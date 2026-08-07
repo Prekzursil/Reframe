@@ -43,10 +43,19 @@ EMBED_SETUP_PS1 = REPO_ROOT / "build" / "python-embed-setup.ps1"
 
 
 def _recording_manager(root: Path, **kwargs: object) -> tuple[AssetManager, list[list[str]]]:
-    """An AssetManager with get-pip pre-staged and a recording run_cmd (no pip)."""
+    """An AssetManager with get-pip pre-staged and a recording run_cmd (no pip).
+
+    "no pip" requires INJECTING the staged digest, not merely writing the file:
+    `_install_env` re-verifies a cached get-pip.py against the manager's pin, so an
+    un-injected dummy is discarded and silently refetched over the network. That is
+    how an upstream rotation of the rolling get-pip.py URL turned this file red.
+    """
     gp = root / "tools" / "get-pip.py"
     gp.parent.mkdir(parents=True, exist_ok=True)
     gp.write_text("# gp", encoding="utf-8")
+    kwargs.setdefault(
+        "get_pip_sha256", "8153d63a9c9aa82b8751e206360a47ac82a56eac21edcc3ae6b121bc72de2cf0"
+    )  # sha256(b"# gp")
     calls: list[list[str]] = []
 
     def fake_run(argv, extra_env=None):  # noqa: ANN001, ANN202 - test seam

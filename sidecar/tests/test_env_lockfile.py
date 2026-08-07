@@ -177,8 +177,14 @@ class _StubMgr:
     def make(tmp_path: Path):
         from media_studio.assets.manager import AssetManager
 
-        mgr = AssetManager(root=tmp_path / "root")
-        # get-pip already staged so _install_env never downloads.
+        # get-pip pre-staged AND its digest injected through the documented
+        # `AssetManager(get_pip_sha256=...)` seam. The injection is what makes
+        # 'never downloads' TRUE: `_install_env` re-verifies a cached get-pip.py
+        # against the pin, so without it this dummy is discarded and the manager
+        # silently refetches from the network -- which is how an upstream rotation
+        # of the rolling get-pip.py URL turned this file red.
+        gp_sha = "8153d63a9c9aa82b8751e206360a47ac82a56eac21edcc3ae6b121bc72de2cf0"  # sha256(b"# gp")
+        mgr = AssetManager(root=tmp_path / "root", get_pip_sha256=gp_sha)
         gp = tmp_path / "root" / "tools" / "get-pip.py"
         gp.parent.mkdir(parents=True, exist_ok=True)
         gp.write_text("# gp", encoding="utf-8")

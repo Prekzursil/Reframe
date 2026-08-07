@@ -132,6 +132,16 @@ def make_manager(
 # building entries; tests that exercise the verify path still pass an explicit one.
 _DUMMY_SHA256 = "a" * 64
 
+#: The dummy get-pip.py body the env-installer tests pre-stage into <root>/tools,
+#: and its digest. Staging alone is NOT enough: `_install_env` RE-VERIFIES a cached
+#: get-pip.py against the manager's pin, so a fixture whose sha does not match is
+#: discarded and silently REFETCHED FROM THE NETWORK. Injecting this through the
+#: documented `AssetManager(get_pip_sha256=...)` seam is what actually makes these
+#: tests hermetic -- otherwise every upstream rotation of the rolling
+#: https://bootstrap.pypa.io/get-pip.py turns the blocking gate red.
+STAGED_GET_PIP = b"# get-pip"
+STAGED_GET_PIP_SHA256 = "93273d4007915e76636bbdfd82cc515939157dd57b4efccee2cbbfc923a45058"
+
 
 def sha_of(*parts: bytes) -> str:
     """sha256 of concatenated body parts (lets download tests pin the served bytes)."""
@@ -879,7 +889,12 @@ class TestEnvInstaller:
         (tmp_path / "tools" / "get-pip.py").write_text("# get-pip", encoding="utf-8")
 
         entry = env_entry()
-        mgr = make_manager(tmp_path, run_cmd=run_cmd, python_exe="C:/embed/python.exe")
+        mgr = make_manager(
+            tmp_path,
+            run_cmd=run_cmd,
+            python_exe="C:/embed/python.exe",
+            get_pip_sha256=STAGED_GET_PIP_SHA256,
+        )
         mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
 
         env_dir = tmp_path / "envs" / "tts-env"
@@ -920,6 +935,7 @@ class TestEnvInstaller:
             chatterbox_python=lambda: "C:/py314/python.exe",
             usage=big_free_usage,
             env_vars={},
+            get_pip_sha256=STAGED_GET_PIP_SHA256,
         )
         mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
         assert calls and calls[0][0] == "C:/py314/python.exe"
@@ -951,6 +967,7 @@ class TestEnvInstaller:
             python_exe="C:/host/python.exe",
             usage=big_free_usage,
             env_vars={},
+            get_pip_sha256=STAGED_GET_PIP_SHA256,
         )
         with pytest.raises(JobCancelled):
             mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: state["cancel"])
@@ -980,6 +997,7 @@ class TestEnvInstaller:
             chatterbox_python=lambda: None,  # py3.14 embed not staged
             usage=big_free_usage,
             env_vars={},
+            get_pip_sha256=STAGED_GET_PIP_SHA256,
         )
         mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
         assert calls and calls[0][0] == "C:/host/python.exe"
@@ -1002,6 +1020,7 @@ class TestEnvInstaller:
             chatterbox_python=lambda: pytest.fail("host-kind must not consult chatterbox_python"),
             usage=big_free_usage,
             env_vars={},
+            get_pip_sha256=STAGED_GET_PIP_SHA256,
         )
         mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
         assert calls and calls[0][0] == "C:/host/python.exe"
@@ -1028,7 +1047,13 @@ class TestEnvInstaller:
             requirements=("torch==2.10.0+cu128",),
             python_kind="chatterbox",
         )
-        mgr = AssetManager(root=tmp_path, run_cmd=run_cmd, usage=big_free_usage, env_vars={})
+        mgr = AssetManager(
+            root=tmp_path,
+            run_cmd=run_cmd,
+            usage=big_free_usage,
+            env_vars={},
+            get_pip_sha256=STAGED_GET_PIP_SHA256,
+        )
         mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
         assert calls and calls[0][0] == "C:/auto314/python.exe"
 
@@ -1039,7 +1064,7 @@ class TestEnvInstaller:
         (tmp_path / "tools").mkdir(parents=True)
         (tmp_path / "tools" / "get-pip.py").write_text("# get-pip", encoding="utf-8")
         entry = env_entry("bad-env")
-        mgr = make_manager(tmp_path, run_cmd=run_cmd)
+        mgr = make_manager(tmp_path, run_cmd=run_cmd, get_pip_sha256=STAGED_GET_PIP_SHA256)
         with pytest.raises(AssetError, match="no matching distribution"):
             mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
         assert not env_sentinel_path(tmp_path / "envs" / "bad-env").exists()
@@ -1203,6 +1228,7 @@ class TestEnsureJob:
             http_factory=boom_factory,
             usage=big_free_usage,
             env_vars={},
+            get_pip_sha256=STAGED_GET_PIP_SHA256,
         )
         dest = mgr.resolve_dest(entry)
         dest.parent.mkdir(parents=True)

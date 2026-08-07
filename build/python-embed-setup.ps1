@@ -93,7 +93,7 @@ param(
     # a341e1a4...7055 (2,226,848 B) started failing closed. Current: 2,230,427 B, pip 26.2.
     # Provenance + its limits are documented at the runtime site, which is the SSOT —
     # see sidecar/media_studio/assets/manager.py::GET_PIP_SHA256. Keep the two in lockstep.
-    [string]$ExpectedGetPipSha256 = '25b5c39ade96bab5eabe6404ce83cab6da2deb5fe3c07d9881f43803edb6f9c8',
+    [string]$ExpectedGetPipSha256 = 'fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6',
     # Fail-closed bootstrap escape hatch: fetch every artifact, PRINT its sha256,
     # delete it, stage NOTHING, exit non-zero. The only way to obtain a pin you
     # do not have yet — it can never produce a build.
