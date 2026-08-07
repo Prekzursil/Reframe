@@ -51,7 +51,7 @@ espeakng-loader==0.2.4
     # via kokoro-onnx
 faster-whisper==1.2.1
     # via media-studio-sidecar (sidecar/pyproject.toml)
-filelock==3.32.0
+filelock==3.32.2
     # via huggingface-hub
 flatbuffers==25.12.19
     # via onnxruntime
@@ -63,7 +63,7 @@ fsspec==2026.7.0
     # via huggingface-hub
 h11==0.16.0
     # via httpcore
-hf-xet==1.5.2
+hf-xet==1.6.0
     # via huggingface-hub
 httpcore==1.0.9
     # via httpx
@@ -71,7 +71,7 @@ httpx==0.28.1
     # via
     #   media-studio-sidecar (sidecar/pyproject.toml)
     #   huggingface-hub
-huggingface-hub==1.25.1
+huggingface-hub==1.26.0
     # via
     #   faster-whisper
     #   tokenizers
@@ -118,7 +118,7 @@ onnxruntime==1.28.0
     #   kokoro-onnx
 opencv-python==4.14.0.94
     # via scenedetect
-packaging==26.2
+packaging==26.3
     # via
     #   huggingface-hub
     #   onnxruntime
@@ -187,7 +187,7 @@ tqdm==4.70.0
     #   faster-whisper
     #   huggingface-hub
     #   scenedetect
-typer==0.27.0
+typer==0.27.1
     # via huggingface-hub
 typing-extensions==4.16.0
     # via
