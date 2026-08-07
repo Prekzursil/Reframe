@@ -127,8 +127,27 @@ async function probeControlBar(page: Page, videoSelector: string): Promise<HitIn
   // MANDATORY before measuring: `boundingBox()` does not scroll, and the
   // MakeShorts designer sits below the fold, so without this the probe point
   // lands outside the viewport and elementFromPoint returns null in EVERY state.
+  //
+  // `scrollIntoViewIfNeeded()` alone is NOT enough, and this cost a red Windows CI
+  // leg: it scrolls the MINIMUM needed to make an element visible, so for an element
+  // taller than the remaining space it can stop with the TOP in view and the BOTTOM
+  // still below the fold. This probe samples the bottom edge, which is exactly the
+  // edge that stayed off-screen. Measured on run 31222301375 (windows-latest): the
+  // guard in `hitTest` fired with "probe point (641, 837) is OUTSIDE the viewport"
+  // against an 820px-tall window — the video's bottom edge was at y=853.
+  //
+  // `scrollIntoView({ block: 'end' })` aligns the element's BOTTOM with the
+  // scrollport's bottom, and acts on the nearest scrollable ANCESTOR rather than only
+  // the window — which matters here because the app shell scrolls inner containers,
+  // so a `window.scrollBy` would have been a no-op.
   await page.locator(videoSelector).scrollIntoViewIfNeeded();
+  await page
+    .locator(videoSelector)
+    .evaluate((el) => el.scrollIntoView({ block: 'end', inline: 'nearest' }));
   const r = await boxOf(page, videoSelector);
+  // The self-validating guard in `hitTest` stays the authority: if the point is STILL
+  // outside after this, the run genuinely measured nothing and must fail loudly rather
+  // than report a null hit as a passing "no interception".
   return hitTest(page, r.x + r.width * 0.15, r.y + r.height - 16);
 }
 
