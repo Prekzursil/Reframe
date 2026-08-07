@@ -11,17 +11,17 @@
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
-    "@remotion/captions": "4.0.500",
-    "@remotion/renderer": "4.0.500",
+    "@remotion/captions": "4.0.506",
+    "@remotion/renderer": "4.0.506",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "remotion": "4.0.500",
+    "remotion": "4.0.506",
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "@remotion/bundler": "4.0.500",
+    "@remotion/bundler": "4.0.506",
     "@types/node": "20.19.43",
-    "@types/react": "19.2.17",
+    "@types/react": "19.2.18",
     "typescript": "5.9.3"
   },
   "overrides": {
