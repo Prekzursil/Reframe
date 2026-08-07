@@ -82,7 +82,16 @@ def big_free_usage(_path: str) -> SimpleNamespace:
     return SimpleNamespace(total=10**13, used=0, free=10**13)
 
 
-def make_manager(tmp_path, *, client=None, run_cmd=None, hf_fetch=None, usage=big_free_usage):
+#: sha256(b"# get-pip") — the dummy body the env-installer tests pre-stage. Injecting
+#: it through the `get_pip_sha256=` seam is what makes "pre-staged, so no download"
+#: actually TRUE: `_install_env` re-verifies a cached get-pip.py against the pin, so an
+#: un-injected dummy is discarded and SILENTLY REFETCHED over the network — which is how
+#: a rotation of the rolling https://bootstrap.pypa.io/get-pip.py reaches tests that
+#: never meant to touch it. Verified: with egress blocked, these now pass.
+STAGED_GET_PIP_SHA256 = "93273d4007915e76636bbdfd82cc515939157dd57b4efccee2cbbfc923a45058"
+
+
+def make_manager(tmp_path, *, client=None, run_cmd=None, hf_fetch=None, usage=big_free_usage, get_pip_sha256=None):
     return AssetManager(
         root=tmp_path,
         http_factory=(lambda: client) if client is not None else None,
@@ -91,6 +100,7 @@ def make_manager(tmp_path, *, client=None, run_cmd=None, hf_fetch=None, usage=bi
         python_exe="C:/embed/python.exe",
         usage=usage,
         env_vars={},
+        get_pip_sha256=get_pip_sha256,
     )
 
 
@@ -412,7 +422,7 @@ def test_env_install_cancelled_between_steps(tmp_path):
         installer="env",
         requirements=("numpy==2.1.0",),
     )
-    mgr = make_manager(tmp_path, run_cmd=run_cmd)
+    mgr = make_manager(tmp_path, run_cmd=run_cmd, get_pip_sha256=STAGED_GET_PIP_SHA256)
     with pytest.raises(JobCancelled):
         mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: True)
     assert run_calls["n"] == 0
