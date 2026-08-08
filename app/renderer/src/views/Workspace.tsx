@@ -50,6 +50,23 @@ const Recipes = lazy(() => import('../features/Recipes'));
 // intelligence A: semantic transcript search (seeks the player on a hit).
 const SemanticSearch = lazy(() => import('../features/SemanticSearch'));
 
+/**
+ * v1.5 timeline-naming — two LABELS name their real subject. Ids are untouched
+ * (`timeline` / `nle` are load-bearing for deep-links, taskHub and useJob's
+ * FEATURE_LABELS), and nothing is added, removed or reordered.
+ *
+ * `timeline` mounts features/Timeline.tsx — a waveform strip plus a lane of
+ * draggable subtitle CUES (Timeline.tsx:1-8), whose sidecar registers exactly
+ * one method, `timeline.peaks` (timeline.py:324). No clip lane, no razor. The
+ * bare name "Timeline" promised a video timeline that is not here; a genuine
+ * video-timeline tab is free to claim it later.
+ *
+ * `nle` mounts features/NleExport.tsx — a CMX3600 EDL / CSV handoff whose
+ * events are approved short-maker clips laid back-to-back
+ * (nle_export.py:162,175-177), i.e. a synthesized rough cut, not a timeline the
+ * user authored. Deliver.tsx already calls the same panel "Pro handoff"; this
+ * label was the outlier.
+ */
 export const WORKSPACE_TABS: TabDef[] = [
   { id: 'transcribe', label: 'Transcribe' },
   { id: 'search', label: 'Search' },
@@ -59,20 +76,8 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'tracks', label: 'Tracks' },
   { id: 'convert', label: 'Convert' },
   { id: 'shortmaker', label: 'Short-maker' },
-  // v1.5 timeline-naming: LABEL only — the `timeline` id is load-bearing
-  // (deep-links, taskHub, useJob's FEATURE_LABELS) and does NOT move. This tab
-  // mounts features/Timeline.tsx, a waveform + draggable subtitle-CUE lane
-  // (Timeline.tsx:1-8); the sidecar behind it registers exactly one method,
-  // `timeline.peaks` (timeline.py:324). Calling it "Timeline" promised a video
-  // timeline that does not exist here, so the label names its real subject. A
-  // genuine video-timeline tab is free to claim the bare name later.
   { id: 'timeline', label: 'Subtitle timeline' },
   { id: 'dub', label: 'Dub' },
-  // v1.5 timeline-naming: LABEL only, same reason. This is the CMX3600 EDL /
-  // CSV handoff for Premiere & Resolve (NleExport.tsx:1-9), built by laying
-  // approved short-maker clips back-to-back — it does not export a timeline the
-  // user authored. Deliver.tsx already calls the same panel "Pro handoff"; this
-  // was the outlier. "NLE export" matches the module, the RPC and the CSS class.
   { id: 'nle', label: 'NLE export' },
   { id: 'recipes', label: 'Recipes' },
   { id: 'assets', label: 'Assets' },
