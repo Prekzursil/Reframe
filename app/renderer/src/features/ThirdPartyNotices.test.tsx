@@ -14,6 +14,7 @@ import {
   THIRD_PARTY_NOTICES,
   FONT_NOTICES,
   FONT_LICENSE_FILE,
+  FFMPEG_NOTICE,
 } from './ThirdPartyNotices';
 
 let container: HTMLDivElement;
@@ -79,7 +80,11 @@ describe('ThirdPartyNotices', () => {
 
   it('points at the vendored LICENSE files for the two vendored networks', async () => {
     await mount();
-    const files = Array.from(container.querySelectorAll('.tpn__file code')).map(
+    // Scoped to the MODELS list (the section's own direct-child <ul>) so the
+    // "exactly two" invariant keeps meaning "two vendored NETWORKS". The bundled-
+    // programs section below ships its own LICENSE path (ffmpeg's GPL text), which
+    // is a different obligation and is asserted separately.
+    const files = Array.from(container.querySelectorAll('.tpn > .tpn__list .tpn__file code')).map(
       (c) => c.textContent,
     );
     expect(files).toContain('sidecar/media_studio/features/_vinet_s/LICENSE');
@@ -141,5 +146,55 @@ describe('ThirdPartyNotices — bundled fonts (WU-1.5 fonts)', () => {
     expect(FONT_NOTICES.map((f) => f.name)).toEqual(['Inter', 'Newsreader', 'IBM Plex Mono']);
     expect(FONT_NOTICES.every((f) => f.license === 'OFL-1.1')).toBe(true);
     expect(FONT_NOTICES.every((f) => f.commercial)).toBe(true);
+  });
+
+  // --- FFmpeg: a REDISTRIBUTED GPL BINARY, not a model -------------------------
+  // The models above are weights we load; ffmpeg.exe is a whole executable we ship
+  // inside the installer, and it is GPL-3.0-or-later because Reframe needs the
+  // GPL-only libx264 encoder. GPL redistribution obliges an offer of the
+  // CORRESPONDING SOURCE, so the notice must name the exact upstream revision — a
+  // generic "we use FFmpeg" credit does not discharge that.
+  it('names the exact FFmpeg build it redistributes', () => {
+    expect(FFMPEG_NOTICE.license).toBe('GPL-3.0-or-later');
+    expect(FFMPEG_NOTICE.version).toBe('n7.1.5-1-g7d0e842004');
+    expect(FFMPEG_NOTICE.buildTag).toBe('autobuild-2026-06-30-13-34');
+    expect(FFMPEG_NOTICE.asset).toBe('ffmpeg-n7.1.5-1-g7d0e842004-win64-gpl-7.1.zip');
+    // The one-letter difference that caused the defect. If this ever reads
+    // `-lgpl-` again the shipped binary cannot encode H.264 at all.
+    expect(FFMPEG_NOTICE.asset).toContain('-win64-gpl-');
+    expect(FFMPEG_NOTICE.asset).not.toContain('-win64-lgpl-');
+  });
+
+  it('offers the corresponding source at the pinned commit, not just a project link', async () => {
+    await mount();
+    const text = container.textContent ?? '';
+    expect(text).toContain('GPL-3.0-or-later');
+    // A source offer has to be reachable and revision-exact.
+    expect(FFMPEG_NOTICE.sourceUrl).toBe('https://github.com/FFmpeg/FFmpeg/tree/7d0e842004');
+    expect(text).toContain(FFMPEG_NOTICE.sourceUrl);
+    expect(text).toContain(FFMPEG_NOTICE.buildScriptsUrl);
+    // ...and the full licence text has to travel with the binary.
+    expect(FFMPEG_NOTICE.licenseFile).toBe('resources/bin/LICENSE.txt');
+    const binaryFiles = Array.from(
+      container.querySelectorAll('.tpn__binaries .tpn__file code'),
+    ).map((c) => c.textContent);
+    expect(binaryFiles).toEqual([FFMPEG_NOTICE.licenseFile]);
+  });
+
+  it('states that shipping GPL ffmpeg does not relicense Reframe, and why', async () => {
+    await mount();
+    const text = container.textContent ?? '';
+    expect(text).toContain('separate child process');
+    expect(FFMPEG_NOTICE.note).toContain('separate child process');
+  });
+
+  it('renders ffmpeg in its own section so the model chip counts are undisturbed', async () => {
+    await mount();
+    expect(container.querySelector('.tpn__binaries')).not.toBeNull();
+    // The pre-existing model/font chip counts are load-bearing assertions above;
+    // a GPL binary is neither "Commercial OK" nor OFL, so it gets its own chip.
+    expect(container.querySelectorAll('.tpn__chip--ok')).toHaveLength(4);
+    expect(container.querySelectorAll('.tpn__chip--ofl')).toHaveLength(3);
+    expect(container.querySelectorAll('.tpn__chip--copyleft')).toHaveLength(1);
   });
 });

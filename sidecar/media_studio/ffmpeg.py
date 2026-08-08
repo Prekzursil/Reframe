@@ -62,6 +62,27 @@ TERMINATE_TIMEOUT_SEC = 5.0
 TREE_KILL_TIMEOUT_SEC = 10.0
 
 
+#: The software H.264 encoder EVERY argv builder in this package hardcodes as a
+#: literal element (features/shortmaker, reframe_claudeshorts, reframe_multispeaker,
+#: stabilize, zoom, brandkit, fillers, media_compat, director_op_engines) and that
+#: the renderer's export/convert defaults request over the wire.
+#:
+#: It is a named constant rather than nine more string literals for ONE reason: a
+#: hardcoded encoder is only correct while the RESOLVED binary actually has it, and
+#: the shipped 1.5 build proved that is not a safe assumption. BtbN's win64-LGPL
+#: ffmpeg is built ``--disable-libx264``, so every export failed with
+#: ``Unknown encoder 'libx264'`` and wrote no file. This constant is the single
+#: place the capability probe below and the setup self-test agree on WHAT to check.
+#:
+#: DELIBERATELY NOT a runtime fallback chain. Substituting ``libopenh264`` (or a
+#: hardware encoder) when libx264 is absent would let an export "succeed" with
+#: silently different rate-control — OpenH264 ignores ``-crf`` entirely — so every
+#: caller's quality contract would change without anyone being told. A loud,
+#: early, actionable failure is the correct behaviour for a missing encoder; the
+#: substitution decision belongs to a human choosing a build, not to the encoder.
+H264_ENCODER = "libx264"
+
+
 class FfmpegNotFound(RuntimeError):
     """Raised when neither a bundled nor a PATH ffmpeg/ffprobe could be found."""
 
@@ -123,6 +144,77 @@ def ffmpeg_path(settings: Mapping[str, Any] | None = None) -> str:
 def ffprobe_path(settings: Mapping[str, Any] | None = None) -> str:
     """Absolute path to the ffprobe binary."""
     return resolve_binary("ffprobe", settings)
+
+
+# ---------------------------------------------------------------------------
+# encoder capability (a PURE parser + one thin, bounded subprocess seam)
+# ---------------------------------------------------------------------------
+def parse_encoders(text: str) -> frozenset[str]:
+    """Parse ``ffmpeg -encoders`` stdout into the set of advertised encoder names.
+
+    The output is a legend block, a ``------`` rule, then one row per encoder::
+
+        Encoders:
+         V..... = Video
+         ...
+         ------
+         V....D libx264              libx264 H.264 / AVC / ... (codec h264)
+
+    Only rows AFTER the rule are encoders, and only the second whitespace-separated
+    column is the name; the six-character flag column is what distinguishes a real
+    row from prose.
+
+    FAILS CLOSED. Unrecognisable input — no rule, a short row, a flag column of the
+    wrong width, empty text — contributes nothing, so a garbled read yields an EMPTY
+    set rather than a guess. That direction matters: the caller treats "encoder
+    absent" as a blocking problem, so a parser that guessed would invent capability
+    the binary may not have and re-open the exact hole this exists to close.
+    """
+    lines = text.splitlines()
+    body: list[str] | None = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and set(stripped) == {"-"}:
+            body = lines[index + 1 :]
+            break
+    if body is None:
+        return frozenset()
+    names: set[str] = set()
+    for line in body:
+        parts = line.split()
+        # parts[0] is the flag column (`V....D`); anything else is not a row.
+        if len(parts) >= 2 and len(parts[0]) == 6:
+            names.add(parts[1])
+    return frozenset(names)
+
+
+def probe_encoders(
+    ffmpeg_bin: str,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> frozenset[str]:
+    """Ask ONE SPECIFIC ffmpeg binary which encoders it advertises.
+
+    Takes the binary path explicitly rather than re-running :func:`resolve_binary`,
+    so a caller that has already resolved a path (the setup self-test) probes the
+    SAME binary it reported — never a different one that happens to be on PATH.
+    That distinction is the whole point: the defect this closes was invisible
+    precisely because the dev/CI PATH ffmpeg is a different artifact from the
+    packaged one.
+
+    argv list, no shell, bounded by :data:`PROBE_TIMEOUT_SEC`, and fail-closed on a
+    non-zero exit. ``runner`` is injectable so tests never spawn a real process.
+    """
+    result = runner(
+        [ffmpeg_bin, "-hide_banner", "-encoders"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=PROBE_TIMEOUT_SEC,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        return frozenset()
+    return parse_encoders(getattr(result, "stdout", "") or "")
 
 
 # ---------------------------------------------------------------------------

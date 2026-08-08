@@ -99,6 +99,16 @@
   color: var(--status-success);
 }
 
+/* A redistributed COPYLEFT binary (ffmpeg, GPL-3.0-or-later). Deliberately not the
+ * error tint used for ViNet-S: this is not a non-commercial restriction, it is an
+ * obligation we have already discharged (source offer + shipped license text). The
+ * warning tint reads as "carries duties", and the license id is the visible text so
+ * the meaning never depends on hue alone. */
+.tpn__chip--copyleft {
+  background: var(--status-warn-soft);
+  color: var(--status-warn);
+}
+
 .tpn__role {
   margin: 0;
   color: var(--text-secondary);

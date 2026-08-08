@@ -158,6 +158,70 @@ export const FONT_NOTICES: readonly FontNotice[] = [
   },
 ];
 
+/**
+ * A REDISTRIBUTED third-party BINARY (an executable shipped inside the installer),
+ * as opposed to a model's weights. Copyleft binaries carry a source-offer
+ * obligation, so this record is revision-exact where a model notice is not.
+ */
+export interface BinaryNotice {
+  /** Display name. */
+  name: string;
+  /** What it does in Reframe (one line). */
+  role: string;
+  /** SPDX license id. */
+  license: string;
+  /** Canonical URL of the license text. */
+  licenseUrl: string;
+  /** Upstream version string, as the binary itself reports it. */
+  version: string;
+  /** The prebuilt-release tag the shipped artifact came from. */
+  buildTag: string;
+  /** The exact release asset file name. */
+  asset: string;
+  /** SHA-256 of that asset (the pin enforced at build-prep time). */
+  sha256: string;
+  /** The corresponding SOURCE at the exact revision — the GPL offer. */
+  sourceUrl: string;
+  /** The build recipe that produced the binary from that source. */
+  buildScriptsUrl: string;
+  /** Where the full license text ships, relative to the install root. */
+  licenseFile: string;
+  /** The obligation/scope callout shown to the user. */
+  note: string;
+}
+
+/**
+ * FFmpeg — the one copyleft BINARY Reframe redistributes.
+ *
+ * Kept in lockstep with `build/python-embed-setup.ps1` ($FfmpegUrl +
+ * $ExpectedFfmpegSha256), `electron-builder.yml`, and the written offer in
+ * `docs/THIRD-PARTY-LICENSES.md`. Re-pinning ffmpeg means editing all four.
+ *
+ * WHY GPL AND NOT LGPL: the software H.264/H.265 encoders are GPL-only, and
+ * `libx264` is the encoder every Reframe export names. The LGPL build shipped
+ * previously was `--disable-libx264`, so every export failed outright. Correcting
+ * the pin to the GPL build is what makes the product work, and it brings the
+ * source-offer obligation this notice discharges.
+ */
+export const FFMPEG_NOTICE: BinaryNotice = {
+  name: 'FFmpeg',
+  role: 'media decode/encode — every import, reframe, caption burn and export',
+  license: 'GPL-3.0-or-later',
+  licenseUrl: 'https://www.gnu.org/licenses/gpl-3.0.html',
+  version: 'n7.1.5-1-g7d0e842004',
+  buildTag: 'autobuild-2026-06-30-13-34',
+  asset: 'ffmpeg-n7.1.5-1-g7d0e842004-win64-gpl-7.1.zip',
+  sha256: '405b190f746db40539eb453967f72c0e69d8bf260b10ceff36e0c2149a9ad22f',
+  sourceUrl: 'https://github.com/FFmpeg/FFmpeg/tree/7d0e842004',
+  buildScriptsUrl: 'https://github.com/BtbN/FFmpeg-Builds',
+  licenseFile: 'resources/bin/LICENSE.txt',
+  note:
+    'Reframe ships this FFmpeg build UNMODIFIED and runs it as a separate child process, ' +
+    'never as a linked library. Reframe’s own source is therefore not covered by the GPL. ' +
+    'You are entitled to the corresponding source for the binary itself, linked above at the ' +
+    'exact revision it was built from.',
+};
+
 /** The Settings → Licenses surface: bundled third-party model attributions. */
 export function ThirdPartyNotices(): React.ReactElement {
   return (
@@ -206,6 +270,52 @@ export function ThirdPartyNotices(): React.ReactElement {
           </li>
         ))}
       </ul>
+      <div className="tpn__binaries">
+        <h3 className="tpn__subtitle">Bundled programs</h3>
+        <p className="tpn__intro">
+          Reframe also ships a complete third-party program inside the installer. Because it is
+          copyleft-licensed, you are entitled to its source code — the exact revision is linked
+          below, and the full license text ships beside the executable.
+        </p>
+        <ul className="tpn__list">
+          <li className="tpn__item" data-license={FFMPEG_NOTICE.license}>
+            <header className="tpn__head">
+              <span className="tpn__name">{FFMPEG_NOTICE.name}</span>
+              <span className="tpn__chip tpn__chip--copyleft" data-commercial="yes">
+                {FFMPEG_NOTICE.license}
+              </span>
+            </header>
+            <p className="tpn__role">{FFMPEG_NOTICE.role}</p>
+            <p className="tpn__attr">
+              Version <code>{FFMPEG_NOTICE.version}</code> · build{' '}
+              <code>{FFMPEG_NOTICE.buildTag}</code>
+            </p>
+            <p className="tpn__license">
+              License:{' '}
+              <a href={FFMPEG_NOTICE.licenseUrl} target="_blank" rel="noreferrer">
+                {FFMPEG_NOTICE.license}
+              </a>{' '}
+              · Source (this exact revision):{' '}
+              <a href={FFMPEG_NOTICE.sourceUrl} target="_blank" rel="noreferrer">
+                {FFMPEG_NOTICE.sourceUrl}
+              </a>
+            </p>
+            <p className="tpn__license">
+              Build scripts:{' '}
+              <a href={FFMPEG_NOTICE.buildScriptsUrl} target="_blank" rel="noreferrer">
+                {FFMPEG_NOTICE.buildScriptsUrl}
+              </a>{' '}
+              · asset <code>{FFMPEG_NOTICE.asset}</code>
+            </p>
+            <p className="tpn__file">
+              Full license: <code>{FFMPEG_NOTICE.licenseFile}</code>
+            </p>
+            <p className="tpn__note" role="note">
+              {FFMPEG_NOTICE.note}
+            </p>
+          </li>
+        </ul>
+      </div>
       <div className="tpn__fonts">
         <h3 className="tpn__subtitle">Bundled fonts</h3>
         <p className="tpn__intro">

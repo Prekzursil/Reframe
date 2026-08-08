@@ -230,6 +230,31 @@ jobs:
         # release workflow's job, not this gate's.
         run: npx electron-builder --config ../electron-builder.yml --win --publish never
 
+      # --- ANTI-RECURRENCE: does the ffmpeg we just PACKAGED actually work? ---
+      # v1.4 shipped a bundled ffmpeg (BtbN win64-LGPL, --disable-libx264
+      # --disable-libx265) that cannot encode H.264, while the sidecar hardcodes
+      # the literal token "libx264" at 13 sites across 9 modules. Every export on
+      # the shipped product died with "Unknown encoder 'libx264'", and CI stayed
+      # green the whole time because every ffmpeg-consuming step above installs
+      # ffmpeg from apt/choco — a GPL build that HAS libx264. The gates measured a
+      # binary the user never runs.
+      #
+      # This step probes the binary electron-builder just staged into the package
+      # (resources/bin — the exact path the packaged main wires MEDIA_STUDIO_FFMPEG
+      # to) and fails the leg if it cannot encode what the code demands. It runs
+      # BEFORE the Playwright specs because it is seconds-fast and its failure
+      # explains every downstream export failure at once.
+      #
+      # Not a 7th quality gate: e2e.yml is the dispatch/nightly workflow, so the
+      # closed 6-gate charter (QUALITY-CHARTER.md rule 2) is untouched.
+      - name: Verify the PACKAGED ffmpeg can encode what the pipeline hardcodes
+        if: runner.os == 'Windows'
+        working-directory: sidecar
+        shell: pwsh
+        # Single line on purpose: a PowerShell backtick continuation breaks on any
+        # trailing whitespace, and a CI step is a bad place to discover that.
+        run: python -m media_studio.encoders --ffmpeg "$env:GITHUB_WORKSPACE/dist/win-unpacked/resources/bin/ffmpeg.exe"
+
       - name: E2E GUI — vitest DOM caption + nasty-caption proofs
         working-directory: app
         run: npm run test:e2e:dom

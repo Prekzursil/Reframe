@@ -28,10 +28,28 @@ const ffprobePath = path.join(ffmpegDir, 'ffprobe.exe');
 - `extraResources` lands the exes in `process.resourcesPath` — **outside `app.asar`** — so no `asarUnpack` gymnastics and no "can't exec from inside asar" failure. (If instead you use `ffmpeg-static`/`@ffmpeg-installer`, you MUST add `asarUnpack` and rewrite `app.asar` → `app.asar.unpacked` in the returned path.)
 
 ### Licensing / gotcha notes (load-bearing)
-- **LGPL vs GPL is the whole game.** FFmpeg is LGPL 2.1+ by default; `--enable-gpl` (needed for libx264/libx265/libxvid) flips the entire binary to GPL v2+. Invoking an **unmodified LGPL exe as a separate child process** is redistribution-safe in a proprietary app.
+
+> **CORRECTED 2026-08-08 — the LGPL recommendation below was FOLLOWED and it shipped a broken
+> product.** Reframe now pins BtbN's **win64-GPL** asset. Read the bullets below as the record of
+> what was decided and why it was wrong, not as guidance.
+>
+> The reasoning error is worth naming precisely, because the dossier was not missing information —
+> the "Functional cost of LGPL" bullet below states plainly that an LGPL build has **no software
+> `libx264`**. What was never checked is that the *codebase* passes `libx264` as a literal argv
+> element in nine sidecar modules and the renderer export default. The licence analysis and the
+> code were each correct in isolation and nobody joined them, so every export in the shipped 1.5
+> build failed with `Unknown encoder 'libx264'`. A documented cost that no one traced to a caller
+> is indistinguishable from an undocumented one.
+>
+> The bullet's suggested mitigation — "use `hevc_nvenc`/hardware instead rather than shipping GPL"
+> — is also not viable as written: hardware encoders are not present on every machine, so a
+> product that requires one is a product that fails on the machines without it. Current decision
+> and full reasoning: [`../../THIRD-PARTY-LICENSES.md`](../../THIRD-PARTY-LICENSES.md).
+
+- **LGPL vs GPL is the whole game.** FFmpeg is LGPL 2.1+ by default; `--enable-gpl` (needed for libx264/libx265/libxvid) flips the entire binary to GPL v2+. Invoking an **unmodified LGPL exe as a separate child process** is redistribution-safe in a proprietary app. *(Still true — and the same separate-child-process reasoning is exactly what makes shipping the GPL build safe for Reframe's own source. The child-process argument was never the LGPL-specific part.)*
 - **Never use `ffmpeg-static` (eugeneware)** — its package and binaries are GPL-3.0. `@ffmpeg-installer/ffmpeg` (LGPL-2.1) is cleaner but you lose control of the exact build/flags.
 - **LGPL obligations to satisfy:** (a) ship the `LICENSE`/`COPYING` file next to the binaries, (b) don't modify the binaries, (c) record the **exact BtbN release tag** so you can honor the source-availability obligation (a link to that tag suffices in practice).
-- **Functional cost of LGPL:** no software `libx264`/`libx265` encoders. Decoding H.264/H.265 still works. For encoding you get **OpenH264** and hardware encoders (`h264_nvenc`/`hevc_nvenc`/`h264_qsv`/`h264_amf`). If Reframe ever needs software x265, that path is GPL-only — use `hevc_nvenc`/hardware instead rather than shipping GPL.
+- **Functional cost of LGPL:** no software `libx264`/`libx265` encoders. Decoding H.264/H.265 still works. For encoding you get **OpenH264** and hardware encoders (`h264_nvenc`/`hevc_nvenc`/`h264_qsv`/`h264_amf`). If Reframe ever needs software x265, that path is GPL-only — use `hevc_nvenc`/hardware instead rather than shipping GPL. **← THIS IS THE BULLET THAT WAS RIGHT AND IGNORED.** Reframe needs software `libx264` (it is `media_studio.ffmpeg.H264_ENCODER`, hardcoded in nine modules), so the cost was not acceptable and the hardware-encoder mitigation is not portable. Decoding still working is precisely what made the failure invisible until an export was attempted: import, preview and probe all behaved normally.
 - **Patents are orthogonal.** H.264/H.265 carry MPEG-LA royalties independent of GPL/LGPL — confirm separately for commercial distribution.
 - **Size:** budget **~150 MB** for both full static exes; drop to an essentials/reduced LGPL build if the installer is too heavy. Prefer **static over shared** (single self-contained exe, no DLL path juggling).
 

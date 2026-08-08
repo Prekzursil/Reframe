@@ -341,6 +341,22 @@ export function probePlayable(
 }
 
 /**
+ * The `resources/bin/ffmpeg` that a PACKAGED artifact actually ships and runs.
+ *
+ * electron-builder maps `build/ffmpeg/win -> resources/bin` (electron-builder.yml
+ * extraResources), and the packaged main process points the sidecar at exactly
+ * this path via MEDIA_STUDIO_FFMPEG (`buildSidecarEnv`; see app/main/
+ * sidecar.env.test.ts §A3 — `<resourcesPath>/bin/ffmpeg.exe`). So this is THE
+ * binary a shipped export runs through, and the only one whose capabilities a
+ * packaged smoke may trust. Verified against a real install: an executable at
+ * `D:/Program Files/Reframe/Reframe.exe` yields
+ * `D:/Program Files/Reframe/resources/bin/ffmpeg.exe`.
+ */
+export function bundledFfmpegPath(executablePath: string): string {
+  return join(dirname(executablePath), 'resources', 'bin', `ffmpeg${process.platform === 'win32' ? '.exe' : ''}`);
+}
+
+/**
  * Resolve `ffprobe` for the spec's OWN independent probe of a produced clip.
  * Mirrors generateSample's ffmpeg resolution so the golden journey carries no new
  * precondition beyond the ffmpeg/ffprobe toolchain it already needs: RF_FFPROBE
