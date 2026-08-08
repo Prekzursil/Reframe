@@ -255,6 +255,55 @@
   color: var(--text-muted);
 }
 
+/* WU-A2 voice-clone consent — a GATE, so it reads as a bordered commitment
+   block rather than fine print: full-row, warning rail, attestation first. */
+.dub-panel .dub-consent {
+  flex: 1 1 100%;
+  order: -1;
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border: 1px solid var(--status-warn, var(--text-faint));
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+}
+
+.dub-panel .dub-consent legend {
+  padding: 0 var(--space-2);
+  font-size: var(--type-caption-size);
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--status-warn, var(--text-secondary));
+}
+
+/* the attestation itself is the loudest line in the block: body voice, inline
+   checkbox — it is a statement the user makes, not a field label */
+.dub-panel .dub-consent .dub-consent-attest {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-weight);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.dub-panel .dub-consent .dub-consent-attest input {
+  margin-top: 0.15em;
+  flex: 0 0 auto;
+}
+
+.dub-panel .dub-consent .dub-consent-note {
+  margin-top: var(--space-3);
+}
+
+.dub-panel .dub-consent-hint {
+  margin: var(--space-3) 0 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}
+
 /* a finished dub is a DONE status: success rail + auditioning player */
 .dub-panel .dub-result {
   margin: var(--space-5) 0;
