@@ -113,7 +113,10 @@ MD_LINK_RE = re.compile(r"\]\(([^)\s#]+?\.(?:md|html|json|py|ts|tsx|css|gz|txt))
 # uses; see the docstring note about the fixer rewriting its own explanation.
 BARE_DOC_RE = re.compile(r"(?<![\w./\-(])([A-Za-z0-9_][A-Za-z0-9_.\-]*\.md)(?![\w/])")
 WAIVER_RE = re.compile(r"ssot-allow:")
-CITING_SUFFIXES = frozenset({".md", ".py", ".ts", ".tsx"})
+# `.ps1` is here because the worktree-hygiene scripts cite repo docs in their comments and
+# were invisible to every rule without it. Measured on the combined tree: adding it scans 10
+# more files and finds nothing, so it is pure coverage rather than a new debt.
+CITING_SUFFIXES = frozenset({".md", ".py", ".ts", ".tsx", ".ps1"})
 
 
 def tracked_files() -> list[str]:
