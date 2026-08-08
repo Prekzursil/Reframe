@@ -152,6 +152,11 @@ _STATIC_DEFAULT_KEYS = (
     "activePreset",
     "firstRunChoiceMade",
     "lastOpenedVideoId",
+    # WU-B1: the lip-sync build flag. Parity is asserted here (the THIRD of the
+    # three places a scalar setting must land) so the default cannot drift to
+    # ON in one file only — for a face-manipulation gate that drift is the whole
+    # risk, not a cosmetic mismatch.
+    "lipSyncEnabled",
 )
 
 # Keys the contract NEWLY declares — previously reached only via stringly-typed

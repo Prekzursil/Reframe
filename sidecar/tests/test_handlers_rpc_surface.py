@@ -183,6 +183,10 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "transcript.previewEdit",
         "transcript.undoEdit",
         "tts.dub.start",
+        # WU-B1: registered unconditionally and refused at CALL time when the
+        # lipSyncEnabled flag is off, so the frozen surface does not depend on a
+        # settings snapshot taken at composition time.
+        "tts.lipsync.start",
         "tts.sample.add",
         "tts.voices",
     }

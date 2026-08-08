@@ -124,6 +124,7 @@ class Settings:
     lastOpenedVideoId: str = ""
     autosave: Autosave | None = None
     exportDefaults: ExportDefaults | None = None
+    lipSyncEnabled: bool = False
     # ---- newly DECLARED here (previously only stringly-accessed) ----
     silenceTrim: bool | None = None
     removeFillers: bool | None = None

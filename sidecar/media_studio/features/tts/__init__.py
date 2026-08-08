@@ -10,6 +10,8 @@ Modules:
   * :mod:`.dub`         — the batched dub pipeline + ``tts.dub.start``
   * :mod:`.voices`      — voice catalog + sample store (``tts.voices`` /
     ``tts.sample.add``)
+  * :mod:`.lipsync`     — re-lip the mouth to a finished dub
+    (``tts.lipsync.start``); OFF unless ``lipSyncEnabled`` is ``True``
 
 :func:`register` is the composition entry the WIRING agent calls from
 ``handlers.register_all`` (mirroring the other feature modules). It builds
@@ -17,6 +19,13 @@ the engine factories, the voice store and the dub service, and registers the
 three frozen A2 methods. Importing this package stays light: no onnxruntime
 / edge-tts / torch import happens until a job actually runs (A6 lesson 1 —
 the natives the wiring agent must pre-import are listed in docs/wiring/WIRING-T2.md).
+
+``tts.lipsync.start`` is registered UNCONDITIONALLY and refuses at CALL time
+when the flag is off. Registering it conditionally would make the method's
+existence depend on the settings snapshot taken at composition time, so a user
+toggling the setting would need a restart AND the UI could not tell "disabled"
+from "this build has no lip-sync". A method that answers "disabled, here is how
+to enable it" is strictly more honest than one that answers "unknown method".
 """
 
 from __future__ import annotations
@@ -32,6 +41,7 @@ from .dub import DubService, Translator
 from .edgetts import EdgeTtsEngine
 from .engine import TtsEngine, TtsError
 from .kokoro import KokoroEngine
+from .lipsync import BackendFactory, ConfidenceProbe, LipSyncService
 from .voices import VoiceStore, make_sample_add_handler, make_voices_handler
 
 log = get_logger("media_studio.tts")
@@ -68,9 +78,12 @@ def register(
     samples_dir: str | os.PathLike | None = None,
     media_duration: Callable[[str], float] | None = None,
     out_dir: str | None = None,
+    lipsync_backend_factory: BackendFactory | None = None,
+    lipsync_confidence_probe: ConfidenceProbe | None = None,
     register_fn: Callable[[str, Any], None] | None = None,
 ) -> DubService:
-    """Register ``tts.voices`` / ``tts.sample.add`` / ``tts.dub.start`` (A2).
+    """Register ``tts.voices`` / ``tts.sample.add`` / ``tts.dub.start`` (A2) +
+    ``tts.lipsync.start`` (WU-B1).
 
     Called by the wiring agent from ``handlers.register_all`` with:
 
@@ -99,19 +112,41 @@ def register(
         media_duration=media_duration,
         out_dir=out_dir,
     )
+
+    # WU-B1: lip-sync consumes a FINISHED dub AudioTrack, so its audio-track
+    # loader is derived from the same service the dub muxes into, and its
+    # cloned-voice consent lookup from the same VoiceStore the dub voiced from.
+    # No new persistence surface — the gate reads what already exists.
+    def load_audio_track(video_id: str, track_id: str) -> dict[str, Any] | None:
+        rows = audio_tracks.list({"videoId": video_id}, None).get("audioTracks", [])
+        return next((dict(row) for row in rows if row.get("id") == track_id), None)
+
+    lipsync = LipSyncService(
+        resolver=resolver,
+        load_audio_track=load_audio_track,
+        get_sample=store.get,
+        backend_factory=lipsync_backend_factory,
+        settings_provider=settings_provider,
+        confidence_probe=lipsync_confidence_probe,
+        out_dir=out_dir,
+    )
     reg = register_fn if register_fn is not None else protocol.register
     reg("tts.voices", make_voices_handler(catalog_engines, store))
     reg("tts.sample.add", make_sample_add_handler(store))
     reg("tts.dub.start", service.dub_start)
-    log.info("registered tts.voices / tts.sample.add / tts.dub.start")
+    reg("tts.lipsync.start", lipsync.lipsync_start)
+    log.info("registered tts.voices / tts.sample.add / tts.dub.start / tts.lipsync.start")
     return service
 
 
 __all__ = [
+    "BackendFactory",
     "ChatterboxEngine",
+    "ConfidenceProbe",
     "DubService",
     "EdgeTtsEngine",
     "KokoroEngine",
+    "LipSyncService",
     "Translator",
     "TtsEngine",
     "TtsError",
