@@ -111,9 +111,7 @@ def test_transcribe_file_does_not_post_correct_on_its_own():
 # --------------------------------------------------------------------------- #
 def test_with_engine_sends_both_biasing_strings_from_settings():
     model = FakeModel()
-    transcribe.transcribe_with_engine(
-        "/v.mp4", loader=FakeLoader(model), settings=_cpu_settings(asrVocabulary=VOCAB)
-    )
+    transcribe.transcribe_with_engine("/v.mp4", loader=FakeLoader(model), settings=_cpu_settings(asrVocabulary=VOCAB))
     assert model.calls[0]["initial_prompt"] == "Glossary: Reframe."
     assert model.calls[0]["hotwords"] == "Reframe"
 
