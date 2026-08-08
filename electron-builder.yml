@@ -81,16 +81,35 @@ extraResources:
   # ChatterboxEngine + bootstrap resolve <resources>/python-chatterbox/python.exe.
   - from: ../build/python-embed-314
     to: python-chatterbox
-  # Bundled ffmpeg/ffprobe (WU A3) — BtbN win64-LGPL STATIC exes, redistribution-
-  # safe in a closed-source app when invoked as a separate child process (LGPL,
-  # unmodified). PINNED release tag: autobuild-2026-07-03-13-21 / asset
-  # ffmpeg-n7.1.5-1-g7d0e842004-win64-lgpl-7.1.zip (staged into build/ffmpeg/win/
+  # Bundled ffmpeg/ffprobe (WU A3) — BtbN win64-**GPL** STATIC exes.
+  # PINNED release tag: autobuild-2026-06-30-13-34 / asset
+  # ffmpeg-n7.1.5-1-g7d0e842004-win64-gpl-7.1.zip (staged into build/ffmpeg/win/
   # by build/python-embed-setup.ps1 -WithFfmpeg). Ships OUTSIDE app.asar via
   # extraResources -> resources/bin/, resolved by ffmpeg.py's _BUNDLED_DIR and by
   # the MEDIA_STUDIO_FFMPEG/FFPROBE env the supervisor injects (WIRING-T5 §2 /
-  # sidecar.ts buildSidecarEnv). LGPL obligation: the BtbN LICENSE.txt is shipped
-  # alongside the exes (the "*.txt" filter below), and the exact source tag is
-  # recorded here + in python-embed-setup.ps1.
+  # sidecar.ts buildSidecarEnv).
+  #
+  # CORRECTED 2026-08-08. This block used to pin the win64-**LGPL** asset and call
+  # it "redistribution-safe in a closed-source app". The licence claim was true but
+  # irrelevant, because that build is configured --disable-libx264 and therefore
+  # CANNOT ENCODE H.264 — which the entire app hardcodes. Every export in the
+  # shipped build failed with "Unknown encoder 'libx264'". Correcting the pin to
+  # GPL is what makes the product work; the reasoning is corrected here rather than
+  # deleted so the trade-off is not silently re-litigated back to LGPL.
+  #
+  # GPL obligation, and why it does NOT reach Reframe's own source: the sidecar
+  # spawns these exes as SEPARATE CHILD PROCESSES over argv lists (media_studio/
+  # ffmpeg.py resolve_binary + run(); no linking, no shell). That is aggregation,
+  # so shipping the unmodified GPL ffmpeg does not relicense Reframe. It DOES
+  # oblige an offer of ffmpeg's corresponding source, discharged three ways:
+  #   1. the BtbN LICENSE.txt travels beside the exes — VERIFIED, not assumed: the
+  #      "*.txt" filter below matches it, and the staged dir contains exactly
+  #      ffmpeg.exe / ffprobe.exe / LICENSE.txt (35,147 B of GPL text; the old LGPL
+  #      asset's was 7,651 B, so this really is the stronger licence's text);
+  #   2. the exact tag + asset + upstream source URL are recorded in
+  #      build/python-embed-setup.ps1 and in the user-facing Settings -> Licenses
+  #      surface (app/renderer/src/features/ThirdPartyNotices.tsx, FFMPEG_NOTICE);
+  #   3. docs/THIRD-PARTY-LICENSES.md carries the written source offer verbatim.
   - from: ../build/ffmpeg/win
     to: bin
     filter:

@@ -16,6 +16,16 @@ Checks (the wire ``id`` the panel keys on):
     ``NATIVE_MODULES_FOR_PREIMPORT`` is likewise ``("cv2",)``).
   * ``asr``    — the Whisper ASR backend (``faster_whisper``) importable.
   * ``ffmpeg`` — ffmpeg + ffprobe resolvable via :mod:`tools_resolver`.
+  * ``encoder`` — the resolved ffmpeg can actually ENCODE H.264
+    (:data:`media_studio.ffmpeg.H264_ENCODER`), not merely exist.
+
+WHY ``encoder`` IS A SEPARATE CHECK FROM ``ffmpeg``. Resolving a binary proves
+presence, not capability, and the 1.5 build shipped exactly that gap: the packaged
+ffmpeg was BtbN's win64-LGPL build (``--disable-libx264``), so this panel reported a
+fully GREEN "Media tools (FFmpeg): ok" on an install where every single export died
+with ``Unknown encoder 'libx264'`` and produced no file. A first-run diagnostic
+whose entire purpose is "never proceed into a broken render" was, for that defect,
+the thing reassuring the user it was fine. Presence alone is not a capability.
 
 Design mirrors :mod:`system_advisor`: PURE verdict builders + injectable probe
 seams (filesystem write, hardware detect, ``importlib.find_spec``, tool resolve).
@@ -27,10 +37,11 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import ffmpeg as _ffmpeg
 from ..util import get_logger
 
 log = get_logger("media_studio.features.self_test")
@@ -52,6 +63,12 @@ ASR_FIX = "The Whisper engine needs faster-whisper — reinstall the app or run 
 
 FFMPEG_LABEL = "Media tools (FFmpeg)"
 FFMPEG_FIX = "ffmpeg/ffprobe were not found — install FFmpeg and add it to PATH, or set its path in Settings."
+
+ENCODER_LABEL = "Video encoder (H.264)"
+ENCODER_FIX = (
+    "This FFmpeg build cannot encode H.264 — exports will fail. Install a build with libx264 "
+    "(the bundled one has it), or clear the custom FFmpeg path in Settings to fall back to it."
+)
 
 # Probe-key module names (a single import-availability family per dependency).
 #
@@ -172,6 +189,28 @@ def tool_check(
     return CheckResult(check_id, label, False, True, f"not found: {', '.join(missing)}", fix_hint)
 
 
+def encoder_check(*, encoders: Collection[str], error: str = "") -> CheckResult:
+    """Verdict for "can this ffmpeg encode H.264?" (REQUIRED — it blocks ``ok``).
+
+    REQUIRED, not informational, because the failure mode is total: with the
+    encoder missing, every export path in the app raises ``Unknown encoder`` and
+    writes nothing. There is no degraded-but-working state to warn about.
+
+    On failure the detail names the H.264 encoders the binary DOES advertise
+    (``libopenh264``, ``h264_nvenc``, ...). That list is what makes the report
+    actionable — it is the difference between "ffmpeg is broken" and "this build
+    dropped libx264 specifically", which is the actual diagnosis.
+    """
+    if error:
+        return CheckResult("encoder", ENCODER_LABEL, False, True, f"Encoder probe failed: {error}", ENCODER_FIX)
+    if _ffmpeg.H264_ENCODER in encoders:
+        return CheckResult("encoder", ENCODER_LABEL, True, True, f"{_ffmpeg.H264_ENCODER} available.", "")
+    alternatives = sorted(name for name in encoders if "264" in name)
+    found = f" This build offers: {', '.join(alternatives)}." if alternatives else ""
+    detail = f"This FFmpeg build has no {_ffmpeg.H264_ENCODER} encoder.{found}"
+    return CheckResult("encoder", ENCODER_LABEL, False, True, detail, ENCODER_FIX)
+
+
 def build_report(checks: Sequence[CheckResult]) -> SelfTestReport:
     """Roll a list of checks up to the report: ``ok`` iff all REQUIRED checks pass.
 
@@ -268,6 +307,36 @@ def _default_disk_usage(path: Path) -> object:
     return shutil.disk_usage(path)
 
 
+def probe_encoder_set(
+    ffmpeg_path: str | None,
+    *,
+    probe: Callable[[str], Collection[str]] | None = None,
+) -> tuple[frozenset[str], str]:
+    """Ask the RESOLVED ffmpeg what it can encode; return ``(encoders, error)``.
+
+    Takes the already-resolved path so the capability answer describes the SAME
+    binary :func:`tool_check` just reported — resolving again here could probe a
+    different ffmpeg than the one the panel names, which is the measurement error
+    that hid the original defect.
+
+    Fail-open like every other probe in this module: an unresolvable ffmpeg or a
+    probe that raises becomes a reported error string, never an exception.
+    """
+    if not ffmpeg_path:
+        return frozenset(), "ffmpeg was not found, so its encoders could not be probed"
+    probe_fn = probe or _default_encoder_probe
+    try:
+        return frozenset(probe_fn(ffmpeg_path)), ""
+    except Exception as exc:
+        log.debug("encoder probe failed during self-test", exc_info=True)
+        return frozenset(), str(exc)
+
+
+def _default_encoder_probe(ffmpeg_path: str) -> Collection[str]:
+    """Default capability probe: one bounded ``ffmpeg -encoders`` subprocess."""
+    return _ffmpeg.probe_encoders(ffmpeg_path)
+
+
 # --------------------------------------------------------------------------- #
 # end-to-end composition
 # --------------------------------------------------------------------------- #
@@ -279,6 +348,7 @@ def run(
     find_spec: Callable[[str], object] | None = None,
     probe_io: Callable[[Path], str] | None = None,
     disk_usage: Callable[[Path], object] | None = None,
+    probe_encoders: Callable[[str], Collection[str]] | None = None,
 ) -> SelfTestReport:
     """Probe everything and assemble the :class:`SelfTestReport`.
 
@@ -314,7 +384,11 @@ def run(
     tool_paths = {name: resolve_tool(name) for name in _FFMPEG_TOOLS}
     ffmpeg = tool_check("ffmpeg", FFMPEG_LABEL, FFMPEG_FIX, paths=tool_paths, names=_FFMPEG_TOOLS)
 
-    return build_report([data, device, cv2, asr, ffmpeg])
+    # Capability, not presence — probed on the binary `ffmpeg` above just named.
+    encoders, encoder_error = probe_encoder_set(tool_paths.get("ffmpeg"), probe=probe_encoders)
+    encoder = encoder_check(encoders=encoders, error=encoder_error)
+
+    return build_report([data, device, cv2, asr, ffmpeg, encoder])
 
 
 __all__ = [
@@ -324,9 +398,11 @@ __all__ = [
     "data_check",
     "dependency_check",
     "device_check",
+    "encoder_check",
     "probe_data_dir",
     "probe_dependencies",
     "probe_disk_free_mb",
+    "probe_encoder_set",
     "run",
     "tool_check",
 ]

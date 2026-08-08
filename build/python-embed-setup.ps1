@@ -8,8 +8,11 @@
 #   build/python-embed-314/  embeddable CPython 3.14 (+ get-pip.py) — the DEDICATED
 #                            interpreter for the ISOLATED chatterbox voice-clone env
 #                            (torch 2.10 only resolves on py3.14; CONTRACTS.md A4)
-#   build/ffmpeg/win/        ffmpeg.exe + ffprobe.exe + LICENSE   (BtbN win64-LGPL,
-#                            with -WithFfmpeg; shipped to resources/bin/)
+#   build/ffmpeg/win/        ffmpeg.exe + ffprobe.exe + LICENSE   (BtbN win64-GPL,
+#                            with -WithFfmpeg; shipped to resources/bin/). GPL, not
+#                            LGPL: the LGPL build is --disable-libx264, which cannot
+#                            encode the H.264 the whole app asks for. See the
+#                            $FfmpegUrl block below for the full licence reasoning.
 #
 # Everything downloaded is PINNED by exact URL (A6 lesson 5) *and* by SHA-256.
 #
@@ -57,13 +60,43 @@ param(
     # failed here for a DIFFERENT reason than the empty pin. It is live now.
     [string]$ExpectedChatterboxPythonSha256 = '8d4d3590c10449d78aa4375f534e6d5f3027d67fdc362dd1a882279db6f90fdf',
     [switch]$WithFfmpeg,
-    # Pinned ffmpeg build (WU A3): BtbN win64-LGPL STATIC (~138 MB zip). BtbN is
-    # the only mainstream source with a redistribution-safe LGPL static Windows
-    # build (gyan.dev main builds are all --enable-gpl); an UNMODIFIED LGPL exe
-    # invoked as a separate child process is redistribution-safe in a closed-
-    # source app. FFmpeg n7.1.5 line. The extractor below also copies the zip's
-    # LICENSE.txt next to the exes (LGPL obligation: ship the license + record
-    # this exact source tag).
+    # Pinned ffmpeg build (WU A3): BtbN win64-**GPL** STATIC. FFmpeg n7.1.5 line.
+    #
+    # *** WHY GPL, NOT LGPL (corrected 2026-08-08 — the previous rationale shipped a
+    # BROKEN product). *** This pin used to read win64-**lgpl** with the argument that
+    # "an UNMODIFIED LGPL exe invoked as a separate child process is redistribution-safe
+    # in a closed-source app". The licence half of that sentence was fine; the
+    # FUNCTIONAL half was never checked. BtbN's LGPL build is configured
+    # `--disable-libx264 --disable-libx265` (read it off the shipped binary:
+    # `ffmpeg -version` prints the full `configuration:` line), so it CANNOT encode
+    # H.264 in software — while nine sidecar modules and the renderer default pass
+    # `-c:v libx264` as a literal argv element. Measured on the installed 1.5 build:
+    #   -c:v libx264     -> "Unknown encoder 'libx264'", exit 1, NO output file
+    #   -c:v libopenh264 -> output produced
+    # Every gate missed it because CI installs ffmpeg from apt/choco (a GPL build that
+    # HAS libx264) and the packaged e2e never exercised an export.
+    #
+    # The GPL analysis that replaces it: FFmpeg is LGPL-2.1+ by default and
+    # `--enable-gpl` (required for libx264/libx265) makes the resulting BINARY GPL.
+    # This asset is BOTH `--enable-gpl` AND `--enable-version3`, so it is
+    # **GPL-3.0-or-later** specifically -- CHECKED, not inferred: the LICENSE.txt in
+    # the staged zip opens "GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007"
+    # (35,147 B), where the superseded LGPL asset's opened "GNU LESSER GENERAL
+    # PUBLIC LICENSE Version 3" (7,651 B).
+    # Reframe does not link it — `media_studio/ffmpeg.py::resolve_binary` resolves an
+    # absolute path and `run()` spawns it as a SEPARATE CHILD PROCESS over an argv list
+    # (never a library call, never `shell=True`). That is aggregation, not a derived
+    # work, so shipping the unmodified GPL `ffmpeg.exe` does NOT relicense Reframe's own
+    # source. What it DOES oblige is a written offer of the CORRESPONDING SOURCE for the
+    # binary we redistribute: the exact upstream tag + asset + source URL are recorded
+    # here, in electron-builder.yml, and user-facing in the app's Settings -> Licenses
+    # surface (app/renderer/src/features/ThirdPartyNotices.tsx, FFMPEG_NOTICE).
+    #
+    # Deliberately a ONE-DIMENSION change: same BtbN release tag, same ffmpeg commit
+    # (g7d0e842004), same n7.1.5 line, same asset shape — only `-lgpl-` becomes `-gpl-`,
+    # so nothing but the licence/encoder set moves. The extractor below still copies the
+    # zip's LICENSE.txt next to the exes (now the GPL text, which is the stronger
+    # obligation: ship the licence + record this exact source tag).
     #
     # *** PIN A MONTH-END TAG ONLY. *** BtbN's retention is TWO-TIER, and getting
     # this wrong silently breaks the Windows build weeks later:
@@ -75,12 +108,17 @@ param(
     # every Windows CI run. Re-pinned 2026-07-26 to the 2026-06-30 month-end tag,
     # which carries the SAME asset (identical filename + ffmpeg commit
     # g7d0e842004) and is retained for years rather than days.
-    [string]$FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-06-30-13-34/ffmpeg-n7.1.5-1-g7d0e842004-win64-lgpl-7.1.zip',
+    [string]$FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-06-30-13-34/ffmpeg-n7.1.5-1-g7d0e842004-win64-gpl-7.1.zip',
     # REQUIRED (WU-S10) when -WithFfmpeg is used: empty => the download is
     # REFUSED. BtbN publishes no per-asset checksum file, so this is the digest of
-    # the exact pinned asset, recorded 2026-07-26 (132 MB; verified to contain
-    # bin/ffmpeg.exe, bin/ffprobe.exe and LICENSE.txt).
-    [string]$ExpectedFfmpegSha256 = 'ec1c6ae03fab10f316344973f83c549b4b662ec3d73f1658353ab1587f4cf727',
+    # the exact pinned asset. RE-RECORDED 2026-08-08 for the win64-GPL asset
+    # (verified to contain bin/ffmpeg.exe, bin/ffprobe.exe and LICENSE.txt, and to
+    # report `--enable-gpl --enable-libx264 --enable-libx265` in its own
+    # `ffmpeg -version` configuration line). The superseded LGPL digest was
+    # ec1c6ae03fab10f316344973f83c549b4b662ec3d73f1658353ab1587f4cf727 — recorded
+    # here so a future reader can tell the two assets apart rather than assuming
+    # the pin merely rotated.
+    [string]$ExpectedFfmpegSha256 = '405b190f746db40539eb453967f72c0e69d8bf260b10ceff36e0c2149a9ad22f',
     [string]$FfmpegDest = (Join-Path (Join-Path $PSScriptRoot 'ffmpeg') 'win'),
     [string]$GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py',
     # get-pip.py is DOWNLOADED then EXECUTED, so it is the most important pin
