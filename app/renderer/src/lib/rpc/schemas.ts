@@ -1190,6 +1190,8 @@ export type DirectorOpKind =
   | 'trim'
   | 'cut'
   | 'join'
+  /** Overlaps clips with an xfade at each boundary (`join` butts them = hard cut). */
+  | 'transition'
   | 'removeSilence'
   | 'removeFillers'
   | 'reorder'
