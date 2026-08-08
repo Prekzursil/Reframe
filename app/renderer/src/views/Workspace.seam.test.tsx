@@ -166,3 +166,25 @@ describe('Workspace ↔ Subtitles seam', () => {
     expect([...container.querySelectorAll('.cue-text')]).toHaveLength(2);
   });
 });
+
+describe('Workspace ↔ Speed seam', () => {
+  it('mounts the REAL Speed panel on the speed tab, threaded with the video duration', async () => {
+    // The point of this test: before v1.5 the re-time engine had no control in
+    // ANY panel. Asserting the real panel (not the Suspense fallback) is what
+    // proves the door is genuinely reachable from the Workspace.
+    await import('../features/Speed'); // warm the lazy chunk (same idiom as above)
+    rpcMock.mockResolvedValue({ project });
+
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="speed" />);
+    });
+    await flush();
+
+    const panel = container.querySelector('.speed-panel');
+    expect(panel).not.toBeNull();
+    // `video.durationSec` is threaded through, so the before/after prediction is
+    // real rather than a dash: 2x on this source halves it.
+    expect(container.querySelector('[data-field="sourceDuration"]')?.textContent).not.toBe('—');
+    expect(container.querySelector('[data-field="newDuration"]')?.textContent).not.toBe('—');
+  });
+});

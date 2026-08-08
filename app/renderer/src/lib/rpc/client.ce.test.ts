@@ -122,3 +122,17 @@ describe('client.reframe.* (V1.1 Lane R per-shot correction)', () => {
     expect(rpc).toHaveBeenCalledWith('reframe.applyOverrides', { plan, overrides });
   });
 });
+
+describe('client.speed.retime (v1.5 — the user-driven door onto the re-time engine)', () => {
+  it('forwards {videoId, factor} for a library video', async () => {
+    const rpc = installApi();
+    await client.speed.retime({ videoId: 'v1' }, 0.5);
+    expect(rpc).toHaveBeenCalledWith('speed.retime', { videoId: 'v1', factor: 0.5 });
+  });
+
+  it('forwards {path, factor} for a direct path', async () => {
+    const rpc = installApi();
+    await client.speed.retime({ path: '/x/clip.mp4' }, 2);
+    expect(rpc).toHaveBeenCalledWith('speed.retime', { path: '/x/clip.mp4', factor: 2 });
+  });
+});
