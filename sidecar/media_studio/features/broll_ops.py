@@ -44,6 +44,8 @@ rendered.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -79,8 +81,78 @@ RunFn = Callable[..., int]
 Clock = Callable[[], str]
 
 
+#: Settings key naming the folder the user keeps their b-roll in.
+BROLL_DIR_KEY = "brollDir"
+#: The index sidecar's filename under the data dir.
+INDEX_FILENAME = "broll.index.json"
+
+#: What counts as b-roll. Matched case-INSENSITIVELY: cameras write ``.MP4``
+#: and ``.JPG``, and a library that silently skipped those would report an
+#: empty folder the user can see files in.
+IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"})
+VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"})
+
+
 def _invalid(message: str) -> RpcError:
     return RpcError(message, ErrorCode.INVALID_PARAMS)
+
+
+def scan_assets(root: str | os.PathLike) -> list[dict[str, Any]]:
+    """Every b-roll file under ``root``, as planner/index-shaped asset dicts.
+
+    Walks recursively in sorted order so the index — and therefore every plan
+    built from it — is reproducible run to run. Each row carries the ``path``,
+    ``sizeBytes`` and ``mtime`` that :func:`broll_index.fingerprint` hashes, plus
+    a stable ``assetId`` derived from the path (so re-scanning the same folder
+    keeps the same ids and an accepted suggestion still resolves).
+
+    A missing or unconfigured folder yields ``[]``: that is the normal first-run
+    state, not an error.
+    """
+    if not root:
+        return []
+    base = Path(root)
+    if not base.is_dir():
+        return []
+    assets: list[dict[str, Any]] = []
+    for path in sorted(base.rglob("*")):
+        suffix = path.suffix.lower()
+        kind = "image" if suffix in IMAGE_EXTS else "video" if suffix in VIDEO_EXTS else None
+        if kind is None or not path.is_file():
+            continue
+        stat = path.stat()
+        assets.append(
+            {
+                "assetId": hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16],
+                "path": str(path),
+                "kind": kind,
+                "sizeBytes": stat.st_size,
+                "mtime": stat.st_mtime,
+                "durationSec": None,
+            }
+        )
+    return assets
+
+
+def load_index_file(path: str | os.PathLike) -> Any:
+    """Read the index sidecar, or ``None`` when it is absent or unreadable.
+
+    A half-written or hand-edited sidecar degrades to "not indexed" — a state
+    the UI can act on with a re-index button — rather than taking the sidecar
+    process down at startup.
+    """
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def save_index_file(path: str | os.PathLike, index: Any) -> None:
+    """Write the index sidecar, creating its parent directory."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(index), encoding="utf-8")
 
 
 def _require_str(params: Mapping[str, Any], key: str) -> str:
@@ -104,12 +176,107 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _no_backbone(_paths: Sequence[str]) -> Sequence[Sequence[float]]:  # pragma: no cover - heavy seam
+def _no_backbone(_paths: Sequence[str]) -> Sequence[Sequence[float]]:  # pragma: no cover - unwired-default guard
     """Default embedder: the real SigLIP-2 tower is wired by the composition root."""
     raise RpcError(
         "no local image/text backbone is wired; install the SigLIP-2 assets first",
         ErrorCode.INTERNAL_ERROR,
     )
+
+
+# --------------------------------------------------------------------------- #
+# the backbone adapters — the ONE heavy edge, split so the logic is testable
+# --------------------------------------------------------------------------- #
+def _default_backbone_factory(settings: dict[str, Any]) -> Any:  # pragma: no cover - heavy seam
+    """The real SigLIP-2 backbone (reuses the shipped ``vlm_backbone`` factory)."""
+    from . import vlm_backbone as _vlm  # noqa: PLC0415 - heavy seam
+
+    return _vlm._default_backbone_factory(settings)
+
+
+def _default_asset_frame(path: str, kind: str) -> Any:  # pragma: no cover - runtime native (cv2)
+    """One representative BGR frame for ``path`` (mid-frame for a video).
+
+    Mirrors ``vlm_backbone._default_frame_loader``'s cv2 usage; excluded from
+    coverage for the same reason (cv2 is a GPU-host dependency, not a gate one),
+    with the logic that CONSUMES it covered via an injected loader.
+    """
+    import cv2  # noqa: PLC0415 - job-time native
+
+    if kind != "video":
+        return cv2.imread(path)
+    cap = cv2.VideoCapture(path)
+    try:
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        if frames > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(frames // 2))
+        _ok, frame = cap.read()
+        return frame
+    finally:
+        cap.release()
+
+
+def _rows(matrix: Any) -> list[list[float]]:
+    """A backbone's ``(N, D)`` output as plain JSON-safe float lists."""
+    return [[float(v) for v in row] for row in matrix]
+
+
+def make_image_embedder(
+    *,
+    backend_factory: Callable[[dict[str, Any]], Any] | None = None,
+    frame_loader: Callable[[str, str], Any] | None = None,
+    settings_provider: Callable[[], dict[str, Any]] | None = None,
+) -> Embedder:
+    """An ``embed_images`` seam over the SigLIP-2 image tower.
+
+    Loads ONE representative frame per asset (a still is itself; a video is its
+    mid-frame — see ``flagship-auto-broll.md`` §11.3, which flags mean-pooling
+    several frames as the more robust but unmeasured alternative), stacks them
+    into a single batch so the tower is entered once, and returns plain float
+    lists the index can persist as JSON.
+
+    Both heavy defaults are injectable, which is what lets this batching and
+    conversion logic be covered with a fake tower instead of a real checkpoint.
+    UNVERIFIED: no test on this branch runs the REAL SigLIP-2 tower or cv2 —
+    the settling experiment is design WU BR8's real-model tier (embed a dog
+    frame and a cityscape decoy, assert the dog out-scores the decoy).
+    """
+    factory = backend_factory or _default_backbone_factory
+    loader = frame_loader or _default_asset_frame
+    provider = settings_provider or dict
+
+    def embed(paths: Sequence[str]) -> Sequence[Sequence[float]]:
+        if not paths:
+            return []
+        import numpy as np  # noqa: PLC0415 - keep module import-light
+
+        backend = factory(provider())
+        frames = [loader(str(path), "video" if Path(path).suffix.lower() in VIDEO_EXTS else "image") for path in paths]
+        return _rows(backend.embed_images(np.stack(frames)))
+
+    return embed
+
+
+def make_text_embedder(
+    *,
+    backend_factory: Callable[[dict[str, Any]], Any] | None = None,
+    settings_provider: Callable[[], dict[str, Any]] | None = None,
+) -> Embedder:
+    """An ``embed_texts`` seam over the SigLIP-2 TEXT tower.
+
+    Must be the same family as :func:`make_image_embedder`'s tower — a
+    cross-modal cosine is only meaningful inside one joint space, which is the
+    invariant ``broll_index.require_model`` enforces at query time.
+    """
+    factory = backend_factory or _default_backbone_factory
+    provider = settings_provider or dict
+
+    def embed(texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        if not texts:
+            return []
+        return _rows(factory(provider()).embed_texts(list(texts)))
+
+    return embed
 
 
 class BrollComposeError(RuntimeError):
@@ -346,11 +513,20 @@ def register(
 
 
 __all__ = [
+    "BROLL_DIR_KEY",
     "DEFAULT_MODEL_ID",
-    "METHODS",
+    "IMAGE_EXTS",
+    "INDEX_FILENAME",
     "MATCHED",
+    "METHODS",
     "NO_CONFIDENT_MATCH",
+    "VIDEO_EXTS",
     "BrollComposeError",
     "BrollOps",
+    "load_index_file",
+    "make_image_embedder",
+    "make_text_embedder",
     "register",
+    "save_index_file",
+    "scan_assets",
 ]
