@@ -223,9 +223,7 @@ class TestResolveEdits:
         assert rejected == []
 
     def test_delete_by_segment_and_word_index_resolves(self):
-        removed, rejected = te.resolve_edits(
-            [{"op": "delete", "segmentIndex": 0, "wordIndex": 1}], _transcript(), 10.0
-        )
+        removed, rejected = te.resolve_edits([{"op": "delete", "segmentIndex": 0, "wordIndex": 1}], _transcript(), 10.0)
         assert removed == [(1.0, 1.4)]
         assert rejected == []
 
@@ -234,9 +232,7 @@ class TestResolveEdits:
         assert removed == [(0.0, 0.5)]
 
     def test_trim_uses_explicit_millisecond_bounds(self):
-        removed, rejected = te.resolve_edits(
-            [{"op": "trim", "startMs": 3200, "endMs": 3400}], _transcript(), 10.0
-        )
+        removed, rejected = te.resolve_edits([{"op": "trim", "startMs": 3200, "endMs": 3400}], _transcript(), 10.0)
         assert removed == [(3.2, 3.4)]
         assert rejected == []
 
@@ -245,9 +241,7 @@ class TestResolveEdits:
         assert removed == [(0.0, 10.0)]
 
     def test_delete_with_explicit_bounds_beats_a_missing_address(self):
-        removed, rejected = te.resolve_edits(
-            [{"op": "delete", "startMs": 1000, "endMs": 1400}], _transcript(), 10.0
-        )
+        removed, rejected = te.resolve_edits([{"op": "delete", "startMs": 1000, "endMs": 1400}], _transcript(), 10.0)
         assert removed == [(1.0, 1.4)]
         assert rejected == []
 
@@ -279,16 +273,12 @@ class TestResolveEdits:
         assert rejected[0]["reason"] == te.REASON_EMPTY_SPAN
 
     def test_span_entirely_past_the_clip_end_is_dropped(self):
-        removed, rejected = te.resolve_edits(
-            [{"op": "trim", "startMs": 20000, "endMs": 21000}], _transcript(), 10.0
-        )
+        removed, rejected = te.resolve_edits([{"op": "trim", "startMs": 20000, "endMs": 21000}], _transcript(), 10.0)
         assert removed == []
         assert rejected[0]["reason"] == te.REASON_EMPTY_SPAN
 
     def test_reorder_is_dropped_as_deferred_not_silently_applied(self):
-        removed, rejected = te.resolve_edits(
-            [{"op": "reorder", "wordId": "w0-3", "toIndex": 0}], _transcript(), 10.0
-        )
+        removed, rejected = te.resolve_edits([{"op": "reorder", "wordId": "w0-3", "toIndex": 0}], _transcript(), 10.0)
         assert removed == []
         assert rejected == [{"index": 0, "op": "reorder", "reason": te.REASON_REORDER_DEFERRED}]
 
@@ -648,16 +638,13 @@ class TestApplyEdit:
         assert result["editId"] == "tedit-1"
         assert len(data["transcriptEdits"]) == 1
 
-
     def test_apply_by_path_only_records_nothing_but_still_cuts(self, tmp_path, settings, registry):
         # No videoId -> no project to write a ledger entry to. The cut STILL
         # happens (silence removal needs no transcript) and editId is None, so a
         # caller cannot later "undo" an edit that was never recorded.
         run = RecordingRun()
         svc, data = _service(tmp_path=tmp_path, settings=settings, run=run)
-        result = self._apply(
-            svc, registry, {"path": "/lib/in.mp4", "removeSilence": True, "padSec": 0.0}
-        )
+        result = self._apply(svc, registry, {"path": "/lib/in.mp4", "removeSilence": True, "padSec": 0.0})
         assert result["path"].endswith(".edited.mp4")
         assert result["removedSec"] > 0.0
         assert result["editId"] is None
