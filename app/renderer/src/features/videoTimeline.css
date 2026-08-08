@@ -1,0 +1,155 @@
+/* videoTimeline.css — the multi-lane VIDEO timeline editor.
+ *
+ * Layout notes that are load-bearing rather than decorative:
+ *  - a lane track is `position: relative` and clips are absolutely positioned by
+ *    PERCENTAGE, so the same rect math (clipRectStyle) works at any zoom/width
+ *    without a resize listener;
+ *  - the trim handles are wider than they look (a transparent hit-slop) because a
+ *    2px grab target is unusable with a mouse and impossible with a trackpad;
+ *  - :focus-visible rings are NOT inside a :where() — a zero-specificity focus
+ *    ring loses to the clip's own background and the keyboard path goes invisible.
+ */
+
+.vtl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vtl__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.vtl__spacer {
+  flex: 1 1 auto;
+}
+
+.vtl__readout {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.vtl__lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vtl__lane {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.vtl__laneHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 4px;
+  min-width: 0;
+}
+
+.vtl__laneName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vtl__track {
+  position: relative;
+  height: 44px;
+  border-radius: 4px;
+  background: color-mix(in oklab, currentColor 8%, transparent);
+  overflow: hidden;
+  cursor: crosshair;
+}
+
+.vtl__clip {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in oklab, currentColor 45%, transparent);
+  border-radius: 3px;
+  background: color-mix(in oklab, currentColor 22%, transparent);
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 36px;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: grab;
+  color: inherit;
+}
+
+.vtl__clip--selected {
+  border-color: currentColor;
+  background: color-mix(in oklab, currentColor 34%, transparent);
+}
+
+.vtl__clip:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+.vtl__edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px; /* hit-slop; the visible bar is the ::after below */
+  cursor: ew-resize;
+  background: transparent;
+}
+
+.vtl__edge--start {
+  left: -2px;
+}
+
+.vtl__edge--end {
+  right: -2px;
+}
+
+.vtl__edge::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.75;
+}
+
+.vtl__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: currentColor;
+  pointer-events: none;
+}
+
+.vtl__empty {
+  font-size: 12px;
+  opacity: 0.7;
+  padding: 4px;
+}
+
+.vtl__error {
+  font-size: 12px;
+  color: color-mix(in oklab, currentColor 70%, red 30%);
+}
+
+.vtl__status {
+  font-size: 12px;
+  opacity: 0.8;
+}
