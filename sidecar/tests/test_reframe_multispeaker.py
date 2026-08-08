@@ -620,6 +620,10 @@ def _engine(**kw):
         "models_present": lambda _s: True,
         "replace_fn": lambda _a, _b: None,
         "remove_fn": lambda _p: None,
+        # The decision-sidecar write is a REAL file write by default; stub it or
+        # every engine test litters the sidecar tree with `out.mp4.reframe.json`
+        # (caught by `no-runtime-junk` — it was committed once before this line).
+        "write_text_fn": lambda _p, _t: None,
     }
     defaults.update(kw)
     return ms.MultiSpeakerReframeEngine({}, **defaults)
