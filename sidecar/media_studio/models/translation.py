@@ -1,14 +1,28 @@
 """Tiered subtitle translation (T3): local MT GGUF -> heavy local -> hosted.
 
-The survey (``docs/research/MT-MODELS-2026.md``, verified live 2026-06-12) picked:
+The survey (``docs/research/MT-MODELS-2026.md``, verified live 2026-06-12) picked
+the tier STRUCTURE; WU-A1 re-picked the WEIGHTS on licence grounds (see below):
 
-  * **tier1** — TranslateGemma-4B-it Q4_K_M (2.49GB, fully GPU-resident): the
-    fast local default for high/mid-resource languages.
-  * **tier2** — TranslateGemma-12B-it Q4_K_M (7.4GB, PARTIAL offload, labelled
-    ``SLOW`` in progress messages): the low-resource/quality tier.
+  * **tier1** — Qwen3-4B Q4_K_M (2.5GB, fully GPU-resident, **Apache-2.0**): the
+    fast local default for high/mid-resource languages. This is the SAME asset
+    the general-LLM seam already installs (``manifest.QWEN_ASSET_NAME``), so it
+    costs zero extra download and zero extra disk.
+  * **tier2** — Qwen3-8B Q4_K_M (5.03GB, PARTIAL offload, **Apache-2.0**,
+    labelled ``SLOW`` in progress messages): the low-resource/quality tier.
   * **tier3** — a hosted OpenAI-compatible provider
     (:class:`~media_studio.models.provider.CloudProvider`): everything outside
     local coverage.
+
+**WU-A1 licence remediation (why the weights changed).** tier1/tier2 previously
+pinned TranslateGemma-4B/12B, whose authoritative Hugging Face tag is
+``license:gemma`` — "Open Weights", **not** OSI-permissive: gated, carrying a
+Prohibited-Use Policy and a downstream pass-through obligation.
+``docs/plans/v1.5/flagship-lip-sync-dub.md:94`` grades that a **commercial
+BLOCKER** in the shipping path, and the owner's constraint is MIT/Apache/BSD only
+for anything a commercial build ships. Both tiers are now Apache-2.0 Qwen3 GGUFs
+running on the SAME llama.cpp :class:`~media_studio.models.runner.ModelRunner`, so
+this is a drop-in weight swap: no new runner seam, and the routing table, the
+fallback chain and the prompt shape are all unchanged.
 
 Language-aware routing: :data:`ROUTING_TABLE` maps a normalized ISO 639-1 code
 to its tier (the survey's table); unknown codes route to the hosted tier. On a
@@ -48,7 +62,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from ..assets.manifest import AssetEntry, register_asset
+from ..assets.manifest import QWEN_ASSET_NAME, QWEN_DEST, AssetEntry, register_asset
 from ..pathsafe import ensure_within
 from ..util import get_logger
 from . import provider as provider_mod
@@ -62,41 +76,66 @@ SubtitleTrack = dict[str, Any]
 # --------------------------------------------------------------------------- #
 # Tiers (docs/research/MT-MODELS-2026.md §2)
 # --------------------------------------------------------------------------- #
-TIER_LOCAL: str = "tier1"  # TranslateGemma-4B Q4_K_M, fully resident
-TIER_LOCAL_HEAVY: str = "tier2"  # TranslateGemma-12B Q4_K_M, partial offload, SLOW
+TIER_LOCAL: str = "tier1"  # Qwen3-4B Q4_K_M, fully resident
+TIER_LOCAL_HEAVY: str = "tier2"  # Qwen3-8B Q4_K_M, partial offload, SLOW
 TIER_HOSTED: str = "tier3"  # hosted OpenAI-compatible provider
 TIERS: tuple[str, ...] = (TIER_LOCAL, TIER_LOCAL_HEAVY, TIER_HOSTED)
 
 #: The progress label the heavy tier carries (the T3 brief: "label SLOW").
 SLOW_LABEL: str = "SLOW"
 
-# Pinned artifacts (survey §2). File names double as the modelsDir lookup names.
+# Pinned artifacts. File names double as the modelsDir lookup names.
 # F3c: the resolve URLs pin a COMMIT HASH (not "main") and carry the file's LFS
-# oid as sha256 (both verified via the HF tree + revision APIs, 2026-06-28).
-TIER1_GGUF_NAME: str = "translategemma-4b-it.Q4_K_M.gguf"
-TIER1_GGUF_COMMIT: str = "35a7486e128b19642cdc72d7b91b21ba388aaf42"
-TIER1_GGUF_URL: str = (
-    "https://huggingface.co/mradermacher/translategemma-4b-it-GGUF/resolve/"
-    f"{TIER1_GGUF_COMMIT}/translategemma-4b-it.Q4_K_M.gguf"
-)
-TIER1_GGUF_SHA256: str = "81200d03e843d2ec1ece6eeafe7d13cb6e5211e1fcd336ade55790b683a08330"
-TIER1_SIZE_MB: int = 2550  # 2.49 GB
+# oid as sha256.
 
-TIER2_GGUF_NAME: str = "translategemma-12b-it.Q4_K_M.gguf"
-TIER2_GGUF_COMMIT: str = "fdf84c9f6fe14e69d58814f14e7b5b63bb6a1b28"
-TIER2_GGUF_URL: str = (
-    "https://huggingface.co/mradermacher/translategemma-12b-it-GGUF/resolve/"
-    f"{TIER2_GGUF_COMMIT}/translategemma-12b-it.Q4_K_M.gguf"
-)
-TIER2_GGUF_SHA256: str = "b7aac4b4be7ab0c49b6556c29c4467e74313df7f1e95d9f9676bb2adf0afa528"
-TIER2_SIZE_MB: int = 7580  # 7.4 GB
+# tier1 IS the general-LLM Qwen3-4B asset the app already installs at "core"
+# tier, so WU-A1 registers NOTHING for it: the swap costs zero new download, and
+# because the resolved path is byte-identical to the one the general-LLM seam
+# uses, ModelRunner.start_server REUSES a live llama.cpp process across an
+# LLM -> MT hand-off instead of restarting it on a different GGUF.
+TIER1_ASSET_NAME: str = QWEN_ASSET_NAME
+TIER1_GGUF_NAME: str = QWEN_DEST.rsplit("/", 1)[-1]
 
-#: Partial offload for the 12B tier on a 6GB card (survey §2; re-tune on the
-#: real GPU — analytic sizing, not measured).
+# tier2 — Qwen3-8B Q4_K_M (Apache-2.0). Commit + sha256 verified live 2026-08-08
+# via the HF revision + tree APIs; the SAME probe re-derived the already-shipped
+# Qwen3-4B pin (manifest.QWEN_GGUF_COMMIT / QWEN_SHA256) byte-for-byte, which is
+# the detector control proving the probe reads real values rather than plausible
+# ones. Note this is SMALLER than the 7.58 GB weight it replaces.
+TIER2_GGUF_NAME: str = "Qwen3-8B-Q4_K_M.gguf"
+TIER2_GGUF_COMMIT: str = "7c41481f57cb95916b40956ab2f0b139b296d974"
+TIER2_GGUF_URL: str = f"https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/{TIER2_GGUF_COMMIT}/{TIER2_GGUF_NAME}"
+TIER2_GGUF_SHA256: str = "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785"
+TIER2_SIZE_MB: int = 5030  # 5,027,783,488 B (HF tree API)
+TIER2_ASSET_NAME: str = "qwen3-8b-gguf"
+
+#: Partial offload for the heavy tier on a 6GB card.
+#: UNVERIFIED — this number was sized analytically for the 7.58GB
+#: TranslateGemma-12B and is CARRIED OVER UNCHANGED. The 5.03GB Qwen3-8B leaves
+#: more headroom so a higher count very likely (~80-90%) fits, but no GPU was
+#: measured in this change and guessing a runtime value is fabrication. Settle
+#: it by running ``llama-server --n-gpu-layers N`` on the 6GB target and taking
+#: the largest N that does not spill to host RAM.
 TIER2_GPU_LAYERS: int = 24
 
-TIER1_ASSET_NAME: str = "translategemma-4b-gguf"
-TIER2_ASSET_NAME: str = "translategemma-12b-gguf"
+# --------------------------------------------------------------------------- #
+# WU-A1 licence gate — MIT/Apache/BSD ONLY for anything a commercial build ships
+# --------------------------------------------------------------------------- #
+#: SPDX ids a commercial Reframe build may ship a model weight under. Deliberately
+#: excludes ``gemma`` (Open Weights, gated, use-restricted), ``cc-by-nc-*``,
+#: ``creativeml-openrail-m`` / ``openrail++`` and ``cc-by-4.0`` (attribution is
+#: outside the owner's strict gate) — see flagship-lip-sync-dub.md §3.2 / §7.
+PERMISSIVE_LICENCES: frozenset[str] = frozenset({"apache-2.0", "mit", "bsd-3-clause"})
+
+#: MT asset name -> (the HF repo its pin MUST resolve from, verified SPDX id).
+#: Verified 2026-08-08 against the HF model-metadata API; the Qwen3-8B repo's
+#: LICENSE file independently reads "Apache License / Version 2.0" (a second,
+#: mechanically different signal from the tag). ``test_mt_weight_licences_are_
+#: permissive`` re-derives the repo from the REGISTERED url, so this record
+#: cannot drift away from the artifact that is actually downloaded.
+MT_WEIGHT_LICENCES: dict[str, tuple[str, str]] = {
+    TIER1_ASSET_NAME: ("Qwen/Qwen3-4B-GGUF", "apache-2.0"),
+    TIER2_ASSET_NAME: ("Qwen/Qwen3-8B-GGUF", "apache-2.0"),
+}
 
 # --------------------------------------------------------------------------- #
 # Routing table (survey §3) — normalized ISO 639-1 code -> tier
@@ -212,11 +251,13 @@ _MT_SYSTEM = (
     "explanation. Preserve meaning and keep it concise enough to read as a "
     "subtitle."
 )
-# CONTRACT-NOTE: TranslateGemma's opinionated source/target content format is
-# applied by the GGUF's own chat template inside the llama.cpp server; through
-# the Provider seam we send plain system+user instruction messages (the same
-# shape features/subtitles.py already uses), which the community GGUF cards
-# document for llama-cli/server use.
+# CONTRACT-NOTE: the GGUF's own chat template is applied inside the llama.cpp
+# server; through the Provider seam we send plain system+user instruction
+# messages (the same shape features/subtitles.py already uses). WU-A1: this is
+# why the Gemma -> Qwen3 swap needs no prompt change — the previous note said the
+# template applied "TranslateGemma's opinionated source/target content format",
+# but that formatting lives in the template, not in what we send, so an
+# instruction-tuned Qwen3 consumes the identical 2-message shape.
 
 
 def build_messages(text: str, target_lang: str, source_lang: str | None = None) -> list[dict[str, str]]:
@@ -458,7 +499,7 @@ class TieredTranslator:
                 f"{tier} unavailable: no MT GGUF configured (install the asset or set settings.modelsDir)"
             )
         if tier == TIER_LOCAL_HEAVY:
-            # Partial offload: the 12B Q4 exceeds 6GB VRAM (survey §2) — SLOW.
+            # Partial offload: the 8B Q4 (5.03GB) plus context exceeds 6GB VRAM — SLOW.
             self._runner.start_server(gguf_path=gguf, gpu_layers=self._tier2_gpu_layers)
         else:
             self._runner.start_server(gguf_path=gguf)
@@ -616,36 +657,27 @@ def _detect_existing(explicit_key: str, name: str) -> Callable[[dict[str, Any]],
     return _probe
 
 
-detect_existing_tier1_gguf = _detect_existing("translateGgufPath", TIER1_GGUF_NAME)
 detect_existing_tier2_gguf = _detect_existing("translateTier2GgufPath", TIER2_GGUF_NAME)
 
 
 def _register_mt_assets() -> None:
-    """Register the survey-chosen MT GGUFs (idempotent re-register is a no-op).
+    """Register the heavy MT tier (idempotent re-register is a no-op).
 
-    F3c: sha256 + HF commit revision are now PINNED (verified via the HF tree +
-    revision APIs). URLs + quant sizes: docs/research/MT-MODELS-2026.md §2.
+    tier1 registers NOTHING. It reuses ``manifest.QWEN_ASSET_NAME`` — the
+    Apache-2.0 Qwen3-4B GGUF the general-LLM seam already installs at "core"
+    tier — so a second entry for byte-identical weights would pull a redundant
+    ~2.5 GB into a second dest. The heavy tier is the only asset this module owns.
+
+    F3c: sha256 + HF commit revision are PINNED (verified via the HF tree +
+    revision APIs, 2026-08-08).
     """
-    register_asset(
-        AssetEntry(
-            name=TIER1_ASSET_NAME,
-            kind="model",
-            size_mb=TIER1_SIZE_MB,
-            dest=f"models/{TIER1_GGUF_NAME}",
-            label="TranslateGemma-4B Q4_K_M (translation, tier 1)",
-            installer="download",
-            url=TIER1_GGUF_URL,
-            sha256=TIER1_GGUF_SHA256,
-            detect=detect_existing_tier1_gguf,
-        )
-    )
     register_asset(
         AssetEntry(
             name=TIER2_ASSET_NAME,
             kind="model",
             size_mb=TIER2_SIZE_MB,
             dest=f"models/{TIER2_GGUF_NAME}",
-            label="TranslateGemma-12B Q4_K_M (translation, tier 2 — SLOW)",
+            label="Qwen3-8B Q4_K_M (translation, tier 2 — SLOW, Apache-2.0)",
             installer="download",
             url=TIER2_GGUF_URL,
             sha256=TIER2_GGUF_SHA256,

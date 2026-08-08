@@ -10,6 +10,7 @@ settings, and the U4 manifest registration of the chosen MT GGUFs.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -22,6 +23,8 @@ from media_studio.models.provider import (
 from media_studio.models.runner import ModelRunner
 from media_studio.models.translation import (
     DEFAULT_TIER,
+    MT_WEIGHT_LICENCES,
+    PERMISSIVE_LICENCES,
     ROUTING_TABLE,
     TIER1_ASSET_NAME,
     TIER1_GGUF_NAME,
@@ -565,7 +568,15 @@ def test_mt_assets_registered_with_pinned_urls():
         assert entry.kind == "model"
         assert entry.installer == "download"
         assert entry.url is not None and entry.url.startswith("https://huggingface.co/")
-        assert entry.url.endswith(gguf)  # the exact pinned file
+        # SCOPE FIX (WU-A1) — the assertion here used to be `entry.url.endswith(gguf)`,
+        # i.e. "the local filename equals the remote filename". That happened to hold
+        # for the two MT-owned Gemma assets, but it is NOT a property of the SHARED
+        # Qwen3-4B asset tier1 now reuses: `manifest.QWEN_DEST` deliberately renames
+        # Qwen3-4B-Q4_K_M.gguf -> qwen3-4b.gguf so `runner.DEFAULT_GGUF_NAME` resolves
+        # it, and that rename predates WU-A1. Replaced with a STRICTLY STRONGER
+        # integrity assertion (this also pins F3c, which endswith() never checked):
+        # the url must resolve a 40-hex COMMIT — never a branch/tag — and name a .gguf.
+        assert re.fullmatch(r"https://huggingface\.co/[^/]+/[^/]+/resolve/[0-9a-f]{40}/\S+\.gguf", entry.url), entry.url
         assert entry.dest == f"models/{gguf}"
         assert entry.size_mb > 0
 
@@ -585,6 +596,80 @@ def test_mt_asset_detect_explicit_path(tmp_path):
     entry = manifest.get_asset(TIER2_ASSET_NAME)
     assert entry.detect({"translateTier2GgufPath": str(gguf)}) == str(gguf)
     assert entry.detect({"translateTier2GgufPath": str(tmp_path / "nope.gguf")}) is None
+
+
+# --------------------------------------------------------------------------- #
+# WU-A1 licence gate — the commercial blocker, stated as executable properties
+#
+# docs/plans/v1.5/flagship-lip-sync-dub.md:94 grades the in-tree TranslateGemma
+# tiers a BLOCKER: `license:gemma` is "Open Weights", NOT OSI-permissive — it is
+# gated, carries a Prohibited-Use Policy and a downstream pass-through duty. The
+# owner's constraint is MIT/Apache/BSD ONLY for anything a commercial build
+# ships. These tests fail on the pre-swap tree (that is the point).
+# --------------------------------------------------------------------------- #
+def test_no_gemma_licensed_weight_is_registered():
+    """No MT tier may pin a Gemma-licensed artifact into the shipping manifest."""
+    for asset_name in (TIER1_ASSET_NAME, TIER2_ASSET_NAME):
+        entry = manifest.get_asset(asset_name)
+        assert entry is not None, asset_name
+        assert "gemma" not in (entry.url or "").lower(), f"{asset_name} still pins a Gemma repo: {entry.url}"
+        assert "gemma" not in (entry.label or "").lower(), f"{asset_name} still labelled Gemma: {entry.label}"
+        assert "gemma" not in asset_name.lower(), f"asset name still names Gemma: {asset_name}"
+
+
+def test_tier1_reuses_the_shipped_qwen_asset_zero_new_download():
+    """tier1 is the ALREADY-SHIPPED Apache Qwen3-4B GGUF — not a second copy.
+
+    `flagship-lip-sync-dub.md:10` calls the swap "a **zero-new-download**
+    drop-in". Registering a distinct MT asset for the same weights would pull a
+    redundant ~2.5 GB and occupy a second dest, so tier1 must resolve the very
+    asset the general-LLM seam already installs (`manifest.QWEN_ASSET_NAME`).
+    """
+    assert TIER1_ASSET_NAME == manifest.QWEN_ASSET_NAME
+    assert f"models/{TIER1_GGUF_NAME}" == manifest.QWEN_DEST
+
+
+def test_mt_weight_licences_are_permissive():
+    """Every SHIPPED MT weight is MIT/Apache/BSD, and the record matches the pin.
+
+    The second half is the load-bearing half: a licence table that is not tied to
+    the URL actually registered is just a claim. Re-deriving the repo from the
+    REGISTERED url means the record cannot drift away from what is downloaded.
+    """
+    assert set(MT_WEIGHT_LICENCES) == {TIER1_ASSET_NAME, TIER2_ASSET_NAME}
+    for asset_name, (repo, spdx) in MT_WEIGHT_LICENCES.items():
+        assert spdx in PERMISSIVE_LICENCES, f"{asset_name}: {spdx} is outside MIT/Apache/BSD"
+        entry = manifest.get_asset(asset_name)
+        assert entry is not None, asset_name
+        assert entry.url.startswith(f"https://huggingface.co/{repo}/resolve/"), (
+            f"{asset_name}: licence record names {repo} but the pin is {entry.url}"
+        )
+
+
+def test_permissive_licences_excludes_the_known_blocker_tags():
+    """The gate must REJECT the tags flagship-lip-sync-dub.md §3.2 enumerates.
+
+    Without this, `PERMISSIVE_LICENCES` could be widened to admit the very
+    licences the commercial gate exists to keep out and every other test here
+    would stay green.
+    """
+    for blocked in ("gemma", "cc-by-nc-4.0", "creativeml-openrail-m", "openrail++", "cc-by-4.0", "other"):
+        assert blocked not in PERMISSIVE_LICENCES
+
+
+def test_mt_tier2_asset_detect_covers_every_lookup_hop(tmp_path):
+    """The heavy tier's detect probe: explicit -> modelsDir -> not-found.
+
+    tier1 no longer owns an asset (it reuses the shared Qwen entry, whose detect
+    is `manifest.detect_existing_gguf`), so the tier2 entry is now the only
+    caller of `_detect_existing` and must exercise all of its hops itself.
+    """
+    entry = manifest.get_asset(TIER2_ASSET_NAME)
+    gguf = tmp_path / TIER2_GGUF_NAME
+    gguf.write_bytes(b"GGUF")
+    assert entry.detect({"modelsDir": str(tmp_path)}) == str(gguf)
+    assert entry.detect({"modelsDir": str(tmp_path / "missing")}) is None
+    assert entry.detect({}) is None
 
 
 # --------------------------------------------------------------------------- #
