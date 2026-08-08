@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Make a fresh git worktree able to run the local gate (tsc / vitest / pre-commit).
 

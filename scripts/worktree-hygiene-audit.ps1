@@ -63,9 +63,16 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Every call site wraps this in @(). PowerShell UNROLLS a single-element array on return,
-# so a bare `Git-Lines ...` that produced one line hands back a [string], and indexing [0]
+# so a bare `Get-GitLine ...` that produced one line hands back a [string], and indexing [0]
 # on it yields a [char]. Same family as the $t[0] bug described in the header.
-function Git-Lines { param([string[]]$GitArgs) return @(& git -C $Repo @GitArgs 2>&1) }
+#
+# Named Get-GitLine, not Git-Lines: `Git` is not an approved PowerShell verb (PSSA
+# PSUseApprovedVerbs) and the noun is singular by convention (PSUseSingularNouns). More
+# importantly the name must not be `git` in any casing -- command resolution is
+# case-insensitive and prefers functions over applications, so a helper called `Git` makes
+# the `& git` inside its own body call itself. That recursion cost a 600s hang in this
+# lane's self-test before it was diagnosed.
+function Get-GitLine { param([string[]]$GitArgs) return @(& git -C $Repo @GitArgs 2>&1) }
 
 if (-not (Test-Path -LiteralPath $Repo)) { Write-Output "FAILED:wt-hygiene repo not found: $Repo"; exit 1 }
 
@@ -86,7 +93,7 @@ function Test-Contained {
 # ---------------------------------------------------------------- detector controls
 $posOk = Test-Contained "$baseSha~1"
 $negRef = $null
-foreach ($b in @(Git-Lines @('for-each-ref', 'refs/heads/', '--format=%(refname:short)'))) {
+foreach ($b in @(Get-GitLine @('for-each-ref', 'refs/heads/', '--format=%(refname:short)'))) {
   $b = "$b".Trim(); if (-not $b) { continue }
   if (-not (Test-Contained $b)) { $negRef = $b; break }
 }
@@ -97,7 +104,7 @@ if (-not $negRef) { Write-Output 'FAILED:wt-hygiene detector negative control fa
 # ---------------------------------------------------------------- worktree -> branch map
 $wtBranch = @{}
 $cur = $null
-foreach ($line in @(Git-Lines @('worktree', 'list', '--porcelain'))) {
+foreach ($line in @(Get-GitLine @('worktree', 'list', '--porcelain'))) {
   $line = "$line"
   if ($line -like 'worktree *') { $cur = $line.Substring(9).Trim() }
   elseif ($line -like 'branch *') { $wtBranch[$cur] = $line.Substring(7).Trim() -replace '^refs/heads/', '' }

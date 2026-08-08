@@ -16,12 +16,26 @@
       resulting tree equals the base's own tree, merging changes nothing, so the branch
       contributes nothing. Fast and exact, but returns CONFLICT (indeterminate, not
       "unmerged") whenever the base later touched the same regions.
-    Tier 2 -- line-set containment. For every file the branch changed, take the lines it
-      ADDED relative to its own merge-base and test membership in the base's blob. Set
-      membership cannot conflict, so it stays decisive as the base advances.
+    Tier 2 -- CONTEXT-WINDOW containment. For every file the branch changed, take the lines
+      it ADDED relative to its own merge-base and require each one to appear in the base's
+      blob *together with its two neighbours*. Membership cannot conflict, so it stays
+      decisive as the base advances.
   Dropping tier 2 is not a conservative simplification: it converts branches whose work
   demonstrably landed into permanent false keeps, because a long-lived base eventually
   conflicts with everything.
+
+  WHY THE WINDOW, NOT BARE SET MEMBERSHIP. The first version tested each added line for
+  membership in a HashSet of the target's lines -- position-blind. Source code is full of
+  lines that recur verbatim (`}`, `  return None`, `    })`, an import), so a branch whose
+  additions happen to be individually common scores residual=0 and is declared LANDED while
+  none of its work is present. `Landed` is what authorises `git branch -D` in
+  worktree-hygiene-teardown.ps1, so that error class deletes unlanded work. Requiring the
+  (previous, line, next) triple shifts every coincidence to needing three consecutive lines
+  to coincide, which effectively does not happen; and when the branch's work landed in a
+  MODIFIED form the window misses and the verdict becomes not-landed -- i.e. the errors now
+  point at KEEPING a branch rather than deleting one. `Residual` (window) and `WeakResidual`
+  (bare membership, the old measure) are both returned so the gap between them is visible
+  instead of inferred.
 
   MEASURED LIMITATION, inline rather than in a footnote: tier 2 considers ADDED lines only.
   A branch whose contribution was a DELETION that never landed would be reported as landed.
@@ -79,10 +93,32 @@ function Get-TreeOf {
   return "$(@(& git -C $Repo show -s --format=%T $Rev)[0])".Trim()
 }
 
+function Get-ContextWindows {
+  <#
+    The set of (previous, line, next) triples in a file, joined by a delimiter that cannot
+    occur in source text. Missing neighbours at the file edges are the empty string, so the
+    first and last lines are still representable.
+  #>
+  param([string[]]$Lines)
+  $set = [System.Collections.Generic.HashSet[string]]::new()
+  for ($i = 0; $i -lt $Lines.Count; $i++) {
+    $prev = if ($i -gt 0) { "$($Lines[$i - 1])" } else { '' }
+    $next = if ($i -lt $Lines.Count - 1) { "$($Lines[$i + 1])" } else { '' }
+    [void]$set.Add("$prev`u{0000}$($Lines[$i])`u{0000}$next")
+  }
+  return $set
+}
+
 function Test-BranchLanded {
   <#
-    Returns [pscustomobject] @{ Landed; Method; Residual; Added }
-    Method: tree-equal | line-containment | not-landed | error
+    Returns [pscustomobject] @{ Landed; Method; Residual; WeakResidual; Added }
+    Method: tree-equal | context-containment | not-landed | error
+
+    Residual     -- added lines whose (prev,line,next) window is absent from the base. This
+                    is the one `Landed` depends on.
+    WeakResidual -- added lines whose TEXT is absent from the base anywhere. Kept only as a
+                    diagnostic: WeakResidual=0 with Residual>0 is precisely the
+                    coincidental-line-match case the old predicate mistook for landed.
   #>
   param(
     [Parameter(Mandatory)][string]$Repo,
@@ -96,14 +132,16 @@ function Test-BranchLanded {
   # on a string returns a [char], which compares unequal to every SHA on earth.
   $mt = @(& git -C $Repo merge-tree --write-tree $BaseSha $Branch 2>&1)
   if ($LASTEXITCODE -eq 0 -and "$($mt[0])".Trim() -eq $BaseTree) {
-    return [pscustomobject]@{ Landed = $true; Method = 'tree-equal'; Residual = 0; Added = 0 }
+    return [pscustomobject]@{ Landed = $true; Method = 'tree-equal'; Residual = 0; WeakResidual = 0; Added = 0 }
   }
 
-  # ---- tier 2: line-set containment against the base's blobs.
+  # ---- tier 2: context-window containment against the base's blobs.
   $mb = "$(@(& git -C $Repo merge-base $BaseSha $Branch)[0])".Trim()
-  if (-not $mb) { return [pscustomobject]@{ Landed = $false; Method = 'error'; Residual = -1; Added = 0 } }
+  if (-not $mb) {
+    return [pscustomobject]@{ Landed = $false; Method = 'error'; Residual = -1; WeakResidual = -1; Added = 0 }
+  }
 
-  $added = 0; $residual = 0
+  $added = 0; $residual = 0; $weakResidual = 0
   foreach ($f in @(& git -C $Repo diff --name-only $mb $Branch 2>$null)) {
     $f = "$f".Trim(); if (-not $f) { continue }
 
@@ -118,17 +156,26 @@ function Test-BranchLanded {
     foreach ($l in $baseLines) { [void]$wasSet.Add("$l") }
     $tgtSet = [System.Collections.Generic.HashSet[string]]::new()
     foreach ($l in $tgtLines) { [void]$tgtSet.Add("$l") }
+    $tgtWindows = Get-ContextWindows -Lines $tgtLines
 
-    foreach ($l in $bLines) {
-      $s = "$l"
+    for ($i = 0; $i -lt $bLines.Count; $i++) {
+      $s = "$($bLines[$i])"
       if ($wasSet.Contains($s)) { continue }                    # not introduced by this branch
       $added++
-      if ($absentInBase -or -not $tgtSet.Contains($s)) { $residual++ }
+      if ($absentInBase) { $residual++; $weakResidual++; continue }
+      if (-not $tgtSet.Contains($s)) { $weakResidual++ }
+      $prev = if ($i -gt 0) { "$($bLines[$i - 1])" } else { '' }
+      $next = if ($i -lt $bLines.Count - 1) { "$($bLines[$i + 1])" } else { '' }
+      if (-not $tgtWindows.Contains("$prev`u{0000}$s`u{0000}$next")) { $residual++ }
     }
   }
 
   if ($added -gt 0 -and $residual -eq 0) {
-    return [pscustomobject]@{ Landed = $true; Method = 'line-containment'; Residual = 0; Added = $added }
+    return [pscustomobject]@{
+      Landed = $true; Method = 'context-containment'; Residual = 0; WeakResidual = $weakResidual; Added = $added
+    }
   }
-  return [pscustomobject]@{ Landed = $false; Method = 'not-landed'; Residual = $residual; Added = $added }
+  return [pscustomobject]@{
+    Landed = $false; Method = 'not-landed'; Residual = $residual; WeakResidual = $weakResidual; Added = $added
+  }
 }

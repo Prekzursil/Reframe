@@ -145,10 +145,24 @@ foreach ($t in $targets) {
   }
   Assert-Primary 'after-remove'
 
-  # 3. delete the branch. -D is required (see above); the SHA is printed so it is recoverable.
+  # 3. ANCHOR the tip before deleting. Printing the SHA is not recovery: once the branch ref
+  #    is gone the commit is unreachable, and `git gc` (which runs automatically) is free to
+  #    discard it -- so "recoverable from the log" holds only until the next gc, and only if
+  #    anyone kept the log. A ref under refs/retired/ keeps the object reachable forever at
+  #    zero cost, and makes the undo one command instead of a forensic exercise.
+  $anchor = "refs/retired/$($t.Branch)"
+  $ur = @(& git -C $Repo update-ref $anchor $sha 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    Write-Output "    ABORT could not anchor $anchor before deleting: $($ur -join ' | ')"; exit 1
+  }
+  Write-Output "    anchored $anchor -> $sha"
+
+  # 4. delete the branch. -D is required (see above); the anchor from step 3 is the safety net.
   $bd = @(& git -C $Repo branch -D $t.Branch 2>&1)
   if ($LASTEXITCODE -ne 0) { Write-Output "    WARN branch delete failed: $($bd -join ' | ')" }
-  else { Write-Output "    deleted branch $($t.Branch) (was $sha)" }
+  else {
+    Write-Output "    deleted branch $($t.Branch) (was $sha; restore: git branch $($t.Branch) $anchor)"
+  }
 
   $done++
 }
