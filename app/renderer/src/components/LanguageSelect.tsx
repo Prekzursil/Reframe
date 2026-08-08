@@ -52,10 +52,28 @@ export interface LanguageSelectProps {
   engine?: string;
 }
 
-// Static partition of the inventory — computed once, not per render.
+// Static partition of the inventory, rendered ONCE at module scope.
+//
+// These are the <option> ELEMENTS, not just the data: the list is 102 entries and
+// this component appears on several surfaces, so building them per render made a
+// measurable difference. Measured on renderer/src/App.director-state.test.tsx under
+// v8 coverage (the heaviest mount in the suite, and already close to the 5s default
+// timeout on main): 19 entries 3529ms -> 102 entries 7763ms, recovered by hoisting.
+// React elements are immutable and safe to share, and the option lists never depend
+// on props, so the reconciler can bail out on these subtrees instead of
+// re-allocating ~250 nodes on every keystroke elsewhere in the form.
 const COMMON_SET: ReadonlySet<string> = new Set(COMMON_CODES);
-const COMMON_OPTIONS = LANGUAGES.filter((l) => COMMON_SET.has(l.code));
-const OTHER_OPTIONS = LANGUAGES.filter((l) => !COMMON_SET.has(l.code));
+
+function optionsFor(predicate: (code: string) => boolean): React.ReactElement[] {
+  return LANGUAGES.filter((l) => predicate(l.code)).map((l) => (
+    <option key={l.code} value={l.code}>
+      {l.label}
+    </option>
+  ));
+}
+
+const COMMON_OPTION_ELEMENTS = optionsFor((code) => COMMON_SET.has(code));
+const OTHER_OPTION_ELEMENTS = optionsFor((code) => !COMMON_SET.has(code));
 
 /** A dropdown over the full language inventory, with auto-detect + capability advice. */
 export function LanguageSelect({
@@ -93,20 +111,8 @@ export function LanguageSelect({
       >
         {includeAuto ? <option value={AUTO_DETECT}>{languageLabel(AUTO_DETECT)}</option> : null}
         {known ? null : <option value={value}>{languageLabel(value)}</option>}
-        <optgroup label="Common">
-          {COMMON_OPTIONS.map((l) => (
-            <option key={l.code} value={l.code}>
-              {l.label}
-            </option>
-          ))}
-        </optgroup>
-        <optgroup label="All languages">
-          {OTHER_OPTIONS.map((l) => (
-            <option key={l.code} value={l.code}>
-              {l.label}
-            </option>
-          ))}
-        </optgroup>
+        <optgroup label="Common">{COMMON_OPTION_ELEMENTS}</optgroup>
+        <optgroup label="All languages">{OTHER_OPTION_ELEMENTS}</optgroup>
       </select>
       {showAdvice ? (
         <p className="lang-select__advice" role="note">

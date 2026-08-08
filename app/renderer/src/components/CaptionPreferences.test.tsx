@@ -88,6 +88,33 @@ describe('<CaptionPreferences />', () => {
     );
   });
 
+  it('warns when the persisted ASR engine cannot transcribe the chosen default language', async () => {
+    // The engine lives in the SAME settings payload this panel already reads, so
+    // the D4 engine-specific caveat costs no extra rpc. Parakeet covers 25
+    // European languages; Thai is not one of them, and offering it silently is
+    // exactly the "language that will fail" case.
+    const rpc: SettingsBridge = {
+      get: vi.fn().mockResolvedValue({ asrEngine: 'parakeet', [PREFERENCE_KEYS.language]: 'th' }),
+      set: vi.fn(),
+    };
+    mountWith(rpc);
+    await flush();
+    const note = container.querySelector('.lang-select__capability')?.textContent ?? '';
+    expect(note).toContain('Parakeet');
+    expect(note).toContain('Thai');
+    expect(note).toContain('Whisper');
+  });
+
+  it('shows no engine warning when the persisted engine does cover the language', async () => {
+    const rpc: SettingsBridge = {
+      get: vi.fn().mockResolvedValue({ asrEngine: 'parakeet', [PREFERENCE_KEYS.language]: 'ro' }),
+      set: vi.fn(),
+    };
+    mountWith(rpc);
+    await flush();
+    expect(container.querySelector('.lang-select__capability')).toBeNull();
+  });
+
   it('loads + reflects persisted preferences', async () => {
     const rpc: SettingsBridge = {
       get: vi.fn().mockResolvedValue({
