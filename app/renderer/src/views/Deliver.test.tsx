@@ -20,6 +20,11 @@ vi.mock('../features/NleExport', () => ({
     <div data-stub="nle-export" data-video={videoId} />
   ),
 }));
+vi.mock('../features/SocialPublishPanel', () => ({
+  SocialPublishPanel: ({ videoId }: { videoId: string }) => (
+    <div data-stub="social-publish" data-video={videoId} />
+  ),
+}));
 
 const VIDEO: Video = {
   id: 'v1',
@@ -79,6 +84,19 @@ describe('Deliver view', () => {
     clickTab('Platform presets');
     expect(q('[data-stub="export-presets"]')).not.toBeNull();
     expect(q('[data-stub="batch-queue"]')).toBeNull();
+  });
+
+  it('switches to the C14 Publish panel and passes the open video for provenance', () => {
+    render(VIDEO);
+    clickTab('Publish');
+    expect(q('[data-stub="social-publish"]')?.getAttribute('data-video')).toBe('v1');
+    expect(q('[data-stub="batch-queue"]')).toBeNull();
+  });
+
+  it('still shows Publish with no video open (a clip can be published standalone)', () => {
+    render(null);
+    clickTab('Publish');
+    expect(q('[data-stub="social-publish"]')?.getAttribute('data-video')).toBe('');
   });
 
   it('hands the open video off to the pro-editor export', () => {

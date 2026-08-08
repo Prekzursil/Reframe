@@ -14,12 +14,16 @@ import { TabBar, tabId, tabPanelId, type TabDef } from '../components/TabBar';
 import { BatchQueue } from '../features/BatchQueue';
 import { ExportPresetsPanel } from '../features/ExportPresetsPanel';
 import { NleExport } from '../features/NleExport';
+import { SocialPublishPanel } from '../features/SocialPublishPanel';
 import type { Video } from '../lib/rpc';
 import './deliver.css';
 
 const TABS: TabDef[] = [
   { id: 'batch', label: 'Batch publish' },
   { id: 'presets', label: 'Platform presets' },
+  // C14: direct publish / scheduling. Sits beside "Platform presets" deliberately —
+  // the presets produce the platform-shaped file, this sends it.
+  { id: 'publish', label: 'Publish' },
   { id: 'handoff', label: 'Pro handoff' },
 ];
 
@@ -70,6 +74,7 @@ export function Deliver({ video, onBack }: DeliverProps): React.ReactElement {
       >
         {active === 'batch' ? <BatchQueue /> : null}
         {active === 'presets' ? <ExportPresetsPanel /> : null}
+        {active === 'publish' ? <SocialPublishPanel videoId={video?.id ?? ''} /> : null}
         {active === 'handoff' ? (
           video ? (
             <NleExport videoId={video.id} />
