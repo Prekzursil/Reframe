@@ -1023,6 +1023,31 @@ export interface SavePresetsBlock {
 }
 
 /**
+ * One custom-dictionary entry (v1.5 asr-vocabulary). `term` is the canonical
+ * spelling that must end up in the transcript; `soundsLike` lists the
+ * mis-transcriptions to rewrite onto it (e.g. `"re frame"` -> `"Reframe"`).
+ *
+ * Field names are FROZEN, identical to the sidecar
+ * `features/asr_vocabulary.parse_terms` reader.
+ */
+export interface AsrVocabularyTerm {
+  term: string;
+  soundsLike?: string[];
+}
+
+/**
+ * The `asrVocabulary` settings value (sidecar `DEFAULT_SETTINGS`, default `[]`).
+ * A bare string is shorthand for `{ term }` with no aliases, so the UI may write
+ * either form. Written through the ordinary `settings.set` — there is no
+ * dedicated RPC, exactly like the sibling `asrEngine` / `transcribeDevice` knobs.
+ *
+ * The sidecar is TOLERANT of every malformed shape (a non-array, a junk entry, an
+ * over-long term) — it degrades to "no vocabulary" rather than failing the job —
+ * so the UI never has to guarantee validity to keep transcription working.
+ */
+export type AsrVocabularySetting = Array<string | AsrVocabularyTerm>;
+
+/**
  * system-advanced saved pipeline recipe — field names FROZEN, identical to the
  * sidecar `recipes.normalize_recipe` shape. A `Step` names an existing RPC
  * method + its params; param values may use the `"$N.key"` prior-step reference
