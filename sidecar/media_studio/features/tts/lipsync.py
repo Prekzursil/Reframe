@@ -236,6 +236,28 @@ def sample_consent_attested(sample: Mapping[str, Any] | None) -> bool:
     return sample.get(SAMPLE_CONSENT_FIELD) is True
 
 
+def require_face_boxes(probe: Callable[[str], Any] | None, media_path: str) -> list[list[int]]:
+    """Face rects from the MIT-licensed detector, or REFUSE.
+
+    Fail-closed on purpose. Returning ``[]`` here would let the backend fall back
+    to its own bundled detector — for a MuseTalk-class graph that is S3FD, which
+    ships under NO LICENCE (plan §3.4), so a silent empty list would quietly
+    reintroduce the exact weight #287 removed from this repo. A missing probe is
+    therefore unfinished wiring to be surfaced, not a default to absorb.
+    """
+    if probe is None:
+        raise LipSyncError(
+            "no face-box provider is wired: lip-sync must be driven with boxes "
+            "from the vendored MIT YuNet detector, because letting the engine "
+            "detect faces itself pulls the unlicensed S3FD weight. Inject a "
+            "face_boxes_probe (reuse reframe_multispeaker's YuNet output)"
+        )
+    boxes = [[int(v) for v in box] for box in probe(media_path)]
+    if not boxes:
+        raise LipSyncError(f"the face detector found no faces in {media_path} — there is no mouth to re-lip")
+    return boxes
+
+
 def require_sample_consent(sample_id: str, sample: Mapping[str, Any] | None) -> None:
     """Refuse when the dub's cloned voice has no stored consent attestation."""
     if sample is None:
@@ -563,6 +585,20 @@ AudioTrackLoader = Callable[[str, str], dict[str, Any] | None]
 # sampleId -> the A3 VoiceSample row (or None when it is not a stored clone).
 SampleGetter = Callable[[str], dict[str, Any] | None]
 BackendFactory = Callable[[str, Mapping[str, Any] | None], LipSyncBackend]
+#: (media_path) -> per-frame ``(x, y, w, h)`` face rects. The LICENCE-critical
+#: seam: supplying boxes is what stops a MuseTalk-class backend reaching for its
+#: bundled S3FD detector, which ships under NO LICENCE at all (plan §3.4). The
+#: intended implementation reuses the already-vendored MIT YuNet output
+#: (``reframe_multispeaker_backend._stage_visual`` -> ``_lightasd_infer.analyze_visual``),
+#: which needs cv2, so it is INJECTED rather than imported here.
+#:
+#: UNVERIFIED, and it is the load-bearing residual of this lane: no caller wires
+#: this yet, so a real run currently falls back to the backend's own detector and
+#: the S3FD avoidance is a DESIGN INTENT, not an enforced property. The settling
+#: experiment is an @e2e run with the probe wired, asserting the backend never
+#: fetches an S3FD weight. Until then :meth:`LipSyncService.lipsync_start` refuses
+#: rather than silently running undetected — see ``require_face_boxes``.
+FaceBoxesProbe = Callable[[str], Sequence[Sequence[int]]]
 
 
 class LipSyncService:
@@ -578,6 +614,7 @@ class LipSyncService:
         settings_provider: Callable[[], dict[str, Any]] | None = None,
         run: RunFn = ffmpeg.run,
         confidence_probe: ConfidenceProbe | None = None,
+        face_boxes_probe: FaceBoxesProbe | None = None,
         out_dir: str | None = None,
     ) -> None:
         self._resolver = resolver
@@ -587,6 +624,7 @@ class LipSyncService:
         self._settings_provider = settings_provider or (lambda: {})
         self._run = run
         self._confidence_probe = confidence_probe
+        self._face_boxes_probe = face_boxes_probe
         self._out_dir = out_dir
 
     def _settings(self) -> dict[str, Any]:
@@ -658,6 +696,7 @@ class LipSyncService:
             out_path = str(out_base / f"lipsync-{track_id}-{stamp}.mp4")
             work_dir = str(out_base / f"work-{track_id}-{stamp}")
             backend = self._backend_factory(engine_id, settings)
+            boxes = require_face_boxes(self._face_boxes_probe, in_path)
             return run_lipsync_pipeline(
                 job_ctx,
                 video_path=in_path,
@@ -667,6 +706,7 @@ class LipSyncService:
                 backend=backend,
                 engine_id=engine_id,
                 quality=quality,
+                boxes=boxes,
                 run=self._run,
                 settings=settings,
                 confidence_probe=self._confidence_probe,
@@ -699,6 +739,7 @@ def _require_str(params: dict[str, Any], key: str) -> str:
 
 __all__ = [
     "CONSENT_PARAM",
+    "FaceBoxesProbe",
     "DEFAULT_ENGINE",
     "DEFAULT_QUALITY",
     "DENIED_ENGINES",
@@ -722,6 +763,7 @@ __all__ = [
     "engine_spec",
     "lipsync_enabled",
     "require_enabled",
+    "require_face_boxes",
     "require_likeness_consent",
     "require_quality",
     "require_sample_consent",

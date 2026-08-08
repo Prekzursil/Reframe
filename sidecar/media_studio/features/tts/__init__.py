@@ -41,7 +41,7 @@ from .dub import DubService, Translator
 from .edgetts import EdgeTtsEngine
 from .engine import TtsEngine, TtsError
 from .kokoro import KokoroEngine
-from .lipsync import BackendFactory, ConfidenceProbe, LipSyncService
+from .lipsync import BackendFactory, ConfidenceProbe, FaceBoxesProbe, LipSyncService
 from .voices import VoiceStore, make_sample_add_handler, make_voices_handler
 
 log = get_logger("media_studio.tts")
@@ -80,6 +80,7 @@ def register(
     out_dir: str | None = None,
     lipsync_backend_factory: BackendFactory | None = None,
     lipsync_confidence_probe: ConfidenceProbe | None = None,
+    lipsync_face_boxes_probe: FaceBoxesProbe | None = None,
     register_fn: Callable[[str, Any], None] | None = None,
 ) -> DubService:
     """Register ``tts.voices`` / ``tts.sample.add`` / ``tts.dub.start`` (A2) +
@@ -128,6 +129,9 @@ def register(
         backend_factory=lipsync_backend_factory,
         settings_provider=settings_provider,
         confidence_probe=lipsync_confidence_probe,
+        # NOT wired by any caller yet, so a real relip fails LOUD naming S3FD
+        # rather than letting the engine detect faces with an unlicensed weight.
+        face_boxes_probe=lipsync_face_boxes_probe,
         out_dir=out_dir,
     )
     reg = register_fn if register_fn is not None else protocol.register
@@ -145,6 +149,7 @@ __all__ = [
     "ConfidenceProbe",
     "DubService",
     "EdgeTtsEngine",
+    "FaceBoxesProbe",
     "KokoroEngine",
     "LipSyncService",
     "Translator",
