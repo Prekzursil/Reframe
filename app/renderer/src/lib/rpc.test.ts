@@ -496,6 +496,24 @@ describe('client.convert / shortmaker (spread-opts branches)', () => {
   });
 });
 
+// v1.5 expose-engines: `stabilize.run` was registered sidecar-side
+// (features/stabilize.py:496) with its own output dir
+// (handlers/library_ops.py:418) but had ZERO references anywhere under app/ —
+// no typed wrapper existed, so no caller could reach it without a raw string.
+describe('client.stabilize (v1.5 expose-engines)', () => {
+  it('run forwards {videoId}', async () => {
+    const r = installApi();
+    await client.stabilize.run('v1');
+    expect(r).toHaveBeenCalledWith('stabilize.run', { videoId: 'v1' });
+  });
+
+  it('run forwards an explicit {path} instead when given (the RPC accepts either)', async () => {
+    const r = installApi();
+    await client.stabilize.run({ path: '/movies/shaky.mp4' });
+    expect(r).toHaveBeenCalledWith('stabilize.run', { path: '/movies/shaky.mp4' });
+  });
+});
+
 describe('client.nle / package (spread + conditional branches)', () => {
   it('nle.export spreads opts when given and defaults to {} when omitted', async () => {
     const r = installApi();
