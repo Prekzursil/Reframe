@@ -35,6 +35,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from ..hf_auth import fetch_with_anonymous_retry
 from ..jobs import JobCancelled
 from ..pathsafe import clean_for_log, ensure_within
 from ..settings_store import default_config_dir
@@ -506,10 +507,29 @@ def _default_hf_fetch(repo_id: str, revision: str | None) -> str:
 
     huggingface_hub is pure Python (already a faster-whisper transitive dep) —
     no native pre-import concern (A6 lesson 1 does not apply).
+
+    AN EXPIRED TOKEN IS WORSE THAN NO TOKEN, so this retries WITHOUT one.
+    huggingface_hub reads HF_TOKEN (and friends) from the ambient environment with no
+    opt-in from us and attaches it to every request. When that token is expired the Hub
+    returns 401 for a PUBLIC repo that downloads fine anonymously. Measured 2026-08-08 on
+    the shipped app: `google/siglip2-so400m-patch16-384` and `teowu/DOVER` both answered
+    `HTTP 401` with the ambient token and `HTTP 200` without it (both `gated=False`,
+    `private=False`) — the user's machine had an expired token exported at User *and*
+    Machine scope, so every Reframe process inherited it and two model downloads failed
+    with the Hub's misleading "Repository Not Found".
+
+    So: attempt with whatever ambient credential exists (a genuinely GATED repo needs it),
+    and on an auth failure retry once with ``token=False`` — huggingface_hub's explicit
+    "send no credential". If the anonymous retry also fails the repo really is gated or
+    absent, and THAT error is the one worth showing.
+
+    The retry itself lives in ``media_studio.hf_auth`` because there are TWO download call
+    sites — this one and ``features/parakeet_asr_backend.py`` — and fixing only the one that
+    happened to fail would leave the identical defect live in the other.
     """
     from huggingface_hub import snapshot_download  # noqa: PLC0415 - lazy seam
 
-    return str(snapshot_download(repo_id=repo_id, revision=revision))
+    return str(fetch_with_anonymous_retry(snapshot_download, repo_id=repo_id, revision=revision))
 
 
 # --------------------------------------------------------------------------- #
