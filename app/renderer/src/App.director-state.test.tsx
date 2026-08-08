@@ -142,6 +142,17 @@ vi.mock('./components/JobQueue', () => ({
   JOBQUEUE_PANEL_ID: 'jobqueue-panel',
 }));
 vi.mock('./components/SidecarBanner', () => ({ SidecarBanner: () => <div /> }));
+// Same doctrine as the sibling views above, applied to a Workspace feature panel
+// this suite never exercises. `open-video` routes through the real Edit ->
+// Workspace, whose panel module graph is resolved during the test; adding the
+// v1.5 Transcript-edit panel pushed the FIRST case past the 5s default timeout
+// (measured: 3/3 fail at the default, 3/3 pass at --testTimeout=30000, so it is a
+// transform-cost cliff, not a behaviour break). Stubbing the panel keeps this
+// suite measuring Director state instead of module-graph cost. UNVERIFIED whether
+// CI's Linux runner would have crossed the same cliff — settled by reverting this
+// mock and reading the gate-tests-coverage vitest step; the stub is correct either
+// way because the panel is irrelevant here.
+vi.mock('./features/TranscriptEditor', () => ({ default: () => <div /> }));
 
 import { App } from './App';
 
