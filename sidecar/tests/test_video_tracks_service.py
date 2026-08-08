@@ -332,6 +332,41 @@ class TestServiceList:
         with pytest.raises(RpcError, match="videoTracks must be a list"):
             service.list({"videoId": "v1"}, ctx())
 
+    def test_malformed_rows_in_a_hand_edited_manifest_are_skipped_not_fatal(self, tmp_path: Path, registry):
+        """A junk lane/clip row must not become an opaque internal error.
+
+        ``find_clip`` and ``library.py``'s ref walk both skip non-dict rows, so a
+        hand-edited manifest carrying one is a real possibility. The read path has
+        to agree with them: ``dict("junk")`` raises ValueError, which is NOT a
+        VideoTrackError and would surface as a 500 instead of a typed refusal.
+        """
+        service, disk, video = make_service(tmp_path)
+        disk.save(
+            "v1",
+            {
+                "videoTracks": [
+                    "not-a-lane",
+                    {
+                        "id": "vt1",
+                        "name": "Video 1",
+                        "index": 0,
+                        "clips": [
+                            "not-a-clip",
+                            {"id": "c1", "path": str(video), "srcIn": 0.0, "srcOut": 2.0, "timelineStart": 0.0},
+                        ],
+                    },
+                ]
+            },
+        )
+        lanes = service.list({"videoId": "v1"}, ctx())["videoTracks"]
+        assert [t["id"] for t in lanes] == ["vt1"]
+        assert [c["id"] for c in lanes[0]["clips"]] == ["c1"]
+        # ... and the render path agrees, rather than choking on the same row
+        job = registry.get(service.render({"videoId": "v1"}, job_ctx(registry))["jobId"])
+        job.wait(timeout=10)
+        assert job.error is None
+        assert [s["clipId"] for s in job.result["segments"]] == ["c1"]
+
 
 class TestServiceLanes:
     def test_add_lane_appends_at_the_next_index(self, tmp_path: Path):
