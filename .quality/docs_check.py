@@ -1,4 +1,10 @@
-"""Documentation anti-drift gate (`.audit/ssot-plan.md` §4, rules R1-R4).
+"""Documentation anti-drift gate — rules R1-R4.
+
+The rules were drafted in the SSOT plan, which lives in the disposable `.audit/` scratch
+tree and is deliberately not tracked; they are restated in full and kept current in
+`docs/INDEX.md § Anti-drift`, which is the tracked authority.  ssot-allow: the sentence
+above names the scratch origin only, and nothing here is decided by that file.
+
 
 Four mechanical checks over the TRACKED tree. Stdlib only, no network, so it rides
 inside gate:1 as a `pre-commit` local hook rather than opening a 7th gate — the

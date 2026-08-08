@@ -58,9 +58,13 @@ MUTATIONS = [
         "r3",
     ),
     (
+        # The payloads below are deliberately-broken FIXTURES, not citations. Without
+        # the waivers this harness fails the very gate it proves — a detector
+        # self-conflict, and the tell that a probe is reading the document instead of
+        # the field.
         "m2 cite a docs/ path that does not exist",
         "docs/ROADMAP.md",
-        lambda t: t + "\n\nSee docs/nope-does-not-exist.md for details.\n",
+        lambda t: t + "\n\nSee docs/nope-does-not-exist.md for details.\n",  # ssot-allow: fixture
         "r2",
     ),
     (
@@ -72,9 +76,7 @@ MUTATIONS = [
     (
         "m3 cite a gitignored path from tracked source",
         "sidecar/media_studio/features/zoom.py",
-        lambda t: t.replace(
-            '"""', '"""Derived by .audit/anything.py.\n\n', 1
-        ),
+        lambda t: t.replace('"""', '"""Derived by .audit/anything.py.\n\n', 1),  # ssot-allow: fixture
         "r4",
     ),
     (

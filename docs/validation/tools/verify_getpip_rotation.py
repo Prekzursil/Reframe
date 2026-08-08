@@ -11,7 +11,7 @@ That is PROVENANCE, NOT AUTHENTICITY -- weaker than a vendor-checksummed pin.
 This runs those four checks and prints the new pin, so the rotation is evidenced
 rather than pasted.
 
-Usage:  python .audit/verify_getpip_rotation.py
+Usage:  python docs/validation/tools/verify_getpip_rotation.py
 """
 
 from __future__ import annotations
