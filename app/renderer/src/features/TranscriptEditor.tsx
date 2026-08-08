@@ -18,6 +18,7 @@
 // / injectable `api?` prop for tests).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import './panels.css';
+import './transcriptEditor.css';
 import {
   buildEditSpans,
   editedText,
