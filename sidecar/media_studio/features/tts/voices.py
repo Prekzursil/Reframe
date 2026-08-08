@@ -120,7 +120,7 @@ class VoiceConsentError(TtsError):
         )
 
 
-def consent_attested(sample: Mapping[str, Any] | Any) -> bool:
+def consent_attested(sample: object) -> bool:
     """Default-deny predicate: ONLY an explicit stored ``True`` is an attestation.
 
     A missing row, a malformed row, ``False``, ``None`` and truthy-but-not-``True``
@@ -132,7 +132,7 @@ def consent_attested(sample: Mapping[str, Any] | Any) -> bool:
     return sample.get("consentAttested") is True
 
 
-def require_consent(sample: Mapping[str, Any] | Any, sample_id: str | None = None) -> None:
+def require_consent(sample: object, sample_id: str | None = None) -> None:
     """Raise :class:`VoiceConsentError` unless ``sample`` carries an attestation.
 
     The single clone-time enforcement point: called BEFORE a stored sample's
@@ -143,7 +143,7 @@ def require_consent(sample: Mapping[str, Any] | Any, sample_id: str | None = Non
         raise VoiceConsentError(sample_id)
 
 
-def _clean_note(note: Any) -> str | None:
+def _clean_note(note: object) -> str | None:
     """A consent note is free text; blank / non-string normalizes to ``None``."""
     if not isinstance(note, str):
         return None
@@ -231,7 +231,7 @@ class VoiceStore:
         name: str | None = None,
         *,
         consent_attested: bool = False,
-        consent_note: Any = None,
+        consent_note: object = None,
     ) -> VoiceSample:
         """Copy ``path`` into the voices dir and persist a VoiceSample row.
 
