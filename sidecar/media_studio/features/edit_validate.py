@@ -58,6 +58,11 @@ _SPAN_REQUIRED_KINDS: frozenset[str] = frozenset(
 #: exist in the understanding (precondition: ``unknown-track`` otherwise).
 _TRACK_KINDS: frozenset[str] = frozenset({"caption", "translateCaption", "overlayText", "lowerThird"})
 
+#: Op kinds that bring OTHER clips to the timeline and therefore require a
+#: non-empty ``params['clips']``. ``join`` appends them; ``transition`` overlaps
+#: them — both are impossible with nothing to join to.
+_CLIPS_REQUIRED_KINDS: frozenset[str] = frozenset({"join", "transition"})
+
 
 @dataclass(frozen=True)
 class Understanding:
@@ -157,11 +162,21 @@ def _precondition_reason(op: EditOp, understanding: Understanding) -> StatusReas
         example) via ``params["panorama"]`` — either a string artifact reference
         or the inline mapping the engine consumes (:func:`_has_panorama`);
       * ``join`` must carry a non-empty ``params["clips"]`` list of paths to
-        concatenate (V1 IA §h E2 — a join with nothing to join is impossible).
+        concatenate (V1 IA §h E2 — a join with nothing to join is impossible);
+      * ``transition`` inherits that same precondition — it is a BOUNDARY
+        treatment, and with a single clip there is no boundary to treat.
+
+    ``transition`` deliberately does NOT join :data:`_SPAN_REQUIRED_KINDS`: it
+    acts on the junction between clips, not on a source range, so demanding a
+    span would drop every legitimate transition. The clip-length precondition a
+    transition really has (each clip must outlast the transition) needs the
+    PROBED duration of the extra clips, which this pure pass does not have — it
+    is enforced at render time in ``transitions.xfade_offsets`` and surfaces as a
+    per-op ``failed`` with auto-rollback.
     """
     if op.kind == "regenScroll" and understanding.require_regen_panorama and not _has_panorama(op.params):
         return "precondition-unmet"
-    if op.kind == "join" and not _has_clips(op.params):
+    if op.kind in _CLIPS_REQUIRED_KINDS and not _has_clips(op.params):
         return "precondition-unmet"
     return None
 
