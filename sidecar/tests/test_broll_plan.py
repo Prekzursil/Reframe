@@ -109,6 +109,20 @@ def test_suggest_reason_on_an_empty_segment_text():
     assert out[0]["reason"].startswith(bp.REASON_NO_TEXT)
 
 
+def test_suggest_reason_truncates_a_long_segment_and_still_fits_the_cap():
+    long_text = "a dog running " * 20
+    out = bp.suggest([_seg(0.0, 4.0, long_text)], [Q_DOG], ASSETS, ASSET_VECS, threshold=0.5)
+    reason = out[0]["reason"]
+    assert len(reason) <= bp.MAX_REASON_CHARS
+    assert "…" in reason
+    assert reason.endswith("(0.99)")
+
+
+def test_suggest_reason_collapses_runaway_whitespace():
+    out = bp.suggest([_seg(0.0, 4.0, "  a\n\tdog   running  ")], [Q_DOG], ASSETS, ASSET_VECS, threshold=0.5)
+    assert out[0]["reason"].startswith('"a dog running"')
+
+
 def test_suggest_with_no_assets_is_empty():
     assert bp.suggest([_seg(0.0, 4.0)], [Q_DOG], [], [], threshold=0.0) == []
 
