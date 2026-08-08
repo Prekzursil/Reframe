@@ -903,8 +903,8 @@ def test_no_gemma_licensed_weight_is_registered():
 def test_tier1_reuses_the_shipped_qwen_asset_zero_new_download():
     """tier1 is the ALREADY-SHIPPED Apache Qwen3-4B GGUF — not a second copy.
 
-    `flagship-lip-sync-dub.md:10` calls the swap "a **zero-new-download**
-    drop-in". Registering a distinct MT asset for the same weights would pull a
+    `docs/plans/v1.5/flagship-lip-sync-dub.md:10` calls the swap "a
+    **zero-new-download** drop-in". A distinct MT asset for the same weights pulls a
     redundant ~2.5 GB and occupy a second dest, so tier1 must resolve the very
     asset the general-LLM seam already installs (`manifest.QWEN_ASSET_NAME`).
     """
@@ -930,7 +930,7 @@ def test_mt_weight_licences_are_permissive():
 
 
 def test_permissive_licences_excludes_the_known_blocker_tags():
-    """The gate must REJECT the tags flagship-lip-sync-dub.md §3.2 enumerates.
+    """The gate must REJECT the tags docs/plans/v1.5/flagship-lip-sync-dub.md §3.2 lists.
 
     Without this, `PERMISSIVE_LICENCES` could be widened to admit the very
     licences the commercial gate exists to keep out and every other test here
