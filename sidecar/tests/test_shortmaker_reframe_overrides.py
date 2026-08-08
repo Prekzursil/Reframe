@@ -1,8 +1,9 @@
 """v1.5 O-2 — the per-shot re-render PARAMETER in the export path.
 
-SCOPE.md:41-44 names two prerequisites for the orphaned ReframeOverridePanel:
-"a trace producer surfaced over RPC PLUS a per-shot re-render parameter in the
-export path". The trace producer is `reframe.shotPlanFor` + the decision
+`docs/plans/v1.5/SCOPE.md` (open item O-2) names two prerequisites for the
+orphaned ReframeOverridePanel: "a trace producer surfaced over RPC plus a
+per-shot re-render parameter in the export path". The trace producer is
+`reframe.shotPlanFor` + the decision
 sidecar; this module covers the second half — a `reframeOverrides` export param,
 keyed by the produced clip path the user corrected, that reaches the reframe
 stage and makes it re-render only the shots that changed.

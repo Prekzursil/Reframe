@@ -44,6 +44,35 @@ siblings WU-3a1/3a2/3a4 shipped.
   plus a per-shot re-render parameter in the export path.
 - Was tracked in: `docs/plans/_archive/v1.4-experience-overhaul.md:46,:76-78`.
 
+**Status: both prerequisites are now BUILT; the mount is NOT.** The item stays
+open. What landed, sidecar-side only:
+
+1. *Trace producer surfaced over RPC.* `MultiSpeakerReframeEngine` writes a
+   decision sidecar (`<clip>.reframe.json`) after a successful render, and
+   `reframe.shotPlanFor {clip}` turns it into the editable plan the panel takes.
+   A clip the engine never rendered has no sidecar and answers `{"plan": null}` —
+   the honest empty state, so a caller can explain rather than invent data.
+2. *Per-shot re-render.* `MultiSpeakerReframeEngine.rerender_with_overrides`
+   replays the corrections onto the persisted plan and re-encodes the timeline
+   **without re-running the ML analysis**. `shortmaker.export` accepts
+   `reframeOverrides: {clipPath: [ShotOverride]}` and threads each clip's entry
+   into its own reframe stage; an engine that cannot honour a correction, and a
+   correction that matches no exported clip, both fail LOUD.
+
+Scope of (2), stated precisely so it is not read as more than it is: shots the
+user did not touch keep byte-identical geometry but are re-encoded, and the
+caption / zoom / brand stages re-run as part of the normal export. The saving is
+the analysis pass, not the encode.
+
+Still missing — and the reason the panel must stay unmounted for now: nothing in
+`app/renderer` calls either RPC (`client.reframe.*` is still reached only by
+`client.ce.test.ts`), so the remaining work is the renderer surface — obtain the
+plan for a produced clip, mount the panel behind a "Fix the framing" disclosure,
+and send `onRerender`'s affected set back through `shortmaker.export` with
+`reframeOverrides` for that clip. Mounting the panel before that would ship a
+surface that looks functional and silently does nothing, which is worse than the
+current state.
+
 ### O-3 — the fuller prompt-driven Director surface
 
 v1.4 promoted a Director rail with plan/apply/undo and a cost preview. The fuller

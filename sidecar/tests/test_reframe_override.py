@@ -394,7 +394,7 @@ def test_rpc_apply_overrides_happy_and_error() -> None:
 # O-2 — the decision SIDECAR: the renderer-reachable trace producer
 #
 # `reframe.shotPlan` is pure and needs a `trace`, but no renderer code can ever
-# obtain one (audit ledger v15-audit-ledger.md:1911). These cover the sidecar
+# obtain one (docs/validation/v15-audit-ledger.md:1911). These cover the sidecar
 # the multi-speaker engine drops next to a rendered clip and the
 # `reframe.shotPlanFor {clip}` RPC that turns it into an editable plan.
 # --------------------------------------------------------------------------- #
