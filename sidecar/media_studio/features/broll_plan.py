@@ -43,10 +43,10 @@ to a softmax-CLIP tier, so :data:`DEFAULT_MIN_SIMILARITY` is the so400m default
 only and a caller on another tier must pass its own calibrated value.
 UNVERIFIED: that default is a placeholder carried from the design doc, NOT a
 calibrated number — no labelled probe set has been measured on this branch. The
-experiment that would settle it is flagship-auto-broll.md §11.2 (20-30
-(segment, relevant-asset, decoy) triples per tier, pick the precision/recall
-knee). Until then treat the default as "requires a threshold slider", not as a
-tuned constant.
+experiment that would settle it is docs/plans/v1.5/flagship-auto-broll.md §11.2
+(20-30 (segment, relevant-asset, decoy) triples per tier, pick the
+precision/recall knee). Until then treat the default as "requires a threshold
+slider", not as a tuned constant.
 """
 
 from __future__ import annotations
