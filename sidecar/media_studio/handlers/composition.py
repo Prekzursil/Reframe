@@ -329,6 +329,25 @@ def register_all(
         register_fn=reg,
     )
 
+    # tracks.video.* — the multi-lane VIDEO timeline (the direct-manipulation
+    # editor: stacked lanes, drag-to-trim handles, razor/split, reorder). Bound to
+    # the SAME project load/save helpers + ffmpeg seams tracks_audio uses, so the
+    # video lanes persist in the same manifest under ``videoTracks`` and ride the
+    # same per-video lock discipline. Renders through the SHIPPED frame-accurate
+    # cutter (features/fillers.build_segment_cut_argv) — no second cut engine.
+    from ..features import video_tracks as _video_tracks  # local: import-light
+
+    _video_tracks.register(
+        resolver=svc._resolve_video_path,
+        load_project=_load_project_data,
+        save_project=_save_project_data,
+        out_dir=svc.exports_dir / "timeline",
+        settings_provider=svc.settings.get,
+        run=svc._ffmpeg_run,  # None -> the real drained ffmpeg.run
+        duration=svc._ffprobe_duration,
+        register_fn=reg,
+    )
+
     # feedback.* (P3-D): the flywheel store registers its own two methods.
     from ..features import feedback as _feedback  # local: import-light
 

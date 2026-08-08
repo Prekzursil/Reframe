@@ -157,9 +157,7 @@ class TestEngineReuse:
         )
         segments = vt.flatten_timeline([track], fps=30)
         mine = vt.build_timeline_render_argv(segments, "out.mp4", settings=SETTINGS)
-        theirs = _fillers.build_segment_cut_argv(
-            "C:/vids/a.mp4", "out.mp4", [(1.0, 3.0), (10.0, 12.0)], SETTINGS
-        )
+        theirs = _fillers.build_segment_cut_argv("C:/vids/a.mp4", "out.mp4", [(1.0, 3.0), (10.0, 12.0)], SETTINGS)
         assert mine == theirs
 
     def test_timeline_order_not_source_order_drives_the_concat(self):

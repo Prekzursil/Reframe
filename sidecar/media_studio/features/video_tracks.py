@@ -349,9 +349,7 @@ def trim_clip_edge(clip: VideoClip, edge: str, timeline_time: float, *, fps: int
     at_f = seconds_to_frames(timeline_time, fps)
     if edge == "start":
         if end_f - at_f < MIN_CLIP_FRAMES:
-            raise VideoTrackError(
-                f"trim would leave {end_f - at_f} frame(s); a clip needs at least {MIN_CLIP_FRAMES}"
-            )
+            raise VideoTrackError(f"trim would leave {end_f - at_f} frame(s); a clip needs at least {MIN_CLIP_FRAMES}")
         new_in_f = in_f + (at_f - start_f)
         if new_in_f < 0:
             raise VideoTrackError(f"trim would need frame {new_in_f}, before the source's start")
@@ -618,9 +616,7 @@ class VideoTracksService:
             raise RpcError(f"{what} failed (ffmpeg exit {code})", ErrorCode.INTERNAL_ERROR)
 
     def _tracks_payload(self, project: dict[str, Any]) -> list[VideoTrack]:
-        return [
-            {**t, "clips": [dict(c) for c in clips_of(t)]} for t in video_tracks_of(project) if isinstance(t, dict)
-        ]
+        return [{**t, "clips": [dict(c) for c in clips_of(t)]} for t in video_tracks_of(project) if isinstance(t, dict)]
 
     def _edit(self, video_id: str, clip_id: str, fps: int, apply: Callable[[VideoTrack, VideoClip], list[VideoClip]]):
         """Load -> locate the clip -> ``apply`` -> overlap-check -> save, under the lock."""
@@ -660,10 +656,12 @@ class VideoTracksService:
         name = params.get("name")
         with self._lock_for(video_id):
             project = self._load_project(video_id)
-            payload: dict[str, Any] = {"index": len(video_tracks_of(project))}
-            if name:
-                payload["name"] = str(name)
             try:
+                # video_tracks_of is INSIDE the try: a corrupt persisted manifest must
+                # surface as a typed INVALID_PARAMS, not leak as an internal error.
+                payload: dict[str, Any] = {"index": len(video_tracks_of(project))}
+                if name:
+                    payload["name"] = str(name)
                 track = add_video_track(project, payload, fps=fps)
             except VideoTrackError as exc:
                 raise _invalid(str(exc)) from exc
