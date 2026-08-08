@@ -3,17 +3,25 @@ import type { EditorState } from '../../lib/editorState';
 import { DEFAULT_CAPTION_DESIGN } from '../../lib/captionDesign';
 import type { Cue } from '../../lib/rpc';
 import {
+  ASPECT_DIMENSIONS,
   PLATFORM_PRESETS,
   type PlatformPreset,
+  aspectFanoutPlan,
+  buildFanoutPreflight,
   buildPreflight,
   captionSummary,
   estimateRenderSec,
   exportConvertOptions,
+  fanoutDestinationLabel,
+  fanoutOutPath,
   firstAvailablePresetId,
   framingSummary,
   presetAvailability,
   presetById,
+  presetsByIds,
   rovingIndex,
+  sanitizeSelection,
+  togglePresetId,
   windowDurationSec,
 } from './exportModel';
 
@@ -222,5 +230,180 @@ describe('rovingIndex', () => {
   });
   it('ignores other keys', () => {
     expect(rovingIndex('Tab', 1, all)).toBe(1);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// v1.5 aspect-matrix: multi-select + the ONE-source -> N-aspect fan-out plan
+// --------------------------------------------------------------------------- //
+describe('ASPECT_DIMENSIONS (renderer mirror of the sidecar aspect registry)', () => {
+  it('carries every curated aspect INCLUDING the widescreen 16:9', () => {
+    expect(ASPECT_DIMENSIONS).toEqual({
+      '9:16': [1080, 1920],
+      '1:1': [1080, 1080],
+      '4:5': [1080, 1350],
+      '16:9': [1920, 1080],
+    });
+  });
+
+  it('covers every aspect the destination catalog can offer (no unmapped badge)', () => {
+    for (const preset of PLATFORM_PRESETS) {
+      expect(ASPECT_DIMENSIONS[preset.aspect]).toBeDefined();
+    }
+  });
+});
+
+describe('togglePresetId', () => {
+  it('adds an unselected id, preserving order', () => {
+    expect(togglePresetId(['tiktok'], 'square')).toEqual(['tiktok', 'square']);
+  });
+
+  it('removes an already-selected id', () => {
+    expect(togglePresetId(['tiktok', 'square'], 'tiktok')).toEqual(['square']);
+  });
+
+  it('refuses to empty the selection (export always needs a destination)', () => {
+    expect(togglePresetId(['tiktok'], 'tiktok')).toEqual(['tiktok']);
+  });
+});
+
+describe('presetsByIds', () => {
+  it('resolves ids to presets in CATALOG order, not click order', () => {
+    // Clicking widescreen then tiktok must still read top-to-bottom in the UI.
+    expect(presetsByIds(['widescreen', 'tiktok']).map((p) => p.id)).toEqual([
+      'tiktok',
+      'widescreen',
+    ]);
+  });
+
+  it('drops ids that are not in the catalog', () => {
+    expect(presetsByIds(['tiktok', '__nope__']).map((p) => p.id)).toEqual(['tiktok']);
+  });
+});
+
+describe('sanitizeSelection', () => {
+  it('keeps a selection whose destinations all still fit the clip', () => {
+    expect(sanitizeSelection(['tiktok', 'square'], 30)).toEqual(['tiktok', 'square']);
+  });
+
+  it('drops destinations the clip has outgrown', () => {
+    // 120s blocks shorts (60s cap) but not the uncapped square.
+    expect(sanitizeSelection(['shorts', 'square'], 120)).toEqual(['square']);
+  });
+
+  it('falls back to the first AVAILABLE destination when everything is dropped', () => {
+    expect(sanitizeSelection(['shorts'], 120)).toEqual([firstAvailablePresetId(120)]);
+  });
+});
+
+describe('aspectFanoutPlan', () => {
+  it('pairs each distinct aspect with its canonical canvas', () => {
+    expect(aspectFanoutPlan(presetsByIds(['tiktok', 'square', 'widescreen']))).toEqual([
+      { aspect: '9:16', width: 1080, height: 1920 },
+      { aspect: '1:1', width: 1080, height: 1080 },
+      { aspect: '16:9', width: 1920, height: 1080 },
+    ]);
+  });
+
+  it('DEDUPES by aspect — three vertical destinations are ONE render target', () => {
+    // Mirrors the sidecar's aspect.fanout_plan dedupe: TikTok + Reels + Shorts
+    // are three destinations but a single 9:16 file.
+    expect(aspectFanoutPlan(presetsByIds(['tiktok', 'reels', 'shorts']))).toEqual([
+      { aspect: '9:16', width: 1080, height: 1920 },
+    ]);
+  });
+
+  it('is empty for an empty destination list', () => {
+    expect(aspectFanoutPlan([])).toEqual([]);
+  });
+
+  it('skips a destination whose aspect has no canonical canvas', () => {
+    const rogue: PlatformPreset = {
+      id: 'rogue',
+      name: 'Rogue',
+      blurb: '',
+      aspect: '21:9',
+      maxSec: null,
+      lengthHint: '',
+    };
+    expect(aspectFanoutPlan([rogue])).toEqual([]);
+  });
+});
+
+describe('fanoutDestinationLabel', () => {
+  it('names a single destination outright', () => {
+    expect(fanoutDestinationLabel(presetsByIds(['tiktok']))).toBe('TikTok');
+  });
+
+  it('names the first and counts the rest', () => {
+    expect(fanoutDestinationLabel(presetsByIds(['tiktok', 'square']))).toBe('TikTok + 1 more');
+    expect(fanoutDestinationLabel(presetsByIds(['tiktok', 'square', 'widescreen']))).toBe(
+      'TikTok + 2 more',
+    );
+  });
+
+  it('degrades to a neutral word when nothing is selected', () => {
+    expect(fanoutDestinationLabel([])).toBe('your destinations');
+  });
+});
+
+describe('fanoutOutPath', () => {
+  const target = { aspect: '9:16', width: 1080, height: 1920 };
+
+  it('writes NEXT TO the source, tagged with the aspect', () => {
+    expect(fanoutOutPath('/videos/talk.mov', target)).toBe('/videos/talk.9x16.mp4');
+  });
+
+  it('uses an "x" separator so the name is legal on Windows', () => {
+    // ':' is a reserved character in a Windows filename — a raw "9:16" would make
+    // the path unopenable (and would read as an alternate data stream).
+    expect(fanoutOutPath('C:\\clips\\talk.mp4', target)).toBe('C:\\clips\\talk.9x16.mp4');
+    expect(fanoutOutPath('C:\\clips\\talk.mp4', target)).not.toContain(':16');
+  });
+
+  it('keeps a dotted directory out of the stem calculation', () => {
+    expect(fanoutOutPath('/a.b/talk', target)).toBe('/a.b/talk.9x16.mp4');
+  });
+
+  it('honours a non-default container extension', () => {
+    expect(fanoutOutPath('/videos/talk.mov', target, 'mkv')).toBe('/videos/talk.9x16.mkv');
+  });
+});
+
+describe('buildFanoutPreflight', () => {
+  it('reports ONE clip per distinct aspect and lists them', () => {
+    const pre = buildFanoutPreflight(stateWith(), presetsByIds(['tiktok', 'square']));
+    expect(pre.clipCount).toBe(2);
+    expect(pre.aspectLabel).toBe('9:16 · 1:1');
+    expect(pre.targets).toHaveLength(2);
+  });
+
+  it('collapses same-aspect destinations to a single clip', () => {
+    const pre = buildFanoutPreflight(stateWith(), presetsByIds(['tiktok', 'reels']));
+    expect(pre.clipCount).toBe(1);
+    expect(pre.aspectLabel).toBe('9:16');
+  });
+
+  it('scales the render estimate by the number of files', () => {
+    const one = buildFanoutPreflight(stateWith(), presetsByIds(['tiktok']));
+    const two = buildFanoutPreflight(stateWith(), presetsByIds(['tiktok', 'square']));
+    expect(one.estRenderLabel).toBe('~0:15');
+    expect(two.estRenderLabel).toBe('~0:30');
+  });
+
+  it('still costs nothing — the render is LOCAL', () => {
+    expect(buildFanoutPreflight(stateWith(), presetsByIds(['tiktok'])).estSpendLabel).toBe('$0.00');
+  });
+
+  it('carries the clip duration through unchanged', () => {
+    const pre = buildFanoutPreflight(stateWith(), presetsByIds(['tiktok']));
+    expect(pre.durationSec).toBe(30);
+    expect(pre.durationLabel).toBe('0:30');
+  });
+
+  it('reports an empty plan honestly rather than pretending one file', () => {
+    const pre = buildFanoutPreflight(stateWith(), []);
+    expect(pre.clipCount).toBe(0);
+    expect(pre.aspectLabel).toBe('');
   });
 });
