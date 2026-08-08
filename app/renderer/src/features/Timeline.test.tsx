@@ -213,6 +213,30 @@ describe('<Timeline />', () => {
     });
   }
 
+  // v1.5 timeline-naming: this panel is a subtitle-CUE editor. Its old heading
+  // said "Timeline", which promised a video timeline the app does not have here
+  // (`docs/plans/v1.5/editing-surface-audit-2026-08.md` §0.1). The heading must
+  // name its real subject, and the panel must point at the surfaces where video
+  // trimming ACTUALLY lives today, so the dead end is not silent.
+  it('names its subject and signposts where video trimming really lives', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+
+    expect(container.querySelector('.timeline__title')?.textContent).toBe('Subtitle timeline');
+
+    const note = container.querySelector('.timeline__scope-note');
+    expect(note).not.toBeNull();
+    const text = note?.textContent ?? '';
+    // what it DOES edit
+    expect(text).toContain('subtitle cues');
+    // the disclaimer that removes the lie
+    expect(text).toContain('does not cut the video');
+    // the two routes that DO cut video today: director.apply (prompt-driven) and
+    // Make Shorts' manual interval control (typed timecodes).
+    expect(text).toContain('Director');
+    expect(text).toContain('Manual interval');
+  });
+
   it('loads the track via tracks.list and renders one rect per cue', async () => {
     const fake = makeFakeApi();
     await mount(fake.api);
