@@ -528,9 +528,11 @@
   color: var(--text-muted);
 }
 
+/* a <summary> is a real keyboard stop — same ring the tab strip / task cards use
+   (workspace.css:194, taskHub.css:102), NOT an invented focus-ring-* token set */
 .audiomix-panel .audiomix-advanced > summary:focus-visible {
-  outline: var(--focus-ring-width) solid var(--focus-ring-color);
-  outline-offset: var(--focus-ring-offset);
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .audiomix-panel .audiomix-advanced .audiomix-controls {

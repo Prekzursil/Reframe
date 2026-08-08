@@ -318,8 +318,8 @@ export function AudioMix({ videoId, api }: AudioMixProps): React.ReactElement {
       </div>
 
       <p className="audiomix-target-note">
-        Exports are normalised to <strong>{formatLufs(target.lufs)}</strong> integrated loudness
-        ({target.label}).
+        Exports are normalised to <strong>{formatLufs(target.lufs)}</strong> integrated loudness (
+        {target.label}).
       </p>
 
       <details className="audiomix-advanced">
