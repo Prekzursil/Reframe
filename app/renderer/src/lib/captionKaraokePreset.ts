@@ -68,6 +68,22 @@ export function karaokeActiveColor(index: number): string {
 }
 
 /**
+ * The active-word accent for `index`, honouring an explicit `CaptionOverride
+ * .activeColor` — the renderer mirror of the sidecar's `resolve_karaoke_style`,
+ * where a named active colour COLLAPSES the yellow/green alternation to that one
+ * colour (a user who names the lit-word colour asked for exactly that colour).
+ *
+ * This exists because `wordColor(word, visual, activeColorOverride)` resolves
+ * `activeColorOverride ?? visual.activeColor`, and `karaokeActiveColor` NEVER
+ * returns undefined — so passing it unconditionally made the override that
+ * `previewVisual` folds into `visual.activeColor` unreachable for karaoke, and the
+ * preview painted an alternating accent the burn would not produce.
+ */
+export function karaokeActiveColorFor(index: number, activeColorOverride?: string): string {
+  return activeColorOverride ?? karaokeActiveColor(index);
+}
+
+/**
  * Vertical margin (px) that keeps the line inside the 9:16 safe area — the
  * renderer mirror of sidecar `safe_area_margin_v`. `top` clears the top ~10%;
  * `center` is centred (0); anything else (`bottom`, the default) clears the

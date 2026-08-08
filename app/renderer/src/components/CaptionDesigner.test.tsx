@@ -91,6 +91,27 @@ describe('<CaptionDesigner />', () => {
     expect(active?.style.color.replace(/\s/g, '')).toContain('255,255,0');
   });
 
+  it('lets an explicit activeColor override the karaoke alternation (burn parity)', () => {
+    // The sidecar's resolve_karaoke_style COLLAPSES the yellow/green alternation to
+    // an explicit override.activeColor, so the preview must do the same or it shows
+    // a colour the burn will not produce. Before this fix the karaoke branch passed
+    // karaokeActiveColor(w.index) UNCONDITIONALLY into wordColor's
+    // `activeColorOverride ?? visual.activeColor`, and since karaokeActiveColor never
+    // returns undefined the folded override.activeColor was unreachable.
+    render({
+      design: {
+        style: 'opusclip-karaoke',
+        box: DEFAULT_CAPTION_DESIGN.box,
+        override: { activeColor: '#FF00FF' },
+      },
+    });
+    tick(container, 11.5); // cue index 0 — would be yellow without the override
+    const line = container.querySelector('.caption-designer__line') as HTMLElement;
+    const active = [...line.querySelectorAll('span')].find((s) => s.textContent === 'Hello');
+    expect(active?.style.color.replace(/\s/g, '')).toContain('255,0,255');
+    expect(active?.style.color.replace(/\s/g, '')).not.toContain('255,255,0');
+  });
+
   it('alternates the karaoke accent by the ABSOLUTE cue index, not the line-local position', () => {
     // A >LINE_GAP_SEC gap isolates cue index 1 onto its own line, so its line-local
     // slice position is 0 (even) while its ABSOLUTE cue index is 1 (odd). The correct

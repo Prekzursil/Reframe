@@ -47,7 +47,7 @@ control               how the karaoke preset honours it
 ``fontFamily``        Style ``Fontname`` (curated allowlist; else ``Anton``)
 ``sizeScale``         multiplies the canvas-derived base size (>= 12 floor)
 ``textColor``         Style ``PrimaryColour`` (the white fill words reset to)
-``spokenColor``       fill FALLBACK when ``textColor`` is absent
+``spokenColor``       inline ``\1c`` on ALREADY-SPOKEN words (its own third state)
 ``activeColor``       the inline ``\1c`` accent — COLLAPSES the alternation
 ``box`` / ``outline`` Style ``BorderStyle`` / ``Outline`` width
 ``uppercase``         per-word casing (tri-state; preset default all-caps)
@@ -63,10 +63,20 @@ EXPLICITLY DECLINED, with the mechanical reason (NOT a silent drop):
   wrap :func:`caption.render_cue_text` uses cannot render any contrast here. It
   would emit tags with zero visual effect. Not applied; see
   :func:`build_line_text`.
-* **``maxLines`` / ``maxCps``.** Consumed at cue GENERATION by
-  :func:`caption_polish.resolve_caption_limits`, i.e. UPSTREAM of all three
-  engines, so they are not karaoke drops. This preset then re-groups the words it
-  is given into its own 1-4-words-per-line look (the teardown model).
+* **``maxLines`` / ``maxCps``.** NEITHER libass burn path consumes them:
+  :func:`caption_polish.polish_cues` (which calls
+  :func:`caption_polish.resolve_caption_limits`) has exactly one production
+  caller, :func:`subtitles.generate_polished` via ``handlers/media_ops.py:53`` —
+  the SOFT-SUBTITLE route. The burn's cue list comes from
+  ``shortmaker._cues_for_clip``, which never calls it. So they shape the sidecar
+  subtitle file, not a burn, and :func:`caption.build_ass` ignores them
+  identically — pre-existing and engine-SYMMETRIC, not a karaoke drop. This
+  preset re-groups the words it is given into its own 1-4-words-per-line look
+  (the teardown model) regardless.
+
+  *(Earlier wording here claimed they were "consumed at cue generation upstream of
+  all three engines". That was REFUTED: `polish_cues` appears nowhere in
+  `shortmaker.py`. The code was and is correct; only the sentence was wrong.)*
 """
 
 from __future__ import annotations
@@ -183,6 +193,9 @@ class ResolvedKaraokeStyle:
     outline_width: int = KARAOKE_OUTLINE_WIDTH
     shadow: int = KARAOKE_SHADOW
     active_colors: tuple[str, str] = KARAOKE_ACTIVE_INLINE
+    #: inline ``\1c`` colour for ALREADY-SPOKEN words, or ``None`` for the preset's
+    #: behaviour (no persistent spoken state — they reset to the white Style fill).
+    spoken_color: str | None = None
     uppercase: bool | None = None
     position_band: str | None = None
 
@@ -222,7 +235,7 @@ def resolve_karaoke_style(override: Mapping[str, Any] | None) -> ResolvedKaraoke
     only the DEFAULTS a dropped field falls back to are karaoke's own. A malformed
     field degrades to the preset value field-by-field and never raises.
 
-    Two karaoke-specific semantics:
+    Three karaoke-specific semantics:
 
     * ``fontFamily`` falls back to :data:`KARAOKE_FONT`. An absent/off-allowlist
       font resolves to :data:`caption_override.BASE_FONT` (``Arial``), which is NOT
@@ -232,10 +245,18 @@ def resolve_karaoke_style(override: Mapping[str, Any] | None) -> ResolvedKaraoke
       colour. The alternation is the preset's default flourish; a user who names an
       active colour asked for the lit word to be that colour, and alternating it
       against a leftover green would defeat the setting.
+    * ``spokenColor`` is its OWN role, never folded into the fill. This preset emits
+      one event per word, so within an event the words before the active one are
+      already spoken and can carry their own inline accent — the same three-state
+      paint the renderer preview implements at ``CaptionOverlay.wordColor:161-163``
+      (active -> activeColor, spoken -> spokenColor, else textColor). An earlier
+      version resolved ``text_color or spoken_color`` into ``PrimaryColour``, which
+      both discarded ``spokenColor`` whenever ``textColor`` was set AND wrongly
+      painted NOT-yet-spoken words with it — a preview/burn divergence.
     """
     o = _override.as_mapping(override)
     base = _override.apply_override(o)
-    fill = _style_colour(base.text_color or base.spoken_color) or KARAOKE_FILL
+    fill = _style_colour(base.text_color) or KARAOKE_FILL
     active = base.active_color
     border_style, outline_width = _resolve_karaoke_border(
         _override.as_bool(o.get("box")), _override.as_bool(o.get("outline"))
@@ -248,6 +269,7 @@ def resolve_karaoke_style(override: Mapping[str, Any] | None) -> ResolvedKaraoke
         border_style=border_style,
         outline_width=outline_width,
         active_colors=(active, active) if active else KARAOKE_ACTIVE_INLINE,
+        spoken_color=base.spoken_color,
         uppercase=_override.as_bool(o.get("uppercase")),
         position_band=base.position_band,
     )
@@ -332,19 +354,35 @@ def _active_word_block(word_text: str, color: str) -> str:
     )
 
 
+def _spoken_word_block(word_text: str, color: str) -> str:
+    r"""Inline ASS for an ALREADY-SPOKEN word: a flat ``\1c`` recolour, then ``\r``.
+
+    No ``\t`` animation — the scale-pop belongs to the word being spoken NOW. Emits
+    ``{\1c<color>}WORD{\r}`` so the rest of the line keeps the Style default.
+    """
+    return f"{{\\1c{color}}}{word_text}{{\\r}}"
+
+
 def build_line_text(
     line_words: Sequence[dict[str, Any]],
     active_index: int,
     active_color: str,
     uppercase: bool = True,
+    spoken_color: str | None = None,
 ) -> str:
     """ASS ``Dialogue`` text for a line with word ``active_index`` highlighted.
 
-    The active word gets :func:`_active_word_block` (alternating colour + pop); the
-    others render as the plain white Style default. Every word is escaped (and
-    upper-cased when requested, the OpusClip all-caps look) BEFORE assembly so the
-    inserted override tags can never be corrupted and caption text can never inject
-    ASS.
+    Three states, mirroring the renderer preview's ``CaptionOverlay.wordColor``:
+    the word at ``active_index`` gets :func:`_active_word_block` (accent + pop);
+    words BEFORE it are already spoken and get :func:`_spoken_word_block` when
+    ``spoken_color`` is set; everything else renders as the plain Style default.
+    With ``spoken_color=None`` (the un-tuned preset) spoken words reset to the white
+    fill, which is the teardown look and what ``KARAOKE_PRESET_VISUAL.spokenColor``
+    mirrors on the renderer side.
+
+    Every word is escaped (and upper-cased when requested, the OpusClip all-caps
+    look) BEFORE assembly so the inserted override tags can never be corrupted and
+    caption text can never inject ASS.
 
     A cue's ``emphasis`` spans are deliberately NOT bolded here (unlike
     :func:`caption.render_cue_text`): the karaoke Style is ``Bold=-1``
@@ -356,7 +394,12 @@ def build_line_text(
     for index, word in enumerate(line_words):
         raw = str(word.get("text") or "")
         text = escape_ass_text(raw.upper() if uppercase else raw)
-        parts.append(_active_word_block(text, active_color) if index == active_index else text)
+        if index == active_index:
+            parts.append(_active_word_block(text, active_color))
+        elif index < active_index and spoken_color:
+            parts.append(_spoken_word_block(text, spoken_color))
+        else:
+            parts.append(text)
     return " ".join(parts)
 
 
@@ -511,7 +554,7 @@ def build_karaoke_ass(
             end = rebase_cue_time(word.get("end", 0.0), source_start)
             if end <= start:
                 continue  # entirely before the clip (or zero-length after re-base)
-            text = build_line_text(line, active_index, color, uppercase=upper)
+            text = build_line_text(line, active_index, color, uppercase=upper, spoken_color=resolved.spoken_color)
             events.append(
                 f"Dialogue: 0,{format_ass_timestamp(start)},{format_ass_timestamp(end)},Default,,0,0,0,,{text}"
             )

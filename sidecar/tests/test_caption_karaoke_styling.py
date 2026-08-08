@@ -194,11 +194,42 @@ class TestResolveKaraokeStyle:
         assert resolved.primary_color == "&H000000FF"
         assert resolved.secondary_color == "&H000000FF"
 
-    def test_spoken_color_is_the_fill_fallback(self):
-        # Mirrors caption_override.apply_override: textColor wins, else spokenColor.
-        assert ck.resolve_karaoke_style({"spokenColor": "#00FF00"}).primary_color == "&H0000FF00"
+    def test_spoken_color_is_a_separate_role_not_the_fill(self):
+        # spokenColor paints ALREADY-SPOKEN words only — the third state the preview
+        # implements at CaptionOverlay.wordColor:162
+        # (`if (word.spoken) return visual.spokenColor || visual.textColor`).
+        # It must NOT be folded into the whole-line fill: with textColor also set the
+        # burn would discard it, and with only spokenColor set every not-yet-spoken
+        # word would wrongly take it too.
+        spoken_only = ck.resolve_karaoke_style({"spokenColor": "#00FF00"})
+        assert spoken_only.primary_color == ck.KARAOKE_FILL  # fill untouched
+        assert spoken_only.spoken_color == "&H0000FF00&"  # inline form, own role
+
         both = ck.resolve_karaoke_style({"textColor": "#FF0000", "spokenColor": "#00FF00"})
         assert both.primary_color == "&H000000FF"
+        assert both.spoken_color == "&H0000FF00&"  # NOT discarded
+
+        assert ck.resolve_karaoke_style({}).spoken_color is None  # no persistent state
+        assert ck.resolve_karaoke_style({"spokenColor": "bad"}).spoken_color is None
+
+    def test_spoken_words_get_the_spoken_colour_in_the_events(self):
+        # Within one per-word event the words BEFORE the active one are already
+        # spoken; they must carry the spoken accent, and the ones after must not.
+        doc = ck.build_karaoke_ass([KARAOKE_CUE], override={"spokenColor": "#00FF00"})
+        events = event_lines(doc, "Default")
+        # event 0: "GO" active, "NOW" not yet spoken -> no spoken accent anywhere.
+        assert r"{\1c&H0000FF00&}" not in events[0]
+        # event 1: "NOW" active, "GO" already spoken -> GO carries the spoken accent.
+        assert r"{\1c&H0000FF00&}GO{\r}" in events[1]
+
+    def test_spoken_colour_is_absent_without_the_override(self):
+        doc = ck.build_karaoke_ass([KARAOKE_CUE])
+        # Un-tuned: already-spoken words reset to the white Style fill, matching
+        # KARAOKE_PRESET_VISUAL.spokenColor === textColor in the renderer mirror.
+        assert event_lines(doc, "Default")[1] == (
+            "Dialogue: 0,0:00:00.50,0:00:01.00,Default,,0,0,0,,"
+            r"GO {\1c&H0000FF00&\t(0,120,\fscx115\fscy115)}NOW{\r}"
+        )
 
     def test_bad_hex_keeps_the_preset_fill(self):
         assert ck.resolve_karaoke_style({"textColor": "red"}).primary_color == ck.KARAOKE_FILL
@@ -300,12 +331,16 @@ class TestBuildKaraokeAssStyling:
         assert style_line(doc).endswith(",2,65,65,346,1")
 
     def test_override_band_re_anchors_but_keeps_the_box_side_margins(self):
-        doc = ck.build_karaoke_ass(
-            [KARAOKE_CUE],
-            position={"x": 0.2, "y": 0.7, "w": 0.6, "h": 0.2},
-            override={"positionBand": "top"},
-        )
-        # band wins on Alignment + MarginV; the box keeps the fine L/R offset.
+        # The box is chosen so its OWN MarginV differs from the band's: bottom edge
+        # at y+h = 0.8 -> (1 - 0.8) * 1920 = 384, whereas band "top" -> 0.10 * 1920
+        # = 192. With y = 0.7 both come to 192 and the assertion below would pass
+        # even if MarginV had come from the box — proving only the Alignment flip.
+        box = {"x": 0.2, "y": 0.6, "w": 0.6, "h": 0.2}
+        without_band = ck.build_karaoke_ass([KARAOKE_CUE], position=box)
+        assert style_line(without_band).endswith(",2,216,216,384,1")
+
+        doc = ck.build_karaoke_ass([KARAOKE_CUE], position=box, override={"positionBand": "top"})
+        # band wins on Alignment + MarginV (8 / 192); the box keeps the L/R offset.
         assert style_line(doc).endswith(",8,216,216,192,1")
 
     def test_hook_title_adds_a_headline_style_and_event(self):
@@ -380,10 +415,12 @@ OVERRIDE_FIELD_CASES: list[tuple[str, Any, Any]] = [
     ("maxCps", 10, 30),
 ]
 
-#: The only fields that legitimately do NOT change the karaoke ASS: they are
-#: consumed at cue GENERATION (upstream of all three caption engines), so they were
-#: never karaoke drops. Proven executable by
-#: :meth:`TestEverySettableFieldReachesTheBurn.test_upstream_fields_are_really_consumed_upstream`.
+#: The only fields that legitimately do NOT change the karaoke ASS. They shape the
+#: SOFT-SUBTITLE route only (`caption_polish.polish_cues` -> its single production
+#: caller `subtitles.generate_polished`); the burn's cue list comes from
+#: `shortmaker._cues_for_clip`, which never calls it. `caption.build_ass` ignores
+#: them identically, so this is engine-SYMMETRIC and pre-existing, not a karaoke
+#: drop. Guarded by :meth:`…test_upstream_fields_are_not_on_either_burn_path`.
 UPSTREAM_ONLY_FIELDS = frozenset({"maxLines", "maxCps"})
 
 
@@ -399,14 +436,23 @@ class TestEverySettableFieldReachesTheBurn:
         else:
             assert doc_a != doc_b, f"{field} is SILENTLY DROPPED by the karaoke renderer"
 
-    def test_upstream_fields_are_really_consumed_upstream(self) -> None:
-        # Makes the UPSTREAM_ONLY_FIELDS exemption evidence rather than an assertion:
-        # caption_polish reads both off captionOverride at cue generation
-        # (caption_polish.py:104-109), i.e. before any engine sees a cue.
-        max_cps, max_lines = cp.resolve_caption_limits({"captionOverride": {"maxCps": 11, "maxLines": 1}})
-        assert (max_cps, max_lines) == (11.0, 1)
-        default_cps, default_lines = cp.resolve_caption_limits({})
-        assert (max_cps, max_lines) != (default_cps, default_lines)
+    def test_upstream_fields_are_not_on_either_burn_path(self) -> None:
+        # The exemption's REAL justification is SYMMETRY: neither libass burn path
+        # consumes these, so karaoke is not dropping anything the normal path keeps.
+        #
+        # (An earlier version asserted `resolve_caption_limits` reads them and called
+        # that proof they were "consumed upstream of all three engines". REFUTED:
+        # `polish_cues` appears nowhere in shortmaker.py — its only production caller
+        # is `subtitles.generate_polished` via handlers/media_ops.py:53, the
+        # soft-subtitle route. Reading that function proved nothing about the burn.)
+        for field, value in (("maxCps", 11), ("maxLines", 1)):
+            assert caption.build_ass([KARAOKE_CUE], override={field: value}) == caption.build_ass([KARAOKE_CUE]), (
+                f"build_ass now honours {field}, so karaoke dropping it IS an asymmetry"
+            )
+
+        # They are live on the soft-subtitle route that does own them.
+        assert cp.resolve_caption_limits({"captionOverride": {"maxCps": 11, "maxLines": 1}}) == (11.0, 1)
+        assert cp.resolve_caption_limits({}) != (11.0, 1)
 
     @pytest.mark.parametrize("malformed", [[1, 2], "an-override", 7, 0.5, True])
     def test_a_non_mapping_override_degrades_instead_of_raising(self, malformed: Any) -> None:

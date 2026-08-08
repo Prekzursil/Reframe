@@ -20,7 +20,7 @@ import { CaptionBox } from '../../components/CaptionBox';
 import { activeLine, wordColor } from '../../components/CaptionOverlay';
 import { prefersReducedMotion } from '../../components/UsageBar';
 import { isNoCaption } from '../../lib/captionTemplates';
-import { isKaraokeStyle, karaokeActiveColor } from '../../lib/captionKaraokePreset';
+import { isKaraokeStyle, karaokeActiveColorFor } from '../../lib/captionKaraokePreset';
 import {
   captionSampleStyle,
   previewSizeScale,
@@ -73,7 +73,9 @@ export function CaptionStage(): React.ReactElement {
                       color: wordColor(
                         w,
                         visual,
-                        karaoke ? karaokeActiveColor(w.index) : undefined,
+                        karaoke
+                          ? karaokeActiveColorFor(w.index, design.override?.activeColor)
+                          : undefined,
                       ),
                       backgroundColor: w.active ? visual.activeBackground : 'transparent',
                     }}
