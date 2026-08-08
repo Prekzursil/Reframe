@@ -620,10 +620,13 @@ def _engine(**kw):
         "models_present": lambda _s: True,
         "replace_fn": lambda _a, _b: None,
         "remove_fn": lambda _p: None,
-        # The decision-sidecar write is a REAL file write by default; stub it or
-        # every engine test litters the sidecar tree with `out.mp4.reframe.json`
-        # (caught by `no-runtime-junk` — it was committed once before this line).
+        # BOTH file-writing seams default to REAL writes, so any test that does
+        # not stub them litters the sidecar tree with `out.mp4.reframe.json` /
+        # `out.multispeaker.concat.mp4.txt` (caught by `no-runtime-junk` — each
+        # was committed once before its line here). Tests that need to observe a
+        # write pass their own recorder via **kw, which overrides these.
         "write_text_fn": lambda _p, _t: None,
+        "write_concat_fn": lambda _lp, _sp: None,
     }
     defaults.update(kw)
     return ms.MultiSpeakerReframeEngine({}, **defaults)
