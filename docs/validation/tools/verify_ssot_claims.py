@@ -252,7 +252,7 @@ for var, truth, doc_claim in PALETTE:
         f"C8:{var}",
         True,
         tok_ok and doc_wrong,
-        f"tokens.css has {truth}={tok_ok}; DESIGN-DIRECTION.md still has {doc_claim}={doc_wrong}",
+        f"tokens.css has {truth}={tok_ok}; docs/build/DESIGN-DIRECTION.md still has {doc_claim}={doc_wrong}",
     )
 
 # ---------------------------------------------------- C9 keystore / consent gate

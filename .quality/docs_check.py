@@ -267,6 +267,54 @@ def subdir_docs_by_basename(files: list[str]) -> dict[str, str]:
     return {name: paths[0] for name, paths in seen.items() if len(paths) == 1}
 
 
+def count_ambiguous_citations(files: list[str], ambiguous: dict[str, list[str]]) -> int:
+    """Bare citations r5 cannot judge, because the basename matches several docs.
+
+    REPORTED, never enforced. r5 skips these deliberately: with 7 tracked `DESIGN.md`
+    files it cannot name the correct fix, and a rule whose message has to guess is worse
+    than silence. But silence hid the residual entirely -- a reader following
+    `see PLAN.md` has six candidates and no way to choose.
+
+    Emitting the count keeps the number generated rather than hand-written (the same
+    reasoning as `waivers-applied`), so tightening this later starts from a measurement
+    instead of an estimate. A sibling reference from inside a candidate's own directory
+    is unambiguous in context and is not counted.
+    """
+    n = 0
+    for rel in files:
+        if Path(rel).suffix not in CITING_SUFFIXES:
+            continue
+        lines = read_lines(rel)
+        if lines is None:
+            continue
+        here = Path(rel).parent.as_posix()
+        for line in lines:
+            if WAIVER_RE.search(line):
+                continue
+            for m in BARE_DOC_RE.finditer(line):
+                cands = ambiguous.get(m.group(1))
+                if not cands:
+                    continue
+                if any(Path(c).parent.as_posix() == here for c in cands):
+                    continue
+                n += 1
+    return n
+
+
+def ambiguous_docs_by_basename(files: list[str]) -> dict[str, list[str]]:
+    """Basenames that match MORE THAN ONE subdirectory doc (r5's blind spot)."""
+    root_names = {f for f in files if "/" not in f}
+    seen: dict[str, list[str]] = {}
+    for rel in files:
+        if not rel.endswith(".md") or "/" not in rel or not is_authority_doc(rel):
+            continue
+        name = Path(rel).name
+        if name in root_names:
+            continue
+        seen.setdefault(name, []).append(rel)
+    return {name: paths for name, paths in seen.items() if len(paths) > 1}
+
+
 def check_r5(files: list[str], subdir_docs: dict[str, str]) -> list[str]:
     """Flag `see FOO.md` when FOO.md actually lives at `some/dir/FOO.md`."""
     bad = []
@@ -353,9 +401,10 @@ def main() -> int:
     # direction, because `git grep -c ssot-allow:` also counts the regex literal and
     # the docstring that explains the idiom — use-vs-mention. A generated number
     # cannot drift from the thing it counts.
+    ambiguous = count_ambiguous_citations(files, ambiguous_docs_by_basename(files))
     print(
         f"docscheck: authority-docs={len(docs)} citing-files-scanned={scanned} "
-        f"waivers-applied={waivers} "
+        f"waivers-applied={waivers} ambiguous-bare={ambiguous} "
         f"r1={counts['r1']} r2={counts['r2']} r3={counts['r3']} r4={counts['r4']} "
         f"r5={counts['r5']}"
     )

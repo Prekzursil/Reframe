@@ -67,7 +67,7 @@ repos:
   - repo: local
     hooks:
       - id: docs-check
-        name: docs-check (SSOT anti-drift R1-R4)
+        name: docs-check (SSOT anti-drift R1-R5)
         entry: python .quality/docs_check.py
         language: system
         pass_filenames: false

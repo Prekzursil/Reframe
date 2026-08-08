@@ -1,5 +1,6 @@
 """The applyEngine: walk an EditPlan over a project COPY, recording an inverse
-(DESIGN §5, GAP-1, PLAN.md §WU-apply — build FIRST, "unretrofittable").
+(docs/plans/_archive/prompt-driven-editing/DESIGN.md §5, GAP-1, and that plan's
+PLAN.md §WU-apply — build FIRST, "unretrofittable").
 
 This is the reversibility layer the in-place handlers lack. Today every handler
 mutates ``project.data`` in place and ``project.save()``s with **no undo**
