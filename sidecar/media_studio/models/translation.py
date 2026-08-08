@@ -225,6 +225,18 @@ _MT_CONTEXT = (
 #: A bound is required: a transcript is unbounded, and an unbounded prompt would
 #: blow the local server's context window.
 SENTENCE_GROUP_MAX_CHARS: int = 400
+
+# A silence longer than this between two cues ends the sentence group, even when the
+# first cue carries no terminal punctuation. ASR output is frequently unpunctuated, so
+# `ends_sentence` alone cannot see a boundary that a listener hears plainly.
+#
+# The value must clear TWO thresholds from opposite directions:
+#   * ABOVE `caption_polish.enforce_min_gap`, which deliberately leaves a ~2-frame hole
+#     (~0.067 s at 30 fps) between consecutive cues of ONE sentence. Anything at or below
+#     that would split every sentence in the file.
+#   * BELOW a real conversational pause. 1.5 s is comfortably longer than the breath
+#     between clauses and shorter than a topic change.
+SENTENCE_GROUP_MAX_GAP_SEC: float = 1.5
 #: Max characters of neighbouring source text passed as context, per side.
 CONTEXT_MAX_CHARS: int = 300
 
@@ -311,6 +323,7 @@ def group_cues_for_translation(
     cues: Sequence[Cue],
     *,
     max_chars: int = SENTENCE_GROUP_MAX_CHARS,
+    max_gap_sec: float = SENTENCE_GROUP_MAX_GAP_SEC,
 ) -> list[list[Cue]]:
     """Group consecutive cues into SENTENCE-level translation units (pure).
 
@@ -323,9 +336,21 @@ def group_cues_for_translation(
     cannot be translated correctly in isolation.
 
     A group closes when: the cue ends a sentence (:func:`caption_polish.ends_sentence`),
-    OR adding the next cue would pass ``max_chars``, OR the cues run out. A BLANK cue
+    OR adding the next cue would pass ``max_chars``, OR the SPEAKER changes, OR the
+    silence before the next cue exceeds ``max_gap_sec``, OR the cues run out. A BLANK cue
     is never merged — it becomes its own group and passes through untranslated, so a
     gap in the transcript can never glue two unrelated sentences together.
+
+    The speaker and pause boundaries exist because ASR output is frequently UNPUNCTUATED,
+    so ``ends_sentence`` alone cannot see a boundary a listener hears plainly. Two
+    speakers' fragments are never one sentence regardless of punctuation, and merging
+    them would hand the model a self-contradicting source — the same "bad translations"
+    class this grouping was built to fix, reintroduced from a different direction.
+
+    A speaker change is only recognised when BOTH cues carry a speaker and the labels
+    differ. A missing label is UNKNOWN, not "a different speaker": diarization is
+    optional here, and letting an absent field manufacture a boundary would silently
+    disable sentence grouping for every undiarized transcript.
     """
     ends = _polish().ends_sentence
     groups: list[list[Cue]] = []
@@ -339,12 +364,29 @@ def group_cues_for_translation(
             current = []
             current_len = 0
 
+    def _speaker(cue: Cue) -> str | None:
+        raw = cue.get("speaker")
+        return str(raw) if raw else None
+
+    def _breaks_continuity(prev: Cue, cue: Cue) -> bool:
+        """Does the boundary between two adjacent cues end the sentence group?"""
+        prev_speaker, speaker = _speaker(prev), _speaker(cue)
+        if prev_speaker is not None and speaker is not None and prev_speaker != speaker:
+            return True
+        try:
+            gap = float(cue.get("start", 0.0)) - float(prev.get("end", 0.0))
+        except (TypeError, ValueError):
+            return False  # unparseable timings are not evidence of a pause
+        return gap > max_gap_sec
+
     for cue in cues:
         text = cue_text(cue)
         if _is_blank(text):
             close()
             groups.append([cue])
             continue
+        if current and _breaks_continuity(current[-1], cue):
+            close()
         if current and current_len + 1 + len(text) > max_chars:
             close()
         current_len += len(text) + (1 if current else 0)

@@ -25,6 +25,7 @@ from media_studio.models.translation import (
     DEFAULT_TIER,
     ROUTING_TABLE,
     SENTENCE_GROUP_MAX_CHARS,
+    SENTENCE_GROUP_MAX_GAP_SEC,
     TIER1_ASSET_NAME,
     TIER1_GGUF_NAME,
     TIER2_ASSET_NAME,
@@ -408,6 +409,62 @@ class TestGroupCuesForTranslation:
             {"index": 3, "start": 2.0, "end": 3.0, "text": "after"},
         ]
         assert [[c["index"] for c in g] for g in group_cues_for_translation(cues)] == [[1], [2], [3]]
+
+    def test_a_speaker_change_closes_the_group(self):
+        """Two speakers' fragments are never ONE sentence, punctuation or not."""
+        cues = [
+            {"index": 1, "start": 0.0, "end": 1.0, "text": "so I told him", "speaker": "SPEAKER_00"},
+            {"index": 2, "start": 1.0, "end": 2.0, "text": "and what did he say", "speaker": "SPEAKER_01"},
+        ]
+        assert [[c["index"] for c in g] for g in group_cues_for_translation(cues)] == [[1], [2]]
+
+    def test_absent_speaker_on_both_cues_is_not_a_change(self):
+        cues = [
+            {"index": 1, "start": 0.0, "end": 1.0, "text": "so I told"},
+            {"index": 2, "start": 1.0, "end": 2.0, "text": "him the truth"},
+        ]
+        assert [len(g) for g in group_cues_for_translation(cues)] == [2]
+
+    def test_a_long_pause_closes_the_group(self):
+        cues = [
+            {"index": 1, "start": 0.0, "end": 1.0, "text": "so I told him"},
+            {"index": 2, "start": 9.0, "end": 10.0, "text": "anyway where were we"},
+        ]
+        assert [[c["index"] for c in g] for g in group_cues_for_translation(cues)] == [[1], [2]]
+
+    def test_the_min_gap_between_cues_of_one_sentence_does_not_close_the_group(self):
+        # `caption_polish.enforce_min_gap` leaves a 2-frame (~0.067s at 30fps) hole
+        # between consecutive cues; that must NOT read as a pause.
+        cues = [
+            {"index": 1, "start": 0.0, "end": 0.933, "text": "so I told"},
+            {"index": 2, "start": 1.0, "end": 2.0, "text": "him the truth"},
+        ]
+        assert [len(g) for g in group_cues_for_translation(cues)] == [2]
+
+    def test_the_pause_threshold_is_configurable(self):
+        cues = [
+            {"index": 1, "start": 0.0, "end": 1.0, "text": "so I told him"},
+            {"index": 2, "start": 2.0, "end": 3.0, "text": "the whole truth"},
+        ]
+        assert [len(g) for g in group_cues_for_translation(cues, max_gap_sec=0.5)] == [1, 1]
+        assert [len(g) for g in group_cues_for_translation(cues, max_gap_sec=5.0)] == [2]
+        assert SENTENCE_GROUP_MAX_GAP_SEC > 0.1
+
+    def test_unparseable_timings_are_not_evidence_of_a_pause(self):
+        """A malformed timing must not invent a boundary, and must not raise.
+
+        Cues reach here from a persisted track that a user can hand-edit (SRT import,
+        the cue editor), so a non-numeric `start`/`end` is reachable input rather than
+        a theoretical one. Splitting on it would silently degrade translation quality
+        for the whole file; raising would fail the render outright. Neither is right --
+        an unreadable timing is simply no evidence, so grouping falls through to the
+        punctuation and max_chars rules.
+        """
+        cues = [
+            {"index": 1, "start": 0.0, "end": "not-a-number", "text": "so I told"},
+            {"index": 2, "start": 1.0, "end": 2.0, "text": "him the truth"},
+        ]
+        assert [len(g) for g in group_cues_for_translation(cues)] == [2]
 
     def test_max_chars_bounds_the_group(self):
         cues = [{"index": i, "start": float(i), "end": i + 1.0, "text": "abcd"} for i in range(1, 6)]
