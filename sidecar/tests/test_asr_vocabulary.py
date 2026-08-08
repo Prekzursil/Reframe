@@ -353,6 +353,40 @@ def test_apply_corrections_skips_a_span_whose_words_are_blank():
     assert [w["text"] for w in out["segments"][0]["words"]] == [" re", "   ", " frame"]
 
 
+# --------------------------------------------------------------------------- #
+# the settings surface — the key is discoverable and round-trips through the store
+# --------------------------------------------------------------------------- #
+def test_default_settings_declares_the_vocabulary_key_as_an_empty_list():
+    from media_studio.settings_store import DEFAULT_SETTINGS
+
+    assert DEFAULT_SETTINGS[V.VOCAB_SETTINGS_KEY] == []
+
+
+def test_the_term_list_round_trips_through_the_settings_store(tmp_path: Any):
+    from media_studio.settings_store import SettingsStore
+
+    path = tmp_path / "settings.json"
+    store = SettingsStore(config_path=path)
+    # A fresh install is backfilled with the empty list -> no vocabulary.
+    assert V.parse_terms(store.get()) == ()
+
+    merged = store.set({V.VOCAB_SETTINGS_KEY: ["Reframe", {"term": "C++", "soundsLike": ["see plus plus"]}]})
+    assert V.parse_terms(merged) == (V.VocabTerm("Reframe", ()), V.VocabTerm("C++", ("see plus plus",)))
+
+    # ...and survives a reload from disk (a NEW store over the same file).
+    reloaded = V.parse_terms(SettingsStore(config_path=path).get())
+    assert [t.term for t in reloaded] == ["Reframe", "C++"]
+
+
+def test_the_settings_surface_never_writes_an_executable_path():
+    # Guard against the vocabulary key drifting into the refused set: it is pure
+    # data, so settings.set must accept it (EXECUTABLE_SETTING_KEYS is the list
+    # of keys that reach a subprocess argv, and this must never join it).
+    from media_studio.settings_store import EXECUTABLE_SETTING_KEYS
+
+    assert V.VOCAB_SETTINGS_KEY not in EXECUTABLE_SETTING_KEYS
+
+
 def test_apply_corrections_does_not_merge_a_span_that_runs_into_a_longer_word():
     # "re frame-shift" is NOT the phrase "re frame": the span match is a
     # fullmatch, so a half-rewrite ("Reframe-shift" losing "-shift") is refused.
