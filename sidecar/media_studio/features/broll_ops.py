@@ -230,10 +230,10 @@ def make_image_embedder(
     """An ``embed_images`` seam over the SigLIP-2 image tower.
 
     Loads ONE representative frame per asset (a still is itself; a video is its
-    mid-frame — see ``flagship-auto-broll.md`` §11.3, which flags mean-pooling
-    several frames as the more robust but unmeasured alternative), stacks them
-    into a single batch so the tower is entered once, and returns plain float
-    lists the index can persist as JSON.
+    mid-frame — see docs/plans/v1.5/flagship-auto-broll.md §11.3, which flags
+    mean-pooling several frames as the more robust but unmeasured alternative),
+    stacks them into a single batch so the tower is entered once, and returns
+    plain float lists the index can persist as JSON.
 
     Both heavy defaults are injectable, which is what lets this batching and
     conversion logic be covered with a fake tower instead of a real checkpoint.
