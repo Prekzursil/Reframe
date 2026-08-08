@@ -1,0 +1,2 @@
+file 'C:\Users\Prekzursil\.claude\agent-worktrees\agent-2019551648\sidecar\out.multispeaker.seg0.mp4'
+file 'C:\Users\Prekzursil\.claude\agent-worktrees\agent-2019551648\sidecar\out.multispeaker.seg1.mp4'

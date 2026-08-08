@@ -9,6 +9,7 @@ synthetic, path-free fixtures — NO video, NO GPU, NO model import. This file I
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -494,6 +495,91 @@ def test_rpc_shot_plan_for_happy() -> None:
     assert out["aspect"] == "9:16"
     assert out["plan"] is not None
     assert len(out["plan"]["shots"]) == 2
+
+
+def test_shot_override_to_dict_omits_absent_fields() -> None:
+    assert ro.ShotOverride(index=2).to_dict() == {"index": 2}
+    assert ro.ShotOverride(index=1, speaker="b", layout="split", crop=(1.0, 2.0, 3.0, 4.0)).to_dict() == {
+        "index": 1,
+        "speaker": "b",
+        "layout": "split",
+        "crop": [1.0, 2.0, 3.0, 4.0],
+    }
+
+
+def test_speaker_candidate_crops_is_the_first_crop_each_speaker_held() -> None:
+    trace = re.ReframeTrace.from_dict(
+        {
+            "shotBoundaries": [],
+            "speakerPerFrame": ["a", "b", "a"],
+            "segments": [],
+            "crops": [[0, 0, 10, 10], [50, 0, 10, 10], [99, 0, 10, 10]],
+        }
+    )
+    shot = ro.plan_from_trace(
+        {
+            "shotBoundaries": [],
+            "speakerPerFrame": ["a", "b", "a"],
+            "segments": [],
+            "crops": [[0, 0, 10, 10], [50, 0, 10, 10], [99, 0, 10, 10]],
+        },
+        source_width=100,
+        source_height=100,
+        fps=25.0,
+    ).shots[0]
+    assert ro.speaker_candidate_crops(trace, shot) == {
+        "a": (0.0, 0.0, 10.0, 10.0),
+        "b": (50.0, 0.0, 10.0, 10.0),
+    }
+
+
+def test_resolved_crop_follows_a_speaker_flip_but_a_hand_moved_crop_wins() -> None:
+    base = ro.ShotDecision(0, 0, 3, "a", "single", (0.0, 0.0, 10.0, 10.0), ("a", "b"))
+    cands = {"a": (0.0, 0.0, 10.0, 10.0), "b": (50.0, 0.0, 10.0, 10.0)}
+    # untouched -> unchanged
+    assert ro.resolved_crop(base, base, cands) == (0.0, 0.0, 10.0, 10.0)
+    # speaker flip with no crop edit -> the crop MOVES to that speaker, otherwise
+    # "flip the speaker" would re-render the same wrong face.
+    flipped = replace(base, speaker="b")
+    assert ro.resolved_crop(base, flipped, cands) == (50.0, 0.0, 10.0, 10.0)
+    # a hand-moved crop is literal intent and wins over the candidate.
+    moved = replace(flipped, crop=(7.0, 0.0, 10.0, 10.0))
+    assert ro.resolved_crop(base, moved, cands) == (7.0, 0.0, 10.0, 10.0)
+    # a flip to a speaker with no recorded crop keeps the current rectangle.
+    assert ro.resolved_crop(base, replace(base, speaker="zz"), cands) == (0.0, 0.0, 10.0, 10.0)
+
+
+def test_effective_overrides_are_absolute_and_only_cover_changed_shots() -> None:
+    trace = re.ReframeTrace.from_dict(_TRACE)
+    base = _plan()
+    resolved = ro.apply_shot_overrides(base, [ro.ShotOverride(index=0, speaker="b")])
+    eff = ro.effective_overrides(base, resolved, trace)
+    assert [o.index for o in eff] == [0]
+    # Absolute, not a delta: every field is carried so a replay is idempotent.
+    assert eff[0].speaker == "b"
+    assert eff[0].layout == "single"
+    assert eff[0].crop == base.shots[0].crop  # 'b' shares the fixture crop
+    assert ro.effective_overrides(base, base, trace) == ()
+
+
+def test_with_overrides_merges_by_index_new_wins() -> None:
+    payload = _sidecar_payload()
+    once = ro.with_overrides(payload, [ro.ShotOverride(index=0, speaker="b")])
+    twice = ro.with_overrides(once, [ro.ShotOverride(index=0, speaker="c"), ro.ShotOverride(index=1, layout="single")])
+    assert {o["index"]: o for o in twice["overrides"]}[0]["speaker"] == "c"
+    assert len(twice["overrides"]) == 2
+    # The ORIGINAL trace is untouched, so the candidate speaker list survives every
+    # round and the user can keep flipping.
+    assert twice["trace"] == payload["trace"]
+
+
+def test_plan_from_sidecar_applies_persisted_overrides() -> None:
+    payload = ro.with_overrides(_sidecar_payload(), [ro.ShotOverride(index=0, speaker="b")])
+    plan = ro.plan_from_sidecar(payload)
+    assert plan.shots[0].speaker == "b"
+    assert plan.shots[0].speakers == ("a", "b")  # candidates preserved
+    with pytest.raises(ro.OverrideError, match="sidecar.overrides must be an array"):
+        ro.plan_from_sidecar({**payload, "overrides": "nope"})
 
 
 def test_rpc_shot_plan_for_is_loud_on_a_bad_clip_and_a_bad_sidecar() -> None:

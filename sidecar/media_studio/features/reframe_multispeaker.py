@@ -70,7 +70,7 @@ from . import aspect as _aspect
 from . import offline as _offline
 from . import reframe_claudeshorts as _cs
 from . import reframe_override as _override
-from .reframe_eval import LAYOUTS, ReframeTrace, Segment, crop_iou
+from .reframe_eval import LAYOUTS, HarnessError, ReframeTrace, Segment, crop_iou
 
 _log = get_logger("media_studio.features.reframe_multispeaker")
 
@@ -1329,11 +1329,68 @@ ReplaceFn = Callable[[str, str], None]
 RemoveFn = Callable[[str], None]
 WriteConcatFn = Callable[[str, Sequence[str]], None]
 WriteTextFn = Callable[[str, str], None]
+ReadTextFn = Callable[[str], str]
 
 
 def _write_text_file(path: str, text: str) -> None:
     """Default text writer (the injectable sidecar-write seam's implementation)."""
     Path(path).write_text(text, encoding="utf-8")
+
+
+def _read_text_file(path: str) -> str:
+    """Default text reader (the injectable sidecar-read seam's implementation)."""
+    return Path(path).read_text(encoding="utf-8")
+
+
+def _crop_center(crop: Box, width: int) -> float:
+    """The crop's horizontal centre as a 0..1 fraction of the source width."""
+    return (float(crop[0]) + float(crop[2]) / 2.0) / float(width)
+
+
+def regions_for_shot(
+    *,
+    layout: str,
+    crop: Box,
+    other_centers: Sequence[float],
+    aspect: str,
+    width: int,
+    height: int,
+) -> tuple[Box, ...]:
+    """The compositor regions for ONE shot of a persisted (corrected) plan.
+
+    The sibling of :func:`segment_regions`, but derived from the PERSISTED plan
+    instead of a fresh :class:`ShotAnalysis` — that is what lets a correction
+    re-render skip the ML analysis entirely (v1.5 O-2 prerequisite (b)).
+
+    * ``single`` — the literal decided rectangle, so a hand nudge/zoom lands
+      exactly where the user put it;
+    * ``split`` / ``composite`` — the cells must carry the CELL aspect or the
+      compositor distorts them, so they are rebuilt from horizontal centres
+      (:func:`_region_for_center`), the primary plus the shot's other candidate
+      speakers. Left -> top, mirroring :func:`segment_regions`' stable
+      assignment; a missing candidate re-uses the primary rather than inventing
+      a blind centre crop.
+    """
+    if layout not in LAYOUTS:
+        raise MultiSpeakerReframeError(f"unknown layout {layout!r}")
+    if layout == "single":
+        return (crop,)
+    out_w, out_h = _aspect.output_dimensions(aspect)
+    half = out_h // 2
+    primary = _crop_center(crop, width)
+    if layout == "split":
+        second = other_centers[0] if other_centers else primary
+        top, bottom = sorted((primary, second))
+        return (
+            _region_for_center(top, out_w, half, width, height),
+            _region_for_center(bottom, out_w, half, width, height),
+        )
+    guests = list(other_centers[:2]) or [primary]
+    guest_w = out_w // len(guests)
+    return (
+        _region_for_center(primary, out_w, half, width, height),
+        *(_region_for_center(cx, guest_w, half, width, height) for cx in guests),
+    )
 
 
 class MultiSpeakerReframeEngine:
@@ -1366,6 +1423,7 @@ class MultiSpeakerReframeEngine:
         remove_fn: RemoveFn = os.remove,
         write_concat_fn: WriteConcatFn = _write_concat_list,
         write_text_fn: WriteTextFn = _write_text_file,
+        read_text_fn: ReadTextFn = _read_text_file,
     ) -> None:
         self._settings = settings or {}
         self._allow_degrade = bool(allow_degrade)
@@ -1378,6 +1436,7 @@ class MultiSpeakerReframeEngine:
         self._remove = remove_fn
         self._write_concat = write_concat_fn
         self._write_text = write_text_fn
+        self._read_text = read_text_fn
 
     def reframe(
         self,
@@ -1473,6 +1532,102 @@ class MultiSpeakerReframeEngine:
         )
         return rendered
 
+    def rerender_with_overrides(
+        self,
+        in_path: str,
+        out_path: str,
+        overrides: Sequence[_override.ShotOverride],
+        on_progress: Callable[[float, str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> str:
+        """Re-render ``out_path`` with the user's per-shot corrections applied.
+
+        v1.5 O-2 prerequisite (b). Reads the decision sidecar this engine left
+        beside ``out_path`` on the previous run, replays the corrections onto that
+        plan, rebuilds each shot's compositor regions from the plan
+        (:func:`regions_for_shot`) and re-encodes the timeline — **without running
+        the ML analysis again**, which is the dominant cost of this engine.
+
+        Scope, stated precisely: the shots the user did NOT touch keep byte-identical
+        GEOMETRY, but the file is re-assembled, so they are re-encoded. The saving
+        this buys is the analysis pass (face detection + ASD + diarization), not the
+        encode. Nothing here re-runs the caption / zoom / brand stages that a
+        short-maker export layers on top — the caller re-runs those.
+
+        Loud, never silent: no persisted decisions, or an override set that changes
+        nothing, raises :class:`MultiSpeakerReframeError` rather than quietly
+        re-rendering something the user did not ask for.
+        """
+        payload = _override.load_decision_sidecar(out_path, read_text=self._read_text)
+        if payload is None:
+            raise MultiSpeakerReframeError(
+                f"no persisted reframe decisions for {out_path} — run the reframe once before correcting it"
+            )
+        try:
+            base = _override.plan_from_sidecar(payload)
+            trace = ReframeTrace.from_dict(payload["trace"])
+            effective = _override.effective_overrides(base, _override.apply_shot_overrides(base, overrides), trace)
+        except (_override.OverrideError, HarnessError) as exc:
+            raise MultiSpeakerReframeError(f"invalid reframe correction: {exc}") from exc
+        if not effective:
+            raise MultiSpeakerReframeError("no shot changed — nothing to re-render")
+        resolved = _override.apply_shot_overrides(base, effective)
+        aspect = str(payload.get("aspect") or DEFAULT_ASPECT)
+        out_w, out_h = _aspect.output_dimensions(aspect)
+        plan = self._plan_from_shot_plan(resolved, trace, aspect)
+        total_frames = resolved.shots[-1].end_frame
+        rendered = self._render_plan(
+            in_path,
+            out_path,
+            plan,
+            out_w=out_w,
+            out_h=out_h,
+            fps=resolved.fps,
+            total_sec=total_frames / resolved.fps,
+            on_progress=on_progress,
+            should_cancel=should_cancel,
+        )
+        # Persist the ABSOLUTE corrections so the panel re-opens on exactly what
+        # was rendered, with the untouched trace keeping every candidate speaker.
+        self._persist_sidecar(rendered, _override.with_overrides(payload, effective))
+        return rendered
+
+    @staticmethod
+    def _plan_from_shot_plan(
+        resolved: _override.ShotPlan,
+        trace: ReframeTrace,
+        aspect: str,
+    ) -> tuple[SegmentRegions, ...]:
+        """One :class:`SegmentRegions` per shot of a corrected plan."""
+        return tuple(
+            SegmentRegions(
+                start_frame=shot.start_frame,
+                end_frame=shot.end_frame,
+                layout=shot.layout,
+                regions=regions_for_shot(
+                    layout=shot.layout,
+                    crop=shot.crop,
+                    other_centers=tuple(
+                        _crop_center(crop, resolved.source_width)
+                        for sid, crop in _override.speaker_candidate_crops(trace, shot).items()
+                        if sid != shot.speaker
+                    ),
+                    aspect=aspect,
+                    width=resolved.source_width,
+                    height=resolved.source_height,
+                ),
+            )
+            for shot in resolved.shots
+        )
+
+    def _persist_sidecar(self, clip: str, payload: Mapping[str, Any]) -> None:
+        """Write ``payload`` to ``<clip>.reframe.json`` (a failure is logged, not fatal)."""
+        path = _override.sidecar_path(clip)
+        try:
+            self._write_text(path, json.dumps(payload))
+        except OSError as exc:
+            _log.warning("could not write the reframe decision sidecar %s: %s", path, exc)
+
     def _write_decision_sidecar(
         self,
         clip: str,
@@ -1491,20 +1646,18 @@ class MultiSpeakerReframeEngine:
         would be worse; the only consequence is that ``reframe.shotPlanFor``
         honestly reports "no plan" for this clip.
         """
-        payload = _override.build_decision_sidecar(
-            engine=ENGINE_NAME,
-            aspect=aspect,
-            source_path=source_path,
-            source_width=analysis.width,
-            source_height=analysis.height,
-            fps=float(analysis.fps),
-            trace=trace,
+        self._persist_sidecar(
+            clip,
+            _override.build_decision_sidecar(
+                engine=ENGINE_NAME,
+                aspect=aspect,
+                source_path=source_path,
+                source_width=analysis.width,
+                source_height=analysis.height,
+                fps=float(analysis.fps),
+                trace=trace,
+            ),
         )
-        path = _override.sidecar_path(clip)
-        try:
-            self._write_text(path, json.dumps(payload))
-        except OSError as exc:
-            _log.warning("could not write the reframe decision sidecar %s: %s", path, exc)
 
     def _render_plan(
         self,

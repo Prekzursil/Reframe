@@ -180,6 +180,17 @@ class ShotOverride:
     layout: str | None = None
     crop: Crop | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """The camelCase wire object — absent fields are OMITTED, not nulled."""
+        out: dict[str, Any] = {"index": self.index}
+        if self.speaker is not None:
+            out["speaker"] = self.speaker
+        if self.layout is not None:
+            out["layout"] = self.layout
+        if self.crop is not None:
+            out["crop"] = list(self.crop)
+        return out
+
     @classmethod
     def from_dict(cls, raw: Any) -> ShotOverride:
         """Validate + parse one override wire object (loud on a bad shape)."""
@@ -416,13 +427,86 @@ def load_decision_sidecar(clip: str, *, read_text: Callable[[str], str] = _read_
     return dict(payload)
 
 
+def sidecar_overrides(payload: Mapping[str, Any]) -> tuple[ShotOverride, ...]:
+    """The corrections already persisted into ``payload`` (empty when none)."""
+    return tuple(ShotOverride.from_dict(o) for o in _seq(payload.get("overrides", []), "sidecar.overrides"))
+
+
 def plan_from_sidecar(payload: Mapping[str, Any]) -> ShotPlan:
-    """Derive the editable :class:`ShotPlan` from a loaded sidecar payload."""
-    return plan_from_trace(
+    """Derive the editable :class:`ShotPlan` from a loaded sidecar payload.
+
+    Corrections from earlier rounds are REPLAYED onto the trace-derived plan, so
+    the panel opens on what was last rendered — while the untouched trace keeps
+    every candidate speaker, so the user can keep flipping.
+    """
+    base = plan_from_trace(
         payload.get("trace", {}),
         source_width=_as_int(payload.get("sourceWidth"), "sidecar.sourceWidth"),
         source_height=_as_int(payload.get("sourceHeight"), "sidecar.sourceHeight"),
         fps=_as_float(payload.get("fps"), "sidecar.fps"),
+    )
+    return apply_shot_overrides(base, sidecar_overrides(payload))
+
+
+def with_overrides(payload: Mapping[str, Any], overrides: Sequence[ShotOverride]) -> dict[str, Any]:
+    """``payload`` with ``overrides`` persisted, merged by shot index (new wins).
+
+    Every override is ABSOLUTE (it carries the whole decision, never a delta), so
+    replaying the merged set is idempotent and a later round can start from it.
+    """
+    merged = {o.index: o.to_dict() for o in sidecar_overrides(payload)}
+    merged.update({o.index: o.to_dict() for o in overrides})
+    return {**payload, "overrides": [merged[index] for index in sorted(merged)]}
+
+
+def speaker_candidate_crops(trace: ReframeTrace, shot: ShotDecision) -> dict[str, Crop]:
+    """The crop the detector used for each candidate speaker within ``shot``.
+
+    First-seen wins, matching :func:`_distinct`'s candidate ordering. This is what
+    lets a speaker FLIP actually move the crop: the panel records only the chosen
+    speaker id, and this recovers the rectangle the detector had for them.
+    """
+    crops: dict[str, Crop] = {}
+    for frame in range(shot.start_frame, shot.end_frame):
+        crops.setdefault(trace.speaker_per_frame[frame], trace.crops[frame])
+    return crops
+
+
+def resolved_crop(base: ShotDecision, resolved: ShotDecision, candidates: Mapping[str, Crop]) -> Crop:
+    """The crop a re-render must use for ``resolved``.
+
+    A hand-moved / zoomed rectangle is literal user intent and always wins. A pure
+    speaker FLIP carries no crop edit, so the crop follows the newly chosen
+    speaker — otherwise "flip the speaker" would re-render the same wrong face.
+    A speaker with no recorded crop keeps the current rectangle.
+    """
+    if resolved.crop != base.crop:
+        return resolved.crop
+    if resolved.speaker != base.speaker:
+        return candidates.get(resolved.speaker, resolved.crop)
+    return resolved.crop
+
+
+def effective_overrides(
+    base: ShotPlan,
+    resolved: ShotPlan,
+    trace: ReframeTrace,
+) -> tuple[ShotOverride, ...]:
+    """One ABSOLUTE override per changed shot, with the crop fully resolved.
+
+    The output is what a re-render renders AND what the sidecar persists, so the
+    plan the panel re-opens on always matches the pixels that were produced.
+    """
+    changed = set(affected_shot_indices(base, resolved))
+    return tuple(
+        ShotOverride(
+            index=after.index,
+            speaker=after.speaker,
+            layout=after.layout,
+            crop=resolved_crop(before, after, speaker_candidate_crops(trace, before)),
+        )
+        for before, after in zip(base.shots, resolved.shots, strict=True)
+        if after.index in changed
     )
 
 
