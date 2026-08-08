@@ -778,6 +778,27 @@ class TestDecisionSidecar:
         ms._write_text_file(str(target), "{}")
         assert target.read_text(encoding="utf-8") == "{}"
 
+    def test_a_real_render_produces_a_plan_the_rpc_can_serve(self, tmp_path):
+        # BOTH-STATES / end-to-end: every other test in this file stubs the write
+        # AND the read seam, so together they could pass while the real file path
+        # was broken. This one uses the PRODUCTION writer and the PRODUCTION
+        # reader, over a real file, through the real `reframe.shotPlanFor`.
+        clip = str(tmp_path / "clip.mp4")
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_analysis()),
+            runner=lambda _argv, **_kw: 0,
+            write_text_fn=ms._write_text_file,  # the real writer
+        )
+        eng.reframe("in.mp4", clip)
+
+        methods: dict = {}
+        ro.register(register_fn=methods.__setitem__)  # the real reader (default seam)
+        out = methods["reframe.shotPlanFor"]({"clip": clip}, None)
+        assert out["engine"] == ms.ENGINE_NAME
+        assert out["plan"]["shots"], "a real render must yield an editable plan over RPC"
+        # And the honest empty state for a clip that was never reframed.
+        assert methods["reframe.shotPlanFor"]({"clip": str(tmp_path / "other.mp4")}, None)["plan"] is None
+
 
 _RERENDER_TRACE = {
     "shotBoundaries": [3],
