@@ -48,6 +48,7 @@ from media_studio.features import fillers as _fillers
 from media_studio.features import reframe as _reframe
 from media_studio.features import shorts as _shorts
 from media_studio.features import silencetrim as _silencetrim
+from media_studio.features import transitions as _transitions
 from media_studio.features.apply_engine import EngineTable, OpEngine
 from media_studio.features.project_copy import ProjectCopy
 from media_studio.models.edit_plan import EditOp
@@ -79,6 +80,7 @@ WIRED_KINDS: tuple[str, ...] = (
     "trim",
     "cut",
     "join",
+    "transition",
     "removeSilence",
     "caption",
     "removeFillers",
@@ -313,18 +315,20 @@ def make_cut_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None)
 
 
 def _require_clips(op: EditOp) -> list[str]:
-    """Return the join op's ``params['clips']`` — a non-empty list of path strings.
+    """Return the op's ``params['clips']`` — a non-empty list of path strings.
 
-    ``join``/concat appends one or more extra clips AFTER the COPY source, so it
-    needs at least one additional clip path. A missing / empty / non-string list
-    is a render error (per-op ``failed`` + rollback), never a silent no-op.
+    Shared by ``join`` (which appends the extra clips AFTER the COPY source) and
+    ``transition`` (which OVERLAPS them onto it): both need at least one
+    additional clip path. A missing / empty / non-string list is a render error
+    (per-op ``failed`` + rollback), never a silent no-op. The message names
+    ``op.kind`` so a transition user is not told their "join op" is malformed.
     """
     raw = op.params.get("clips")
     if not isinstance(raw, (list, tuple)) or not raw:
-        raise DirectorEngineError(f"join op {op.id!r} requires a non-empty params['clips'] list")
+        raise DirectorEngineError(f"{op.kind} op {op.id!r} requires a non-empty params['clips'] list")
     clips = [p for p in raw if isinstance(p, str) and p.strip()]
     if not clips:
-        raise DirectorEngineError(f"join op {op.id!r} params['clips'] has no usable path strings")
+        raise DirectorEngineError(f"{op.kind} op {op.id!r} params['clips'] has no usable path strings")
     return clips
 
 
@@ -390,6 +394,92 @@ def make_join_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None
         )
 
     return engine
+
+
+def _transition_geometry(in_path: str, settings: Mapping[str, Any] | None) -> tuple[int, int]:
+    """Probe the COPY source's ``(width, height)`` — the conform target for xfade.
+
+    ``xfade`` blends two frames pixel-for-pixel and therefore REFUSES inputs of
+    differing size, so every clip is letterboxed to the source's real geometry
+    (``transitions._conform_chain``). ``shorts.probe_dims`` returns ``(0, 0)`` on
+    ANY probe failure; scaling to ``0:0`` would emit a broken filtergraph, so that
+    degrades to a render error (per-op ``failed`` + rollback), never a bad render.
+    """
+    width, height = _shorts.probe_dims(in_path, dict(settings or {}))
+    if width <= 0 or height <= 0:
+        raise DirectorEngineError(
+            f"could not probe source dimensions for {in_path!r} (transition needs a conform target)"
+        )
+    return width, height
+
+
+def make_transition_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None) -> OpEngine:
+    """Engine for ``transition``: join ``params['clips']`` with an xfade at each boundary.
+
+    The counterpart to ``join``, and deliberately a SEPARATE kind rather than a
+    join flag, because the two produce different timelines: ``join`` concatenates
+    (``out = sum(parts)``), a transition OVERLAPS by ``durationMs``
+    (``out = sum(parts) - boundaries * durationMs``). The progress denominator
+    passed to the runner is that overlap-subtracted total, so the progress bar
+    tracks the real output rather than a duration that never gets rendered.
+
+    Params: ``clips`` (required), ``style`` (a :data:`transitions.STYLE_IDS` id,
+    default cross-dissolve), ``durationMs`` (clamped), ``fps`` (conform target).
+
+    Every :class:`transitions.TransitionError` — unknown style, a clip shorter
+    than the transition it must host, a mis-derived offset count — is re-raised as
+    a :class:`DirectorEngineError`, so an impossible transition degrades to a
+    per-op ``failed`` with auto-rollback exactly like every other wired kind.
+
+    COST, stated not hidden: xfade decodes and recomposites both sides of every
+    boundary, so this render can never be a stream copy. See
+    :func:`transition_reencode_note` for the user-facing disclosure.
+    """
+
+    def engine(op: EditOp, project_copy: ProjectCopy) -> EditOp:
+        restored = _maybe_restore(op, project_copy)
+        if restored is not None:
+            return restored
+        clips = _require_clips(op)
+        in_path = _source_path(project_copy)
+        inputs = [in_path, *clips]
+        opts = dict(settings or {})
+        durations = [_ffmpeg.ffprobe_duration(path, opts) for path in inputs]
+        width, height = _transition_geometry(in_path, settings)
+        out_path = _out_path(project_copy, op)
+        try:
+            duration_sec = _transitions.normalize_duration_ms(op.params.get("durationMs")) / 1000.0
+            argv = _transitions.build_transition_argv(
+                inputs,
+                str(out_path),
+                style=op.params.get("style"),
+                duration_ms=op.params.get("durationMs"),
+                durations_sec=durations,
+                width=width,
+                height=height,
+                fps=int(op.params.get("fps") or _transitions.DEFAULT_FPS),
+                settings=settings,
+            )
+        except _transitions.TransitionError as exc:
+            raise DirectorEngineError(f"transition op {op.id!r}: {exc}") from exc
+        total = _transitions.total_duration_sec(durations, duration_sec)
+        code = runner(argv, total_sec=total)
+        if code != 0:
+            raise DirectorEngineError(f"ffmpeg exit {code} rendering 'transition' op {op.id!r}")
+        previous = _repoint(project_copy, str(out_path))
+        return _inverse_op(op, previous)
+
+    return engine
+
+
+def transition_reencode_note(count: int) -> str:
+    """Re-export of :func:`transitions.reencode_note` (the render-cost disclosure).
+
+    Surfaced from THIS module so the cost travels with the engine table: a caller
+    that can dispatch a transition can always reach the sentence explaining why it
+    cannot be a stream copy.
+    """
+    return _transitions.reencode_note(count)
 
 
 def make_remove_silence_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None) -> OpEngine:
@@ -931,6 +1021,7 @@ def build_engines(*, runner: RunFn | None = None, settings: Mapping[str, Any] | 
         "trim": make_trim_engine(runner=run, settings=settings),
         "cut": make_cut_engine(runner=run, settings=settings),
         "join": make_join_engine(runner=run, settings=settings),
+        "transition": make_transition_engine(runner=run, settings=settings),
         "removeSilence": make_remove_silence_engine(runner=run, settings=settings),
         "caption": make_caption_engine(runner=run, settings=settings),
         "removeFillers": make_remove_fillers_engine(runner=run, settings=settings),
@@ -974,6 +1065,8 @@ __all__ = [
     "make_export_engine",
     "make_join_engine",
     "make_lower_third_engine",
+    "make_transition_engine",
+    "transition_reencode_note",
     "make_overlay_text_engine",
     "make_reframe_engine",
     "make_remove_fillers_engine",
