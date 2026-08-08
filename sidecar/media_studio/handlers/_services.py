@@ -248,6 +248,7 @@ class Services:
     subtitles_generate = media_ops.subtitles_generate
     subtitles_edit = media_ops.subtitles_edit
     subtitles_export = media_ops.subtitles_export
+    subtitles_import = media_ops.subtitles_import
     subtitles_translate = media_ops.subtitles_translate
     tracks_list = media_ops.tracks_list
     tracks_rename = media_ops.tracks_rename
