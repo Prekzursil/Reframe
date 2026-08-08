@@ -40,6 +40,9 @@ const Convert = lazy(() => import('../features/Convert'));
 const ShortMaker = lazy(() => import('../features/ShortMaker'));
 const TimelinePanel = lazy(() => import('../features/Timeline'));
 const Dub = lazy(() => import('../features/Dub'));
+// v1.5 audiomix-ui: the A/V mixer — music bed / VO under the speaker with
+// sidechain auto-ducking, plus EBU R128 loudness normalization of an export.
+const AudioMix = lazy(() => import('../features/AudioMix'));
 const Assets = lazy(() => import('../features/Assets'));
 // captions-export: EDL/CSV NLE timeline export of approved clips.
 const NleExport = lazy(() => import('../features/NleExport'));
@@ -61,6 +64,7 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'shortmaker', label: 'Short-maker' },
   { id: 'timeline', label: 'Timeline' },
   { id: 'dub', label: 'Dub' },
+  { id: 'audiomix', label: 'Audio mix' },
   { id: 'nle', label: 'Timeline export' },
   { id: 'recipes', label: 'Recipes' },
   { id: 'assets', label: 'Assets' },
@@ -80,7 +84,7 @@ export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
     tabIds: ['transcribe', 'search', 'subtitles', 'diarize', 'refine'],
   },
   { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline'] },
-  { id: 'audio', label: 'Audio', tabIds: ['dub'] },
+  { id: 'audio', label: 'Audio', tabIds: ['dub', 'audiomix'] },
   {
     id: 'deliver',
     label: 'Deliver',
@@ -285,6 +289,8 @@ export function Workspace({
         );
       case 'dub':
         return <Dub videoId={video.id} />;
+      case 'audiomix':
+        return <AudioMix videoId={video.id} />;
       case 'nle':
         return <NleExport videoId={video.id} />;
       case 'recipes':

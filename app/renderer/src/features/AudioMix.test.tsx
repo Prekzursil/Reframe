@@ -194,10 +194,17 @@ describe('<AudioMix />', () => {
     return container.querySelector(selector) as T;
   }
 
+  /**
+   * Set a controlled input through React's TRACKED native value setter. A bare
+   * `el.value = x` updates the node behind React's value tracker, which then
+   * sees no change and swallows the synthetic onChange — the field would look
+   * typed but the state would never move (the repo idiom: Diarize.test.tsx:299).
+   */
   async function type(selector: string, value: string): Promise<void> {
     const el = q<HTMLInputElement>(selector);
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
     await act(async () => {
-      el.value = value;
+      setter.call(el, value);
       el.dispatchEvent(new Event('input', { bubbles: true }));
     });
   }
@@ -321,7 +328,9 @@ describe('<AudioMix />', () => {
       );
     });
     await flush();
-    expect(q<HTMLElement>('[data-testid="audiomix-result"]').textContent).toContain('Normalized');
+    // the result card names WHICH job produced the file (the other branch of the
+    // mode label is asserted as 'Mixed' by the merge test above)
+    expect(q<HTMLElement>('[data-testid="audiomix-result"]').textContent).toContain('Normalised');
   });
 
   it('surfaces a rejected rpc as an error and returns to idle', async () => {

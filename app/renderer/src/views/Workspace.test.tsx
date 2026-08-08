@@ -65,6 +65,7 @@ vi.mock('../features/Convert', () => stubPanel('Convert'));
 vi.mock('../features/ShortMaker', () => stubPanel('ShortMaker'));
 vi.mock('../features/Timeline', () => stubPanel('Timeline'));
 vi.mock('../features/Dub', () => stubPanel('Dub'));
+vi.mock('../features/AudioMix', () => stubPanel('AudioMix'));
 vi.mock('../features/Assets', () => stubPanel('Assets'));
 vi.mock('../features/NleExport', () => stubPanel('NleExport'));
 vi.mock('../features/Diarize', () => stubPanel('Diarize'));
@@ -133,7 +134,13 @@ async function flush(): Promise<void> {
 }
 
 describe('Workspace', () => {
-  it('exposes the contract tabs in order (P2: +Timeline/Dub/Assets; captions-export: +Timeline export; system-advanced: +Diarize/Recipes)', () => {
+  // SCOPE NOTE (v1.5 audiomix-ui): this list is an ENUMERATION of the tab strip,
+  // so adding a tab legitimately changes it. 'Audio mix' joins the Audio cluster
+  // beside Dub — it is the ONLY renderer entry point to the sidecar's
+  // audiomix.merge / audiomix.normalize (sidechain auto-duck + EBU R128), which
+  // had zero callers. No assertion was weakened: the list is still exact and
+  // still order-sensitive, one element longer.
+  it('exposes the contract tabs in order (P2: +Timeline/Dub/Assets; captions-export: +Timeline export; system-advanced: +Diarize/Recipes; audiomix-ui: +Audio mix)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Search',
@@ -145,10 +152,31 @@ describe('Workspace', () => {
       'Short-maker',
       'Timeline',
       'Dub',
+      'Audio mix',
       'Timeline export',
       'Recipes',
       'Assets',
     ]);
+  });
+
+  it('mounts the audio mixer on the Audio mix tab (the only audiomix.* caller)', async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+
+    const tab = [...container.querySelectorAll('[role="tab"]')].find(
+      (t) => t.textContent === 'Audio mix',
+    ) as HTMLElement;
+    expect(tab).toBeDefined();
+    await act(async () => {
+      tab.click();
+    });
+    await flush();
+
+    const panel = container.querySelector('[data-panel="AudioMix"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.getAttribute('data-videoid')).toBe('v1');
   });
 
   it('opens the project via project.open and shows the title + tabs', async () => {

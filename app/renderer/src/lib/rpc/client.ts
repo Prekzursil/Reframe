@@ -388,6 +388,49 @@ export const client = {
       rpc('tracks.audio.strip', { ...p }),
   },
 
+  /**
+   * `audiomix.*` — the A/V mixer (`sidecar/media_studio/features/audiomix.py`).
+   * `merge` lays a music bed / VO UNDER the clip's own audio with a
+   * `sidechaincompress` auto-DUCK keyed off the speaker, then EBU R128
+   * `loudnorm`; `normalize` runs the loudnorm alone (no bed). BOTH are LONG jobs:
+   * the rpc resolves `{jobId}` only and the terminal `{path}` arrives on
+   * `job.done`. The video stays under stream copy — the output is a NEW file
+   * under `exports/audiomix`, the source is never rewritten.
+   *
+   * Prefer `platform` over a hard-coded `loudnessTarget`: the sidecar's
+   * `PLATFORM_LOUDNESS` map is the single authority for the number, and it fails
+   * LOUD (INVALID_PARAMS) on an unknown name rather than silently exporting at
+   * the wrong loudness. An explicit `loudnessTarget` still overrides it.
+   *
+   * Both wrappers are deliberately branch-free: params are forwarded
+   * unconditionally and `JSON.stringify` drops `undefined` keys on the wire, so
+   * an omitted tunable reaches the sidecar as absent (its default applies).
+   */
+  audiomix: {
+    /** `audiomix.merge {videoId|path, bgPath, ...}` -> {jobId} -> {path}. */
+    merge: (params: {
+      videoId?: string;
+      path?: string;
+      bgPath: string;
+      bgGainDb?: number;
+      duckThreshold?: number;
+      duckRatio?: number;
+      platform?: string;
+      loudnessTarget?: number;
+      loudnessTp?: number;
+      loudnessLra?: number;
+    }): Promise<JobHandle & { path?: string }> => rpc('audiomix.merge', { ...params }),
+    /** `audiomix.normalize {videoId|path, ...}` -> {jobId} -> {path}. */
+    normalize: (params: {
+      videoId?: string;
+      path?: string;
+      platform?: string;
+      loudnessTarget?: number;
+      loudnessTp?: number;
+      loudnessLra?: number;
+    }): Promise<JobHandle & { path?: string }> => rpc('audiomix.normalize', { ...params }),
+  },
+
   assets: {
     list: (): Promise<{ assets: AssetInfo[] }> => rpc('assets.list'),
     ensure: (names: string[]): Promise<JobHandle> => rpc('assets.ensure', { names }),
