@@ -35,9 +35,7 @@ def test_parse_terms_accepts_plain_strings():
 
 
 def test_parse_terms_accepts_dicts_with_sounds_like():
-    terms = V.parse_terms(
-        {V.VOCAB_SETTINGS_KEY: [{"term": "Reframe", "soundsLike": ["re frame", " reframed ", ""]}]}
-    )
+    terms = V.parse_terms({V.VOCAB_SETTINGS_KEY: [{"term": "Reframe", "soundsLike": ["re frame", " reframed ", ""]}]})
     assert len(terms) == 1
     assert terms[0].term == "Reframe"
     assert terms[0].sounds_like == ("re frame", "reframed")
@@ -61,7 +59,9 @@ def test_parse_terms_skips_junk_entries(junk: Any):
 
 
 def test_parse_terms_ignores_non_string_and_non_list_sounds_like():
-    terms = V.parse_terms({V.VOCAB_SETTINGS_KEY: [{"term": "A", "soundsLike": "nope"}, {"term": "B", "soundsLike": [1]}]})
+    terms = V.parse_terms(
+        {V.VOCAB_SETTINGS_KEY: [{"term": "A", "soundsLike": "nope"}, {"term": "B", "soundsLike": [1]}]}
+    )
     assert terms == (V.VocabTerm("A", ()), V.VocabTerm("B", ()))
 
 
@@ -175,20 +175,26 @@ def _seg(text: str, words: list[tuple[str, float, float]]) -> dict[str, Any]:
 
 
 def test_apply_corrections_without_terms_is_identity():
-    t = _transcript(_seg(" re frame is good", [(" re", 0.0, 0.5), (" frame", 0.5, 1.0), (" is", 1.0, 1.2), (" good", 1.2, 2.0)]))
+    t = _transcript(
+        _seg(" re frame is good", [(" re", 0.0, 0.5), (" frame", 0.5, 1.0), (" is", 1.0, 1.2), (" good", 1.2, 2.0)])
+    )
     assert V.apply_corrections(t, ()) is t
 
 
 def test_apply_corrections_fixes_a_multi_word_alias_in_segment_text():
     terms = V.parse_terms({V.VOCAB_SETTINGS_KEY: [{"term": "Reframe", "soundsLike": ["re frame"]}]})
-    t = _transcript(_seg(" re frame is good", [(" re", 0.0, 0.5), (" frame", 0.5, 1.0), (" is", 1.0, 1.2), (" good", 1.2, 2.0)]))
+    t = _transcript(
+        _seg(" re frame is good", [(" re", 0.0, 0.5), (" frame", 0.5, 1.0), (" is", 1.0, 1.2), (" good", 1.2, 2.0)])
+    )
     out = V.apply_corrections(t, terms)
     assert out["segments"][0]["text"] == " Reframe is good"
 
 
 def test_apply_corrections_merges_the_word_span_and_keeps_the_outer_timings():
     terms = V.parse_terms({V.VOCAB_SETTINGS_KEY: [{"term": "Reframe", "soundsLike": ["re frame"]}]})
-    t = _transcript(_seg(" re frame is good", [(" re", 0.0, 0.5), (" frame", 0.5, 1.0), (" is", 1.0, 1.2), (" good", 1.2, 2.0)]))
+    t = _transcript(
+        _seg(" re frame is good", [(" re", 0.0, 0.5), (" frame", 0.5, 1.0), (" is", 1.0, 1.2), (" good", 1.2, 2.0)])
+    )
     words = V.apply_corrections(t, terms)["segments"][0]["words"]
     assert [w["text"] for w in words] == [" Reframe", " is", " good"]
     assert words[0]["start"] == pytest.approx(0.0)
@@ -228,7 +234,12 @@ def test_apply_corrections_does_not_match_inside_a_longer_word():
 
 def test_apply_corrections_prefers_the_longest_alias():
     terms = V.parse_terms(
-        {V.VOCAB_SETTINGS_KEY: [{"term": "OpenAI Codex", "soundsLike": ["open ai codex"]}, {"term": "OpenAI", "soundsLike": ["open ai"]}]}
+        {
+            V.VOCAB_SETTINGS_KEY: [
+                {"term": "OpenAI Codex", "soundsLike": ["open ai codex"]},
+                {"term": "OpenAI", "soundsLike": ["open ai"]},
+            ]
+        }
     )
     t = _transcript(
         _seg(
@@ -243,7 +254,9 @@ def test_apply_corrections_prefers_the_longest_alias():
 
 def test_apply_corrections_handles_a_term_with_non_word_characters():
     terms = V.parse_terms({V.VOCAB_SETTINGS_KEY: [{"term": "C++", "soundsLike": ["see plus plus"]}]})
-    t = _transcript(_seg(" see plus plus code", [(" see", 0.0, 0.4), (" plus", 0.4, 0.8), (" plus", 0.8, 1.2), (" code", 1.2, 2.0)]))
+    t = _transcript(
+        _seg(" see plus plus code", [(" see", 0.0, 0.4), (" plus", 0.4, 0.8), (" plus", 0.8, 1.2), (" code", 1.2, 2.0)])
+    )
     out = V.apply_corrections(t, terms)
     assert out["segments"][0]["text"] == " C++ code"
     assert [w["text"] for w in out["segments"][0]["words"]] == [" C++", " code"]
