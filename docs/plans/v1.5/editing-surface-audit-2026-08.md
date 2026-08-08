@@ -94,7 +94,7 @@ Legend — **BUILT**: engine + RPC + a user-reachable UI. **PARTIAL**: says whic
 | 2 | **Cut** (delete span, ripple) | PARTIAL — engine BUILT, Director-only, **UI MISSING** | `director_op_engines.py:80`; `:269` *"head + tail concatenated"* |
 | 3 | **Split at playhead** | PARTIAL — **cues only**; video split MISSING | `timelineOps.ts:57-67` `splitCue` operates on `Cue`; no video-split op kind in `WIRED_KINDS` (`:78-92`) |
 | 4 | **Multi-clip timeline** | **MISSING** — explicitly deferred | `director_op_engines.py:105-120`; `reorder` -> *"the timeline clip-reorder engine (multi-clip permutation)"* (`:116`). `join` is **append-only** — extra clips go *"AFTER the COPY source"* (`:318`) |
-| 5 | **Transitions** | **MISSING** | zero `xfade` in `sidecar/media_studio` (grep, 0 hits) |
+| 5 | **Transitions** | ~~MISSING~~ -> **BUILT at a chain boundary** (engine + op kind + UI); arbitrary-timeline transitions still MISSING | was: zero `xfade` in `sidecar/media_studio` (grep, 0 hits). Now: `sidecar/media_studio/features/transitions.py` (xfade + acrossfade builders), `transition` in `director_op_engines.WIRED_KINDS`, picker at `app/renderer/src/panels/TransitionPicker.tsx`. See the §2 correction below |
 | 6 | **Speed ramp / slow-mo** | PARTIAL — **constant** factor BUILT, **ramp MISSING**, Director-only | `retime` wired `:87`; `build_retime_argv` `:665-689` = `setpts=(1/factor)*PTS` + `atempo` chain `:640-673`. One scalar `factor`; no keyframed curve |
 | 7 | **Crop / pan / zoom keyframes** | PARTIAL — **auto** punch-in BUILT, **user keyframes MISSING** | `zoom.py:5` *"pure ffmpeg `zoompan` expression"*, `:168-194` *"the auto punch-in zoom"*; `zoomPan` wired `:86`. Per-shot crop override exists (`reframe.applyOverrides`, `reframe_override.py:433`) but is reframe-scoped, not a general keyframe editor |
 | 8 | **Colour correction** | **MISSING** | zero `eq=`, `curves`, `colorbalance`, `colorchannelmixer`, `hue=` (grep, 0 hits) |
@@ -124,8 +124,10 @@ Legend — **BUILT**: engine + RPC + a user-reachable UI. **PARTIAL**: says whic
   proxy, project save/load, batch queue.
 - **PARTIAL: 12** — of which **6 are "engine exists, no UI"** (trim, cut, retime, zoomPan,
   titles, and split-for-video), all gated behind the AI Director.
-- **MISSING: 9** — transitions, colour, LUTs, freeze, reverse, masking, chroma key,
-  markers/chapters, multi-clip timeline.
+- **MISSING: ~~9~~ 8** — colour, LUTs, freeze, reverse, masking, chroma key,
+  markers/chapters, multi-clip timeline. (Transitions left this list: BUILT at a chain
+  boundary — engine, op kind and picker — see row 5 and the §2 correction. The
+  arbitrary-timeline case is folded into "multi-clip timeline", which is still missing.)
 
 The distribution is the story: Reframe's gap is **less about missing engines than about missing
 direct manipulation**. Six real, tested, working ffmpeg engines have no user-facing control.
@@ -165,9 +167,36 @@ The ceiling is **not** ffmpeg. ffmpeg can do every missing primitive in §1. The
 
 That model makes four things structurally impossible, not merely unimplemented:
 
-1. **Anything requiring two clips at the same instant** — transitions, video-over-video B-roll,
+1. **Anything requiring two clips at the same instant** — ~~transitions,~~ video-over-video B-roll,
    picture-in-picture, compositing. `xfade` needs an overlap; an append-only `join` (`:318`)
    cannot produce one.
+
+   > **CORRECTION (transitions lane, 2026-08).** The transitions half of this row was an
+   > OVERCLAIM and is REFUTED. It reasoned from the *timeline model* — true, `Project.clips`
+   > cannot express two clips at one instant — to the *render*, which does not need it. A
+   > boundary transition is one ffmpeg pass over N inputs: `xfade` creates the overlap INSIDE
+   > its own filtergraph from two separate `-i` inputs, exactly as the concat filter already
+   > takes N inputs at `director_op_engines.build_join_argv`. No sequence document is
+   > involved. Measured by building it: `sidecar/media_studio/features/transitions.py`
+   > (xfade + acrossfade, chained offsets), a `transition` op kind in `WIRED_KINDS`, and
+   > `app/renderer/src/panels/TransitionPicker.tsx`. It landed on the existing single-clip
+   > mutation chain with no model change — the same "cheap on today's substrate" shape as the
+   > §3 S1.3 colour/LUT ops, which is where this row should have put it.
+   >
+   > **What the row got RIGHT, and what is still MISSING.** What is now built is a transition
+   > at the boundaries of a linear CHAIN (`source -> clip -> clip`), because that is the only
+   > junction the mutation chain can name. Still genuinely blocked on the §3 stage-2 sequence
+   > model: a transition at an arbitrary point in a reorderable multi-clip timeline (there are
+   > no positions to attach it to), and B-roll / PiP / compositing (those need one clip to
+   > persist THROUGH another's duration, which is a different thing from overlapping at a
+   > junction, and the row is still correct about them).
+   >
+   > Cost, disclosed rather than buried: a transition can never be a stream copy, since xfade
+   > must decode and recomposite both sides of every boundary. That is not a regression on
+   > `join`, which already re-encoded through the concat filter (`build_join_argv`, `-c:v
+   > libx264`); and the genuine `-c copy` fast path in
+   > `sidecar/media_studio/features/reframe_multispeaker.py` (`build_concat_argv`) stitches
+   > per-segment crops of ONE clip inside the active-speaker pass and is untouched.
 2. **Arbitrary time reordering** — the deferred `reorder` op. Ripple/roll/slip/slide edits all
    need positions the model does not hold.
 3. **Non-destructive parameter tweaking.** Changing a title's colour today means re-running the
@@ -206,7 +235,8 @@ extending the mutation chain: *high* — the deferral comment at `:103-104` is t
 reaching the same conclusion independently.
 
 - Multi-clip timeline with reorder / ripple
-- Transitions
+- ~~Transitions~~ — REFUTED for the chain-boundary case (built; see the §2 correction). Still
+  needed for a transition at an arbitrary point in a reorderable timeline.
 - B-roll / PiP / multi-track video
 - Masking, and motion tracking bound to an effect (needs per-frame animated parameters)
 - N-track audio mixing with automation
@@ -281,9 +311,10 @@ one document:
 - **ffmpeg** for a fast flatten of the simple single-track case (reuse the concat-filter path,
   `:339-360`).
 
-Unlocks multi-clip reorder (retiring the deferred `reorder`), transitions (`xfade` becomes
-expressible), B-roll/PiP, and a real app-wide undo over document edits rather than file
-re-points. NLE export stops being synthesized and becomes a faithful serialization.
+Unlocks multi-clip reorder (retiring the deferred `reorder`), transitions ~~(`xfade` becomes
+expressible)~~ *at an arbitrary timeline position — `xfade` is already expressible at a chain
+boundary, see the §2 correction*, B-roll/PiP, and a real app-wide undo over document edits
+rather than file re-points. NLE export stops being synthesized and becomes a faithful serialization.
 
 ### Stage 3 — depth
 

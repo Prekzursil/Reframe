@@ -18,6 +18,7 @@ import {
   transitionBlocker,
   transitionOutputMs,
   transitionReencodeNote,
+  transitionStyleBlurb,
   transitionStyleLabel,
 } from './transitions';
 
@@ -66,6 +67,19 @@ describe('transitionStyleLabel', () => {
     // Defensive: a plan from an older/newer sidecar could carry a style this
     // build does not know. Render the id rather than "undefined".
     expect(transitionStyleLabel('starWipe' as TransitionStyleId)).toBe('starWipe');
+  });
+});
+
+describe('transitionStyleBlurb', () => {
+  it('resolves a known id to its blurb', () => {
+    expect(transitionStyleBlurb('dissolve')).toMatch(/blend through each other/);
+  });
+
+  it('is empty for an unknown style rather than undefined', () => {
+    // The picker renders this straight into a <p>; a plan from a newer sidecar
+    // could name a style this build has no copy for, and "undefined" must never
+    // reach the DOM. Lives here, not in the component, so the guard is testable.
+    expect(transitionStyleBlurb('starWipe' as TransitionStyleId)).toBe('');
   });
 });
 
@@ -157,7 +171,11 @@ describe('buildTransitionOp', () => {
     expect(op.status).toBe('planned');
     expect(op.statusReason).toBeNull();
     expect(op.reversible).toBe(true);
-    expect(op.params).toEqual({ clips: ['/b.mp4', '/c.mp4'], style: 'wipeLeft', durationMs: 1_200 });
+    expect(op.params).toEqual({
+      clips: ['/b.mp4', '/c.mp4'],
+      style: 'wipeLeft',
+      durationMs: 1_200,
+    });
   });
 
   it('defaults the style and duration', () => {
@@ -172,7 +190,12 @@ describe('buildTransitionOp', () => {
   });
 
   it('writes a deterministic, locally-derived rationale (no model text)', () => {
-    const op = buildTransitionOp({ id: 't1', clips: ['/b.mp4'], style: 'fadeBlack', durationMs: 800 });
+    const op = buildTransitionOp({
+      id: 't1',
+      clips: ['/b.mp4'],
+      style: 'fadeBlack',
+      durationMs: 800,
+    });
     expect(op.rationale).toBe('Fade through black · 0.8s');
   });
 
