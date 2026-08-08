@@ -69,6 +69,7 @@ vi.mock('../features/Assets', () => stubPanel('Assets'));
 vi.mock('../features/NleExport', () => stubPanel('NleExport'));
 vi.mock('../features/Diarize', () => stubPanel('Diarize'));
 vi.mock('../features/Refine', () => stubPanel('Refine'));
+vi.mock('../features/Stabilize', () => stubPanel('Stabilize'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
 
@@ -133,7 +134,12 @@ async function flush(): Promise<void> {
 }
 
 describe('Workspace', () => {
-  it('exposes the contract tabs in order (P2: +Timeline/Dub/Assets; captions-export: +Timeline export; system-advanced: +Diarize/Recipes)', () => {
+  // SCOPE CHANGE (v1.5 expose-engines lane): this list gains 'Stabilize'. The
+  // assertion is WIDENED by exactly one entry, never weakened — every previously
+  // pinned label and its position relative to the others is unchanged. The new
+  // tab is what makes the already-registered `stabilize.run` RPC reachable at
+  // all (it had zero references anywhere under app/ before this lane).
+  it('exposes the contract tabs in order (P2: +Timeline/Dub/Assets; captions-export: +Timeline export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Search',
@@ -144,11 +150,18 @@ describe('Workspace', () => {
       'Convert',
       'Short-maker',
       'Timeline',
+      'Stabilize',
       'Dub',
       'Timeline export',
       'Recipes',
       'Assets',
     ]);
+  });
+
+  it('puts Stabilize in the "Frame & Cut" cluster so it is reachable without the Advanced disclosure', () => {
+    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
+    expect(frame?.tabIds).toContain('stabilize');
+    expect(frame?.advanced).not.toBe(true);
   });
 
   it('opens the project via project.open and shows the title + tabs', async () => {
@@ -266,6 +279,7 @@ describe('Workspace', () => {
     ['convert', 'Convert'],
     ['shortmaker', 'ShortMaker'],
     ['timeline', 'Timeline'],
+    ['stabilize', 'Stabilize'],
     ['dub', 'Dub'],
     ['nle', 'NleExport'],
     ['recipes', 'Recipes'],
