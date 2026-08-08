@@ -264,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"FAILED:encoder-capability missing={','.join(missing)} in {resolved} — "
             "the pipeline passes these as literal -c:v/-c:a tokens, so every affected "
-            "export will die with \"Unknown encoder\". Bundle an ffmpeg built with them."
+            'export will die with "Unknown encoder". Bundle an ffmpeg built with them.'
         )
         return 1
     print(f"SUCCESS:encoder-capability {resolved} provides all of: {', '.join(REQUIRED_ENCODERS)}")

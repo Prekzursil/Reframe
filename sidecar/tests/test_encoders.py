@@ -212,9 +212,7 @@ def test_missing_encoders_names_libx264_on_the_shipped_lgpl_build(tmp_path: Path
     """THE SHIPPED DEFECT, reproduced as a unit assertion."""
     exe = tmp_path / f"ffmpeg{encoders_exe_suffix()}"
     exe.write_text("stub")
-    missing = encoders.missing_encoders(
-        settings={"ffmpegPath": str(exe)}, probe_runner=_runner(stdout=LGPL_ENCODERS)
-    )
+    missing = encoders.missing_encoders(settings={"ffmpegPath": str(exe)}, probe_runner=_runner(stdout=LGPL_ENCODERS))
     # EXACTLY libx264: the shipped LGPL build really does provide aac and
     # pcm_s16le, so a broader "missing" set would mean the parser is wrong
     # rather than the binary being incapable.
@@ -224,9 +222,7 @@ def test_missing_encoders_names_libx264_on_the_shipped_lgpl_build(tmp_path: Path
 def test_missing_encoders_is_empty_on_a_gpl_build(tmp_path: Path):
     exe = tmp_path / f"ffmpeg{encoders_exe_suffix()}"
     exe.write_text("stub")
-    missing = encoders.missing_encoders(
-        settings={"ffmpegPath": str(exe)}, probe_runner=_runner(stdout=GPL_ENCODERS)
-    )
+    missing = encoders.missing_encoders(settings={"ffmpegPath": str(exe)}, probe_runner=_runner(stdout=GPL_ENCODERS))
     assert missing == ()
 
 
@@ -300,9 +296,7 @@ def test_scan_source_encoders_reads_vcodec_and_acodec_dict_values(tmp_path: Path
 
 def test_scan_source_encoders_ignores_copy_and_dynamic_values(tmp_path: Path):
     """`copy` is a stream-copy directive, not an encoder; non-literals are skipped."""
-    (tmp_path / "m.py").write_text(
-        'a = ["-c:v", "copy"]\nb = ["-c:a", chosen]\nc = {"vcodec": other}\n'
-    )
+    (tmp_path / "m.py").write_text('a = ["-c:v", "copy"]\nb = ["-c:a", chosen]\nc = {"vcodec": other}\n')
     assert encoders.scan_source_encoders(tmp_path) == {}
 
 
