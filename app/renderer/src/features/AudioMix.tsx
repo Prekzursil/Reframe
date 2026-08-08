@@ -26,6 +26,19 @@
 // exporting at the wrong loudness. The numbers mirrored below are for DISPLAY
 // only and are gated against the real `.py` by AudioMix.conformance.test.ts.
 //
+// KNOWN LIMITS (stated here so nobody has to rediscover them):
+//   * `merge` REQUIRES the clip to carry an audio stream — the engine's graph
+//     opens with `[0:a]asplit` (audiomix.py:148), so a silent source fails in
+//     ffmpeg. The panel does NOT pre-flight that; the failure surfaces as the
+//     job's error text. Closing it would need a probe RPC that does not exist.
+//   * The bed is entered as a TYPED path (no native picker), matching the
+//     sibling Dub voice-sample field. The sidecar validates existence and fails
+//     loud with `background audio not found: <path>` (audiomix.py:340-341).
+//   * The produced file is NOT registered in the Library — `merge`/`normalize`
+//     return `{path}` and make no library call (audiomix.py:355, :377), the same
+//     as the stabilize/silence-trim derivatives. It is reachable on disk via the
+//     `audiomix` row PathsPanel already lists.
+//
 // Consumes the FROZEN window.api bridge through the shared `./_api` helpers, the
 // same pattern as the sibling long-job panels (Dub / Convert / Tracks).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
