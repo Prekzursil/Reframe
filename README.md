@@ -27,7 +27,7 @@ and pick one:
 
 | Asset | What it is |
 |-------|------------|
-| `media-studio-<version>-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, get a Start-menu / desktop shortcut ("Reframe - Media Studio"). Auto-updates in place from here on. |
+| `media-studio-<version>-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, then choose what to set up (see below). Gets a Start-menu / desktop shortcut ("Reframe - Media Studio"). Auto-updates in place from here on. |
 | `media-studio-<version>-win-x64.zip` | **Portable** — unzip anywhere and run `Reframe - Media Studio.exe`. No install, no admin. |
 
 <!-- Deliberately version-agnostic. `electron-builder.yml` derives the artifact name from
@@ -38,9 +38,24 @@ and pick one:
      could not download. Take whatever the Releases page actually offers. -->
 
 
-**First run does the rest automatically.** The download is **slim** (the app + a bundled
-CPython + ffmpeg + the render engine). On first launch the app downloads the heavier pieces
-(ML wheels and the local models you choose) into your user data dir
+**The installer asks once, then first run does the rest automatically.** After the
+directory page the installer shows a **component page**:
+
+| Choice | What gets set up now |
+|--------|----------------------|
+| **Minimum** | The app plus subject tracking, so reframing works right away. |
+| **Default** (recommended) | Adds offline transcription — captions, subtitles and search work out of the box. |
+| **Full** | Everything up front, including the local AI Director model. |
+| **Custom** | Tick the feature packs you want (*Transcription & subtitles*, *AI Director*). |
+
+Whatever you pick is what the app provisions on its first launch — **unattended**, with no
+second prompt. Anything you skip still downloads the first time you use it, and you can
+change the selection later in **Settings**. Upgrading never re-asks and never re-downloads:
+an existing install keeps the profile, models and settings it already has.
+
+The download itself is **slim** (the app + a bundled CPython + ffmpeg + the render engine) —
+**no models are bundled in the installer**. On first launch the app downloads the heavier
+pieces (ML wheels and the local models your choice implies) into your user data dir
 (`%APPDATA%\media-studio`) — resumable and checksummed. Budget a **few GB** of one-time
 download depending on which models you enable. **After that it works fully offline.**
 
