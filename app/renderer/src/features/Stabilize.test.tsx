@@ -99,7 +99,9 @@ describe('stabilizeOutcome', () => {
   });
 
   it('ignores a shapeless notice rather than rendering junk', () => {
-    expect(stabilizeOutcome({ path: '/p.mp4', stabilized: false, notice: 'nope' })?.notice).toBeNull();
+    expect(
+      stabilizeOutcome({ path: '/p.mp4', stabilized: false, notice: 'nope' })?.notice,
+    ).toBeNull();
   });
 });
 

@@ -794,7 +794,11 @@ export const client = {
     run: (
       target: string | { videoId?: string; path?: string },
     ): Promise<
-      JobHandle & { path?: string; stabilized?: boolean; notice?: { type: string; message: string } }
+      JobHandle & {
+        path?: string;
+        stabilized?: boolean;
+        notice?: { type: string; message: string };
+      }
     > => rpc('stabilize.run', typeof target === 'string' ? { videoId: target } : { ...target }),
   },
 } as const;
