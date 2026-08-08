@@ -145,7 +145,7 @@ def _asset_id(asset: Mapping[str, Any], index: int) -> str:
 def rank_assets(
     query_vec: Vector,
     asset_vecs: Sequence[Vector],
-    assets: Sequence[Mapping[str, Any]],
+    assets: Sequence[dict[str, Any]],
     top_k: int,
 ) -> list[AssetHit]:
     """Rank ``assets`` by cosine of their image vector against ``query_vec``.
@@ -186,7 +186,7 @@ def _reason(text: str, score: float) -> str:
 def suggest(
     segments: Sequence[Mapping[str, Any]],
     segment_vecs: Sequence[Vector],
-    assets: Sequence[Mapping[str, Any]],
+    assets: Sequence[dict[str, Any]],
     asset_vecs: Sequence[Vector],
     *,
     threshold: float = DEFAULT_MIN_SIMILARITY,
@@ -235,7 +235,7 @@ def suggest(
 
 def diversify(
     suggestions: Sequence[BrollSuggestion],
-    assets: Sequence[Mapping[str, Any]],
+    assets: Sequence[dict[str, Any]],
     asset_vecs: Sequence[Vector],
     *,
     method: diversity.Method = "mmr",
@@ -372,7 +372,7 @@ def place(
 def plan(
     segments: Sequence[Mapping[str, Any]],
     segment_vecs: Sequence[Vector],
-    assets: Sequence[Mapping[str, Any]],
+    assets: Sequence[dict[str, Any]],
     asset_vecs: Sequence[Vector],
     *,
     total_sec: float,
