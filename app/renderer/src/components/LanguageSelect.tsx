@@ -21,7 +21,13 @@
 //     needs the hosted provider or the slow local model). `capabilityNote` renders
 //     that inline rather than letting the job fail later with no warning.
 import React, { useId } from 'react';
-import { AUTO_DETECT, COMMON_CODES, LANGUAGES, capabilityNote, languageLabel } from '../lib/languages';
+import {
+  AUTO_DETECT,
+  COMMON_CODES,
+  LANGUAGES,
+  capabilityNote,
+  languageLabel,
+} from '../lib/languages';
 import './languageSelect.css';
 
 export interface LanguageSelectProps {

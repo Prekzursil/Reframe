@@ -29,13 +29,7 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..', '..', '..');
 
-const SIDECAR_LANGUAGES = resolve(
-  REPO_ROOT,
-  'sidecar',
-  'media_studio',
-  'features',
-  'languages.py',
-);
+const SIDECAR_LANGUAGES = resolve(REPO_ROOT, 'sidecar', 'media_studio', 'features', 'languages.py');
 const SIDECAR_TRANSLATION = resolve(
   REPO_ROOT,
   'sidecar',
