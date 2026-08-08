@@ -396,8 +396,8 @@ def paths_describe(self: Services, params: dict[str, Any], ctx: RpcContext) -> d
     legacy JSON index the store only reads-then-demotes and never writes.
     ``subDirs`` names the per-feature derivative folders the sidecar writes into —
     ``dubs`` under the data dir; the ffmpeg-derivative folders
-    (``stabilized``/``audiomix``/``trimmed``) under the exports root, matching
-    ``register_all``'s wiring; and ``managed-copies``, the opt-in byte-copy store
+    (``stabilized``/``audiomix``/``trimmed``/``retimed``) under the exports root,
+    matching ``register_all``'s wiring; and ``managed-copies``, the opt-in byte-copy store
     beside the library DB (``keepcopy.STORE_DIRNAME``, rendered by
     ``ManagedStoreMeter`` in the same Settings sub-tab but named nowhere else).
     ``shorts`` is written PER-VIDEO as ``exports/shorts-<videoId>``, so it is
@@ -418,6 +418,7 @@ def paths_describe(self: Services, params: dict[str, Any], ctx: RpcContext) -> d
             "stabilized": str(self.exports_dir / "stabilized"),
             "audiomix": str(self.exports_dir / "audiomix"),
             "trimmed": str(self.exports_dir / "trimmed"),
+            "retimed": str(self.exports_dir / "retimed"),
             "managed-copies": str(Path(self.library.index_path).parent / _keepcopy.STORE_DIRNAME),
         },
     }
