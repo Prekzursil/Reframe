@@ -256,3 +256,33 @@ system-advanced group **directly after `diarize`** —
 - T5: electron-builder.yml · build/* · sidecar runtime_setup/* + media_studio/tools_resolver.py(+tests)
 - WIRING (last, serialized): handlers.py · __main__.py · Workspace.tsx · App.tsx · preload.ts · main.ts ·
   lib/rpc.ts · app/package.json · CONTRACTS conformance.
+
+---
+
+# v1.5 ADDENDUM — WU-A2 voice-clone consent (2026-08-08; ADDITIVE, extends A2 + A3)
+
+Source: [`docs/plans/v1.5/flagship-lip-sync-dub.md`](docs/plans/v1.5/flagship-lip-sync-dub.md)
+§4 WU-A2 + §5.1 (the LEGAL keystone — EU AI Act Art. 50 transparency). Additive
+in the A3a sense: **every previously-frozen field keeps its name and meaning**;
+`tts.sample.add` gains a REQUIRED param and `VoiceSample` gains three fields.
+
+## A2 (amended) — `tts.sample.add`
+- `tts.sample.add({path, name?, consentAttested, consentNote?})` -> `{sample: VoiceSample}`
+  - `consentAttested` is REQUIRED and must be exactly `true`. Anything else
+    (absent, `false`, `"true"`, `1`) is a typed `INVALID_PARAMS` refusal and
+    **nothing is written** — no copied audio, no index row.
+- `tts.dub.start` is UNCHANGED on the wire, but a `sampleId` whose stored row
+  carries no attestation is refused with the same typed error, synchronously,
+  before the job is spawned. This closes the LEGACY-row back door.
+
+## A3 (amended) — `VoiceSample`
+- `VoiceSample {id, name, path, durationSec, consentAttested:bool, consentAt:str|null, consentNote:str|null}`
+  - `consentAt` is UTC ISO-8601 (`YYYY-MM-DDTHH:MM:SSZ`).
+  - A row written before this addendum backfills to `consentAttested:false`,
+    `consentAt:null` — it still LISTS (with a `consent required` label on its
+    `tts.voices` row) but cannot be cloned until the user re-attests.
+- The A2 `Voice` row (`{id,engine,lang,name}`) stays FROZEN at four keys.
+
+## Scope
+The gate is unconditional: there is no settings opt-out in this addendum. A
+`requireVoiceConsent` setting is WU-A4's, and may only ever be *stricter*.
