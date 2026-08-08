@@ -171,6 +171,23 @@ describe('Workspace', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).not.toContain('Timeline export');
   });
 
+  // A constant saying "Subtitle timeline" is not the same signal as a BUTTON
+  // showing it — the two tests above read WORKSPACE_TABS directly, so a rename
+  // that never reached the rendered strip would still pass them. This one goes
+  // through the real TabBar and reads the DOM, which is the thing a user sees.
+  // Verified as a real detector by mutation: reverting either label in
+  // Workspace.tsx turns this red (see the commit body for the captured output).
+  it('renders the honest labels on the real tab buttons, not just in the array', async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+    const tabText = (id: string): string | null | undefined =>
+      container.querySelector(`[role="tab"][data-tab-id="${id}"]`)?.textContent;
+    expect(tabText('timeline')).toBe('Subtitle timeline');
+    expect(tabText('nle')).toBe('NLE export');
+  });
+
   it('opens the project via project.open and shows the title + tabs', async () => {
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
