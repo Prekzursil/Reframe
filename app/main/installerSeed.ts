@@ -35,6 +35,7 @@
 // PURE-BY-SEAM: all filesystem access is injected ({@link InstallerSeedIo}) so the
 // decision is fully testable; main.ts owns the concrete seam.
 import { join } from 'node:path';
+import type { FirstRunKind } from './firstRunGate';
 import {
   INSTALL_PROFILE_FILE,
   parsePersistedInstallProfile,
@@ -107,6 +108,31 @@ export function parseInstallerSeed(raw: string | undefined): PersistedInstallPro
   } catch {
     return null; // corrupt JSON -> fall back to the in-app picker, never a guessed set
   }
+}
+
+/**
+ * WU-I1: whether the in-app ProfilePicker must still ask (main.ts `awaitingProfile`).
+ *
+ * The picker is suppressed for exactly one case: a FIRST-EVER run whose profile was
+ * adopted from the installer ON THIS LAUNCH. That is what makes an install unattended.
+ *
+ * `installerAdoptedThisLaunch` — NOT "a profile exists at the data root" — is the
+ * deliberate condition, and the difference is a real trap. A first run that dies
+ * mid-download leaves its chosen profile persisted but writes no completion marker, so
+ * the NEXT launch is `first-ever` again. Keying off mere existence would silently retry
+ * the SAME set (possibly the one that just filled the disk) with no route back to the
+ * chooser. Keying off this-launch adoption keeps that path exactly as it was before
+ * WU-I1: the picker reappears and the user can pick something smaller.
+ *
+ * Every other case is unchanged: a silent WU-S2 `re-bootstrap` replays the persisted
+ * profile without prompting, and `none` has no first-run work to gate.
+ */
+export function shouldAwaitProfileChoice(
+  firstRun: boolean,
+  firstRunKind: FirstRunKind,
+  installerAdoptedThisLaunch: boolean,
+): boolean {
+  return firstRun && firstRunKind === 'first-ever' && !installerAdoptedThisLaunch;
 }
 
 /** Windows paths are case-insensitive; compare the two profile paths accordingly. */

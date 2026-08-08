@@ -54,8 +54,8 @@ import {
   resolveInstallChoice,
   type ResolvedInstallChoice,
 } from './installProfiles';
-import { adoptInstallerProfileSeed } from './installerSeed';
-import { createInstallerSeedIo } from './installerSeedIo';
+import { adoptInstallerProfileSeed, shouldAwaitProfileChoice } from './installerSeed';
+import { createInstallerSeedIo, serializeInstallProfile } from './installerSeedIo';
 import { registerDialogIpc } from './dialogIpc';
 import { resolveScopedMediaPath } from './exportPath';
 import {
@@ -656,11 +656,10 @@ function installProfilePath(): string {
  */
 function persistInstallProfile(choice: ResolvedInstallChoice): void {
   try {
-    writeFileSync(
-      installProfilePath(),
-      `${JSON.stringify({ profile: choice.profile, bundles: choice.bundles }, null, 2)}\n`,
-      'utf8',
-    );
+    // WU-I1: serialised by the SAME function the installer-seed adoption uses, so a
+    // profile written by the picker and one adopted from the installer are byte-
+    // identical. Two inlined JSON.stringify calls would be two shapes waiting to drift.
+    writeFileSync(installProfilePath(), serializeInstallProfile(choice), 'utf8');
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`[bootstrap] could not persist install profile: ${(err as Error).message}`);
@@ -683,16 +682,19 @@ function persistInstallProfile(choice: ResolvedInstallChoice): void {
  * FAIL-OPEN by construction: every failure mode degrades to "show the picker", never
  * to a failed startup.
  */
-function adoptInstallerProfile(): void {
+function adoptInstallerProfile(): boolean {
   const result = adoptInstallerProfileSeed(createInstallerSeedIo(exeDir(), DATA_ROOT));
   if (result.outcome === 'adopted') {
     // eslint-disable-next-line no-console
     console.error(`[bootstrap] adopted the installer's ${result.profile?.profile} profile`);
-  } else if (result.outcome === 'invalid-seed' || result.outcome === 'write-failed') {
+    return true;
+  }
+  if (result.outcome === 'invalid-seed' || result.outcome === 'write-failed') {
     // Loud, but never fatal — the in-app ProfilePicker still answers the question.
     // eslint-disable-next-line no-console
     console.error(`[bootstrap] installer profile seed ignored (${result.outcome})`);
   }
+  return false;
 }
 
 /**
@@ -1226,10 +1228,10 @@ function bootstrap(): void {
   // are caught without a surprise re-provision now.
   // WU-I1: pull the NSIS component page's choice into the data root BEFORE the
   // first-run classification reads it. Packaged-only (dev has no installer) and
-  // lock-holder-only (never write into a tree a live copy owns).
-  if (app.isPackaged && lock.ok) {
-    adoptInstallerProfile();
-  }
+  // lock-holder-only (never write into a tree a live copy owns). The RETURN value —
+  // "an installer choice was adopted on THIS launch" — is what suppresses the picker
+  // below; see shouldAwaitProfileChoice for why mere existence would be wrong.
+  const installerAdopted = app.isPackaged && lock.ok ? adoptInstallerProfile() : false;
 
   const markerExists = existsSync(firstRunCompletePath());
   const shippedFp = shippedRequirementsFingerprint();
@@ -1245,15 +1247,13 @@ function bootstrap(): void {
   // install-profile choice before spawning bootstrap (awaitingProfile). A silent
   // WU-S2 re-bootstrap reuses the persisted profile and auto-spawns (no picker).
   //
-  // WU-I1: …UNLESS the question is already answered. When a profile is persisted at
-  // the data root on a first-ever run it came from the NSIS component page (adopted
-  // just above — the in-app picker cannot have run yet, since it only appears on a
-  // first-ever run and persists on the way to bootstrap). Asking again would make the
-  // installer page decorative and the install non-unattended, so the picker is
-  // skipped and the auto-spawn below feeds bootstrap.py the SAME persisted set the
-  // re-bootstrap path already uses.
-  const awaitingProfile =
-    firstRun && firstRunKind === 'first-ever' && readPersistedInstallAssets() === null;
+  // WU-I1: …UNLESS the NSIS component page already answered on THIS launch, in which
+  // case asking again would make the installer page decorative and the install
+  // non-unattended. The auto-spawn below then feeds bootstrap.py the SAME persisted
+  // set the re-bootstrap path already uses — no new branch. The decision (and why it
+  // keys off this-launch adoption rather than "a profile exists") is the unit-tested
+  // pure shouldAwaitProfileChoice.
+  const awaitingProfile = shouldAwaitProfileChoice(firstRun, firstRunKind, installerAdopted);
   // WU-1b: seed the provisioning latch BEFORE the window loads so the renderer's
   // mount-time `provisioning.get` query is correct on the very first frame — a
   // first/re- run withholds the shell (no sidecar to serve its RPCs yet), an

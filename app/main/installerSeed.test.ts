@@ -20,6 +20,7 @@ import {
   adoptInstallerProfileSeed,
   installerSeedPath,
   parseInstallerSeed,
+  shouldAwaitProfileChoice,
   type InstallerSeedIo,
 } from './installerSeed';
 import {
@@ -183,6 +184,34 @@ describe('parseInstallerSeed', () => {
     expect(parseInstallerSeed('')).toBeNull();
     expect(parseInstallerSeed('[]')).toBeNull();
     expect(parseInstallerSeed('{"profile":1}')).toBeNull();
+  });
+});
+
+describe('shouldAwaitProfileChoice — when the in-app picker still has to ask', () => {
+  it('skips the picker on the launch that adopted an installer choice (unattended)', () => {
+    expect(shouldAwaitProfileChoice(true, 'first-ever', true)).toBe(false);
+  });
+
+  it('still asks on a first-ever run with no installer choice (the pre-WU-I1 path)', () => {
+    expect(shouldAwaitProfileChoice(true, 'first-ever', false)).toBe(true);
+  });
+
+  it('RE-ASKS after a failed first run, even though a profile is already persisted', () => {
+    // The regression this predicate exists to prevent: keying off "a profile exists at
+    // the data root" would make a first run that died mid-download silently retry the
+    // SAME set on the next launch, with no way back to the chooser to pick a smaller
+    // one. Only an adoption performed on THIS launch suppresses the picker.
+    expect(shouldAwaitProfileChoice(true, 'first-ever', false)).toBe(true);
+  });
+
+  it('never asks on a silent re-bootstrap (it replays the persisted profile)', () => {
+    expect(shouldAwaitProfileChoice(true, 're-bootstrap', false)).toBe(false);
+    expect(shouldAwaitProfileChoice(true, 're-bootstrap', true)).toBe(false);
+  });
+
+  it('never asks when there is no first-run work at all', () => {
+    expect(shouldAwaitProfileChoice(false, 'none', false)).toBe(false);
+    expect(shouldAwaitProfileChoice(false, 'first-ever', false)).toBe(false);
   });
 });
 
