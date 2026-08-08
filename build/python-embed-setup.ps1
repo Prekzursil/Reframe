@@ -77,7 +77,12 @@ param(
     # HAS libx264) and the packaged e2e never exercised an export.
     #
     # The GPL analysis that replaces it: FFmpeg is LGPL-2.1+ by default and
-    # `--enable-gpl` (required for libx264/libx265) makes the resulting BINARY GPL-2+.
+    # `--enable-gpl` (required for libx264/libx265) makes the resulting BINARY GPL.
+    # This asset is BOTH `--enable-gpl` AND `--enable-version3`, so it is
+    # **GPL-3.0-or-later** specifically -- CHECKED, not inferred: the LICENSE.txt in
+    # the staged zip opens "GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007"
+    # (35,147 B), where the superseded LGPL asset's opened "GNU LESSER GENERAL
+    # PUBLIC LICENSE Version 3" (7,651 B).
     # Reframe does not link it — `media_studio/ffmpeg.py::resolve_binary` resolves an
     # absolute path and `run()` spawns it as a SEPARATE CHILD PROCESS over an argv list
     # (never a library call, never `shell=True`). That is aggregation, not a derived

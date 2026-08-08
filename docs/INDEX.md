@@ -80,6 +80,7 @@ The five facts that get contradicted most often, and the one place each is decid
 | [`CHANGELOG.md`](../CHANGELOG.md) | the only release history; every version in `app/package.json` has a heading. |
 | [`QUALITY-CHARTER.md`](../QUALITY-CHARTER.md) | the only place gate COMPOSITION and tool VERSION PINS are declared. |
 | [`SECURITY.md`](../SECURITY.md) | the only vuln-reporting policy. |
+| [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) | the only record of obligations for REDISTRIBUTED BINARIES, and the home of the GPL written source offer for the bundled FFmpeg. Models/fonts are the in-app Settings → Licenses surface instead. |
 | [`CONTRACTS.md`](../CONTRACTS.md) | DEMOTED. Historical P1/P2 build contract; decides nothing. The wire contract is [`rpc-contract-v2.md`](rpc-contract-v2.md). |
 
 ## Current program — v1.5

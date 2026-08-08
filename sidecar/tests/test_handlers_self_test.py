@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from media_studio import handlers, tools_resolver
+from media_studio import ffmpeg, handlers, tools_resolver
+from media_studio.features import self_test
 from media_studio.handlers import Services
 from media_studio.protocol import RpcContext
 
@@ -46,11 +47,18 @@ def test_register_all_wires_system_self_test(tmp_path: Path) -> None:
 
 def test_self_test_returns_wire_report(tmp_path: Path, ctx: RpcContext, monkeypatch: Any) -> None:
     monkeypatch.setattr(tools_resolver, "resolve_tool", lambda name, _s=None: f"/usr/bin/{name}")
+    # `resolve_tool` above returns a FICTIONAL path, so the real `ffmpeg -encoders`
+    # seam must be stubbed too — otherwise this test's verdict would depend on
+    # whether the host happens to have a working /usr/bin/ffmpeg, which is true on
+    # the Linux CI runner (apt installs one) and false on a Windows dev box. Stub it
+    # to a capable build; the encoder check's own behaviour is proven in
+    # tests/test_ffmpeg_encoders.py against BOTH real builds' captured output.
+    monkeypatch.setattr(self_test, "_default_encoder_probe", lambda _p: {ffmpeg.H264_ENCODER, "aac"})
     out = _services(tmp_path).system_self_test({}, ctx)
 
     assert set(out) == {"ok", "checks", "problems"}
     assert isinstance(out["ok"], bool)
-    assert [c["id"] for c in out["checks"]] == ["data", "device", "cv2", "asr", "ffmpeg"]
+    assert [c["id"] for c in out["checks"]] == ["data", "device", "cv2", "asr", "ffmpeg", "encoder"]
     a_check = out["checks"][0]
     assert set(a_check) == {"id", "label", "ok", "required", "detail", "fixHint"}
     # The tmp data dir is writable and the injected probe + monkeypatched tools pass.
@@ -58,6 +66,32 @@ def test_self_test_returns_wire_report(tmp_path: Path, ctx: RpcContext, monkeypa
     assert by_id["data"]["ok"] is True
     assert by_id["device"]["ok"] is True
     assert by_id["ffmpeg"]["ok"] is True
+    assert by_id["encoder"]["ok"] is True
+
+
+def test_self_test_surfaces_an_ffmpeg_that_cannot_encode_h264(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: Any
+) -> None:
+    """The shipped-defect shape, end to end over the RPC the panel actually calls.
+
+    ffmpeg RESOLVES fine — so the `ffmpeg` row is green, exactly as it was on the
+    broken 1.5 build — but it cannot encode H.264. The report must still block.
+    """
+    monkeypatch.setattr(tools_resolver, "resolve_tool", lambda name, _s=None: f"/usr/bin/{name}")
+    # The real LGPL build's H.264 story: OpenH264 and hardware, no libx264.
+    monkeypatch.setattr(
+        self_test, "_default_encoder_probe", lambda _p: {"libopenh264", "h264_nvenc", "aac"}
+    )
+    out = _services(tmp_path).system_self_test({}, ctx)
+
+    by_id = {c["id"]: c for c in out["checks"]}
+    assert by_id["ffmpeg"]["ok"] is True, "presence still passes — that is the trap"
+    assert by_id["encoder"]["ok"] is False
+    assert by_id["encoder"]["required"] is True
+    assert out["ok"] is False
+    assert any(ffmpeg.H264_ENCODER in p for p in out["problems"]), out["problems"]
+    # The panel must be able to say WHICH encoders the build does have.
+    assert "libopenh264" in by_id["encoder"]["detail"]
 
 
 def test_self_test_cv2_row_is_green_when_opencv_is_importable(
