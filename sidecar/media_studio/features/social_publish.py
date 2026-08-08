@@ -48,10 +48,17 @@ fallback carries an explicit ``requires_app_running`` flag plus a warning string
 the UI is expected to show verbatim. The flag is the mechanism: a caller cannot
 render a local-queue plan without also receiving the disclosure.
 
-Pure logic only — no network, no provider imports, no token handling. Tokens for
-these platforms live exclusively in the Electron main process keystore
-(``app/main/keystore.ts``) and are injected per-request; nothing here reads,
-writes, or logs credential material.
+Pure logic only — no network, no provider imports, no token handling. Nothing here
+reads, writes, or logs credential material.
+
+Where tokens live, stated precisely so this comment does not drift into a claim it
+does not support: OAuth tokens are stored in the Electron main-process keystore
+(``app/main/keystore.ts``, ``social`` section). The per-request injection channel
+that provider API keys use is the intended route for handing a token to a future
+uploader, and the field name is reserved
+(``social_queue.INJECTED_TOKENS_FIELD``) and already covered by the log redactor —
+but **no injection path is wired yet, because nothing on this side performs an
+upload**. See ``docs/wiring/WIRING-social-publish.md`` §4 for the full residual list.
 """
 
 from __future__ import annotations

@@ -861,6 +861,39 @@ describe('WU-0 QoL settings shapes (mirror sidecar DEFAULT_SETTINGS)', () => {
   });
 });
 
+describe('client.social (C14 publish/schedule)', () => {
+  it('social.* forward their params', async () => {
+    const r = installApi();
+    await client.social.capabilities();
+    expect(r).toHaveBeenCalledWith('social.capabilities', undefined);
+    await client.social.plan('tiktok', 1_800_003_600);
+    expect(r).toHaveBeenCalledWith('social.plan', { platform: 'tiktok', publishAt: 1_800_003_600 });
+    await client.social.queue();
+    expect(r).toHaveBeenCalledWith('social.queue', undefined);
+    await client.social.cancel('e1');
+    expect(r).toHaveBeenCalledWith('social.cancel', { id: 'e1' });
+  });
+
+  it('social.plan sends publishAt: null for an immediate preview', async () => {
+    const r = installApi();
+    await client.social.plan('youtube');
+    expect(r).toHaveBeenCalledWith('social.plan', { platform: 'youtube', publishAt: null });
+  });
+
+  it('social.enqueue nests the job under `job`', async () => {
+    const r = installApi();
+    const job = {
+      platform: 'youtube',
+      clipPath: 'a.mp4',
+      title: 'T',
+      description: '',
+      videoId: 'v1',
+    };
+    await client.social.enqueue(job);
+    expect(r).toHaveBeenCalledWith('social.enqueue', { job });
+  });
+});
+
 describe('client.exportPresets / templates / batch (WU11)', () => {
   const PRESET: ExportPreset = {
     id: 'tiktok',

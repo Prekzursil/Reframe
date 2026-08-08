@@ -126,6 +126,15 @@ means each user's quota and audit state is their own.
   pure and fully unit-tested — but nothing here opens a socket yet.
 - **The uploaders.** No YouTube resumable upload and no TikTok publish call is
   implemented, so `social.enqueue` records an intent that nothing yet performs.
+- **The token INJECTION path is not wired.** The field name is reserved
+  (`social_queue.INJECTED_TOKENS_FIELD` = `_injectedSocialTokens`) and the sidecar's
+  log redactor already strips it, but `keyBridge.forwardParams` does not yet inject a
+  social token into any method — deliberately, because no sidecar handler performs an
+  upload, and injecting a credential into a method that has no use for it is the
+  opposite of least privilege. The reservation exists so the redactor is ready before
+  the first producer, not to imply a live path.
+- **A local scheduler RUNNER.** `PublishQueueStore.due()` computes which local-queue
+  entries are ready, but no timer calls it yet.
 - **A real OAuth round-trip has NOT been performed** (NOT-CHECKED): it requires a
   registered OAuth app, which is an owner action. Nothing in this feature has been
   proven end-to-end against a live platform, and no claim here should be read as
