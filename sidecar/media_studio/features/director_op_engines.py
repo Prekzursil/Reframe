@@ -82,6 +82,7 @@ WIRED_KINDS: tuple[str, ...] = (
     "removeSilence",
     "caption",
     "removeFillers",
+    "reorder",
     "reframe",
     "zoomPan",
     "retime",
@@ -100,10 +101,11 @@ WIRED_KINDS: tuple[str, ...] = (
 #:   * ``ocrExtractList``  -> an OCR engine (text recognition, not a render);
 #:   * ``regenScroll``     -> the scroll-regen engine (also needs a panorama).
 #:
-#: ``reorder`` is a multi-clip timeline permutation outside the single-clip
-#: render scope of these adapters and is likewise left deferred.
+#: v1.5 (SCOPE.md O-3) REMOVED ``reorder`` from this set: it is a segment
+#: permutation the shipped ``fillers.build_segment_cut_argv`` concat already
+#: expresses, so it is now a real wired engine (:func:`make_reorder_engine`) —
+#: it never needed a "multi-clip timeline" subsystem at all.
 DEFERRED_KINDS: tuple[str, ...] = (
-    "reorder",
     "stitchPanorama",
     "regenScroll",
     "ocrExtractList",
@@ -113,7 +115,6 @@ DEFERRED_KINDS: tuple[str, ...] = (
 #: deferral notice (:func:`log_deferred`) so the unwired set names WHY each is
 #: held back, not just THAT it is.
 DEFERRED_SUBSYSTEMS: dict[str, str] = {
-    "reorder": "the timeline clip-reorder engine (multi-clip permutation)",
     "stitchPanorama": "the panorama/stitch engine",
     "regenScroll": "the scroll-regen engine (requires a stitched panorama)",
     "ocrExtractList": "an OCR engine",
@@ -301,6 +302,100 @@ def make_cut_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None)
         if restored is not None:
             return restored
         keeps = _keep_for_cut(op)
+        return _render(
+            project_copy,
+            op,
+            lambda i, o: _fillers.build_segment_cut_argv(i, o, keeps, dict(settings or {})),
+            runner=runner,
+            settings=settings,
+        )
+
+    return engine
+
+
+def _is_index(value: Any) -> bool:
+    """True for a real ``int`` (``bool`` is an ``int`` subclass and is NOT one)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _require_segments(op: EditOp) -> list[tuple[float, float]]:
+    """Return the reorder op's ``params['segments']`` as ordered second spans.
+
+    ``segments`` is the ordered list of ``[startMs, endMs]`` source ranges the
+    timeline is built from — for transcript-native editing, one entry per
+    transcript block. Each must be a forward, non-negative pair; anything else
+    is a render error (per-op ``failed`` + rollback), never a silent no-op.
+    """
+    raw = op.params.get("segments")
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise DirectorEngineError(
+            f"reorder op {op.id!r} requires a non-empty params['segments'] list of [startMs, endMs] pairs"
+        )
+    spans: list[tuple[float, float]] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+            raise DirectorEngineError(
+                f"reorder op {op.id!r} params['segments'][{index}] must be a [startMs, endMs] pair"
+            )
+        start, end = entry
+        if not _is_index(start) or not _is_index(end):
+            raise DirectorEngineError(f"reorder op {op.id!r} params['segments'][{index}] bounds must be integers")
+        if start < 0 or end <= start:
+            raise DirectorEngineError(
+                f"reorder op {op.id!r} params['segments'][{index}] must be a forward, non-negative span"
+            )
+        spans.append((start / 1000.0, end / 1000.0))
+    return spans
+
+
+def _require_order(op: EditOp, count: int) -> list[int]:
+    """Return the reorder op's ``params['order']`` — a PERMUTATION of the indices.
+
+    Omitted ``order`` defaults to the identity, i.e. "keep the segments exactly
+    as listed" (still a real edit: it compacts the gaps BETWEEN segments away).
+    A supplied order must use every segment index exactly once — a subset would
+    silently DELETE a segment and a repeat would duplicate one, so neither is a
+    reorder and both are rejected rather than rendered.
+    """
+    raw = op.params.get("order")
+    if raw is None:
+        return list(range(count))
+    if not isinstance(raw, (list, tuple)):
+        raise DirectorEngineError(f"reorder op {op.id!r} params['order'] must be a list of segment indices")
+    order = [index for index in raw if _is_index(index)]
+    if len(order) != len(raw) or sorted(order) != list(range(count)):
+        raise DirectorEngineError(
+            f"reorder op {op.id!r} params['order'] must be a permutation of the {count} segment indices "
+            "(each index exactly once)"
+        )
+    return order
+
+
+def make_reorder_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None) -> OpEngine:
+    """Engine for ``reorder``: re-concatenate ``params['segments']`` in a new order.
+
+    The op carries the ordered source ranges (``segments``, ``[startMs, endMs]``
+    pairs — one per transcript block for transcript-native editing) plus the
+    permutation (``order``, defaulting to the identity). The forward render feeds
+    the PERMUTED keep list to ``fillers.build_segment_cut_argv``, whose
+    ``trim``/``atrim`` + ``concat`` graph emits the segments in exactly that
+    order, so the output really is the resequenced clip (the strongest non-no-op
+    proof: keep *i* of the graph is ``segments[order[i]]``).
+
+    This kind was previously DEFERRED as needing "the timeline clip-reorder
+    engine (multi-clip permutation)". That premise was wrong: a permutation of
+    spans within one source is precisely what the shipped segment-cut concat
+    already does, so no new subsystem is required. The inverse restores the
+    pre-reorder reference (undo, no re-render).
+    """
+
+    def engine(op: EditOp, project_copy: ProjectCopy) -> EditOp:
+        restored = _maybe_restore(op, project_copy)
+        if restored is not None:
+            return restored
+        segments = _require_segments(op)
+        order = _require_order(op, len(segments))
+        keeps = [segments[index] for index in order]
         return _render(
             project_copy,
             op,
@@ -934,6 +1029,7 @@ def build_engines(*, runner: RunFn | None = None, settings: Mapping[str, Any] | 
         "removeSilence": make_remove_silence_engine(runner=run, settings=settings),
         "caption": make_caption_engine(runner=run, settings=settings),
         "removeFillers": make_remove_fillers_engine(runner=run, settings=settings),
+        "reorder": make_reorder_engine(runner=run, settings=settings),
         "reframe": make_reframe_engine(runner=run, settings=settings),
         "zoomPan": make_zoom_pan_engine(runner=run, settings=settings),
         "retime": make_retime_engine(runner=run, settings=settings),
@@ -978,6 +1074,7 @@ __all__ = [
     "make_reframe_engine",
     "make_remove_fillers_engine",
     "make_remove_silence_engine",
+    "make_reorder_engine",
     "make_retime_engine",
     "make_translate_caption_engine",
     "make_trim_engine",

@@ -16,6 +16,7 @@ ffmpeg.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -123,7 +124,11 @@ def test_reorder_persists_the_repointed_manifest(tmp_path: Path) -> None:
     pc = _copy(tmp_path)
     build_engines(runner=FakeRunner())["reorder"](_op(segments=SEGMENTS, order=[1, 0, 2]), pc)
     # the ON-DISK manifest references the render (not just the in-memory dict).
-    assert pc.data["video"]["path"] in pc.manifest_path.read_text(encoding="utf-8")
+    # Parsed, not substring-matched: JSON escapes Windows backslashes, so a raw
+    # `in` over the file text is a false negative on this platform.
+    on_disk = json.loads(pc.manifest_path.read_text(encoding="utf-8"))
+    assert on_disk["video"]["path"] == pc.data["video"]["path"]
+    assert Path(on_disk["video"]["path"]).name == "src.r1.mp4"  # the rendered file, not the source
 
 
 def test_reorder_surfaces_an_ffmpeg_failure(tmp_path: Path) -> None:
