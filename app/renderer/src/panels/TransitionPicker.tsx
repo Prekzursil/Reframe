@@ -20,6 +20,16 @@
 //
 // A thin render shell: all arithmetic and all guard logic is `lib/transitions`,
 // so this file holds only selection state and wiring.
+//
+// NOT YET MOUNTED — read this before citing the feature as user-reachable. This
+// component is complete and covered, but nothing imports it except its own test:
+// `WORKSPACE_TABS` (views/Workspace.tsx) has no transitions tab, so today a
+// `transition` op reaches the engine only through `director.apply` (the AI
+// prompt), like the other "engine exists, no UI" ops the v1.5 editing-surface
+// audit lists. Mounting needs one thing this component cannot supply itself: a
+// list of joinable clips WITH probed durations — `available` is typed to demand
+// `durationMs` precisely because the guard and the running total are worthless
+// without it, and `Project.clips` does not carry it today.
 import React, { useCallback, useMemo, useState } from 'react';
 import '../features/panels.css';
 import './transitionPicker.css';

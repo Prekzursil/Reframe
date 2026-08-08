@@ -83,7 +83,7 @@ Legend — **BUILT**: engine + RPC + a user-reachable UI. **PARTIAL**: says whic
 | 2 | **Cut** (delete span, ripple) | PARTIAL — engine BUILT, Director-only, **UI MISSING** | `director_op_engines.py:80`; `:269` *"head + tail concatenated"* |
 | 3 | **Split at playhead** | PARTIAL — **cues only**; video split MISSING | `timelineOps.ts:57-67` `splitCue` operates on `Cue`; no video-split op kind in `WIRED_KINDS` (`:78-92`) |
 | 4 | **Multi-clip timeline** | **MISSING** — explicitly deferred | `director_op_engines.py:105-120`; `reorder` -> *"the timeline clip-reorder engine (multi-clip permutation)"* (`:116`). `join` is **append-only** — extra clips go *"AFTER the COPY source"* (`:318`) |
-| 5 | **Transitions** | ~~MISSING~~ -> **BUILT at a chain boundary** (engine + op kind + UI); arbitrary-timeline transitions still MISSING | was: zero `xfade` in `sidecar/media_studio` (grep, 0 hits). Now: `sidecar/media_studio/features/transitions.py` (xfade + acrossfade builders), `transition` in `director_op_engines.WIRED_KINDS`, picker at `app/renderer/src/panels/TransitionPicker.tsx`. See the §2 correction below |
+| 5 | **Transitions** | ~~MISSING~~ -> **engine + op kind BUILT** at a chain boundary; picker component BUILT but **NOT MOUNTED** (so it joins the six "engine exists, no reachable UI" rows, not the BUILT ones); arbitrary-timeline transitions still MISSING | was: zero `xfade` in `sidecar/media_studio` (grep, 0 hits). Now: `sidecar/media_studio/features/transitions.py` (xfade + acrossfade builders), `transition` in `director_op_engines.WIRED_KINDS`, reachable via `director.apply`. `app/renderer/src/panels/TransitionPicker.tsx` exists and is fully tested but is imported by nothing except its own test — grep `TransitionPicker` over `app/` returns 2 files, both its own. See the §2 correction below |
 | 6 | **Speed ramp / slow-mo** | PARTIAL — **constant** factor BUILT, **ramp MISSING**, Director-only | `retime` wired `:87`; `build_retime_argv` `:665-689` = `setpts=(1/factor)*PTS` + `atempo` chain `:640-673`. One scalar `factor`; no keyframed curve |
 | 7 | **Crop / pan / zoom keyframes** | PARTIAL — **auto** punch-in BUILT, **user keyframes MISSING** | `zoom.py:5` *"pure ffmpeg `zoompan` expression"*, `:168-194` *"the auto punch-in zoom"*; `zoomPan` wired `:86`. Per-shot crop override exists (`reframe.applyOverrides`, `reframe_override.py:433`) but is reframe-scoped, not a general keyframe editor |
 | 8 | **Colour correction** | **MISSING** | zero `eq=`, `curves`, `colorbalance`, `colorchannelmixer`, `hue=` (grep, 0 hits) |
@@ -114,9 +114,11 @@ Legend — **BUILT**: engine + RPC + a user-reachable UI. **PARTIAL**: says whic
 - **PARTIAL: 12** — of which **6 are "engine exists, no UI"** (trim, cut, retime, zoomPan,
   titles, and split-for-video), all gated behind the AI Director.
 - **MISSING: ~~9~~ 8** — colour, LUTs, freeze, reverse, masking, chroma key,
-  markers/chapters, multi-clip timeline. (Transitions left this list: BUILT at a chain
-  boundary — engine, op kind and picker — see row 5 and the §2 correction. The
-  arbitrary-timeline case is folded into "multi-clip timeline", which is still missing.)
+  markers/chapters, multi-clip timeline. (Transitions left this list but became **PARTIAL**,
+  not BUILT: the engine and op kind ship and render real media, the picker component exists
+  but is not mounted, so it is Director-only like trim/cut/retime — see row 5. That makes it
+  the **7th** "engine exists, no reachable UI" row, which is the pattern §0 already names as
+  Reframe's real gap. The arbitrary-timeline case stays under "multi-clip timeline".)
 
 The distribution is the story: Reframe's gap is **less about missing engines than about missing
 direct manipulation**. Six real, tested, working ffmpeg engines have no user-facing control.
@@ -171,6 +173,18 @@ That model makes four things structurally impossible, not merely unimplemented:
    > `app/renderer/src/panels/TransitionPicker.tsx`. It landed on the existing single-clip
    > mutation chain with no model change — the same "cheap on today's substrate" shape as the
    > §3 S1.3 colour/LUT ops, which is where this row should have put it.
+   >
+   > **Scope of that claim, kept narrower than the work.** The ENGINE is reachable today only
+   > through `director.apply` — i.e. behind the AI prompt, exactly like the six other rows §1
+   > flags as "engine exists, no UI". `TransitionPicker.tsx` is written, tested and covered,
+   > but it is **not mounted in any view** (`WORKSPACE_TABS` at
+   > `app/renderer/src/views/Workspace.tsx:53-66` has no transitions tab, and a grep for
+   > `TransitionPicker` across `app/` returns only the component and its own test). Mounting
+   > it needs one thing this lane did not have: a renderer-side list of joinable clips WITH
+   > probed durations, which `Project.clips` (`library.py:527`) does not carry. Settling
+   > experiment: add a `clip.duration` to the project manifest read, then render the picker in
+   > a Workspace tab and drive it with `ui-drive` to confirm a transition op reaches
+   > `director.apply`.
    >
    > **What the row got RIGHT, and what is still MISSING.** What is now built is a transition
    > at the boundaries of a linear CHAIN (`source -> clip -> clip`), because that is the only
