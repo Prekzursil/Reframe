@@ -29,6 +29,11 @@ def ctx() -> RpcContext:
     return RpcContext(emit_notification=lambda obj: None, jobs=None)
 
 
+def job_ctx(registry: Any) -> RpcContext:
+    """An RpcContext WITH a job registry (tracks.video.render defers to a job)."""
+    return RpcContext(emit_notification=lambda obj: None, jobs=registry)
+
+
 def a_clip(**over: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "id": "c1",
@@ -523,18 +528,31 @@ class TestServiceClips:
 
 
 class TestServiceRender:
+    """``render`` must be a JOB, not a blocking direct handler.
+
+    An encode of a long timeline takes minutes; running it inside the handler
+    would block the sidecar's single stdio loop and freeze the whole app (the
+    reason every other encode feature — stabilize.run, audiomix.merge,
+    silence.trim — returns ``{jobId}``). It must also be cooperatively
+    cancellable, since a user who mis-cut the timeline needs to stop the encode.
+    """
+
     def _seeded(self, tmp_path: Path, **kw):
         service, disk, video = make_service(tmp_path, **kw)
         lanes = service.list({"videoId": "v1"}, ctx())["videoTracks"]
         return service, disk, video, lanes[0]["id"], lanes[0]["clips"][0]["id"]
 
-    def test_render_runs_the_shipped_cutter_and_reports_the_output(self, tmp_path: Path):
+    def test_render_defers_to_a_job_and_reports_the_output(self, tmp_path: Path, registry):
         calls: list[tuple] = []
         service, _disk, video, _lane, clip_id = self._seeded(
             tmp_path, run=lambda argv, **kw: calls.append((argv, kw)) or 0
         )
         service.split_clip({"videoId": "v1", "clipId": clip_id, "atTimeline": 20.0}, ctx())
-        result = service.render({"videoId": "v1"}, ctx())
+        handle = service.render({"videoId": "v1"}, job_ctx(registry))
+        assert set(handle) == {"jobId"}
+        job = registry.get(handle["jobId"])
+        job.wait(timeout=10)
+        result = job.result
         assert result["durationSec"] == pytest.approx(60.0)
         assert len(result["segments"]) == 2
         assert Path(result["path"]).parent == tmp_path / "exports" / "timeline"
@@ -544,18 +562,24 @@ class TestServiceRender:
         assert argv.count("-i") == 1 and argv[argv.index("-i") + 1] == str(video)
         assert kw["total_sec"] == pytest.approx(60.0)
 
-    def test_a_nonzero_ffmpeg_exit_is_a_typed_error_not_a_silent_pass(self, tmp_path: Path):
-        service, _disk, _video, _lane, _clip = self._seeded(tmp_path, run=lambda argv, **kw: 3)
-        with pytest.raises(RpcError, match="ffmpeg exit 3"):
+    def test_render_without_a_job_registry_is_a_typed_refusal(self, tmp_path: Path):
+        service, _disk, _video, _lane, _clip = self._seeded(tmp_path)
+        with pytest.raises(RpcError, match="job registry"):
             service.render({"videoId": "v1"}, ctx())
 
-    def test_render_refuses_an_empty_timeline(self, tmp_path: Path):
+    def test_a_nonzero_ffmpeg_exit_fails_the_job_not_a_silent_pass(self, tmp_path: Path, registry):
+        service, _disk, _video, _lane, _clip = self._seeded(tmp_path, run=lambda argv, **kw: 3)
+        job = registry.get(service.render({"videoId": "v1"}, job_ctx(registry))["jobId"])
+        job.wait(timeout=10)
+        assert job.error is not None and "ffmpeg exit 3" in str(job.error)
+
+    def test_render_refuses_an_empty_timeline_before_starting_a_job(self, tmp_path: Path, registry):
         service, _disk, _video, _lane, clip_id = self._seeded(tmp_path)
         service.remove_clip({"videoId": "v1", "clipId": clip_id}, ctx())
         with pytest.raises(RpcError, match="at least one"):
-            service.render({"videoId": "v1"}, ctx())
+            service.render({"videoId": "v1"}, job_ctx(registry))
 
-    def test_render_refuses_an_overlapping_timeline(self, tmp_path: Path):
+    def test_render_refuses_an_overlapping_timeline_before_starting_a_job(self, tmp_path: Path, registry):
         service, disk, video, _lane, _clip = self._seeded(tmp_path)
         data = disk.load("v1")
         data["videoTracks"][0]["clips"].append(
@@ -563,7 +587,28 @@ class TestServiceRender:
         )
         disk.save("v1", data)
         with pytest.raises(RpcError, match="overlap"):
-            service.render({"videoId": "v1"}, ctx())
+            service.render({"videoId": "v1"}, job_ctx(registry))
+
+    def test_the_job_body_passes_a_cancel_probe_and_a_progress_sink_to_ffmpeg(self, tmp_path: Path, registry) -> None:
+        """Cooperative cancel + progress are WIRED, asserted on the seam's kwargs.
+
+        UNVERIFIED (inline, scoped): this proves the ``should_cancel`` callable and
+        the ``on_progress`` sink reach ``ffmpeg.run``; it does NOT prove ffmpeg is
+        actually killed mid-encode. That is a property of the shipped drained
+        runner (``ffmpeg.run`` + ``_watch_cancel``, already covered by
+        tests/test_ffmpeg.py), not of this module. Settling experiment for the
+        end-to-end claim: an ``e2e``-marked test that renders a long real clip and
+        cancels the job, asserting the process exits and the partial file is
+        removed. Not written here — this module owns no process handling.
+        """
+        seen: list[dict[str, Any]] = []
+        service, _disk, _video, _lane, _clip = self._seeded(tmp_path, run=lambda argv, **kw: seen.append(kw) or 0)
+        job = registry.get(service.render({"videoId": "v1"}, job_ctx(registry))["jobId"])
+        job.wait(timeout=10)
+        assert callable(seen[0]["should_cancel"]) and seen[0]["should_cancel"]() is False
+        assert callable(seen[0]["on_progress"])
+        # the progress sink is a real pass-through onto the job's own reporter
+        seen[0]["on_progress"](42, "half way")
 
 
 class TestRegistration:
