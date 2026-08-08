@@ -75,7 +75,10 @@ export function flattenWords(transcript: Transcript | null | undefined): Transcr
       const start = finite(word.start);
       const end = finite(word.end);
       if (start === null || end === null) return;
-      const stamped = typeof word.wordId === 'string' && word.wordId ? word.wordId : `w${segmentIndex}-${wordIndex}`;
+      const stamped =
+        typeof word.wordId === 'string' && word.wordId
+          ? word.wordId
+          : `w${segmentIndex}-${wordIndex}`;
       out.push({
         wordId: stamped,
         segmentIndex,
@@ -122,7 +125,9 @@ export function buildEditSpans(
   words: readonly TranscriptWord[],
   deleted: ReadonlySet<string>,
 ): EditSpan[] {
-  return words.filter((w) => deleted.has(w.wordId)).map((w) => ({ op: 'delete' as const, wordId: w.wordId }));
+  return words
+    .filter((w) => deleted.has(w.wordId))
+    .map((w) => ({ op: 'delete' as const, wordId: w.wordId }));
 }
 
 /** The client-side estimate of how much time the current selection removes. */
