@@ -400,6 +400,26 @@ describe('client.subtitles (spread-opts branches)', () => {
     expect(r).toHaveBeenCalledWith('subtitles.export', { trackId: 't1', format: 'srt' });
   });
 
+  // v1.5 captions audit section 5.1: the tolerant SRT/VTT/ASS readers had no
+  // production caller. This is the client half of the wire that gives them one.
+  it('import forwards videoId/text/format and spreads optional name+lang', async () => {
+    const r = installApi();
+    await client.subtitles.import('v1', '1\n00:00:00,000 --> 00:00:01,000\nhi\n', 'srt');
+    expect(r).toHaveBeenCalledWith('subtitles.import', {
+      videoId: 'v1',
+      text: '1\n00:00:00,000 --> 00:00:01,000\nhi\n',
+      format: 'srt',
+    });
+    await client.subtitles.import('v1', 'WEBVTT\n\n', 'vtt', { name: 'fixed.vtt', lang: 'ro' });
+    expect(r).toHaveBeenCalledWith('subtitles.import', {
+      videoId: 'v1',
+      text: 'WEBVTT\n\n',
+      format: 'vtt',
+      name: 'fixed.vtt',
+      lang: 'ro',
+    });
+  });
+
   it('translate spreads opts when given and defaults to {} when omitted', async () => {
     const r = installApi();
     await client.subtitles.translate('t1', 'es');

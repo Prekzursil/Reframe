@@ -206,6 +206,17 @@ export const client = {
       rpc('subtitles.translate', { trackId, targetLang, ...(opts ?? {}) }),
     export: (trackId: string, format: SubtitleFormat): Promise<{ path: string }> =>
       rpc('subtitles.export', { trackId, format }),
+    // v1.5 escape hatch: bring a hand-corrected SRT/VTT/ASS back IN. `text` is the
+    // file's CONTENT, not a path — the caller reads it with the standard File API,
+    // so the sidecar never opens a renderer-supplied filesystem path. `format` is
+    // passed raw (the sidecar folds '.SRT'/'ssa' and rejects anything else).
+    import: (
+      videoId: string,
+      text: string,
+      format: string,
+      opts?: { name?: string; lang?: string },
+    ): Promise<{ track: SubtitleTrack }> =>
+      rpc('subtitles.import', { videoId, text, format, ...(opts ?? {}) }),
   },
 
   tracks: {
