@@ -108,8 +108,14 @@ def hex_to_ass_color(value: Any, alpha: str = "00") -> str | None:
     return f"&H{alpha}{bb}{gg}{rr}&".upper()
 
 
-def _as_bool(value: Any) -> bool | None:
-    """Return ``value`` when it is a genuine ``bool``, else ``None`` (absent)."""
+def as_bool(value: Any) -> bool | None:
+    """Return ``value`` when it is a genuine ``bool``, else ``None`` (absent).
+
+    The tri-state matters: a deliberate ``False`` (e.g. ``outline: false``) must be
+    distinguishable from an ABSENT field, which keeps the template's value. Shared
+    with :mod:`.caption_karaoke`, whose preset base differs from this module's, so
+    it resolves the same toggles against its own defaults.
+    """
     return value if isinstance(value, bool) else None
 
 
@@ -200,7 +206,7 @@ def apply_override(override: Mapping[str, Any] | None) -> ResolvedCaptionStyle:
     primary = text_color or spoken_color or BASE_PRIMARY
     secondary = active_color or BASE_SECONDARY
 
-    border_style, outline_width = _resolve_border(_as_bool(o.get("box")), _as_bool(o.get("outline")))
+    border_style, outline_width = _resolve_border(as_bool(o.get("box")), as_bool(o.get("outline")))
 
     band = o.get("positionBand")
     position_band = band if band in POSITION_BAND_ALIGNMENT else None
@@ -215,7 +221,7 @@ def apply_override(override: Mapping[str, Any] | None) -> ResolvedCaptionStyle:
         border_style=border_style,
         outline_width=outline_width,
         shadow=BASE_SHADOW,
-        uppercase=_as_bool(o.get("uppercase")) or False,
+        uppercase=as_bool(o.get("uppercase")) or False,
         position_band=position_band,
         text_color=text_color,
         active_color=active_color,
@@ -248,6 +254,7 @@ __all__ = [
     "SIZE_SCALE_MIN",
     "ResolvedCaptionStyle",
     "apply_override",
+    "as_bool",
     "hex_to_ass_color",
     "resolve_caption_style",
 ]
