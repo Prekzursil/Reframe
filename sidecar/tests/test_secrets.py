@@ -229,6 +229,39 @@ def test_redact_params_hides_injected_keys_bundle() -> None:
     assert "sk-live-1234" not in repr(out)
 
 
+def test_every_injected_credential_field_name_is_pinned_to_its_definition() -> None:
+    """The redactor's LITERAL field names must match their defining constants.
+
+    ``_SECRET_PARAM_FIELDS`` cannot import either name (``settings_store`` imports
+    from this module, and a ``models`` module must not import ``features``), so the
+    spellings are duplicated by necessity. A rename on one side only would silently
+    stop redacting a LIVE credential — the exact failure the field was added to
+    prevent — so the parity is asserted here instead of trusted.
+    """
+    from media_studio.features.social_queue import INJECTED_TOKENS_FIELD
+    from media_studio.settings_store import INJECTED_KEYS_FIELD
+
+    assert INJECTED_KEYS_FIELD in secrets._SECRET_PARAM_FIELDS
+    assert INJECTED_TOKENS_FIELD in secrets._SECRET_PARAM_FIELDS
+
+
+def test_redact_params_hides_injected_social_tokens_bundle() -> None:
+    # C14: main injects decrypted OAuth tokens for the social platforms under
+    # `_injectedSocialTokens`, the exact same in-memory stdio channel `_injectedKeys`
+    # already uses. It must be stripped by the SAME redactor — a second injected
+    # credential field that the no-log formatter does not know about would reinstate
+    # the leak `_injectedKeys` was added to close.
+    out = secrets.redact_params(
+        {
+            "job": {"platform": "youtube", "title": "clip"},
+            "_injectedSocialTokens": {"youtube": {"accessToken": "ya29.live-SECRET-9999"}},
+        }
+    )
+    assert out["job"] == {"platform": "youtube", "title": "clip"}  # non-secret preserved
+    assert out["_injectedSocialTokens"] == secrets.REDACTION_PLACEHOLDER
+    assert "ya29.live-SECRET-9999" not in repr(out)
+
+
 def test_redact_params_hides_nested_provider_block() -> None:
     # providers.upsert nests the entry under a "provider" key (providers_ops.py).
     out = secrets.redact_params({"provider": {"id": "groq", "provider": "Groq", "apiKeys": ["gsk-nested-KEY7"]}})
