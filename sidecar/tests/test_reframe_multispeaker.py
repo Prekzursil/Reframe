@@ -7,9 +7,13 @@ engine orchestration, all with hand-built fixtures and an injected FAKE backend
 
 from __future__ import annotations
 
+import json
+import logging
+
 import pytest
 from media_studio.features import offline as _offline
 from media_studio.features import reframe_multispeaker as ms
+from media_studio.features import reframe_override as ro
 from media_studio.features.reframe_eval import LAYOUTS, ReframeTrace, Segment
 
 
@@ -675,6 +679,97 @@ class TestEngineRender:
         )
         with pytest.raises(ms.MultiSpeakerRenderError):
             eng.reframe("in.mp4", "out.mp4")
+
+
+class TestDecisionSidecar:
+    """v1.5 O-2 — the render must LEAVE BEHIND the per-shot decisions.
+
+    Without this the R2 override panel can never be honoured: the trace was
+    built in-process and discarded, so the renderer had nothing to correct
+    (docs/validation/v15-audit-ledger.md:1911).
+    """
+
+    def test_render_writes_the_decision_sidecar_next_to_the_output(self):
+        written: dict[str, str] = {}
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_analysis()),
+            runner=lambda _argv, **_kw: 0,
+            write_text_fn=lambda p, t: written.__setitem__(p, t),
+        )
+        eng.reframe("in.mp4", "out.mp4")
+        payload = json.loads(written["out.mp4.reframe.json"])
+        assert payload["version"] == ro.SIDECAR_VERSION
+        assert payload["engine"] == ms.ENGINE_NAME
+        assert payload["aspect"] == ms.DEFAULT_ASPECT
+        assert payload["sourcePath"] == "in.mp4"
+        assert (payload["sourceWidth"], payload["sourceHeight"], payload["fps"]) == (1920, 1080, 30.0)
+        assert len(payload["trace"]["crops"]) == 6
+        # The persisted payload must re-derive the SAME editable plan the panel edits.
+        assert ro.plan_from_sidecar(payload).shots
+
+    def test_sidecar_is_written_only_after_the_render_succeeds(self):
+        written: dict[str, str] = {}
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_analysis()),
+            runner=lambda *_a, **_k: 1,  # ffmpeg fails
+            write_text_fn=lambda p, t: written.__setitem__(p, t),
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert written == {}
+
+    def test_a_sidecar_write_failure_does_not_lose_the_rendered_clip(self):
+        # The clip is already correct on disk; failing the whole render over a
+        # metadata file would be worse. It is LOGGED, not silent, and the
+        # consequence is only that `reframe.shotPlanFor` reports "no plan".
+        # `util.get_logger` sets propagate=False, so pytest's caplog cannot see
+        # this record at all — attach a handler to the module logger instead
+        # (verified to FIRE on the current implementation, and it would go quiet
+        # if the except arm ever became a silent `pass`).
+        def boom(_p: str, _t: str) -> None:
+            raise OSError("read-only volume")
+
+        seen: list[str] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                seen.append(record.getMessage())
+
+        handler = _Capture(level=logging.WARNING)
+        ms._log.addHandler(handler)
+        try:
+            eng = _engine(
+                backend_factory=lambda _s: _FakeBackend(_analysis()),
+                runner=lambda _argv, **_kw: 0,
+                write_text_fn=boom,
+            )
+            assert eng.reframe("in.mp4", "out.mp4") == "out.mp4"
+        finally:
+            ms._log.removeHandler(handler)
+        assert any("reframe decision sidecar" in m for m in seen)
+
+    def test_the_degrade_path_writes_no_sidecar(self):
+        # A single-speaker fallback has no per-shot decisions, so advertising a
+        # correction panel for it would be a lie.
+        written: dict[str, str] = {}
+
+        class _Single:
+            def reframe(self, _i, o, _a, **_kw):
+                return o
+
+        eng = _engine(
+            which=lambda _x: None,
+            allow_degrade=True,
+            single_speaker=_Single(),
+            write_text_fn=lambda p, t: written.__setitem__(p, t),
+        )
+        assert eng.reframe("in.mp4", "out.mp4") == "out.mp4"
+        assert written == {}
+
+    def test_default_write_text_writes_a_real_file(self, tmp_path):
+        target = tmp_path / "x.json"
+        ms._write_text_file(str(target), "{}")
+        assert target.read_text(encoding="utf-8") == "{}"
 
 
 class TestEngineFailureContract:

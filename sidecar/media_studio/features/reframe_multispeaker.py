@@ -54,12 +54,14 @@ basic-memory ``reframe-multi-speaker-engine-approach-decided-hybrid``.
 from __future__ import annotations
 
 import contextlib
+import json
 import math
 import os
 import shutil
 import statistics
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from .. import ffmpeg
@@ -67,6 +69,7 @@ from ..util import get_logger
 from . import aspect as _aspect
 from . import offline as _offline
 from . import reframe_claudeshorts as _cs
+from . import reframe_override as _override
 from .reframe_eval import LAYOUTS, ReframeTrace, Segment, crop_iou
 
 _log = get_logger("media_studio.features.reframe_multispeaker")
@@ -1325,6 +1328,12 @@ ReframeRunner = Callable[..., int]  # ffmpeg.run-shaped
 ReplaceFn = Callable[[str, str], None]
 RemoveFn = Callable[[str], None]
 WriteConcatFn = Callable[[str, Sequence[str]], None]
+WriteTextFn = Callable[[str, str], None]
+
+
+def _write_text_file(path: str, text: str) -> None:
+    """Default text writer (the injectable sidecar-write seam's implementation)."""
+    Path(path).write_text(text, encoding="utf-8")
 
 
 class MultiSpeakerReframeEngine:
@@ -1356,6 +1365,7 @@ class MultiSpeakerReframeEngine:
         replace_fn: ReplaceFn = os.replace,
         remove_fn: RemoveFn = os.remove,
         write_concat_fn: WriteConcatFn = _write_concat_list,
+        write_text_fn: WriteTextFn = _write_text_file,
     ) -> None:
         self._settings = settings or {}
         self._allow_degrade = bool(allow_degrade)
@@ -1367,6 +1377,7 @@ class MultiSpeakerReframeEngine:
         self._replace = replace_fn
         self._remove = remove_fn
         self._write_concat = write_concat_fn
+        self._write_text = write_text_fn
 
     def reframe(
         self,
@@ -1440,7 +1451,7 @@ class MultiSpeakerReframeEngine:
         plan = plan_render_segments(analysis, trace, aspect=aspect)
         fps = float(analysis.fps)
         total_sec = analysis.total_frames / fps
-        return self._render_plan(
+        rendered = self._render_plan(
             in_path,
             out_path,
             plan,
@@ -1451,6 +1462,49 @@ class MultiSpeakerReframeEngine:
             on_progress=on_progress,
             should_cancel=should_cancel,
         )
+        # v1.5 O-2: LEAVE THE DECISIONS BEHIND. Written only after the render
+        # succeeded, so a sidecar never describes a clip that does not exist.
+        self._write_decision_sidecar(
+            rendered,
+            source_path=in_path,
+            aspect=aspect,
+            analysis=analysis,
+            trace=trace,
+        )
+        return rendered
+
+    def _write_decision_sidecar(
+        self,
+        clip: str,
+        *,
+        source_path: str,
+        aspect: str,
+        analysis: ShotAnalysis,
+        trace: ReframeTrace,
+    ) -> None:
+        """Persist ``clip``'s per-shot decisions as ``<clip>.reframe.json``.
+
+        This is what makes the R2 correction panel possible at all: the trace was
+        previously built in-process and discarded, so no renderer code could ever
+        obtain one (audit ledger :1911). A write failure is LOGGED and swallowed —
+        the clip on disk is already correct and losing it over a metadata file
+        would be worse; the only consequence is that ``reframe.shotPlanFor``
+        honestly reports "no plan" for this clip.
+        """
+        payload = _override.build_decision_sidecar(
+            engine=ENGINE_NAME,
+            aspect=aspect,
+            source_path=source_path,
+            source_width=analysis.width,
+            source_height=analysis.height,
+            fps=float(analysis.fps),
+            trace=trace,
+        )
+        path = _override.sidecar_path(clip)
+        try:
+            self._write_text(path, json.dumps(payload))
+        except OSError as exc:
+            _log.warning("could not write the reframe decision sidecar %s: %s", path, exc)
 
     def _render_plan(
         self,
