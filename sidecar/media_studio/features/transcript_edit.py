@@ -105,7 +105,12 @@ class AddressedWord(TypedDict):
 
 
 class TranscriptEditStats(TypedDict):
-    """Per-category stats. The filler/silence fields mirror ``RefineStats``."""
+    """Per-category stats. The filler/silence fields mirror ``RefineStats``.
+
+    ``wordsDeleted`` counts the edit spans that RESOLVED (a ``trim`` counts too,
+    since it also removes speech) — NOT the rejected ones, and not the words the
+    filler engine cut on its own (those stay in ``fillersRemoved``).
+    """
 
     wordsDeleted: int
     deletedSec: float
