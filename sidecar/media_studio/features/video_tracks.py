@@ -612,7 +612,19 @@ class VideoTracksService:
         return True
 
     def _tracks_payload(self, project: dict[str, Any]) -> list[VideoTrack]:
-        return [{**t, "clips": [dict(c) for c in clips_of(t)]} for t in video_tracks_of(project) if isinstance(t, dict)]
+        """A deep-ish copy of the lanes, SKIPPING malformed rows.
+
+        The non-dict CLIP filter is load-bearing, not defensive noise: a
+        hand-edited manifest can carry a junk row (``find_clip`` and library.py's
+        ref walk both skip one), and ``dict("junk")`` raises ValueError — which is
+        not a :class:`VideoTrackError`, so it escaped the typed-refusal wrapper and
+        surfaced as an opaque internal error on ``tracks.video.list``.
+        """
+        return [
+            {**t, "clips": [dict(c) for c in clips_of(t) if isinstance(c, dict)]}
+            for t in video_tracks_of(project)
+            if isinstance(t, dict)
+        ]
 
     def _edit(self, video_id: str, clip_id: str, fps: int, apply: Callable[[VideoTrack, VideoClip], list[VideoClip]]):
         """Load -> locate the clip -> ``apply`` -> overlap-check -> save, under the lock."""
