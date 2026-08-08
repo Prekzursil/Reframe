@@ -442,6 +442,20 @@ def register_all(
         register_fn=reg,
     )
 
+    # social.* (C14): direct publish / scheduling to social platforms. The group is
+    # storage + pure-decision only — the per-platform capability matrix (which of the
+    # four platforms a LOCAL desktop app may publish to at all), the honest
+    # platform-vs-local scheduling decision, and the publish queue at
+    # data_dir/social-queue.json (atomic temp+rename). NO token ever reaches this
+    # side at rest: OAuth tokens live in the main-process keystore and ride the
+    # existing per-request stdio injection, exactly as provider keys do.
+    from ..features import social_queue as _social_queue  # local: import-light
+
+    _social_queue.register(
+        path=svc.data_dir / "social-queue.json",
+        register_fn=reg,
+    )
+
     # templates.* (repurpose WU5): saved multi-source pipelines (a recipe PLUS
     # defaultControls + exportTargets). list/save/delete are direct CRUD; apply
     # runs ONE source through the EXISTING recipe runner after binding steps to
