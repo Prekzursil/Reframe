@@ -116,18 +116,26 @@ class TestNormalizePreset:
                 }
             )
 
-    @pytest.mark.parametrize(("raw", "norm"), [("1:1", "1:1"), ("4:5", "4:5"), ("9x16", "9:16")])
+    @pytest.mark.parametrize(
+        ("raw", "norm"),
+        [("1:1", "1:1"), ("4:5", "4:5"), ("9x16", "9:16"), ("16:9", "16:9"), ("16x9", "16:9")],
+    )
     def test_multi_aspect_accepted_and_canonicalized(self, raw, norm):
-        # WU R3: 1:1 + 4:5 are now valid export aspects alongside 9:16, and an
-        # "WxH" form is canonicalized to "W:H".
+        # WU R3: 1:1 + 4:5 are valid export aspects alongside 9:16, and an "WxH"
+        # form is canonicalized to "W:H". v1.5 aspect-matrix: 16:9 (widescreen)
+        # joined them as a first-class curated preset.
         p = export_presets.normalize_preset(
             {"label": "x", "aspect": raw, "minSec": 20, "maxSec": 60, "count": 1, "captionStyle": "libass"}
         )
         assert p["aspect"] == norm
 
-    @pytest.mark.parametrize("bad_aspect", ["16:9", "3:4", "potato", "9", "0:0"])
+    # SCOPE FIX (v1.5 aspect-matrix lane): "16:9" moved OUT of this rejection list
+    # and INTO the accept list above — the catalog now offers it deliberately.
+    # 21:9 replaces it so the uncurated-ratio case still has a landscape member;
+    # no assertion was weakened and the accept-list grew by two cases.
+    @pytest.mark.parametrize("bad_aspect", ["21:9", "3:4", "potato", "9", "0:0"])
     def test_unsupported_or_garbage_aspect_rejected(self, bad_aspect):
-        # A parseable-but-uncurated ratio (16:9) AND outright garbage both fail loud.
+        # A parseable-but-uncurated ratio (21:9) AND outright garbage both fail loud.
         with pytest.raises(RpcError):
             export_presets.normalize_preset(
                 {"label": "x", "aspect": bad_aspect, "minSec": 20, "maxSec": 60, "count": 1, "captionStyle": "libass"}
