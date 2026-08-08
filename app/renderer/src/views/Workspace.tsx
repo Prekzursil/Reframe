@@ -51,6 +51,8 @@ const Refine = lazy(() => import('../features/Refine'));
 // v1.5 expose-engines: per-video camera-shake removal. The `stabilize.run` RPC
 // and its output dir already existed; this tab is what makes them reachable.
 const Stabilize = lazy(() => import('../features/Stabilize'));
+// v1.5 flagship #2: transcript-native editing (strike a word -> the video cuts).
+const TranscriptEditor = lazy(() => import('../features/TranscriptEditor'));
 const Recipes = lazy(() => import('../features/Recipes'));
 // intelligence A: semantic transcript search (seeks the player on a hit).
 const SemanticSearch = lazy(() => import('../features/SemanticSearch'));
@@ -76,6 +78,7 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'transcribe', label: 'Transcribe' },
   { id: 'search', label: 'Search' },
   { id: 'subtitles', label: 'Subtitles' },
+  { id: 'transcriptEdit', label: 'Transcript edit' },
   { id: 'diarize', label: 'Diarize' },
   { id: 'refine', label: 'Refine' },
   { id: 'tracks', label: 'Tracks' },
@@ -104,7 +107,7 @@ export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
   {
     id: 'speech',
     label: 'Speech & Text',
-    tabIds: ['transcribe', 'search', 'subtitles', 'diarize', 'refine'],
+    tabIds: ['transcribe', 'search', 'subtitles', 'transcriptEdit', 'diarize', 'refine'],
   },
   { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline', 'stabilize', 'speed'] },
   { id: 'audio', label: 'Audio', tabIds: ['dub'] },
@@ -296,6 +299,8 @@ export function Workspace({
     switch (active) {
       case 'subtitles':
         return <Subtitles videoId={video.id} initialTrack={tracks[0] ?? null} />;
+      case 'transcriptEdit':
+        return <TranscriptEditor videoId={video.id} />;
       case 'diarize':
         return <Diarize videoId={video.id} />;
       case 'refine':
