@@ -472,3 +472,19 @@
   border-radius: var(--radius-sm);
   background: var(--surface-raised, transparent);
 }
+
+/* v1.5 expose-engines: the Stabilize panel's SKIP notice (ffmpeg built without
+   libvidstab). This is a warning, not a failure and not a success — the run
+   completed but did nothing, and the source clip came back untouched. It
+   therefore uses the WARN token, never the error red (which would overstate a
+   non-failure) and never the plain body style (which would let a no-op read as
+   a finished job). The leading edge carries the signal for mono/high-contrast
+   readers who do not get the hue. */
+.stabilize-panel .stabilize-notice {
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius-sm);
+  background: var(--status-warn-soft);
+  color: var(--status-warn);
+  font-size: var(--type-caption-size);
+}
