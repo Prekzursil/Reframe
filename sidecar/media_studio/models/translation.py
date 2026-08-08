@@ -123,7 +123,7 @@ TIER2_GPU_LAYERS: int = 24
 #: SPDX ids a commercial Reframe build may ship a model weight under. Deliberately
 #: excludes ``gemma`` (Open Weights, gated, use-restricted), ``cc-by-nc-*``,
 #: ``creativeml-openrail-m`` / ``openrail++`` and ``cc-by-4.0`` (attribution is
-#: outside the owner's strict gate) — see flagship-lip-sync-dub.md §3.2 / §7.
+#: outside the owner's strict gate) — docs/plans/v1.5/flagship-lip-sync-dub.md §3.2.
 PERMISSIVE_LICENCES: frozenset[str] = frozenset({"apache-2.0", "mit", "bsd-3-clause"})
 
 #: MT asset name -> (the HF repo its pin MUST resolve from, verified SPDX id).
