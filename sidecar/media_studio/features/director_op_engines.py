@@ -92,32 +92,63 @@ WIRED_KINDS: tuple[str, ...] = (
     "export",
 )
 
-#: The op kinds NOT wired to a real engine — each needs a subsystem ffmpeg alone
-#: cannot provide. Logged up front (never silently skipped) so an op of one of
-#: these kinds surfaces as a clear per-op ``failed`` with auto-rollback (the
-#: graceful degradation), never a silent no-op. HONESTLY DEFERRED:
+#: The op kinds NOT wired into :func:`build_engines`. Logged up front (never
+#: silently skipped) so an op of one of these kinds surfaces as a clear per-op
+#: ``failed`` with auto-rollback (the graceful degradation), never a silent no-op.
 #:
-#:   * ``stitchPanorama`` -> the panorama/stitch engine (multi-frame mosaic);
-#:   * ``ocrExtractList``  -> an OCR engine (text recognition, not a render);
-#:   * ``regenScroll``     -> the scroll-regen engine (also needs a panorama).
+#: v1.5 (SCOPE.md O-3) corrects TWO false statements this block used to make.
 #:
-#: v1.5 (SCOPE.md O-3) REMOVED ``reorder`` from this set: it is a segment
-#: permutation the shipped ``fillers.build_segment_cut_argv`` concat already
-#: expresses, so it is now a real wired engine (:func:`make_reorder_engine`) —
-#: it never needed a "multi-clip timeline" subsystem at all.
+#: 1. ``reorder`` is REMOVED from the set. It was deferred as needing "the
+#:    timeline clip-reorder engine (multi-clip permutation)". That premise was
+#:    wrong: it is a permutation of spans within ONE source, which the shipped
+#:    ``fillers.build_segment_cut_argv`` concat already expresses. It is now a
+#:    real wired engine (:func:`make_reorder_engine`) and needed no subsystem.
+#:
+#: 2. The remaining three are NOT missing their engines. ``panorama_stitch.py``,
+#:    ``scroll_regen.py`` and ``ocr_list.py`` each ship a complete, unit-tested
+#:    subsystem with its heavy half behind an injected seam. What is missing is
+#:    only the apply-time ADAPTER, and :data:`DEFERRED_SUBSYSTEMS` now names the
+#:    concrete mechanism each adapter still needs rather than pretending the
+#:    engine itself is absent. The three shared gaps are: span frame-sampling
+#:    (no helper exists anywhere in the tree), a manifest artifact slot plus a
+#:    non-video inverse sentinel (:data:`RESTORE_KEY` restores a video PATH, and
+#:    these ops produce artifacts/text instead), and — for ``regenScroll`` — a
+#:    cross-op handoff, since ``apply_engine.apply_plan`` gives an op no way to
+#:    read a previous op's output. Those are deliberately NOT invented here.
 DEFERRED_KINDS: tuple[str, ...] = (
     "stitchPanorama",
     "regenScroll",
     "ocrExtractList",
 )
 
-#: Each deferred kind -> the subsystem it requires. Surfaced verbatim in the
-#: deferral notice (:func:`log_deferred`) so the unwired set names WHY each is
-#: held back, not just THAT it is.
+#: Each deferred kind -> the work it still needs, naming the SHIPPED module the
+#: adapter would drive. Surfaced verbatim in the deferral notice
+#: (:func:`log_deferred`) so the unwired set says WHY each is held back — and,
+#: since v1.5, says it TRUTHFULLY (the engines exist; the adapters do not).
+#: ``test_deferred_subsystems_name_modules_that_exist`` pins every module named
+#: here to a real importable module, so this text cannot rot into a lie again.
 DEFERRED_SUBSYSTEMS: dict[str, str] = {
-    "stitchPanorama": "the panorama/stitch engine",
-    "regenScroll": "the scroll-regen engine (requires a stitched panorama)",
-    "ocrExtractList": "an OCR engine",
+    "stitchPanorama": (
+        "an apply-time adapter over the shipped panorama/stitch engine "
+        "media_studio.features.panorama_stitch (needs span frame-sampling + a manifest artifact slot)"
+    ),
+    "regenScroll": (
+        "an apply-time adapter over the shipped scroll-regen engine "
+        "media_studio.features.scroll_regen (needs a stitched panorama handed across ops + a span splice)"
+    ),
+    "ocrExtractList": (
+        "an apply-time adapter over the shipped OCR engine "
+        "media_studio.features.ocr_list (needs span frame-sampling + the on-demand rapidocr-onnx asset)"
+    ),
+}
+
+#: Deferred kind -> the SHIPPED engine module its adapter would drive. Kept
+#: beside :data:`DEFERRED_SUBSYSTEMS` so the "engine exists, adapter does not"
+#: claim is machine-checkable rather than prose.
+DEFERRED_ENGINE_MODULES: dict[str, str] = {
+    "stitchPanorama": "media_studio.features.panorama_stitch",
+    "regenScroll": "media_studio.features.scroll_regen",
+    "ocrExtractList": "media_studio.features.ocr_list",
 }
 
 
@@ -1053,6 +1084,7 @@ def log_deferred(log: Any) -> None:
 
 
 __all__ = [
+    "DEFERRED_ENGINE_MODULES",
     "DEFERRED_KINDS",
     "DEFERRED_SUBSYSTEMS",
     "WIRED_KINDS",

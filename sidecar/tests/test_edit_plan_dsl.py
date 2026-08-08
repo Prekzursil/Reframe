@@ -290,6 +290,48 @@ def test_regen_precondition_can_be_disabled():
     assert out.ops[0].status == "planned"
 
 
+# --------------------------------------------------------------------------- #
+# regenScroll panorama shape (v1.5 SCOPE.md O-3 — a CONFIRMED contradiction).
+#
+# Measured on the pre-fix tree, two independent probes:
+#   panorama as STRING -> validator 'planned'                / engine REJECTED
+#   panorama as DICT   -> validator 'precondition-unmet'     / engine ACCEPTED
+# i.e. the ONLY shape `scroll_regen._require_panorama` can consume was the one
+# the validator dropped, so NO regenScroll op could be both valid and
+# renderable. The validator must accept the engine's mapping shape — while
+# still rejecting a malformed one (this is a net TIGHTENING for garbage input,
+# not a loosened guard).
+# --------------------------------------------------------------------------- #
+def test_keep_regen_with_a_panorama_mapping_the_engine_can_consume():
+    pano = {"imagePath": "p.png", "height": 900, "frameOffsets": [0, 300]}
+    plan = _plan(ops=(_op("o1", "regenScroll", (0, 1000), panorama=pano),))
+    out = validate_and_reject(plan, understanding=_u())
+    assert out.ops[0].status == "planned"
+
+
+@pytest.mark.parametrize(
+    "pano",
+    [
+        {},  # empty mapping
+        {"imagePath": "p.png"},  # missing height + frameOffsets
+        {"imagePath": "p.png", "height": 900},  # missing frameOffsets
+        {"imagePath": 7, "height": 900, "frameOffsets": []},  # imagePath not a string
+        {"imagePath": "p.png", "height": "900", "frameOffsets": []},  # height not an int
+        {"imagePath": "p.png", "height": True, "frameOffsets": []},  # bool is not a height
+        {"imagePath": "p.png", "height": 900, "frameOffsets": "0,300"},  # offsets not a list
+        {"imagePath": "", "height": 900, "frameOffsets": []},  # blank imagePath
+        "",  # blank artifact reference
+        "   ",  # whitespace-only artifact reference
+        42,  # not a string and not a mapping
+        [],  # not a string and not a mapping
+    ],
+)
+def test_drop_regen_with_a_malformed_panorama(pano):
+    plan = _plan(ops=(_op("o1", "regenScroll", (0, 1000), panorama=pano),))
+    out = validate_and_reject(plan, understanding=_u())
+    assert out.ops[0].status_reason == "precondition-unmet"
+
+
 def test_export_op_exempt_from_span_requirement():
     plan = _plan(ops=(_op("o1", "export", None),))
     out = validate_and_reject(plan, understanding=_u())
