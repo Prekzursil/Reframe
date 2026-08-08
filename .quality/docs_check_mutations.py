@@ -99,13 +99,19 @@ def main() -> int:
     failures = 0
     for name, rel, mutate, rule in MUTATIONS:
         p = ROOT / rel
-        original = p.read_text(encoding="utf-8")
+        # Byte-exact round-trip. `read_text`/`write_text` normalise CRLF -> LF on the
+        # way out, so a "revert" would silently rewrite the line endings of every file
+        # this harness touches (windows-shell.md §8b). git happens to normalise those
+        # away here; on a repo that does not, it would leave a whole-file phantom diff.
+        raw = p.read_bytes()
+        eol = b"\r\n" if b"\r\n" in raw else b"\n"
+        original = raw.decode("utf-8").replace("\r\n", "\n")
         mutated = mutate(original)
         if mutated == original:
             print(f"  BROKEN-HARNESS {name}: mutation was a no-op on {rel}")
             failures += 1
             continue
-        p.write_text(mutated, encoding="utf-8")
+        p.write_bytes(mutated.replace("\n", eol.decode()).encode("utf-8"))
         try:
             code, out = run()
             n = counter(out, rule)
@@ -114,7 +120,7 @@ def main() -> int:
             if not ok:
                 failures += 1
         finally:
-            p.write_text(original, encoding="utf-8")
+            p.write_bytes(raw)
         code, out = run()
         if code != 0:
             print(f"  REVERT-FAILED after {name}: gate still red (exit {code})")
