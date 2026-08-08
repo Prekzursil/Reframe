@@ -32,15 +32,18 @@
 }
 
 .transcript-token:hover {
-  background: var(--surface-sunken, rgb(0 0 0 / 12%));
+  background: var(--surface-hover);
 }
 
 /* The one place a visible focus ring is non-negotiable: the tokens are the entire
- * keyboard surface of this pane. Never `:where()` this rule — a zero-specificity
- * focus style is how the v1.4 focus rings silently disappeared. */
+ * keyboard surface of this pane. `--focus-ring` is a two-stop BOX-SHADOW value
+ * (tokens.css), not a colour — so it is consumed the way the rest of the shell
+ * consumes it (library-cards.css / firstRunSetup.css), never as an `outline`
+ * colour. Never `:where()` this rule either — a zero-specificity focus style is
+ * how the v1.4 focus rings silently disappeared. */
 .transcript-token:focus-visible {
-  outline: 2px solid var(--focus-ring, currentcolor);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .transcript-token[data-deleted="true"] {
