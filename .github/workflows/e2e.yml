@@ -89,6 +89,17 @@ jobs:
 
       - name: E2E sidecar — pytest -m e2e (AI2 hub/director + intel/repurpose + nasty inputs)
         working-directory: sidecar
+        env:
+          # sidecar/tests/conftest.py installs the hermetic egress guard
+          # (tests/_hermetic.py) for EVERY pytest invocation, including this one.
+          # That guard exists to keep the BLOCKING gate (quality.yml) independent
+          # of third-party endpoints — the get-pip.py rotation took main red twice.
+          # This opt-in suite is the opposite contract by design: it is the heavy
+          # leg that is ALLOWED real fetches (it installs huggingface_hub +
+          # faster-whisper precisely so the reframe/ASD flows can provision real
+          # model weights). Blocking egress here would be a scope error, not
+          # hardening, so the guard is explicitly stood down for this step only.
+          REFRAME_ALLOW_EGRESS: "1"
         run: python -m pytest -m e2e -v
 
       - name: E2E sidecar — real short-making pipeline smoke (real ffmpeg + tiny whisper)

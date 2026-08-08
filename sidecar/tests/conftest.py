@@ -15,6 +15,25 @@ from hypothesis import HealthCheck, settings
 from media_studio import protocol
 from media_studio.jobs import JobRegistry
 
+from tests import _hermetic
+
+# --- Hermetic egress guard (ALWAYS ON) -------------------------------------
+# Installed at MODULE scope, not in a fixture, so it is armed before any test
+# module is imported (import-time network calls are exactly the class this
+# catches). ci-hygiene.md 2: "Hermetic CI = block egress + verify a committed
+# snapshot store."
+#
+# The get-pip.py incident took the blocking gate red TWICE in eight days: 14
+# tests pre-staged a dummy cache, the manager re-verified it, discarded it, and
+# silently refetched the real rolling artifact -- so an upstream rotation, not a
+# code change, decided whether CI was green. Riding inside this existing pytest
+# step costs no extra CI minutes and cannot drift out of sync with the suite.
+#
+# It is DESTINATION-aware: loopback/unspecified addresses pass through, so the
+# asyncio self-pipe and every ("127.0.0.1", 0) test server keep working. Opt out
+# for a deliberately live run with REFRAME_ALLOW_EGRESS=1.
+_hermetic.install()
+
 # --- Hypothesis: a deterministic, bounded CI profile -----------------------
 # WU-B property/fuzz layer. The default Hypothesis profile is non-deterministic
 # (random seed) and enforces a 200ms per-example deadline — both flake the
