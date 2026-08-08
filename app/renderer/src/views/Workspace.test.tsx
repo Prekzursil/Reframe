@@ -144,11 +144,31 @@ describe('Workspace', () => {
       'Convert',
       'Short-maker',
       'Timeline',
+      // v1.5: the Speed panel joins "Frame & Cut". Before it, the re-time engine
+      // had NO control in any panel — only an LLM-planned Director op reached it.
+      'Speed',
       'Dub',
       'Timeline export',
       'Recipes',
       'Assets',
     ]);
+  });
+
+  it('puts Speed in the Frame & Cut group and selects it from a deep-link', async () => {
+    // The REAL panel mount is asserted in Workspace.seam.test.tsx, which drains
+    // macrotasks — the lazy chunk is a genuine dynamic import and this file's
+    // microtask-only flush() can leave the Suspense fallback up.
+    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
+    expect(frame?.tabIds).toContain('speed');
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="speed" />);
+    });
+    await flush();
+    const speedTab = [...container.querySelectorAll('[role="tab"]')].find(
+      (t) => t.textContent === 'Speed',
+    );
+    expect(speedTab).toBeDefined();
+    expect(speedTab?.getAttribute('aria-selected')).toBe('true');
   });
 
   it('opens the project via project.open and shows the title + tabs', async () => {

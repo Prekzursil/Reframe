@@ -235,6 +235,31 @@ export const client = {
     ): Promise<JobHandle & { paths?: string[] }> => rpc('convert.batch', { items }),
   },
 
+  /**
+   * Playback speed. `factor` > 1 speeds up (shorter), < 1 slows down (longer);
+   * the sidecar rejects a non-positive, out-of-window, or exactly-1.0 factor
+   * (`features/speed.py` `resolve_factor`), so validate with `isRetimeFactor`
+   * from `lib/speedPresets` before calling if the value came from a user.
+   *
+   * A job: this resolves with `{jobId}` only, and the terminal
+   * `{path, factor, sourceDurationSec, durationSec}` arrives on `job.done`.
+   *
+   * CONSTANT factor over the whole clip — there is no keyframed ramp engine.
+   */
+  speed: {
+    retime: (
+      target: { videoId?: string; path?: string },
+      factor: number,
+    ): Promise<
+      JobHandle & {
+        path?: string;
+        factor?: number;
+        sourceDurationSec?: number;
+        durationSec?: number;
+      }
+    > => rpc('speed.retime', { ...target, factor }),
+  },
+
   shortmaker: {
     select: (
       videoId: string,
