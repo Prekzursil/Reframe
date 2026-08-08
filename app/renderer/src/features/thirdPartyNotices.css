@@ -23,8 +23,12 @@
   color: var(--text-secondary);
 }
 
-/* The "Bundled fonts" block sits below the model list, separated by a hairline
- * so the two license categories read as distinct groups under one heading. */
+/* The sub-blocks below the model list — bundled programs, optional downloads,
+ * bundled fonts — each sit behind a hairline so the license categories read as
+ * distinct groups under one heading. (`.tpn__binaries` was added without a rule
+ * and rendered as an unseparated block; folded in here so all three match.) */
+.tpn__binaries,
+.tpn__optin,
 .tpn__fonts {
   display: flex;
   flex-direction: column;
@@ -107,6 +111,20 @@
 .tpn__chip--copyleft {
   background: var(--status-warn-soft);
   color: var(--status-warn);
+}
+
+/* An OPT-IN Responsible-AI (OpenRAIL) model. NOT the success tint: that reads as
+ * "permissive, no strings", and these licences bind the USER with a prohibited-use
+ * list. NOT the error tint either: they are not non-commercial, and colouring them
+ * like ViNet-S would assert something false. The warning tint — same as the
+ * copyleft binary — is the honest third state: allowed, carries duties. The chip
+ * text spells out both halves ("commercial OK, use-restricted") so the meaning
+ * never depends on hue, and its own class keeps the model/font/binary chip counts
+ * independent. */
+.tpn__chip--userestricted {
+  background: var(--status-warn-soft);
+  color: var(--status-warn);
+  white-space: normal;
 }
 
 .tpn__role {

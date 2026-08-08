@@ -749,6 +749,58 @@ class TestSettingParity:
 
 
 # --------------------------------------------------------------------------- #
+# cross-file licence drift guard
+# --------------------------------------------------------------------------- #
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_NOTICES_TSX = _REPO_ROOT / "app" / "renderer" / "src" / "features" / "ThirdPartyNotices.tsx"
+_LICENSES_DOC = _REPO_ROOT / "docs/THIRD-PARTY-LICENSES.md"  # ssot-allow: this IS the path, joined for the gate's r5
+
+
+class TestLicenceDriftGuard:
+    """The same licence fact lives in three files. Assert it agrees in all three.
+
+    A licence claim is precisely the kind of duplicated fact that must not drift:
+    the engine registry decides what runs, the notices component is what the user
+    is shown, and the licences doc is where the pass-through obligation is
+    recorded. A silent disagreement between them is a misrepresentation, so this
+    reads the other two files rather than trusting a comment to keep them in step.
+    """
+
+    def test_the_renderer_notice_quotes_the_same_weights_licences(self):
+        source = _NOTICES_TSX.read_text(encoding="utf-8")
+        for spec in ls.ENGINES.values():
+            assert f"weightsLicense: '{spec.weights_license}'" in source, (
+                f"{spec.id}: the notices component does not carry weights licence {spec.weights_license!r}"
+            )
+            assert f"codeLicense: '{spec.code_license}'" in source
+            assert f"commercial: {str(spec.commercial).lower()}" in source
+            assert f"useRestricted: {str(spec.use_restricted).lower()}" in source
+
+    def test_the_renderer_notice_never_calls_these_models_non_commercial(self):
+        # The plan doc's original verdict. If it reappears in the shipped UI the
+        # user is told something the licence text contradicts.
+        source = _NOTICES_TSX.read_text(encoding="utf-8")
+        optin = source.split("OPT_IN_MODEL_NOTICES")[-1]
+        assert "commercial: false" not in optin
+        assert "useRestricted: false" not in optin
+
+    def test_the_licences_doc_records_both_engines_and_the_denied_one(self):
+        # Whitespace-normalised: the quoted clause is wrapped across markdown
+        # lines (and the blob is LF while the worktree is CRLF), so a raw
+        # substring search would report a false absence on a pure re-flow.
+        doc = " ".join(_LICENSES_DOC.read_text(encoding="utf-8").replace(">", " ").split())
+        for spec in ls.ENGINES.values():
+            assert spec.weights_license in doc, f"{spec.id}: licence absent from docs/THIRD-PARTY-LICENSES.md"
+        assert "Wav2Lip is excluded" in doc
+        # The flow-down clause is the obligation an attribution block does NOT
+        # discharge, so it must be quoted somewhere durable.
+        assert "MUST be included as an enforceable provision" in doc
+
+    def test_the_setting_name_is_the_same_string_in_the_ui_and_the_gate(self):
+        assert f"gatedBy: '{ls.SETTING_ENABLED}'" in _NOTICES_TSX.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
 # the isolated-env runner (its heavy body is pragma-no-cover)
 # --------------------------------------------------------------------------- #
 class TestRunnerJobParsing:
