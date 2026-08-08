@@ -136,7 +136,10 @@ your limit, so many small approved runs can't quietly add up.
   desktop app and the future hosted platform.
 - **Heavy work:** verthor (9:16 reframe, WSL2), ffmpeg/libass (cut/caption/convert/stabilize/mix),
   PySceneDetect (scene cuts). Models are downloaded on demand to the app data dir (never committed).
-- **Contract:** [`CONTRACTS.md`](CONTRACTS.md) is the frozen interface.
+- **Contract:** [`docs/rpc-contract-v2.md`](docs/rpc-contract-v2.md) is the live interface.
+  [`CONTRACTS.md`](CONTRACTS.md) is the original frozen v1 contract and is **superseded**
+  — it says so on its own line 3, and this line used to call it "the frozen interface",
+  which pointed every new reader at a retired authority.
 
 > Reframe ships from one engine in two forms: this **local desktop app** (the focus), and a
 > future **hosted platform** (an OpusClip-style paid service) that reuses the same Python

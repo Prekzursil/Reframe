@@ -24,6 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def _find_root() -> Path:
     """Same anchor as `docs_check.py`. `parent.parent` would be wrong the moment this
     file moves — which it already did once, from the repo root into `.quality/`, and the
@@ -52,9 +53,14 @@ def counter(out: str, rule: str) -> int:
 # (name, file, mutate(text) -> text, rule expected to fire)
 MUTATIONS = [
     (
-        "m1 unlink a doc from INDEX.md",
+        # Anchored on the ROW, by regex, not on one exact link spelling. The literal
+        # string this used to search for did not exist in the tree it shipped with, so
+        # every run reported BROKEN-HARNESS and the accompanying "5/5 mutations go red"
+        # claim was false. A mutation keyed to a formatting detail of the file it mutates
+        # decays the first time anyone reflows that file.
+        "m1 unlink a doc from docs/INDEX.md",
         "docs/INDEX.md",
-        lambda t: t.replace("[`WU-R0-EVAL-HARNESS.md`](WU-R0-EVAL-HARNESS.md)", "WU-R0 (unlinked)"),
+        lambda t: re.sub(r"(?m)^\|.*WU-R0-EVAL-HARNESS\.md.*\n", "", t, count=1),
         "r3",
     ),
     (
@@ -85,6 +91,25 @@ MUTATIONS = [
         lambda t: re.sub(r"(?m)^> \*\*Status:\*\*.*\n", "", t, count=1),
         "r1",
     ),
+    (
+        # PLANTED-CITATION CONTROL for r5. The rename that motivated r5 was invisible to
+        # r1-r4, so "the gate is green" was not evidence the bare-name form is covered.
+        # This plants exactly that form and requires r5 to name it.
+        "m5 cite a subdirectory doc by BARE basename",
+        "sidecar/media_studio/features/zoom.py",
+        lambda t: t.replace('"""', '"""Wiring notes live in WIRING-T2.md.\n\n', 1),  # ssot-allow: fixture
+        "r5",
+    ),
+    (
+        # NEGATIVE control for the same rule: the QUALIFIED spelling of the identical
+        # citation must NOT fire. Without this, r5 could be "flag every .md basename"
+        # and still pass m5 — a rule that cannot be satisfied is as useless as one that
+        # cannot fire. Expected rule count is 0, so it is checked separately below.
+        "m5b cite the SAME doc by its full path (must stay green)",
+        "sidecar/media_studio/features/zoom.py",
+        lambda t: t.replace('"""', '"""Wiring notes live in docs/wiring/WIRING-T2.md.\n\n', 1),
+        None,
+    ),
 ]
 
 
@@ -114,9 +139,16 @@ def main() -> int:
         p.write_bytes(mutated.replace("\n", eol.decode()).encode("utf-8"))
         try:
             code, out = run()
-            n = counter(out, rule)
-            ok = code == 1 and n > 0
-            print(f"  {'RED-OK  ' if ok else 'MISS    '} {name}: exit={code} {rule}={n}")
+            if rule is None:
+                # A NEGATIVE control: this edit is legitimate and the gate must stay
+                # green. `MISS` here means the rule over-fires, which is just as much a
+                # broken gate as one that never fires.
+                ok = code == 0
+                print(f"  {'GREEN-OK' if ok else 'MISS    '} {name}: exit={code} (expected 0)")
+            else:
+                n = counter(out, rule)
+                ok = code == 1 and n > 0
+                print(f"  {'RED-OK  ' if ok else 'MISS    '} {name}: exit={code} {rule}={n}")
             if not ok:
                 failures += 1
         finally:

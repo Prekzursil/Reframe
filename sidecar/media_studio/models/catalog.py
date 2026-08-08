@@ -14,7 +14,7 @@ no cross-import of the other Hub modules. It is the single source of truth the
 
 Honesty rule (matches the seed's ⛔ section): every quality label is *dated
 guidance* ("our pick · as of <date>"), never an objective benchmark, and free
-tiers churn — re-verify ``CATALOG-SEED.md`` at build time. The "N keys =/=
+tiers churn — re-verify ``docs/plans/_archive/provider-hub/CATALOG-SEED.md`` at build time. The "N keys =/=
 N x quota" reality lives in the SETUP/MODEL-GUIDE docs, not here.
 """
 
@@ -417,7 +417,7 @@ def order_by(
     raise ValueError(f"unknown order key: {key!r}")
 
 
-#: The editorial "Top pick per task" from ``CATALOG-SEED.md`` (seeded verbatim;
+#: The editorial "Top pick per task" from ``docs/plans/_archive/provider-hub/CATALOG-SEED.md`` (seeded verbatim;
 #: the free-tier/grade math alone can't reproduce these because the seed prefers
 #: the SAFE Groq models over the higher-quota-but-unverified Cerebras ones, and
 #: prefers Gemini Flash-Lite over Flash for OCR). Validated against ``CATALOG``

@@ -129,6 +129,6 @@ Manual llama-server start is NO LONGER needed — `ModelRunner.start_server()` i
 
 ## 6. Known seams still needing wiring (pointer)
 
-The five P0/P1 punch-list items in `P2-COMPLETENESS-REPORT.md §8`: green-the-suites fixes,
+The five P0/P1 punch-list items in `docs/_archive/2026-06/P2-COMPLETENESS-REPORT.md §8`: green-the-suites fixes,
 shortmaker→Remotion routing, production panel bundling, `audioTrackId` carry, packaged-mode
 supervisor block. Everything else on this checklist is live today.

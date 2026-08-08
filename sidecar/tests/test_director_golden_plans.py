@@ -2,7 +2,7 @@
 
 This harness is the falsifiable *"does the canonical example still decompose
 correctly"* guard (DESIGN §3, PLAN §WU-eval-harness). It runs the two canonical
-examples (``FEATURE.md:14-15``) through the SHIPPED Director path —
+examples (``docs/plans/_archive/prompt-driven-editing/FEATURE.md:14-15``) through the SHIPPED Director path —
 ``director.plan`` -> ``validate_and_reject`` -> ``director.apply`` -> ``apply_plan``
 — with a FAKE at every seam (canned planner provider, fake engines table), and
 asserts the **golden EditPlan op sequence** plus the apply outcome. There is no

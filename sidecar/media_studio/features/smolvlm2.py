@@ -2,7 +2,7 @@
 
 The final, *optional* stage of the Phase-8 selection pipeline: a small on-device
 video-LLM (``HuggingFaceTB/SmolVLM2-2.2B-Instruct``, Apache-2.0 — commercial OK;
-PHASE8-SOTA-MANIFEST.md component #13) that **reorders only the top-K candidates**
+reports/PHASE8-SOTA-MANIFEST.md component #13) that **reorders only the top-K candidates**
 the cheaper Tier-0/Tier-1 stages already ranked. It is the heaviest single model
 in the stack (~5.2 GB BF16 runtime VRAM) and is **6 GB-tight**: it CANNOT co-run
 with any other GPU model, so the orchestrator unloads everything else first, this

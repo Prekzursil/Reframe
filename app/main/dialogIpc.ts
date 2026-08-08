@@ -4,7 +4,7 @@
 // (multi-select, video file filters) resolving with the picked ABSOLUTE paths,
 // or `[]` when the user cancels. The renderer reaches this through the preload
 // bridge as `window.api.openVideos()` — the exact preload.ts/main.ts lines the
-// WIRING agent must apply are specified in WIRING-U2.md (preload.ts/main.ts are
+// WIRING agent must apply are specified in docs/wiring/WIRING-U2.md (preload.ts/main.ts are
 // shared files per CONTRACTS.md A8 and are NOT touched by this unit).
 //
 // CONTRACT-NOTE: the channel name mirrors the rpc-style dotted method naming
@@ -77,7 +77,7 @@ async function openVideosDialog(event: IpcMainInvokeEvent): Promise<string[]> {
 /**
  * Register the `dialog.openVideos` ipc handler. Returns a disposer that
  * removes it again (mirrors `registerIpc` in ipc.ts). The wiring agent calls
- * this from main.ts bootstrap (see WIRING-U2.md).
+ * this from main.ts bootstrap (see docs/wiring/WIRING-U2.md).
  */
 export function registerDialogIpc(): () => void {
   ipcMain.handle(DIALOG_OPEN_VIDEOS_CHANNEL, openVideosDialog);

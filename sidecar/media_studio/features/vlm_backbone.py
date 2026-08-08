@@ -2,7 +2,7 @@
 
 ONE backbone load, THREE scorers. The pinned model is **SigLIP-2 SoViT-400M**
 (``google/siglip2-so400m-patch16-384``, Apache-2.0 — commercial OK, ~2.3 GB
-fp16; PHASE8-SOTA-MANIFEST.md component #2). It is loaded ONCE behind an
+fp16; reports/PHASE8-SOTA-MANIFEST.md component #2). It is loaded ONCE behind an
 injectable :class:`BackboneBackend` seam and its image embeddings are reused by
 all three pure-numpy scorers:
 

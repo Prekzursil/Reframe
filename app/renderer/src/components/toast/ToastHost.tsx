@@ -1,6 +1,6 @@
 // ToastHost.tsx — portal that renders the live toast stack (P2 U3).
 //
-// Mount once near the app root, INSIDE <ToastProvider> (see WIRING-U3.md).
+// Mount once near the app root, INSIDE <ToastProvider> (see docs/wiring/WIRING-U3.md).
 // Renders into document.body via a portal so toasts overlay every view.
 // Styling lives in toast.css; per the shell.css convention, App.tsx (wiring)
 // owns the top-level CSS import.

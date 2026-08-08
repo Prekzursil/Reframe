@@ -7,7 +7,7 @@
 // protocol that ignores `Range: bytes=...` (and it ALWAYS sends an
 // open-ended `bytes=0-` for the first media request).
 //
-// Wiring (see WIRING-U1.md):
+// Wiring (see docs/wiring/WIRING-U1.md):
 //   1. `registerMediaSchemePrivileges()` at main.ts module top level —
 //      Electron requires registerSchemesAsPrivileged BEFORE app `ready`.
 //   2. `registerMediaProtocol(getPathForVideoId)` once inside bootstrap()

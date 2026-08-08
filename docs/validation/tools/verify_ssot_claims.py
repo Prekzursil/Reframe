@@ -299,7 +299,7 @@ check(
     "C11",
     True,
     "B-roll" in roadmap and "deferred" in roadmap.lower(),
-    f"ROADMAP.md still lists B-roll as deferred={'B-roll' in roadmap and 'deferred' in roadmap.lower()}",
+    f"docs/ROADMAP.md still lists B-roll as deferred={'B-roll' in roadmap and 'deferred' in roadmap.lower()}",
 )
 
 # ------------------------------------------------------------------- C12 ledger
@@ -403,7 +403,7 @@ check(
     "P2.6",
     True,
     "Not merged" not in rpcdoc,
-    f'rpc-contract-v2.md no longer claims "Not merged"={"Not merged" not in rpcdoc}',
+    f'docs/rpc-contract-v2.md no longer claims "Not merged"={"Not merged" not in rpcdoc}',
 )
 
 pmeta = read("app/renderer/src/features/providerMeta.ts") or ""
@@ -436,8 +436,8 @@ P1 = [
     "reframe-techprep-dossier.md",
     "reframe-trust-plan.md",
     "reframe-competitor-research.md",
-    "reframe-visual-audit.md",
-    "reframe-reconcile-audit.md",
+    "docs/_archive/2026-07/reframe-visual-audit.md",
+    "docs/_archive/2026-07/reframe-reconcile-audit.md",
 ]
 present = [f for f in P1 if (review_dir / f).is_file()]
 check(

@@ -16,7 +16,7 @@ Modules:
 the engine factories, the voice store and the dub service, and registers the
 three frozen A2 methods. Importing this package stays light: no onnxruntime
 / edge-tts / torch import happens until a job actually runs (A6 lesson 1 —
-the natives the wiring agent must pre-import are listed in WIRING-T2.md).
+the natives the wiring agent must pre-import are listed in docs/wiring/WIRING-T2.md).
 """
 
 from __future__ import annotations

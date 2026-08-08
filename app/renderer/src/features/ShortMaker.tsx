@@ -654,7 +654,7 @@ export function ShortMaker({
       // — the sidecar's _resolve_candidates prefers an inline `candidates` list.
       // (INTEGRATION-REPORT HIGH-3: ids alone were unsatisfiable.)
       // T4b: the caption style + reframe engine override flow into export as
-      // OPTIONAL params (consumed sidecar-side per WIRING-T4B.md; the current
+      // OPTIONAL params (consumed sidecar-side per docs/wiring/WIRING-T4B.md; the current
       // export handler safely ignores unknown params until that patch lands).
       // A2: audioTrackId is included ONLY when a track is chosen ("Original"
       // sends nothing — the sidecar keeps each clip's own audio).

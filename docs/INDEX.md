@@ -97,7 +97,7 @@ The five facts that get contradicted most often, and the one place each is decid
 | [`plans/v1.5/flagship-lip-sync-dub.md`](plans/v1.5/flagship-lip-sync-dub.md) | flagship #4 build spec; the only one carrying a TTS/voice-clone licence gate. |
 | [`plans/v1.5/signed-release-ci.md`](plans/v1.5/signed-release-ci.md) | the only plan for the missing release workflow. |
 | [`plans/v1.5/signed-release-trust-options.md`](plans/v1.5/signed-release-trust-options.md) | **why** Ed25519 beat cosign / SLSA / Authenticode — the only record of the rationale behind `app/main/updateVerify.ts`. |
-| [`plans/v1.5/model-rehosting.md`](plans/v1.5/model-rehosting.md) | the NC→permissive re-hosting dossier. Superseded by `PROGRAM.md` on ViNet-S. |
+| [`plans/v1.5/model-rehosting.md`](plans/v1.5/model-rehosting.md) | the NC→permissive re-hosting dossier. Superseded by `docs/plans/v1.5/PROGRAM.md` on ViNet-S. |
 | [`plans/v1.5/techprep-dossier.md`](plans/v1.5/techprep-dossier.md) | shipped-design record for the keystore / WS-D stream. |
 | [`plans/v1.5/competitor-research.md`](plans/v1.5/competitor-research.md) | external market input; NOT a repo-grounded authority. |
 | `plans/v1.5/redesign.html` · `plans/v1.5/shell-audit/` | the rendered pro-shell mock and the 8-shot captured baseline of the pre-redesign shell. |
@@ -177,5 +177,5 @@ now. Their bodies are left intact as historical record; the header is the correc
 | `plans/_archive/ux-qol/` | shipped as `job_store.py`. |
 | `plans/_archive/editing-refine/` | shipped as `features/refine.py`, `features/diarize.py`. |
 | `plans/_archive/v1.4-experience-overhaul.md` | the v1.4 plan. Its one unshipped sub-unit (WU-3a3) is open item O-2 in `plans/v1.5/SCOPE.md`. |
-| `_archive/2026-06/` | pre-v1.3 plan/gate artifacts (`PLAN-P1`, `PLAN-P2`, `PLAN-P4-REFRAME-OPUSCLIP`, `DESIGN`, `DESIGN-GATE-1`, `V1-GRILL-DECISIONS`, `reframe-v1.3-settings-gaps`), the two P2 build reports, `LLM-BACKEND.md`, and `PR-PURGE-CHECKLIST.md`. |
-| `_archive/2026-07/` | `reframe-visual-audit.md` and `reframe-reconcile-audit.md` (both actively wrong — kept as a lesson, see `plans/v1.5/README.md`), and `handoff/` (two v1.4 handoff docs). |
+| `_archive/2026-06/` | pre-v1.3 plan/gate artifacts (`PLAN-P1`, `PLAN-P2`, `PLAN-P4-REFRAME-OPUSCLIP`, `DESIGN`, `DESIGN-GATE-1`, `V1-GRILL-DECISIONS`, `reframe-v1.3-settings-gaps`), the two P2 build reports, `docs/_archive/2026-06/LLM-BACKEND.md`, and `docs/_archive/2026-06/PR-PURGE-CHECKLIST.md`. |
+| `_archive/2026-07/` | `docs/_archive/2026-07/reframe-visual-audit.md` and `docs/_archive/2026-07/reframe-reconcile-audit.md` (both actively wrong — kept as a lesson, see `plans/v1.5/README.md`), and `handoff/` (two v1.4 handoff docs). |

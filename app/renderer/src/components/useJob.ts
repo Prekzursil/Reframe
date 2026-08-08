@@ -142,7 +142,7 @@ let registeredJobRetry: JobRetryFn | null = null;
  * Loose wiring for U5's `job.retry` RPC (A2): the Retry button on error toasts
  * appears ONLY when a retry callable exists. Once the sidecar method ships,
  * the wiring agent registers one — e.g.
- * `registerJobRetry((jobId) => rpc('job.retry', { jobId }))` — see WIRING-U3.md.
+ * `registerJobRetry((jobId) => rpc('job.retry', { jobId }))` — see docs/wiring/WIRING-U3.md.
  * Pass null to unregister. Until registration, no Retry button is offered.
  */
 export function registerJobRetry(fn: JobRetryFn | null): void {

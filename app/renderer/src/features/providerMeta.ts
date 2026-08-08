@@ -14,7 +14,7 @@
 // constants). The console URLs are sourced VERBATIM from `docs/providers/SETUP.md`
 // (dated 2026-06-16); the base URLs are the providers' well-known public
 // OpenAI-compatible endpoints. All are public, non-secret presentation metadata —
-// the user still brings their own key. Re-verify against SETUP.md at build time
+// the user still brings their own key. Re-verify against docs/providers/SETUP.md at build time
 // (free tiers + endpoints churn).
 //
 // Keyed by the catalog's `provider` DISPLAY name (e.g. "Groq") so a catalog row

@@ -3,7 +3,7 @@
 > **Status:** SUPERSEDED BY docs/plans/v1.5/SCOPE.md (2026-08-08) — shipped in `sidecar/media_studio/models/ai_job.py`; the RPC doctrine here is replaced by `docs/rpc-contract-v2.md`. Historical only.
 
 **Date:** 2026-06-16 · **Mode:** expansion + better-ideas + red-team + scope-change
-**Inputs:** Provider Hub DESIGN.md v2 (Design Gate v2 = CHANGES), Director FEATURE.md, 6-lens divergence brainstorm (`wf_4f88631b`), live code seams.
+**Inputs:** Provider Hub DESIGN.md v2 (Design Gate v2 = CHANGES), Director docs/plans/_archive/prompt-driven-editing/FEATURE.md, 6-lens divergence brainstorm (`wf_4f88631b`), live code seams.
 **Status:** ✅ GRILL COMPLETE (all ~29 decisions answered 2026-06-16/17). This log is the authoritative decision spine → feeds the PLAN stage. **A grill is not a build.** See "CONVERGED PROGRAM" at the bottom.
 
 ---
@@ -92,7 +92,7 @@
 | PH3 | **Presets + per-function customize + suggestions** | 3 presets + per-task model override w/ catalog ranking; full device-aware auto = phase-2 |
 | PH4 | **Build vision offload now (in Hub MVP)** | CloudVisionBackend + dual text/frame consent; DEP: needs phase-8 merge first |
 | PH5 | **Both local backends** | embedded llama.cpp zero-setup default + auto-detect Ollama/LM Studio as pool providers |
-| PH6 | **Catalog seeded (`CATALOG-SEED.md`)** | Groq GPT-OSS-120B + Cerebras Qwen3-235B = reasoning/JSON (no-train); Gemini Flash = vision (⚠️trains free); per-task tiers + privacy flags. **KEY: "N keys=N×quota" is FALSE — per-ACCOUNT; only MULTI-PROVIDER rotation stacks legitimately.** |
+| PH6 | **Catalog seeded (`docs/plans/_archive/provider-hub/CATALOG-SEED.md`)** | Groq GPT-OSS-120B + Cerebras Qwen3-235B = reasoning/JSON (no-train); Gemini Flash = vision (⚠️trains free); per-task tiers + privacy flags. **KEY: "N keys=N×quota" is FALSE — per-ACCOUNT; only MULTI-PROVIDER rotation stacks legitimately.** |
 | D1 | **Director = conversational agent + pipeline toolbox** | canonical = the Claude+Descript BC-list chat; scroll=panorama-stitch+regen (not speed-ramp); list-extract=OCR→text+poster; multi-deliverable; honest-about-limits; tools T-stitch/T-scroll/T-ocr-list/T-transcript-edit/T-qa/T-silence |
 | PH1↻ / SE2 | **Multi-provider rotation; same-provider keys = failover-only** | quota/×N bars stack across DISTINCT providers only; 2nd same-provider key = transient failover, never advertised as ×quota; docs steer to diversify providers; no account-farming |
 | D3 | **Hard-validate plans (reject, never clamp)** | out-of-bounds ops rejected + re-prompted vs real clip duration + preconditions; trust gate |

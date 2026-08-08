@@ -158,7 +158,7 @@ def resolve_node_runner(
 
     Order: settings.nodeExePath -> env MEDIA_STUDIO_NODE_EXE (the
     supervisor injects ``process.execPath`` here in the packaged app — see
-    WIRING-T5.md) -> the dev electron exe under ``app/node_modules`` -> plain
+    docs/wiring/WIRING-T5.md) -> the dev electron exe under ``app/node_modules`` -> plain
     ``node`` on PATH. The CALLER sets ``ELECTRON_RUN_AS_NODE=1`` when spawning
     an Electron binary; that env contract is T4a's (caption_remotion).
     """
@@ -434,6 +434,6 @@ def register_tool_assets() -> None:
 
 
 # Register at import (mirrors manifest._register_day1; identical re-register is
-# a no-op). WIRING-T5.md asks handlers.register_all to import this module so
+# a no-op). docs/wiring/WIRING-T5.md asks handlers.register_all to import this module so
 # the entries land in the manifest before assets.list is served.
 register_tool_assets()

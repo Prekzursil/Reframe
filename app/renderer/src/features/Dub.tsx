@@ -11,7 +11,7 @@
 // Consumes the FROZEN window.api bridge via the shared local helpers in
 // `./_api` (the same pattern as the sibling panels). The finished dub WAV is
 // auditioned directly in an <audio> tag through the mstream:// protocol's
-// `dub:<path>` id form (see WIRING-T2.md for the one-line main-process
+// `dub:<path>` id form (see docs/wiring/WIRING-T2.md for the one-line main-process
 // resolver extension; until applied the player shows the path instead).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import './panels.css';

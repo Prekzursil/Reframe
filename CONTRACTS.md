@@ -142,7 +142,7 @@ PySceneDetect for scene cuts. No torch unless verthor's own venv needs it (verth
 ---
 
 # P2 ADDENDUM (2026-06-12) — frozen for the P2 build. Read WITH the base contract above.
-Scope: PLAN-P2.md v2.1 (gate-passed). Where this addendum extends §2/§3/§4/§6/§7, it WINS.
+Scope: docs/_archive/2026-06/PLAN-P2.md v2.1 (gate-passed). Where this addendum extends §2/§3/§4/§6/§7, it WINS.
 
 ## A2. Method registry additions (names are FROZEN — register exactly these)
 - `media.playable({videoId})` -> `{playable:bool, reason?, proxyPath?}`  (codec-driven: remux-safe vs proxy)

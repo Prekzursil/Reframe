@@ -52,7 +52,7 @@ changed — never the reverse.
 
 - **B-roll is not deferred.** `docs/ROADMAP.md` lists B-roll, emoji/SFX triggers and
   publishing as "deferred from V1"; `PROGRAM.md` makes local auto-B-roll flagship #3
-  and puts emoji-burst + SFX-on-emphasis in the caption engine. ROADMAP.md is stale
+  and puts emoji-burst + SFX-on-emphasis in the caption engine. docs/ROADMAP.md is stale
   at v1.2.0 while `app/package.json` is 1.4.2.
 
 ## Two documents were archived, not promoted
@@ -60,9 +60,9 @@ changed — never the reverse.
 They are at `docs/_archive/2026-07/` because they are superseded, and one is
 **actively wrong** in a way worth remembering:
 
-- `reframe-visual-audit.md` — its P0 ("16+ horizontal top-level tabs") is refuted by
+- `docs/_archive/2026-07/reframe-visual-audit.md` — its P0 ("16+ horizontal top-level tabs") is refuted by
   `App.tsx`, which renders 8 vertical rails.
-- `reframe-reconcile-audit.md` — asserts *"there is NO 'YuNet' anywhere in the repo
+- `docs/_archive/2026-07/reframe-reconcile-audit.md` — asserts *"there is NO 'YuNet' anywhere in the repo
   (zero matches)"*. There are 369 occurrences across 44 files, and the detector it
   contradicts had landed roughly 24 hours before that file's mtime. Its headline gap
   (no keystore) was likewise already closed by `app/main/keystore.ts`.

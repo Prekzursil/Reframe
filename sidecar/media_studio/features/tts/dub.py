@@ -16,7 +16,7 @@ Seams (everything heavy is injected; tests run the pipeline with fakes):
   CONTRACT-NOTE: T3's public API is not frozen by the addendum; we depend on
   a small protocol (``translate(texts, target_lang, source_lang) -> texts`` +
   ``free()``) and the wiring agent adapts T3's real surface to it (see
-  WIRING-T2.md). When no translator is wired and a ``targetLang`` is asked,
+  docs/wiring/WIRING-T2.md). When no translator is wired and a ``targetLang`` is asked,
   the job fails with a clear error (A6 lesson 3 — surfaced, never swallowed).
 * ``engines`` — engine-id -> factory map (engines built lazily INSIDE the
   job so constructing the service never loads a backend).
@@ -100,7 +100,7 @@ def _default_translator_factory() -> Translator:
     if factory is None:
         raise DubError(
             "models.translation has no get_translator(); the wiring agent "
-            "must inject a translator_factory adapter (see WIRING-T2.md)"
+            "must inject a translator_factory adapter (see docs/wiring/WIRING-T2.md)"
         )
     return factory()  # type: ignore[no-any-return]
 

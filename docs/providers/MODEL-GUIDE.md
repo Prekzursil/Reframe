@@ -8,7 +8,7 @@ limits and training policy at signup. You bring your own API key for every
 provider; Reframe never ships keys.
 
 This guide mirrors the machine-readable catalog in
-`sidecar/media_studio/models/catalog.py` (seeded from `CATALOG-SEED.md`). The Hub
+`sidecar/media_studio/models/catalog.py` (seeded from `docs/plans/_archive/provider-hub/CATALOG-SEED.md`). The Hub
 surfaces the same data in the UI as "our pick · as of \<date\>".
 
 ## The five Reframe tasks

@@ -10,7 +10,7 @@ A6 lesson 1 (NON-NEGOTIABLE): ``kokoro_onnx`` drags in **onnxruntime** (a
 native C-extension). It is imported LAZILY inside ``synth`` here, so the
 wiring agent MUST add ``"onnxruntime"`` and ``"kokoro_onnx"`` to
 ``__main__._preimport_native_modules`` — a first import on a job thread
-deadlocks the sidecar (proven). See WIRING-T2.md.
+deadlocks the sidecar (proven). See docs/wiring/WIRING-T2.md.
 
 The onnx session is injectable (``factory``) so unit tests never import
 onnxruntime; WAV writing is stdlib ``wave`` (no soundfile — nothing else to

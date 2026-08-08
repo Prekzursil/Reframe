@@ -21,7 +21,7 @@ pins; the ``+cu128`` local-version pins below satisfy that, but pip can only
 resolve them with the PyTorch index available — the env install step needs
 ``PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128`` in the
 process environment (the assets manager inherits ``os.environ``). See
-WIRING-T2.md for where the wiring agent sets it.
+docs/wiring/WIRING-T2.md for where the wiring agent sets it.
 
 CONTRACT-NOTE (dedicated Python 3.14 interpreter): chatterbox-tts 0.1.7 pins
 ``torch==2.6.0`` for ``python_version<"3.14"`` and ``torch>=2.9.0`` for
