@@ -94,6 +94,21 @@ attribution block, and so belongs in a durable quotable text:
 Verified 2026-08-08 by two mechanically independent probes: the Hub API metadata
 for each repo, and a raw fetch of each repo's own `README.md` YAML frontmatter.
 
+**Scope of that verification, stated narrowly:** neither repo ships a licence
+file — a recursive `*LICENSE*` search of `ByteDance/LatentSync-1.6` returns
+nothing, and `TMElyralab/MuseTalk`'s root is two weight directories plus a README
+and `.gitattributes`. The licence is therefore declared **only by the Hub metadata
+tag**. What was read verbatim is the canonical text *for that tag* (Stability's
+CreativeML Open RAIL++-M and CompVis's CreativeML OpenRAIL-M). Treating the tag as
+pointing at that text is the Hub's own convention and is strong, but it is an
+inference, not a document either upstream published. If an upstream later ships a
+modified licence file, that file governs and the URLs in
+`app/renderer/src/features/ThirdPartyNotices.tsx` must be re-pointed at it. The
+settling check is a re-run of the `*LICENSE*` search against each repo.
+
+LatentSync's *code* licence is not an inference: `bytedance/LatentSync`'s GitHub
+`LICENSE` is the verbatim Apache License 2.0 text.
+
 **These are NOT non-commercial licences.** Both grants are royalty-free and
 expressly permit hosting the model "for Third Party remote access purposes (e.g.
 software-as-a-service)". What they add is Attachment A — a list of prohibited

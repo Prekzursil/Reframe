@@ -268,6 +268,16 @@ export interface OptInModelNotice {
  * `ENGINES`, and a sidecar test reads THIS FILE and fails if the two disagree —
  * a licence claim is exactly the sort of duplicated fact that must not drift.
  *
+ * SCOPE OF `weightsLicenseUrl` — measured, and narrower than it looks: NEITHER
+ * repo ships a licence file (`find hf://models/ByteDance/LatentSync-1.6 --name
+ * '*LICENSE*'` returns nothing; MuseTalk's root is two weight dirs + README +
+ * .gitattributes). The licence is declared ONLY by the Hub metadata tag, so these
+ * URLs are the CANONICAL TEXT FOR THAT TAG (SDXL's Open RAIL++-M, CompVis's
+ * CreativeML OpenRAIL-M) — not a document either repo published. That mapping is
+ * the Hub's tag convention, which is strong but is an inference; if an upstream
+ * ever ships its own modified licence text, that file governs and these links
+ * must be re-pointed at it.
+ *
  * WHY THESE ARE NOT CHIPPED "Commercial OK": that chip reads, in this UI, as
  * "permissive, no strings", and for an OpenRAIL model that is a materially
  * incomplete statement — the use-restrictions bind the USER too. Chipping them
