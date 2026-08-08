@@ -217,6 +217,17 @@ describe('<AudioMix />', () => {
     expect(container.textContent).toContain(formatLufs(targetFor(DEFAULT_TARGET_ID).lufs));
   });
 
+  it('shows a REAL Windows path in the bed placeholder', () => {
+    // A JSX string attribute is HTML-like: it does NOT process backslash
+    // escapes, so `placeholder="C:\\path"` renders two visible backslashes and
+    // shows the user a path shape that does not exist. (The sibling Dub panel
+    // has this defect at Dub.tsx:342 — out of this lane's scope to change.)
+    render(<AudioMix videoId="v1" api={makeBridge().api} />);
+    const placeholder = q<HTMLInputElement>('[data-input="bg-path"]').placeholder;
+    expect(placeholder).toBe('C:\\path\\to\\bed.mp3');
+    expect(placeholder).not.toContain('\\\\');
+  });
+
   it('mixes a bed under the speaker and renders the produced file on job.done', async () => {
     const { api, calls, doneCbs, progressCbs } = makeBridge();
     render(<AudioMix videoId="v1" api={api} />);

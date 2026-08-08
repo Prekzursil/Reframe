@@ -291,10 +291,13 @@ export function AudioMix({ videoId, api }: AudioMixProps): React.ReactElement {
       <div className="audiomix-controls">
         <label>
           Music bed / voiceover file{' '}
+          {/* A JSX string attribute is NOT escape-processed: `C:\\path` would
+              render TWO literal backslashes to the user. Asserted by the
+              "shows a REAL Windows path" case in AudioMix.test.tsx. */}
           <input
             data-input="bg-path"
             type="text"
-            placeholder="C:\\path\\to\\bed.mp3"
+            placeholder="C:\path\to\bed.mp3"
             value={bgPath}
             onChange={(e) => setBgPath(e.target.value)}
             disabled={busy}
