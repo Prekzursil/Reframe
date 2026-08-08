@@ -106,6 +106,24 @@ def test_deferred_subsystems_cover_every_deferred_kind() -> None:
     assert "OCR" in engines_mod.DEFERRED_SUBSYSTEMS["ocrExtractList"]
 
 
+def test_deferred_subsystems_name_modules_that_exist() -> None:
+    # v1.5 SCOPE.md O-3 anti-drift. The deferral text used to claim these kinds
+    # were missing "the panorama/stitch engine" / "an OCR engine" — false: each
+    # engine SHIPS and is unit-tested; only the apply-time adapter is missing.
+    # Pin every module the text names to a real importable module so the
+    # corrected wording cannot rot back into that lie (delete panorama_stitch.py
+    # and this test fires).
+    import importlib
+
+    assert set(engines_mod.DEFERRED_ENGINE_MODULES) == set(DEFERRED_KINDS)
+    for kind, module_name in engines_mod.DEFERRED_ENGINE_MODULES.items():
+        assert importlib.import_module(module_name) is not None
+        # the human-readable deferral must cite the same module it claims to need
+        assert module_name in engines_mod.DEFERRED_SUBSYSTEMS[kind]
+        # ...and must say the ADAPTER is what is missing, not the engine
+        assert "adapter" in engines_mod.DEFERRED_SUBSYSTEMS[kind]
+
+
 def test_log_deferred_announces_unwired_kinds_with_subsystems() -> None:
     seen: list[tuple[Any, ...]] = []
 
