@@ -408,6 +408,17 @@ class TestEverySettableFieldReachesTheBurn:
         default_cps, default_lines = cp.resolve_caption_limits({})
         assert (max_cps, max_lines) != (default_cps, default_lines)
 
+    @pytest.mark.parametrize("malformed", [[1, 2], "an-override", 7, 0.5, True])
+    def test_a_non_mapping_override_degrades_instead_of_raising(self, malformed: Any) -> None:
+        # `captionOverride` is an UNTRUSTED wire value: shortmaker passes
+        # `settings.get("captionOverride")` straight through (shortmaker.py:441).
+        # apply_override's docstring promises a malformed override "degrades
+        # field-by-field ... never raises", so a non-Mapping must behave like an
+        # absent one on BOTH libass paths, not crash the render with AttributeError.
+        assert ck.build_karaoke_ass([KARAOKE_CUE], override=malformed) == ck.build_karaoke_ass([KARAOKE_CUE])
+        assert caption.build_ass([KARAOKE_CUE], override=malformed) == caption.build_ass([KARAOKE_CUE])
+        assert co.apply_override(malformed) == co.apply_override(None)
+
     @pytest.mark.parametrize(
         "override",
         [

@@ -233,7 +233,7 @@ def resolve_karaoke_style(override: Mapping[str, Any] | None) -> ResolvedKaraoke
       active colour asked for the lit word to be that colour, and alternating it
       against a leftover green would defeat the setting.
     """
-    o = override or {}
+    o = _override.as_mapping(override)
     base = _override.apply_override(o)
     fill = _style_colour(base.text_color or base.spoken_color) or KARAOKE_FILL
     active = base.active_color

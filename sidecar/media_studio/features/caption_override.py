@@ -108,6 +108,20 @@ def hex_to_ass_color(value: Any, alpha: str = "00") -> str | None:
     return f"&H{alpha}{bb}{gg}{rr}&".upper()
 
 
+def as_mapping(value: Any) -> Mapping[str, Any]:
+    """``value`` when it is a ``Mapping``, else an EMPTY mapping.
+
+    ``captionOverride`` is an untrusted wire value handed straight through by
+    ``shortmaker._lazy_caption``, so a list / string / number arriving in that slot
+    must degrade to "no override" exactly like any other malformed field — this
+    module promises it "never raises", and without this guard a non-Mapping reached
+    ``.get`` and killed the render with ``AttributeError``. ``bool`` is a Mapping-less
+    ``int`` and is rejected by the same check. Mirrors the ``isinstance`` guard
+    :func:`caption_polish.resolve_caption_limits` already applies to the same field.
+    """
+    return value if isinstance(value, Mapping) else {}
+
+
 def as_bool(value: Any) -> bool | None:
     """Return ``value`` when it is a genuine ``bool``, else ``None`` (absent).
 
@@ -194,7 +208,7 @@ def apply_override(override: Mapping[str, Any] | None) -> ResolvedCaptionStyle:
     (or, failing that, the karaoke ``spokenColor``) -> ``PrimaryColour``;
     ``activeColor`` -> ``SecondaryColour``.
     """
-    o = override or {}
+    o = as_mapping(override)
 
     raw_font = o.get("fontFamily")
     font_name = raw_font.strip() if isinstance(raw_font, str) else ""
@@ -255,6 +269,7 @@ __all__ = [
     "ResolvedCaptionStyle",
     "apply_override",
     "as_bool",
+    "as_mapping",
     "hex_to_ass_color",
     "resolve_caption_style",
 ]
