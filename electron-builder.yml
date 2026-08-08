@@ -163,8 +163,23 @@ nsis:
   # .ico as win.icon — replaces the default Electron icon everywhere.
   installerIcon: icons/reframe.ico
   uninstallerIcon: icons/reframe.ico
+  # WU-I1: the COMPONENT PAGE. buildResources-relative (../build/installer.nsh).
+  # Adds an nsDialogs page at electron-builder's `customPageAfterChangeDir` hook —
+  # Minimum / Default / Full / Custom with individually selectable feature packs —
+  # and writes the choice as `$INSTDIR/.first-run-profile.json`. The app adopts that
+  # seed into its runtime-resolved data root on first launch (app/main/installerSeed.ts),
+  # so setup provisions the chosen packs UNATTENDED instead of re-asking in the in-app
+  # ProfilePicker. NO model bytes are bundled — the packs are asset names routed to
+  # bootstrap.py `--assets`, and the weights still download on demand (the NSIS ~2 GB
+  # ceiling noted at the top of this file is exactly why).
+  # The ids/labels in that .nsh are pinned against app/main/installProfiles.ts by
+  # app/main/installerSeed.test.ts, so the page and the app cannot drift apart.
+  include: installer.nsh
   # First-run state lives in %APPDATA%/media-studio (envs/models/tools);
-  # uninstall keeps it so a reinstall needs no re-download.
+  # uninstall keeps it so a reinstall needs no re-download. KEEP false: it is also
+  # what makes an upgrade safe — the uninstaller electron-updater runs in-place only
+  # touches %APPDATA%/<app> when this is true (app-builder-lib
+  # templates/nsis/uninstaller.nsh:223-248), and it NEVER touches the data root.
   deleteAppDataOnUninstall: false
   shortcutName: Reframe
 
