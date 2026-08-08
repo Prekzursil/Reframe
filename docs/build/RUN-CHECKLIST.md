@@ -1,12 +1,14 @@
 # media-studio — RUN CHECKLIST (install · run · verify) — P2 edition (2026-06-12)
 
+> **Status:** DRAFT
+
 Exact, copy-pasteable steps to install dependencies, launch the app + sidecar, and verify the
 GPU/model path. Windows / PowerShell. Paths absolute where it matters.
 
 > **Status:** the composition root EXISTS (`media_studio/__main__.py` → `handlers.register_all()`
 > → **42 methods** registered, verified live). The P1-era warning about `METHOD_NOT_FOUND` is
 > obsolete. Current suite state: sidecar 1089/1091, UI 299/302 — the 5 failures and the remaining
-> wiring gaps are in `docs/build/P2-COMPLETENESS-REPORT.md` (read it with this).
+> wiring gaps are in `docs/_archive/2026-06/P2-COMPLETENESS-REPORT.md` (read it with this).
 
 ---
 
@@ -127,6 +129,6 @@ Manual llama-server start is NO LONGER needed — `ModelRunner.start_server()` i
 
 ## 6. Known seams still needing wiring (pointer)
 
-The five P0/P1 punch-list items in `P2-COMPLETENESS-REPORT.md §8`: green-the-suites fixes,
+The five P0/P1 punch-list items in `docs/_archive/2026-06/P2-COMPLETENESS-REPORT.md §8`: green-the-suites fixes,
 shortmaker→Remotion routing, production panel bundling, `audioTrackId` carry, packaged-mode
 supervisor block. Everything else on this checklist is live today.

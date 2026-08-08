@@ -1,5 +1,7 @@
 # MT Model Survey & Tiered-Translation Decision (T3.0, surveyed live 2026-06-12)
 
+> **Status:** ACTIVE
+
 Scope: open MT models runnable **<= 6GB VRAM as GGUF via llama.cpp**, for the
 `subtitles.translate` + T2 dub pipeline. Every availability claim below was
 verified against the live Hugging Face pages on 2026-06-12 (links inline).

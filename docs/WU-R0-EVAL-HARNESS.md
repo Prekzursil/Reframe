@@ -1,5 +1,7 @@
 # WU R0 — ML Eval Harness (the regression gate R1 must clear)
 
+> **Status:** ACTIVE
+
 **Status:** implemented on `feat/v1.1.0`.
 **Module:** `sidecar/media_studio/features/reframe_eval.py` ·
 **Pure tier:** `sidecar/tests/test_reframe_eval.py` (100% line+branch, in the gate) ·

@@ -1,7 +1,7 @@
 """Unit tests for media_studio.models.catalog (WU-catalog).
 
 Pure data + pure helpers — no network, no model, no fakes needed. Asserts the
-catalog was seeded VERBATIM from ``docs/plans/provider-hub/CATALOG-SEED.md`` (13 entries,
+catalog was seeded VERBATIM from ``docs/plans/_archive/provider-hub/CATALOG-SEED.md`` (13 entries,
 >=3 distinct providers, every one of the 5 Reframe tasks ranked, dated guidance,
 privacy/train-on-input axis), and that the filter/order/top-pick helpers behave.
 """
@@ -35,7 +35,7 @@ from media_studio.models.catalog import (
 def test_catalog_is_a_tuple_of_entries() -> None:
     assert isinstance(CATALOG, tuple)
     assert all(isinstance(e, CatalogEntry) for e in CATALOG)
-    # 13 seeded models per CATALOG-SEED.md.
+    # 13 seeded models per docs/plans/_archive/provider-hub/CATALOG-SEED.md.
     assert len(CATALOG) == 13
 
 

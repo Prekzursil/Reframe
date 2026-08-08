@@ -1,5 +1,7 @@
 # Reframe — live visual audit (v1.5 input)
 
+> **Status:** ARCHIVED 2026-08-08
+
 Read from the committed Playwright win32 baselines (the driven-app captures): Library,
 Create/Shorts, Edit/workspace, Director. These are visual-truth findings to fuse into the
 v1.5 roadmap.

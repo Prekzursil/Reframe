@@ -1,5 +1,7 @@
 # RPC Contract v2 — migration plan (123 methods, no big-bang)
 
+> **Status:** ACTIVE
+
 Companion to [`rpc-contract-v2.md`](./rpc-contract-v2.md). This is the incremental,
 parity-tested, CI-gated path from "5-method POC" to "all ~123 methods generated",
 with the 100%-coverage gate green at **every** commit.

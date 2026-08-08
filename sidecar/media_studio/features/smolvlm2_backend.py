@@ -7,7 +7,7 @@ place allowed to import ``transformers`` / ``torch``, and those imports live
 inside the methods so even importing THIS module stays light.
 
 The pinned model is ``HuggingFaceTB/SmolVLM2-2.2B-Instruct`` (Apache-2.0,
-~5.2 GB BF16 runtime VRAM; PHASE8-SOTA-MANIFEST.md component #13). This is the
+~5.2 GB BF16 runtime VRAM; reports/PHASE8-SOTA-MANIFEST.md component #13). This is the
 heaviest single model in the stack and is **6 GB-tight**: it CANNOT co-run with
 any other GPU model. The orchestrator unloads everything else first; this backend
 loads the model ALONE, scores the clips, and **unloads** it (``free()``) before

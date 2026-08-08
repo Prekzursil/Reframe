@@ -21,7 +21,7 @@ import '../components/library-cards.css';
 // Per-file import failures surface as TYPED toasts. U3 owns the app-wide toast
 // system (components/toast/*); to stay lane-independent, Library accepts an
 // OPTIONAL `toast` prop the wiring agent connects to U3's useToast (see
-// WIRING-U2.md). When the prop is absent, a small local fallback strip renders
+// docs/wiring/WIRING-U2.md). When the prop is absent, a small local fallback strip renders
 // the toasts inline so no failure is ever silent.
 
 export type ToastKind = 'error' | 'success' | 'info';
@@ -99,7 +99,7 @@ interface AddResult {
 // `openVideos` / `pathForFile` are P2 additions to window.api that are not on
 // the frozen MediaApi type in components/api.ts (a shared file). Library views
 // the bridge structurally and degrades gracefully when the wiring has not
-// landed yet. Exact preload lines: WIRING-U2.md.
+// landed yet. Exact preload lines: docs/wiring/WIRING-U2.md.
 
 interface PickerBridge {
   openVideos?: () => Promise<string[]>;

@@ -77,7 +77,7 @@ PINNED_PIP = "pip==25.2"
 # content update rather than truncation, and the payload being the canonical
 # base85-zip bootstrapper (shebang + "Hi There!" header + base85/zip markers). That is
 # provenance, NOT authenticity — treat it as weaker than a vendor-checksummed pin.
-# Re-run `.audit/verify_getpip_rotation.py` to reproduce all four checks.
+# Re-run `docs/validation/tools/verify_getpip_rotation.py` to reproduce all four checks.
 #
 # The durable fix is still unavailable: pypa's versioned URLs
 # (https://bootstrap.pypa.io/pip/<ver>/get-pip.py) 404 for 3.12/3.14, they exist only

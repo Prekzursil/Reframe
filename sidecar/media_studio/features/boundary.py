@@ -38,7 +38,7 @@ MAX_SEC: float = 60.0
 
 # N1 (V1.1 SEL1) — "mid-form" relaxes the hard snap window so a long moment can be
 # kept WHOLE instead of being trimmed back to 60 s. The verified OpusClip teardown
-# (docs/research/OPUSCLIP-PARITY-IMPROVEMENT-NOTE) shows real clips run 16-160 s,
+# (never committed; its finding is inlined here) shows real clips run 16-160 s,
 # NOT 60-capped. The envelope per mode is the single source of truth shared with
 # ``select.py`` (the two modules must agree so a select-side mid-form candidate is
 # not silently clamped at the boundary stage).

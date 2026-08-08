@@ -1,5 +1,7 @@
 # TTS Engines for Voiceover/Dub (research, 2026-06-11)
 
+> **Status:** ACTIVE
+
 For a LOCAL, portable Electron+Python app generating multilingual voiceover/dub from subtitles, time-aligned to cues.
 License is the first filter for a closed/portable app. Re-verify model availability before locking defaults.
 

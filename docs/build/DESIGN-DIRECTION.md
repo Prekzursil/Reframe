@@ -1,5 +1,7 @@
 # DESIGN-DIRECTION — media-studio
 
+> **Status:** SUPERSEDED BY docs/design-system.md (2026-08-08)
+
 **Direction: Dark Editorial.** media-studio is a video tool, so it follows the rule every
 serious video app follows: the footage is the brightest, most saturated thing on screen.
 The chrome is near-black and tonal; hierarchy comes from type contrast (big numbers and

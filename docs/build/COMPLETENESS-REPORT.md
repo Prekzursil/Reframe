@@ -1,5 +1,7 @@
 # media-studio — COMPLETENESS REPORT (post-build punch list)
 
+> **Status:** SUPERSEDED BY docs/_archive/2026-06/P2-COMPLETENESS-REPORT.md (2026-08-08)
+
 Read-only sweep of `app/` + `sidecar/` against `CONTRACTS.md`. Every finding is
 file:line. Sorted into the seven requested sections, then a prioritized fix list.
 

@@ -85,7 +85,7 @@ class ComponentSpec:
 
 #: The 15 manifest components + the two zero-download CPU floors (motion gets the
 #: ``opencv`` floor; diversity/ranker are pure numpy/sklearn-class). Field values
-#: come verbatim from PHASE8-SOTA-MANIFEST.md (sizes, VRAM table, licenses).
+#: come verbatim from reports/PHASE8-SOTA-MANIFEST.md (sizes, VRAM table, licenses).
 COMPONENTS: tuple[ComponentSpec, ...] = (
     # ---- Tier-0 CPU floor (zero downloads) ----
     ComponentSpec(

@@ -1,5 +1,7 @@
 # Reframe Redesign — Synthesized Design Direction
 
+> **Status:** ACTIVE
+
 **Verdict: ADOPT-WITH-CHANGES.** All six review lenses independently returned `adopt-with-changes`. The 5-phase editor IA + three-zone shell + content-first Library is **structurally sound and worth building** — every required change is *additive*, none demands abandoning the locked IA. The prototype is a strong **layout/IA proof**; it is **not** a color, token, state, or accessibility source of truth. Build the real screens against the shipped `tokens.css` (extended deliberately), not against the prototype's literal values.
 
 This document is the acceptance artifact that gates screen build-out. It is grounded in the actual prototype (`reframe-redesign.html`), the shipped `tokens.css` + its conformance guard, the live visual audit, the competitor research, the locked v1.5 program, and a direct inspection of the current renderer (`app/renderer/src`).

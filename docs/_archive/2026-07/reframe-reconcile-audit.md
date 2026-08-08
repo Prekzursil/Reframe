@@ -1,5 +1,7 @@
 # Reframe — "Reconcile, Don't Rebuild" Gap Dossier
 
+> **Status:** ARCHIVED 2026-08-08
+
 **Scope:** four read-only audits (WS-C readiness, WS-D keys, WS-D usage, WS-E Director) folded into one build-ready plan.
 **Governing principle:** almost everything asked for already exists and ships. The work is to RECONCILE new capability requirements onto existing wire types / RPCs / components — NOT to rebuild. The single true build-out is the WS-D *storage* side (OS secret store) plus three small key-management RPCs and the Director current-video wiring.
 
@@ -7,7 +9,7 @@
 
 ## Executive summary — the one key gap
 
-**KEY GAP:** API keys are stored and transmitted in **PLAINTEXT** (raw JSON in `%APPDATA%/media-studio/settings.json` + raw over the IPC/stdin pipe); `DESIGN-GATE-1.md` R2(c) mandates an OS secret store (DPAPI/Keychain/libsecret) and **that half is not implemented**. Everything else (add, validate, remove, usage bars, spend cap, readiness roll-up, reframe degrade-notices) already exists and only needs reconciliation, not a rebuild.
+**KEY GAP:** API keys are stored and transmitted in **PLAINTEXT** (raw JSON in `%APPDATA%/media-studio/settings.json` + raw over the IPC/stdin pipe); `docs/_archive/2026-06/DESIGN-GATE-1.md` R2(c) mandates an OS secret store (DPAPI/Keychain/libsecret) and **that half is not implemented**. Everything else (add, validate, remove, usage bars, spend cap, readiness roll-up, reframe degrade-notices) already exists and only needs reconciliation, not a rebuild.
 
 ---
 
@@ -26,7 +28,7 @@
 ### Storage & transit (the real build-out)
 - **At rest — PLAINTEXT:** `SettingsStore._write` writes raw `providers[].apiKeys` (`settings_store.py:158-163`) to `%APPDATA%/media-studio/settings.json`. Good: outside any shareable/project folder. Bad: no encryption.
 - **In transit — PLAINTEXT over stdio:** raw key travels renderer → `window.api.rpc` → `ipcMain.handle('rpc')` (`ipc.ts:58-61`) → `Sidecar.request` → `child.stdin.write(JSON.stringify(...))` (`sidecar.ts:354-377`). Local-only (stdio, not network) but still cleartext. Redaction is read-path-only; the write path carries raw.
-- **Design intent vs reality:** `DESIGN-GATE-1.md` R2(c) mandates *"API keys in OS secret store (DPAPI/Keychain/libsecret), excluded from the shareable project folder."* The "excluded from project folder" half is met; the **DPAPI/secret-store half is NOT** — this is WS-D's storage gap.
+- **Design intent vs reality:** `docs/_archive/2026-06/DESIGN-GATE-1.md` R2(c) mandates *"API keys in OS secret store (DPAPI/Keychain/libsecret), excluded from the shareable project folder."* The "excluded from project folder" half is met; the **DPAPI/secret-store half is NOT** — this is WS-D's storage gap.
 
 ### Recommended build (surgical seams)
 - **A) Main-side keystore (recommended over sidecar crypto):** new `app/main/keystore.ts` owning `safeStorage.encryptString/decryptString` (currently **zero** `safeStorage` usage in repo). Keys never persist in `settings.json`; sidecar stores an opaque placeholder, main holds the DPAPI-encrypted vault. Single choke point that yields raw keys today = `settings_store.py:187 get_raw()` → provider factory (`providers_ops.py:417-439`).

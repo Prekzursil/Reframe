@@ -12,7 +12,7 @@ on a thread per A6 lesson 2, argv lists per lesson 4).
 A6 lesson 1 note for the wiring agent: ``edge-tts`` pulls in **aiohttp**,
 whose http parser is a native C-extension — add ``"aiohttp"`` to
 ``__main__._preimport_native_modules`` (guarded; absence fine). See
-WIRING-T2.md.
+docs/wiring/WIRING-T2.md.
 """
 
 from __future__ import annotations

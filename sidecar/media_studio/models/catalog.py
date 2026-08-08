@@ -4,7 +4,7 @@ A hand-curated, **dated** catalog ranking each free/paid LLM by fitness for
 Reframe's five tasks (Moment-Find/Select, Caption/Title/Hook, Translation,
 Vision/OCR, Edit-Plan Gen), with a privacy axis (a ``trains_on_input`` flag plus
 a coarse ``privacy_tier``) so the UI can warn before private data leaves the
-machine. Seeded VERBATIM from ``docs/plans/provider-hub/CATALOG-SEED.md`` (research pass
+machine. Seeded VERBATIM from ``docs/plans/_archive/provider-hub/CATALOG-SEED.md`` (research pass
 ``wf_e4773258``, 2026-06-16).
 
 This is **pure data + pure helpers** — no network, no model, no ``time`` import,
@@ -14,7 +14,7 @@ no cross-import of the other Hub modules. It is the single source of truth the
 
 Honesty rule (matches the seed's ⛔ section): every quality label is *dated
 guidance* ("our pick · as of <date>"), never an objective benchmark, and free
-tiers churn — re-verify ``CATALOG-SEED.md`` at build time. The "N keys =/=
+tiers churn — re-verify ``docs/plans/_archive/provider-hub/CATALOG-SEED.md`` at build time. The "N keys =/=
 N x quota" reality lives in the SETUP/MODEL-GUIDE docs, not here.
 """
 
@@ -161,7 +161,7 @@ _MULTI: tuple[Capability, ...] = (Capability.TEXT, Capability.VISION)
 
 
 # --------------------------------------------------------------------------- #
-# CATALOG — seeded VERBATIM from docs/plans/provider-hub/CATALOG-SEED.md
+# CATALOG — seeded VERBATIM from docs/plans/_archive/provider-hub/CATALOG-SEED.md
 # --------------------------------------------------------------------------- #
 
 CATALOG: tuple[CatalogEntry, ...] = (
@@ -417,7 +417,7 @@ def order_by(
     raise ValueError(f"unknown order key: {key!r}")
 
 
-#: The editorial "Top pick per task" from ``CATALOG-SEED.md`` (seeded verbatim;
+#: The editorial "Top pick per task" from ``docs/plans/_archive/provider-hub/CATALOG-SEED.md`` (seeded verbatim;
 #: the free-tier/grade math alone can't reproduce these because the seed prefers
 #: the SAFE Groq models over the higher-quota-but-unverified Cerebras ones, and
 #: prefers Gemini Flash-Lite over Flash for OCR). Validated against ``CATALOG``

@@ -1,5 +1,7 @@
 # Phase 8 — Advanced Multimodal Moment-Finding: SOTA Build Manifest
 
+> **Status:** ACTIVE
+
 **Project:** Reframe Media Studio (local-first desktop video editor)
 **Target hardware:** RTX 4050 Laptop, **6 GB VRAM**, sequential **load → infer → unload** (one heavy model at a time)
 **Goal:** Find interesting clips/shorts from **VISION + AUDIO + transcript** (not speech-only), work on **silent video**, and improve selection + caption accuracy.

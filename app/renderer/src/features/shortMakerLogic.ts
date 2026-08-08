@@ -68,7 +68,7 @@ export interface Candidate {
  * captionStyle}; the P2 T4b lane adds `reframeEngine` (auto|verthor|
  * claudeshorts) flowing through the same controls object into
  * `shortmaker.select`, and both `captionStyle` + `reframeEngine` are ALSO sent
- * as optional top-level `shortmaker.export` params (see WIRING-T4B.md for the
+ * as optional top-level `shortmaker.export` params (see docs/wiring/WIRING-T4B.md for the
  * sidecar consumption patch).
  */
 export interface ShortMakerControls {

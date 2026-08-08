@@ -1,4 +1,8 @@
-"""Deterministic verifier for every load-bearing factual claim in .audit/ssot-plan.md.
+"""Deterministic verifier for every load-bearing factual claim in the SSOT plan.
+
+The plan itself lives in the disposable `.audit/` scratch tree and is deliberately
+NOT tracked; the CLAIMS are what matter and they are all re-derived below from the
+tree at HEAD, so this file stands alone.  ssot-allow: names the scratch input only.
 
 Rationale (rules/common/fan-out-contract.md C4): the plan's claims are all
 mechanically decidable — does this file exist, does this string appear, what
@@ -9,7 +13,7 @@ So: check them in code, act only on what passes, and report every miss.
 A claim that FAILS here is not "the plan is wrong" — it may be that the repo moved
 since the plan was written. Either way the plan's edit must not be applied blind.
 
-Usage:  python .audit/verify_ssot_claims.py
+Usage:  python docs/validation/tools/verify_ssot_claims.py
 Exit 0 if every claim resolved as predicted, 1 otherwise.
 """
 
@@ -56,16 +60,24 @@ def read(rel: str) -> str | None:
 OPEN_ITEMS = {
     "C1a",
     "C1b",
-    "C2b",
     "C5a",
     "C5b",
     "C8:--surface-deep",
     "C8:--text-muted",
-    "C9b",
     "C11",
-    "P2.11b",
     "P1-corpus",
 }
+
+# RETIRED from OPEN_ITEMS, each with its expectation FLIPPED so the correction is now a
+# permanent guard rather than a note:
+#   C2b     — phase 3. The false clause was deleted (not merely moved); the check now
+#             reads the ARCHIVED path, so it asserts CONTENT, not path existence. A
+#             path-keyed retirement would have gone green on the `git mv` alone.
+#   C9b     — DETECTOR ARTIFACT, not an open defect. "no keystore" is True whole-file
+#             and False outside blockquotes: the only survivor is the correction note at
+#             CONTRACTS.md:126 QUOTING the dead clause.
+#   P2.11b  — same shape. "1.4.1" survives only inside the HTML comment at README.md:32-38
+#             that explains why the asset table is version-agnostic.
 
 
 def check(cid: str, predicted: bool, actual: bool, detail: str) -> None:
@@ -141,9 +153,19 @@ for rel, needle in c1_docs:
 # ---------------------------------------------------------- C2 coverage-thresholds
 cov_exists = (ROOT / ".coverage-thresholds.json").is_file()
 check("C2a", True, cov_exists, f".coverage-thresholds.json exists={cov_exists}")
-aiplan = read("docs/plans/ai-program/PLAN.md") or ""
-denial = "does NOT exist" in aiplan and "coverage-thresholds" in aiplan
-check("C2b", True, denial, f"ai-program/PLAN.md still denies the file exists={denial}")
+# INVARIANT (was OPEN). Read the ARCHIVED path and assert the CONTENT. Keying this on
+# the LIVE path would have flipped green the instant phase 3 ran `git mv` — laundering a
+# false clause into a permanently-passing check with nobody having deleted it.
+_AIPLAN = "docs/plans/_archive/ai-program/PLAN.md"
+aiplan = read(_AIPLAN)
+denial = aiplan is not None and "does NOT exist" in aiplan and "coverage-thresholds" in aiplan
+check(
+    "C2b",
+    True,
+    aiplan is not None and not denial,
+    f"{_AIPLAN} present={aiplan is not None}; its "
+    f'".coverage-thresholds.json does NOT exist" clause is gone={not denial}',
+)
 added_in = git("log", "--diff-filter=A", "--format=%h", "--", ".coverage-thresholds.json")
 check(
     "C2c",
@@ -243,7 +265,20 @@ C9_FILES = [
 missing9 = [f for f in C9_FILES if not (ROOT / f).is_file()]
 check("C9a", True, not missing9, f"all 4 keystore/consent files present (missing: {missing9 or 'none'})")
 contracts = read("CONTRACTS.md") or ""
-check("C9b", True, "no keystore" in contracts, f'CONTRACTS.md still says "no keystore"={"no keystore" in contracts}')
+# DETECTOR FIX (v3) + INVARIANT (was OPEN): a whole-file substring says "no keystore" is
+# STILL there, contradicting the code and PR #324. It is — at :126, inside a blockquote
+# that reads `> **Corrected.** This clause used to read "no keystore, no consent
+# framework"`. Reading the document instead of the LIVE TEXT is the same use-vs-mention
+# error as C5b/P2.8. Strip blockquote lines, then ask whether the dead clause survives.
+_contracts_noquote = re.sub(r"(?m)^\s*>.*$", "", contracts)
+_dead_clause = "no keystore" in _contracts_noquote or "no consent framework" in _contracts_noquote
+check(
+    "C9b",
+    True,
+    not _dead_clause,
+    f"CONTRACTS.md dead 'no keystore'/'no consent framework' clause gone outside blockquotes="
+    f"{not _dead_clause} (whole-file mentions={contracts.count('no keystore')}, all in the correction note)",
+)
 
 # --------------------------------------------------------------- C10 test runner
 jest_n, jest_files = count_occurrences(
@@ -264,7 +299,7 @@ check(
     "C11",
     True,
     "B-roll" in roadmap and "deferred" in roadmap.lower(),
-    f"ROADMAP.md still lists B-roll as deferred={'B-roll' in roadmap and 'deferred' in roadmap.lower()}",
+    f"docs/ROADMAP.md still lists B-roll as deferred={'B-roll' in roadmap and 'deferred' in roadmap.lower()}",
 )
 
 # ------------------------------------------------------------------- C12 ledger
@@ -318,10 +353,15 @@ _probe = subprocess.run(
 check("C0.2", True, _probe.returncode != 0, f"a NEW .claude/commands/*.md is trackable={_probe.returncode != 0}")
 
 # ------------------------------------------------- Phase 2 spot checks (2.9-2.12)
-seed_wrong = (ROOT / "docs/providers/CATALOG-SEED.md").is_file()
-seed_right = (ROOT / "docs/plans/provider-hub/CATALOG-SEED.md").is_file()
-check("P2.9a", True, not seed_wrong, f"docs/providers/CATALOG-SEED.md absent={not seed_wrong}")
-check("P2.9b", True, seed_right, f"docs/plans/provider-hub/CATALOG-SEED.md present={seed_right}")
+seed_wrong = (ROOT / "docs/providers/CATALOG-SEED.md").is_file()  # ssot-allow: asserts ABSENCE
+seed_right = (ROOT / "docs/plans/_archive/provider-hub/CATALOG-SEED.md").is_file()
+check(
+    "P2.9a",
+    True,
+    not seed_wrong,
+    f"docs/providers/CATALOG-SEED.md absent={not seed_wrong}",  # ssot-allow: asserts ABSENCE
+)
+check("P2.9b", True, seed_right, f"docs/plans/_archive/provider-hub/CATALOG-SEED.md present={seed_right}")
 
 appt = read("app/renderer/src/App.tsx") or ""
 RAILS = ["library", "makeshorts", "edit", "caption", "export", "deliver", "director", "settings"]
@@ -335,7 +375,21 @@ check("P2.10b", True, len(subs_found) == 8, f"Settings.tsx names {len(subs_found
 ver = json.loads(apppkg or "{}").get("version", "?")
 readme = read("README.md") or ""
 check("P2.11a", True, ver == "1.4.2", f"app/package.json version={ver}")
-check("P2.11b", True, "1.4.1" in readme, f"README.md still cites 1.4.1={'1.4.1' in readme}")
+# DETECTOR FIX (v3) + INVARIANT (was OPEN): "1.4.1" IS still in README.md — only inside
+# the HTML comment at :32-38 that explains why the asset table is version-agnostic. The
+# durable assertion is not "no 1.4.1 anywhere" (prose may legitimately discuss a version)
+# but "the asset table names no hardcoded version at all", which is what actually goes
+# stale on a bump. electron-builder.yml derives the name from app/package.json.
+_readme_nocomment = re.sub(r"<!--.*?-->", "", readme, flags=re.S)
+_agnostic = "media-studio-<version>-win-x64" in _readme_nocomment
+_hardcoded = re.findall(r"media-studio-\d+\.\d+\.\d+-win-x64", _readme_nocomment)
+check(
+    "P2.11b",
+    True,
+    _agnostic and not _hardcoded,
+    f"README asset table is version-agnostic={_agnostic}, hardcoded asset names outside "
+    f"comments={_hardcoded or 'none'} (whole-file '1.4.1' mentions={readme.count('1.4.1')}, all in the comment)",
+)
 changelog = read("CHANGELOG.md") or ""
 check(
     "P2.12",
@@ -349,7 +403,7 @@ check(
     "P2.6",
     True,
     "Not merged" not in rpcdoc,
-    f'rpc-contract-v2.md no longer claims "Not merged"={"Not merged" not in rpcdoc}',
+    f'docs/rpc-contract-v2.md no longer claims "Not merged"={"Not merged" not in rpcdoc}',
 )
 
 pmeta = read("app/renderer/src/features/providerMeta.ts") or ""
@@ -382,8 +436,8 @@ P1 = [
     "reframe-techprep-dossier.md",
     "reframe-trust-plan.md",
     "reframe-competitor-research.md",
-    "reframe-visual-audit.md",
-    "reframe-reconcile-audit.md",
+    "docs/_archive/2026-07/reframe-visual-audit.md",
+    "docs/_archive/2026-07/reframe-reconcile-audit.md",
 ]
 present = [f for f in P1 if (review_dir / f).is_file()]
 check(

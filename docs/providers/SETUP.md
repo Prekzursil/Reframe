@@ -1,5 +1,7 @@
 # Reframe Provider Setup — bring your own free API key
 
+> **Status:** ACTIVE
+
 **Dated guidance · as of 2026-06-16.** Reframe runs AI **locally by default** and
 never requires the cloud. Cloud is opt-in acceleration: you supply a free API key
 from one or more providers, and Reframe rotates across them (with your local model

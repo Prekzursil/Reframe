@@ -94,7 +94,7 @@ export interface ToastProviderProps {
 }
 
 /**
- * Mount once near the app root (see WIRING-U3.md); pair with <ToastHost /> to
+ * Mount once near the app root (see docs/wiring/WIRING-U3.md); pair with <ToastHost /> to
  * actually render the stack. Owns the queue (reducer) + auto-dismiss timers.
  */
 export function ToastProvider({ children }: ToastProviderProps): React.ReactElement {

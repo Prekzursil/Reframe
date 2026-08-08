@@ -85,7 +85,8 @@ class TestShippedRequirementFiles:
         # installs UNPINNED `opencv-python-headless`, and the dev box carries 4.13.0,
         # so a green suite would have been evidence about a different wheel.
         #
-        # Measured (.audit/probe_opencv_414.py, throwaway venv, real wheel): all 26
+        # Measured (docs/validation/tools/probe_dependency_pin.py, throwaway venv,
+        # real wheel): all 26
         # `cv2.*` attributes the sidecar references — derived from the source, not
         # hand-listed — are present on 4.14.0.94; `cv2.FaceDetectorYN.create` (the
         # YuNet reframe keystone) is callable; and cvtColor / resize / imencode /

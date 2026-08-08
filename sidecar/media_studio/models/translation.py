@@ -38,7 +38,7 @@ This module also registers the two MT GGUF manifest entries (U4
 
 NO new RPC methods are registered here (A2's method names are frozen;
 ``subtitles.translate`` already exists) — the handler wiring snippet lives in
-``WIRING-T3.md``.
+``docs/wiring/WIRING-T3.md``.
 """
 
 from __future__ import annotations

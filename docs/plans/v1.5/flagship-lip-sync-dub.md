@@ -1,5 +1,7 @@
 # Reframe v1.5 Flagship "Unknown" — Implementation Plan + Go/No-Go
 
+> **Status:** DRAFT
+
 **Author:** flagship-scoping subagent · **Date:** 2026-07-12 · **Mode:** research + design + plan only (no repo edits)
 **Repo:** `Prekzursil/Reframe` (Electron + Python sidecar) · **Baseline read from `origin/main`** (local checkout is 10 commits behind)
 

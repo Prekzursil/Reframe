@@ -1,5 +1,7 @@
 # Reframe Model Re-Hosting Dossier
 
+> **Status:** SUPERSEDED BY docs/plans/v1.5/PROGRAM.md (2026-07-11)
+
 **Scope:** personal / non-commercial use. **Verify-before-load is mandatory** — every hosted artifact is sha256-pinned in `assets/manifest.py`, verified at download (and recommended again at load), and the pickle load-path is eliminated where feasible.
 
 **Manifest (single source of truth for pins):**

@@ -7,8 +7,10 @@ pan keeps full height, so a full-width bottom bar surfaces as a sliced fragment,
 and OUR burned captions / the chosen face can collide with it.
 
 This module is the **PURE, dependency-free** detection + safe-zone layer (see the
-OpusClip teardown ``opus-clip-teardown-razvan-gandu`` and the parity note
-``docs/research/OPUSCLIP-PARITY-IMPROVEMENT-NOTE-2026-06-28.md`` §N6). It:
+OpusClip teardown ``opus-clip-teardown-razvan-gandu``; the parity note that
+used to be cited here was never committed, so its §N6 finding is inlined:
+chyrons occupy the outer ~12% of frame height and a safe zone must clear
+the full band, not the text box). It:
 
   * turns per-frame OCR text boxes into horizontal **bands** (one frame at a time),
   * classifies a band as a **top/bottom chyron candidate** by width + edge,

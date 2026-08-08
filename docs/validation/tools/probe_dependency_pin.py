@@ -10,7 +10,7 @@ This installs the exact target wheel into a throwaway venv and asserts that ever
 cv2 attribute the sidecar actually references still exists, plus that YuNet
 (`FaceDetectorYN`, the reframe keystone) can really be constructed and run.
 
-Usage:  python .audit/probe_opencv_414.py [version]
+Usage:  python docs/validation/tools/probe_dependency_pin.py [version]
 Exit 0 if every referenced attribute is present and YuNet detects on a real frame.
 """
 

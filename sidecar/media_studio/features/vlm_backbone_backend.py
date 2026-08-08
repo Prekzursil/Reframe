@@ -7,7 +7,7 @@ the one place allowed to import ``transformers`` / ``torch``, and those imports
 live inside the methods so even importing THIS module stays light.
 
 The pinned model is ``google/siglip2-so400m-patch16-384`` (Apache-2.0, ~2.3 GB
-fp16; PHASE8-SOTA-MANIFEST.md component #2). The tiny aesthetic MLP head is the
+fp16; reports/PHASE8-SOTA-MANIFEST.md component #2). The tiny aesthetic MLP head is the
 AGPL-free reimplementation (manifest #3): its weights load from the on-demand
 asset when present, else :meth:`head_weights` returns ``None`` and the pure
 runner falls back to its embedding-norm proxy.

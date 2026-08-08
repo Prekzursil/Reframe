@@ -34,7 +34,7 @@ is imported here (stdlib subprocess/zipfile only) — nothing to pre-import in
 CONTRACT-NOTE: A2/A3 freeze no settings field names for this engine; the keys
 ``nodeExePath`` / ``renderJsPath`` / ``remotionBundleDir`` /
 ``chromeHeadlessShellPath`` follow the existing ``ffmpegPath`` naming
-convention and are documented here + in WIRING-T4A.md.
+convention and are documented here + in docs/wiring/WIRING-T4A.md.
 """
 
 from __future__ import annotations

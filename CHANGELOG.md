@@ -1,5 +1,7 @@
 # Changelog
 
+> **Status:** ACTIVE
+
 All notable changes to Reframe — Media Studio are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
