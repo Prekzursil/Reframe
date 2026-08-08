@@ -1,5 +1,5 @@
 // client.ce.test.ts — isolated cross-edit (feature-completion reconcile) coverage
-// for the client.ts wrappers WIRED in this pass: batch.plan / batch.consent, the
+// for the client.ts wrappers WIRED in this pass: batch.plan, the
 // transcribe.start `alignWords` trigger, the director.apply reviewed-op forwarding,
 // and the reframe.* per-shot correction group. Written as a UNIQUELY-named file so
 // it never collides with the shared rpc.test.ts / rpc.property.test.ts; coverage is
@@ -41,14 +41,6 @@ describe('client.batch.plan (§9.1 consent preview)', () => {
     const rpc = installApi();
     await client.batch.plan('b1');
     expect(rpc).toHaveBeenCalledWith('batch.plan', { id: 'b1' });
-  });
-});
-
-describe('client.batch.consent (read-only run/skip preview)', () => {
-  it('forwards {id}', async () => {
-    const rpc = installApi();
-    await client.batch.consent('b1');
-    expect(rpc).toHaveBeenCalledWith('batch.consent', { id: 'b1' });
   });
 });
 
