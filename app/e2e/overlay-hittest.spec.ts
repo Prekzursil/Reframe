@@ -43,6 +43,21 @@ let win: Page;
 test.beforeAll(async () => {
   launched = await launchSeededApp();
   win = await prepareWindow(launched.app);
+  // TALLER VIEWPORT, on purpose. `prepareWindow` pins 1280x820 so the VISUAL suite's
+  // pixel baselines are reproducible run-to-run — a constraint this spec inherits but
+  // does not need, because it owns no baselines. It is a pointer hit-test gate: it asks
+  // "which element receives a click here", which depends on stacking order and
+  // `pointer-events`, not on how tall the window is.
+  //
+  // And 820px is too short for one of its four cases. The MakeShorts caption designer's
+  // <video> ends at y=853, so the control-bar probe 16px above that lands at y=837 —
+  // outside the viewport, where `elementFromPoint` cannot answer. Measured identically
+  // on windows-latest across runs 31222301375 and 31227054912.
+  //
+  // Scrolling does not help (see probeControlBar): the pixels do not exist to scroll to.
+  // Making the viewport tall enough to hold the surface under test is the fix, and it
+  // weakens nothing — every assertion below is still the real Chromium hit-test.
+  await win.setViewportSize({ width: 1280, height: 1200 });
 });
 
 test.afterAll(async () => {
@@ -128,26 +143,19 @@ async function probeControlBar(page: Page, videoSelector: string): Promise<HitIn
   // MakeShorts designer sits below the fold, so without this the probe point
   // lands outside the viewport and elementFromPoint returns null in EVERY state.
   //
-  // `scrollIntoViewIfNeeded()` alone is NOT enough, and this cost a red Windows CI
-  // leg: it scrolls the MINIMUM needed to make an element visible, so for an element
-  // taller than the remaining space it can stop with the TOP in view and the BOTTOM
-  // still below the fold. This probe samples the bottom edge, which is exactly the
-  // edge that stayed off-screen. Measured on run 31222301375 (windows-latest): the
-  // guard in `hitTest` fired with "probe point (641, 837) is OUTSIDE the viewport"
-  // against an 820px-tall window — the video's bottom edge was at y=853.
-  //
-  // `scrollIntoView({ block: 'end' })` aligns the element's BOTTOM with the
-  // scrollport's bottom, and acts on the nearest scrollable ANCESTOR rather than only
-  // the window — which matters here because the app shell scrolls inner containers,
-  // so a `window.scrollBy` would have been a no-op.
+  // Scrolling alone CANNOT fix the MakeShorts designer case, and a `scrollIntoView({
+  // block: 'end' })` attempt is recorded here so it is not retried: on run 31227054912
+  // it left windows-latest reporting the IDENTICAL "probe point (641, 837) is OUTSIDE
+  // the viewport" as the run before it — zero effect — while REGRESSING ubuntu-latest,
+  // which had been passing. The designer simply does not fit: its video bottom lands at
+  // y=853 in the 820px-tall window `prepareWindow` pins, and no amount of scrolling
+  // creates viewport that is not there. The height is what had to change (see the
+  // `beforeAll` note above).
   await page.locator(videoSelector).scrollIntoViewIfNeeded();
-  await page
-    .locator(videoSelector)
-    .evaluate((el) => el.scrollIntoView({ block: 'end', inline: 'nearest' }));
   const r = await boxOf(page, videoSelector);
   // The self-validating guard in `hitTest` stays the authority: if the point is STILL
-  // outside after this, the run genuinely measured nothing and must fail loudly rather
-  // than report a null hit as a passing "no interception".
+  // outside, the run genuinely measured nothing and must fail loudly rather than report
+  // a null hit as a passing "no interception".
   return hitTest(page, r.x + r.width * 0.15, r.y + r.height - 16);
 }
 
