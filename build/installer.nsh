@@ -54,6 +54,19 @@
 ; string for the conformance test, and only the rendered caption is escaped.
 !searchreplace REFRAME_UI_TRANSCRIPTION "${REFRAME_LABEL_TRANSCRIPTION}" "&" "&&"
 
+; INSTALLER-PASS ONLY. electron-builder runs makensis TWICE over this same script: once for
+; the installer, and once for the uninstaller with -DBUILD_UNINSTALLER (see the build log's
+; `Command line defined: "BUILD_UNINSTALLER"`, and app-builder-lib templates/nsis/installer.nsi
+; :90,:95 which gate the whole install half on `!ifndef BUILD_UNINSTALLER`).
+;
+; Every one of these vars is used ONLY inside customPageAfterChangeDir / customInstall, and
+; app-builder-lib does not insert those macros in the uninstaller pass. Declared unconditionally
+; they were therefore declared-and-never-referenced in that pass, and NSIS emitted
+;   warning 6001: Variable "ReframeProfile" not referenced or never set, wasting memory!
+; which electron-builder compiles with /WX -> "Error: warning treated as error" -> NO INSTALLER
+; IS PRODUCED AT ALL. Measured on this box: the packaging run reached
+; `dist/win-unpacked` and `.nsis.7z` and then died at the uninstaller compile.
+!ifndef BUILD_UNINSTALLER
 Var ReframeProfile
 Var ReframeBundles
 Var ReframeDialog
@@ -64,6 +77,7 @@ Var ReframeRadioCustom
 Var ReframeCheckTranscription
 Var ReframeCheckAiDirector
 Var ReframeScratch
+!endif
 
 ; ---------------------------------------------------------------------------
 ; The component page
