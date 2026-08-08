@@ -998,7 +998,21 @@ export function migrateLegacyPlaintextKeys(
   }
 
   // 1. Re-encrypt every plaintext key into the DPAPI keystore.
-  writeKeystore(safeStorage, keystorePath, keys);
+  //
+  //    CARRY THE EXISTING NON-PROVIDER SECTIONS FORWARD. `keys` came from
+  //    extractPlaintextKeys(settings.json), which by construction only knows about
+  //    PROVIDER material — so writing it verbatim would rebuild the keystore document
+  //    without the C14 `social` section and destroy every connected social account.
+  //    That is reachable whenever plaintext keys REAPPEAR in settings.json after an
+  //    account was connected (a restored settings backup, or a sidecar that
+  //    re-persists a key), which makes it a real wipe path rather than a theoretical
+  //    one. A store we could not READ contributes nothing (fail-closed: never
+  //    fabricate a section from an unreadable blob) — the migration still proceeds,
+  //    because migrating the plaintext keys off disk is the more urgent job.
+  const existing = readKeystore(safeStorage, keystorePath);
+  const carried: DecryptedKeys =
+    existing.keys?.social !== undefined ? { ...keys, social: existing.keys.social } : keys;
+  writeKeystore(safeStorage, keystorePath, carried);
 
   // 2. Strip the raw keys from settings.json (preserving all non-secret settings),
   //    then shred every stale prior copy that could still hold plaintext.

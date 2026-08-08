@@ -27,6 +27,7 @@ import {
   type SafeStorageLike,
   type SocialToken,
   loadDecryptedKeys,
+  migrateLegacyPlaintextKeys,
   readKeystore,
   saveDecryptedKeys,
 } from './keystore';
@@ -114,6 +115,56 @@ describe('THE NO-WIPE INVARIANT (both directions)', () => {
     const loaded = loadDecryptedKeys(safeStorage, keystorePath);
     expect(loaded.social?.youtube).toEqual(TOKEN);
     expect(loaded.providers.groq).toBeUndefined();
+  });
+
+  it('the LEGACY-PLAINTEXT MIGRATION does NOT destroy stored social tokens', () => {
+    // The nastiest of the three write paths, and the one an enumeration of
+    // saveDecryptedKeys callers found rather than intuition: the boot-time migration
+    // calls writeKeystore with extractPlaintextKeys(settings), which knows nothing
+    // about the social section. Reachable whenever plaintext keys REAPPEAR in
+    // settings.json after an account was connected (a restored settings backup, a
+    // sidecar that re-persists a key) -- and the cost is every connected account.
+    const safeStorage = makeSafeStorage();
+    saveDecryptedKeys(safeStorage, keystorePath, { providers: {}, social: { youtube: TOKEN } });
+    const settingsPath = join(dir, 'settings.json');
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ providers: [{ id: 'groq', apiKeys: ['gsk-legacy-PLAIN'] }] }),
+      'utf8',
+    );
+
+    const result = migrateLegacyPlaintextKeys(safeStorage, settingsPath, keystorePath);
+    expect(result.status).toBe('migrated');
+
+    const loaded = loadDecryptedKeys(safeStorage, keystorePath);
+    expect(loaded.providers.groq).toEqual(['gsk-legacy-PLAIN']);
+    expect(loaded.social?.youtube).toEqual(TOKEN);
+  });
+
+  it('the migration tolerates an UNREADABLE keystore without inventing a social section', () => {
+    // If the existing keystore cannot be read, the migration must still migrate the
+    // plaintext keys (that is its whole job) rather than abort -- but it must not
+    // fabricate a social section from a store it could not read.
+    const safeStorage: SafeStorageLike = {
+      ...makeSafeStorage(),
+      decryptString: () => {
+        throw new Error('DPAPI failed');
+      },
+    };
+    writeFileSync(
+      keystorePath,
+      JSON.stringify({ version: 1, providers: {}, social: { youtube: 'Y2lwaGVy' } }),
+      'utf8',
+    );
+    const settingsPath = join(dir, 'settings.json');
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ providers: [{ id: 'groq', apiKeys: ['gsk-legacy-PLAIN'] }] }),
+      'utf8',
+    );
+    expect(migrateLegacyPlaintextKeys(safeStorage, settingsPath, keystorePath).status).toBe(
+      'migrated',
+    );
   });
 
   it('saving a social token does NOT destroy provider keys', () => {
