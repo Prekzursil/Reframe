@@ -106,6 +106,7 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "reframe.applyOverrides",
         "reframe.eval",
         "reframe.shotPlan",
+        "reframe.shotPlanFor",
         "savePresets.apply",
         "savePresets.list",
         "savePresets.remove",

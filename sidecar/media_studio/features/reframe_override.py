@@ -31,13 +31,26 @@ The wire shapes (camelCase) mirror the R0 trace contract:
 
 RPCs (pure compose): ``reframe.shotPlan`` derives an editable plan from a trace;
 ``reframe.applyOverrides`` resolves overrides + returns the affected-shot set.
+
+**v1.5 O-2 — the decision sidecar.** Those two RPCs were unreachable from the app:
+``shotPlan`` needs a ``trace`` and NO renderer code could ever obtain one (the
+multi-speaker engine built one in-process and threw it away). So the engine now
+drops a small JSON *decision sidecar* next to every clip it renders —
+``<clip>.reframe.json``, see :func:`build_decision_sidecar` — and
+``reframe.shotPlanFor {clip}`` turns it into an editable plan. A clip the engine
+never rendered has no sidecar and yields ``{"plan": null}``: an HONEST empty
+state, so the UI can say "no per-shot decisions for this clip" instead of
+mounting a correction panel over invented data. A sidecar that EXISTS but is
+corrupt or of an unknown version is LOUD (never a silent skip).
 """
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from .reframe_eval import (
@@ -52,6 +65,13 @@ from .reframe_eval import _as_int as _eval_as_int
 #: The default layout assigned to a shot whose frames carry no concrete layout
 #: label (only the ``"none"`` filler) — a single-speaker crop is the safe floor.
 DEFAULT_LAYOUT = "single"
+
+#: The decision-sidecar filename suffix — ``<rendered clip>.reframe.json``.
+SIDECAR_SUFFIX = ".reframe.json"
+
+#: The sidecar schema version. A sidecar written by a future/unknown schema is
+#: REJECTED loudly rather than half-read (GATE-2 "no silent fallbacks").
+SIDECAR_VERSION = 1
 
 Crop = tuple[float, float, float, float]
 
@@ -312,6 +332,101 @@ def plan_from_trace(
 
 
 # --------------------------------------------------------------------------- #
+# The decision sidecar (v1.5 O-2) — how a trace REACHES the renderer
+# --------------------------------------------------------------------------- #
+
+
+def sidecar_path(clip: str) -> str:
+    """The decision-sidecar path for a rendered ``clip`` (``<clip>.reframe.json``)."""
+    return f"{clip}{SIDECAR_SUFFIX}"
+
+
+def trace_to_dict(trace: ReframeTrace) -> dict[str, Any]:
+    """Serialise an R0 :class:`ReframeTrace` to its camelCase wire object.
+
+    The exact inverse of :meth:`ReframeTrace.from_dict` (which the R0 module
+    ships without a serialiser), so a persisted sidecar round-trips.
+    """
+    return {
+        "shotBoundaries": list(trace.shot_boundaries),
+        "speakerPerFrame": list(trace.speaker_per_frame),
+        "segments": [
+            {"startFrame": seg.start_frame, "endFrame": seg.end_frame, "layout": seg.layout} for seg in trace.segments
+        ],
+        "crops": [list(crop) for crop in trace.crops],
+    }
+
+
+def build_decision_sidecar(
+    *,
+    engine: str,
+    aspect: str,
+    source_path: str,
+    source_width: int,
+    source_height: int,
+    fps: float,
+    trace: ReframeTrace,
+) -> dict[str, Any]:
+    """The sidecar payload an engine drops next to a clip it just rendered.
+
+    It carries EVERYTHING a later correction round needs without re-running the
+    ML analysis: the source clip the crops are expressed against, its geometry,
+    the aspect the engine targeted, and the per-frame trace the editable plan is
+    derived from.
+    """
+    return {
+        "version": SIDECAR_VERSION,
+        "engine": engine,
+        "aspect": aspect,
+        "sourcePath": source_path,
+        "sourceWidth": source_width,
+        "sourceHeight": source_height,
+        "fps": fps,
+        "trace": trace_to_dict(trace),
+    }
+
+
+def _read_text(path: str) -> str:
+    """Default sidecar reader (the injectable seam's production implementation)."""
+    return Path(path).read_text(encoding="utf-8")
+
+
+def load_decision_sidecar(clip: str, *, read_text: Callable[[str], str] = _read_text) -> dict[str, Any] | None:
+    """Load ``clip``'s decision sidecar; ``None`` when the clip has none.
+
+    ABSENT is a legitimate state (the clip was rendered by an engine that emits
+    no per-shot decisions), so it returns ``None`` rather than raising. A sidecar
+    that EXISTS but is unreadable — bad JSON, not an object, or an unknown schema
+    version — is a LOUD :class:`OverrideError`; half-reading it would be exactly
+    the silent fallback GATE-2 forbids.
+    """
+    try:
+        raw = read_text(sidecar_path(clip))
+    except OSError:
+        return None
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        raise OverrideError(f"reframe sidecar is not valid JSON: {exc}") from exc
+    if not isinstance(payload, Mapping):
+        raise OverrideError("reframe sidecar must be a JSON object")
+    version = payload.get("version")
+    if version != SIDECAR_VERSION:
+        raise OverrideError(f"unsupported reframe sidecar version {version!r}")
+    return dict(payload)
+
+
+def plan_from_sidecar(payload: Mapping[str, Any]) -> ShotPlan:
+    """Derive the editable :class:`ShotPlan` from a loaded sidecar payload."""
+    return plan_from_trace(
+        payload.get("trace", {}),
+        source_width=_as_int(payload.get("sourceWidth"), "sidecar.sourceWidth"),
+        source_height=_as_int(payload.get("sourceHeight"), "sidecar.sourceHeight"),
+        fps=_as_float(payload.get("fps"), "sidecar.fps"),
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Apply overrides + compute the affected-shot set (pure)
 # --------------------------------------------------------------------------- #
 
@@ -397,13 +512,21 @@ def affected_shot_indices(base: ShotPlan, resolved: ShotPlan) -> tuple[int, ...]
 # --------------------------------------------------------------------------- #
 
 
-def register(*, register_fn: Callable[[str, Callable[..., Any]], None]) -> None:
-    """Register ``reframe.shotPlan`` + ``reframe.applyOverrides`` (pure compose).
+def register(
+    *,
+    register_fn: Callable[[str, Callable[..., Any]], None],
+    read_text: Callable[[str], str] = _read_text,
+) -> None:
+    """Register the three ``reframe.*`` override methods (pure compose).
 
     ``register_fn`` is ``protocol.register`` in production; tests pass a fake
-    registrar. Neither method runs a heavy engine — ``shotPlan`` derives an
-    editable plan from an already-computed trace, and ``applyOverrides`` resolves
-    a user's edits and returns the affected-shot set the R1 engine re-renders.
+    registrar. ``read_text`` is the sidecar-read seam (a real file read in
+    production, a stub in tests). No method runs a heavy engine:
+
+    * ``reframe.shotPlan``      — plan from a caller-supplied trace;
+    * ``reframe.shotPlanFor``   — plan from the clip's persisted decision
+      sidecar (v1.5 O-2: the renderer has no other way to get a trace);
+    * ``reframe.applyOverrides`` — resolve a user's edits -> affected-shot set.
     """
 
     def reframe_shot_plan(params: dict[str, Any], _ctx: Any) -> dict[str, Any]:
@@ -429,7 +552,28 @@ def register(*, register_fn: Callable[[str, Callable[..., Any]], None]) -> None:
         except OverrideError as exc:
             raise _invalid_params(exc) from exc
 
+    def reframe_shot_plan_for(params: dict[str, Any], _ctx: Any) -> dict[str, Any]:
+        """``reframe.shotPlanFor({clip})`` -> ``{plan|null, engine, aspect}``.
+
+        ``plan: null`` is the honest "this clip carries no per-shot decisions"
+        answer (no sidecar), NOT an error — the UI renders an explanation
+        instead of a correction panel it could not honour.
+        """
+        try:
+            clip = _require_str(params.get("clip"), "clip")
+            payload = load_decision_sidecar(clip, read_text=read_text)
+            if payload is None:
+                return {"plan": None, "engine": "", "aspect": ""}
+            return {
+                "plan": plan_from_sidecar(payload).to_dict(),
+                "engine": _require_str(payload.get("engine", ""), "sidecar.engine"),
+                "aspect": _require_str(payload.get("aspect", ""), "sidecar.aspect"),
+            }
+        except OverrideError as exc:
+            raise _invalid_params(exc) from exc
+
     register_fn("reframe.shotPlan", reframe_shot_plan)
+    register_fn("reframe.shotPlanFor", reframe_shot_plan_for)
     register_fn("reframe.applyOverrides", reframe_apply_overrides)
 
 
