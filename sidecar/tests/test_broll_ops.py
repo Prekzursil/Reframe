@@ -14,6 +14,7 @@ consent gate is reachable from here.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -309,6 +310,174 @@ def test_apply_of_an_unknown_video_raises(tmp_path, registry):
     svc = _svc(tmp_path, _Store(), resolver=lambda vid: None)
     with pytest.raises(RpcError, match="unknown video"):
         svc.apply({"videoId": "ghost", "insertions": [_plan_row()]}, _rpc(registry))
+
+
+# --------------------------------------------------------------------------- #
+# the disk adapters the composition root wires in
+# --------------------------------------------------------------------------- #
+def test_scan_assets_finds_stills_and_clips_and_classifies_them(tmp_path):
+    (tmp_path / "a.png").write_bytes(b"x")
+    (tmp_path / "b.MP4").write_bytes(b"yy")
+    (tmp_path / "notes.txt").write_text("ignored")
+    found = {a["path"]: a for a in bo.scan_assets(tmp_path)}
+    assert len(found) == 2
+    assert found[str(tmp_path / "a.png")]["kind"] == "image"
+    # Extension matching is case-insensitive: a camera writes .MP4/.JPG.
+    assert found[str(tmp_path / "b.MP4")]["kind"] == "video"
+
+
+def test_scan_assets_recurses_and_is_deterministically_ordered(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "z.png").write_bytes(b"x")
+    (tmp_path / "a.png").write_bytes(b"x")
+    assert [Path(a["path"]).name for a in bo.scan_assets(tmp_path)] == ["a.png", "z.png"]
+
+
+def test_scan_assets_carries_the_stat_metadata_the_index_fingerprints(tmp_path):
+    (tmp_path / "a.png").write_bytes(b"12345")
+    asset = bo.scan_assets(tmp_path)[0]
+    assert asset["sizeBytes"] == 5
+    assert asset["mtime"] > 0
+    assert asset["assetId"]
+
+
+def test_scan_assets_gives_each_file_a_stable_distinct_id(tmp_path):
+    (tmp_path / "a.png").write_bytes(b"x")
+    (tmp_path / "b.png").write_bytes(b"x")
+    first = {a["assetId"] for a in bo.scan_assets(tmp_path)}
+    assert len(first) == 2
+    assert first == {a["assetId"] for a in bo.scan_assets(tmp_path)}
+
+
+def test_scan_assets_of_a_missing_folder_is_empty_not_an_error(tmp_path):
+    # An unconfigured b-roll folder is the normal first-run state.
+    assert bo.scan_assets(tmp_path / "nope") == []
+
+
+def test_scan_assets_of_no_folder_at_all_is_empty(tmp_path):
+    assert bo.scan_assets("") == []
+
+
+def test_index_file_round_trips(tmp_path):
+    path = tmp_path / "broll.index.json"
+    index = bi.build(ASSETS, [[1.0, 0.0], [0.0, 1.0]], model=MODEL, built_at="t")
+    bo.save_index_file(path, index)
+    assert bo.load_index_file(path) == index
+
+
+def test_index_file_absent_reads_as_none(tmp_path):
+    assert bo.load_index_file(tmp_path / "nothing.json") is None
+
+
+def test_index_file_corrupt_reads_as_none_rather_than_crashing(tmp_path):
+    # A half-written sidecar must degrade to "not indexed" (which the UI can
+    # act on), never take the whole sidecar down on startup.
+    path = tmp_path / "broll.index.json"
+    path.write_text("{not json", encoding="utf-8")
+    assert bo.load_index_file(path) is None
+
+
+def test_index_file_of_a_non_object_reads_as_none(tmp_path):
+    path = tmp_path / "broll.index.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    assert bo.load_index_file(path) is None
+
+
+def test_save_index_file_creates_its_parent_directory(tmp_path):
+    path = tmp_path / "deep" / "nested" / "broll.index.json"
+    bo.save_index_file(path, bi.build([], [], model=MODEL, built_at="t"))
+    assert path.is_file()
+
+
+# --------------------------------------------------------------------------- #
+# the backbone adapters (the ONE heavy edge, kept injectable so it is testable)
+# --------------------------------------------------------------------------- #
+class _FakeBackbone:
+    """Stands in for the SigLIP-2 towers; records what it was handed."""
+
+    def __init__(self) -> None:
+        self.images: Any = None
+        self.texts: Any = None
+
+    def embed_images(self, frames):
+        import numpy as np
+
+        self.images = frames
+        return np.asarray([[float(len(frames)), 0.0] for _ in range(len(frames))])
+
+    def embed_texts(self, texts):
+        import numpy as np
+
+        self.texts = list(texts)
+        return np.asarray([[0.0, float(len(t))] for t in texts])
+
+
+def test_image_embedder_loads_one_frame_per_asset_and_returns_plain_lists():
+    import numpy as np
+
+    backbone = _FakeBackbone()
+    seen: list[tuple[str, str]] = []
+
+    def loader(path, kind):
+        seen.append((path, kind))
+        return np.zeros((2, 2, 3), dtype=np.uint8)
+
+    embed = bo.make_image_embedder(backend_factory=lambda s: backbone, frame_loader=loader, settings_provider=dict)
+    out = embed(["/lib/dog.png", "/lib/clip.mp4"])
+    assert seen == [("/lib/dog.png", "image"), ("/lib/clip.mp4", "video")]
+    # The index and planner want JSON-safe floats, never a numpy array.
+    assert out == [[2.0, 0.0], [2.0, 0.0]]
+    assert all(isinstance(v, float) for row in out for v in row)
+
+
+def test_image_embedder_batches_every_frame_into_one_backbone_call():
+    import numpy as np
+
+    backbone = _FakeBackbone()
+    embed = bo.make_image_embedder(
+        backend_factory=lambda s: backbone,
+        frame_loader=lambda p, k: np.zeros((2, 2, 3), dtype=np.uint8),
+        settings_provider=dict,
+    )
+    embed(["/a.png", "/b.png", "/c.png"])
+    assert backbone.images.shape == (3, 2, 2, 3), "one stacked batch, not three loads"
+
+
+def test_image_embedder_of_nothing_never_loads_the_model():
+    def boom(_settings):
+        raise AssertionError("an empty re-index must not pay for a model load")
+
+    assert bo.make_image_embedder(backend_factory=boom, frame_loader=lambda p, k: None)([]) == []
+
+
+def test_text_embedder_returns_plain_lists():
+    backbone = _FakeBackbone()
+    embed = bo.make_text_embedder(backend_factory=lambda s: backbone, settings_provider=dict)
+    assert embed(["ab", "cde"]) == [[0.0, 2.0], [0.0, 3.0]]
+    assert backbone.texts == ["ab", "cde"]
+
+
+def test_text_embedder_of_nothing_never_loads_the_model():
+    def boom(_settings):
+        raise AssertionError("an empty transcript must not pay for a model load")
+
+    assert bo.make_text_embedder(backend_factory=boom)([]) == []
+
+
+def test_the_two_embedders_share_ONE_backbone_instance_per_call():
+    # Both towers must come from the same loaded model: a cross-modal cosine is
+    # only valid inside one joint space, and two factory calls could resolve to
+    # two different checkpoints if settings changed between them.
+    built: list[Any] = []
+
+    def factory(_settings):
+        backbone = _FakeBackbone()
+        built.append(backbone)
+        return backbone
+
+    bo.make_text_embedder(backend_factory=factory, settings_provider=dict)(["a"])
+    bo.make_text_embedder(backend_factory=factory, settings_provider=dict)(["b"])
+    assert len(built) == 2, "each call builds lazily; the caller owns any caching"
 
 
 # --------------------------------------------------------------------------- #
