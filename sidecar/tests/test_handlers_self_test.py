@@ -79,9 +79,7 @@ def test_self_test_surfaces_an_ffmpeg_that_cannot_encode_h264(
     """
     monkeypatch.setattr(tools_resolver, "resolve_tool", lambda name, _s=None: f"/usr/bin/{name}")
     # The real LGPL build's H.264 story: OpenH264 and hardware, no libx264.
-    monkeypatch.setattr(
-        self_test, "_default_encoder_probe", lambda _p: {"libopenh264", "h264_nvenc", "aac"}
-    )
+    monkeypatch.setattr(self_test, "_default_encoder_probe", lambda _p: {"libopenh264", "h264_nvenc", "aac"})
     out = _services(tmp_path).system_self_test({}, ctx)
 
     by_id = {c["id"]: c for c in out["checks"]}
