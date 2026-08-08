@@ -647,9 +647,7 @@ class GazeService:
             out_path = str(out_dir / f"{Path(in_path).stem or 'clip'}.gaze.mp4")
 
             def plan(pair: EyePair, *, frame_w: int, frame_h: int, read_patch: PatchReader) -> FacePlan:
-                return plan_face(
-                    pair, frame_w=frame_w, frame_h=frame_h, strength=strength, read_patch=read_patch
-                )
+                return plan_face(pair, frame_w=frame_w, frame_h=frame_h, strength=strength, read_patch=read_patch)
 
             backend = factory(settings)
             try:

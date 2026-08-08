@@ -84,25 +84,19 @@ def test_warp_radius_is_never_zero_for_a_minimal_box() -> None:
 # plan_face — the pure decision layer
 # --------------------------------------------------------------------------- #
 def test_plan_face_returns_one_edit_per_eye() -> None:
-    plan = plan_face(
-        _good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-6.0)
-    )
+    plan = plan_face(_good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-6.0))
     assert plan.skipped is None
     assert len(plan.eyes) == 2
 
 
 def test_plan_face_shifts_an_offset_iris_toward_centre() -> None:
     # Iris displaced LEFT of the aperture centre -> a positive (rightward) shift.
-    plan = plan_face(
-        _good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-6.0)
-    )
+    plan = plan_face(_good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-6.0))
     assert all(edit.shift[0] > 0 for edit in plan.eyes)
 
 
 def test_plan_face_produces_no_shift_for_a_centred_iris() -> None:
-    plan = plan_face(
-        _good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(0.0)
-    )
+    plan = plan_face(_good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(0.0))
     assert plan.skipped is None
     # A symmetric iris centroid lands on the aperture centre to within float
     # noise, so the shift is negligible rather than bit-exact zero. (The
@@ -111,16 +105,12 @@ def test_plan_face_produces_no_shift_for_a_centred_iris() -> None:
 
 
 def test_plan_face_at_zero_strength_produces_no_shift() -> None:
-    plan = plan_face(
-        _good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=0.0, read_patch=_reader(-6.0)
-    )
+    plan = plan_face(_good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=0.0, read_patch=_reader(-6.0))
     assert all(edit.shift == (0.0, 0.0) for edit in plan.eyes)
 
 
 def test_plan_face_propagates_a_skip_and_plans_nothing() -> None:
-    plan = plan_face(
-        _good_pair(score=0.1), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-6.0)
-    )
+    plan = plan_face(_good_pair(score=0.1), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-6.0))
     assert plan.skipped == SkipReason.LOW_CONFIDENCE
     assert plan.eyes == ()
 
@@ -147,9 +137,7 @@ def test_plan_face_skips_an_eye_whose_box_falls_outside_the_frame() -> None:
 
 
 def test_plan_face_carries_the_radius_and_iris_into_each_edit() -> None:
-    plan = plan_face(
-        _good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-6.0)
-    )
+    plan = plan_face(_good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-6.0))
     edit = plan.eyes[0]
     assert edit.radius == pytest.approx(warp_radius(edit.box))
     assert 0.0 <= edit.iris[0] <= edit.box.w
@@ -159,9 +147,7 @@ def test_plan_face_respects_the_max_shift_cap() -> None:
     # An iris pushed to the very edge of the crop demands a shift LARGER than the
     # cap, so this exercises the clamp rather than passing trivially: a real
     # (non-zero) rightward shift that still never exceeds MAX_SHIFT_FRACTION.
-    plan = plan_face(
-        _good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-14.5)
-    )
+    plan = plan_face(_good_pair(), frame_w=FRAME_W, frame_h=FRAME_H, strength=1.0, read_patch=_reader(-14.5))
     cap = gaze.max_shift_px(gaze.interocular_px(_good_pair()))
     assert plan.eyes
     assert all(0.0 < edit.shift[0] <= cap + 1e-6 for edit in plan.eyes)

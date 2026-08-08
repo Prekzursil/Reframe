@@ -428,6 +428,21 @@ def register_all(
         register_fn=reg,
     )
 
+    # gaze.* (C15): eye-contact correction — a LIKENESS-ALTERING op, so
+    # ``gaze.run`` is gated by the fail-closed attestation in
+    # ``models/likeness.py`` and REFUSES before resolving media or building a
+    # backend. ``gaze.probe`` reports whether the (already-vendored, MIT) YuNet
+    # asset the ASD path shares is installed, so the UI can disable the control
+    # instead of failing a job. No new model and no new download.
+    from ..features import gaze as _gaze  # local: import-light
+
+    _gaze.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "gaze",
+        settings_provider=svc.settings.get,
+        register_fn=reg,
+    )
+
     # ---------------------------------------------------------------------- #
     # system-advanced group (this build) — health / recipes / diarize.
     # Each module owns its own register() (mirrors shorts / cues / assets).
