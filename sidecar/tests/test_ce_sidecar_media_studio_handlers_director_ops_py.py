@@ -256,3 +256,49 @@ def test_editplan_injected_provider_short_circuits_before_routing(tmp_path: Path
     svc.settings.set(_cloud_editplan_settings("local"))
 
     assert svc._editplan_provider_or_refuse() is sentinel
+
+
+# --------------------------------------------------------------------------- #
+# TEXT-consent REFUSAL — the privacy gate, covered WITHOUT ffmpeg or a socket
+#
+# This refusal (``director_ops.py`` `_editplan_provider_or_refuse`, the
+# `raise _invalid(...)` when the RAW routed pool has a cloud target but the
+# TEXT-consent-filtered pool has none) is the single line that stops
+# ``director.plan`` shipping the transcript to a provider the user revoked text
+# consent for. Until now its ONLY coverage in the blocking gate came from
+# ``test_e2e_ai2_director_text_consent.py``, which is `skipif`-gated on
+# `shutil.which("ffmpeg")` and stands up a real loopback HTTP model server.
+#
+# That made a privacy gate's coverage depend on `apt-get install ffmpeg`
+# succeeding on the runner (quality.yml): if ffmpeg ever failed to install, the
+# module would silently skip and the 100%-coverage gate would fail with a
+# confusing 99.99% error instead of a clear missing-dependency one. Measured:
+# ignoring that module drops the sidecar to `19032 1 4856 1 99%` with this line
+# as the sole miss. This test covers the same refusal with no ffmpeg, no
+# subprocess and no socket, so the coverage no longer rides on a system package.
+# --------------------------------------------------------------------------- #
+def _text_revoked_cloud_settings() -> dict[str, Any]:
+    """A cloud-routed editPlan target whose per-provider TEXT consent is REVOKED."""
+    settings = _cloud_editplan_settings("cloud")
+    settings["consent"] = {"perProvider": {"Groq": {"text": False}}}
+    # Pin offline OFF so the sibling OfflineError branch cannot fire first and
+    # mask the consent refusal (is_offline falls back to MEDIA_STUDIO_OFFLINE
+    # when the setting is absent — an ambient env var must not steer this test).
+    settings["offline"] = False
+    return settings
+
+
+def test_editplan_refuses_when_every_cloud_target_has_text_consent_revoked(tmp_path: Path) -> None:
+    """Cloud route + revoked TEXT consent -> typed refusal, before any chat egress."""
+    svc = Services(data_dir=tmp_path / "data")  # provider=None -> routing resolves
+    svc.settings.set(_text_revoked_cloud_settings())
+
+    with pytest.raises(RpcError) as excinfo:
+        svc._editplan_provider_or_refuse()
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMS
+    message = str(excinfo.value)
+    assert "TEXT consent is revoked" in message
+    # The message must name the setting the user has to change, or the refusal
+    # is a dead end for whoever hits it.
+    assert "consent.perProvider" in message
