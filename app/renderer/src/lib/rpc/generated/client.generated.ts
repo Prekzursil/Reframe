@@ -16,7 +16,8 @@ export const clientGenerated = {
   },
 
   providers: {
-    revealKey: (id: string, index = 0): Promise<RevealKeyResult> => rpc('providers.revealKey', { id, index }),
+    revealKey: (id: string, index = 0): Promise<RevealKeyResult> =>
+      rpc('providers.revealKey', { id, index }),
   },
 
   settings: {
@@ -25,7 +26,12 @@ export const clientGenerated = {
   },
 
   shortmaker: {
-    select: (videoId: string, prompt: string, controls: ShortmakerControls): Promise<JobHandle & { candidates?: Candidate[] }> => rpc('shortmaker.select', { videoId, prompt, controls }),
+    select: (
+      videoId: string,
+      prompt: string,
+      controls: ShortmakerControls,
+    ): Promise<JobHandle & { candidates?: Candidate[] }> =>
+      rpc('shortmaker.select', { videoId, prompt, controls }),
   },
 } as const;
 

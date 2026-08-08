@@ -92,13 +92,11 @@ def _relip(job: dict[str, Any]) -> None:  # pragma: no cover - isolated env only
     confidence score measured across the WHOLE timeline.
     """
     import torch  # noqa: PLC0415
-    from latentsync.pipelines.lipsync_pipeline import (
-        LipsyncPipeline,  # noqa: PLC0415 # pyright: ignore[reportMissingImports]
-    )
+    from latentsync.pipelines import lipsync_pipeline  # noqa: PLC0415 # pyright: ignore[reportMissingImports]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     steps = 20 if job["quality"] == "quality" else 8
-    pipeline = LipsyncPipeline.from_pretrained(job["engine"]).to(device)
+    pipeline = lipsync_pipeline.LipsyncPipeline.from_pretrained(job["engine"]).to(device)
     out = Path(job["outVideo"])
     out.parent.mkdir(parents=True, exist_ok=True)
     pipeline(

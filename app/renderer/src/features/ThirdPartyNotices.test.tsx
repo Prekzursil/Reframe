@@ -15,6 +15,7 @@ import {
   FONT_NOTICES,
   FONT_LICENSE_FILE,
   FFMPEG_NOTICE,
+  OPT_IN_MODEL_NOTICES,
 } from './ThirdPartyNotices';
 
 let container: HTMLDivElement;
@@ -196,5 +197,90 @@ describe('ThirdPartyNotices — bundled fonts (WU-1.5 fonts)', () => {
     expect(container.querySelectorAll('.tpn__chip--ok')).toHaveLength(4);
     expect(container.querySelectorAll('.tpn__chip--ofl')).toHaveLength(3);
     expect(container.querySelectorAll('.tpn__chip--copyleft')).toHaveLength(1);
+  });
+});
+
+// --- OPT-IN OpenRAIL models (lip-sync, WU-B1) ---------------------------------
+// Weights that are NOT shipped: downloaded only when `lipSyncEnabled` is on. The
+// licence class is the whole point of this block — OpenRAIL PERMITS commercial
+// use and attaches behavioural use-restrictions, and a notice that states only
+// one of those two halves is a misrepresentation either way.
+describe('ThirdPartyNotices — opt-in OpenRAIL models (WU-B1 lip-sync)', () => {
+  it('names both engines with their VERIFIED weights licence tags', async () => {
+    await mount();
+    const text = container.textContent ?? '';
+    expect(text).toContain('LatentSync');
+    expect(text).toContain('MuseTalk');
+    // The Hub tags, exactly as the Hub reports them (verified 2026-08-08).
+    expect(text).toContain('openrail++');
+    expect(text).toContain('creativeml-openrail-m');
+    // The code licence differs from the weights licence for both, and saying so
+    // is the point: quoting only one of the pair misstates the position.
+    expect(text).toContain('Apache-2.0');
+    expect(text).toContain('MIT');
+  });
+
+  it('states BOTH halves of the OpenRAIL position, not just the permissive half', async () => {
+    await mount();
+    const section = container.querySelector('.tpn__optin');
+    expect(section).not.toBeNull();
+    const text = section?.textContent ?? '';
+    expect(text).toContain('Commercial use IS permitted');
+    expect(text).toContain('prohibited USES');
+    expect(text).toContain('pass those same restrictions on');
+    // ...and it must NOT claim the licence is non-commercial.
+    expect(text).not.toContain('Non-commercial');
+  });
+
+  it('surfaces the likeness attestation and the S3FD avoidance as obligations', async () => {
+    await mount();
+    const text = container.querySelector('.tpn__optin')?.textContent ?? '';
+    expect(text).toContain('right to modify the on-screen person');
+    expect(text).toContain('S3FD');
+    // Each engine names the setting that gates its download.
+    expect(container.querySelectorAll('.tpn__optin code')).toHaveLength(2);
+    expect(text).toContain('lipSyncEnabled');
+  });
+
+  it('chips them as their own third state, leaving every existing count intact', async () => {
+    await mount();
+    const chips = container.querySelectorAll('.tpn__chip--userestricted');
+    expect(chips).toHaveLength(2);
+    // Both halves in the chip TEXT, so the meaning survives without colour.
+    expect(chips[0]?.textContent).toContain('commercial OK, use-restricted');
+    expect(chips[0]?.getAttribute('data-commercial')).toBe('yes');
+    expect(chips[0]?.getAttribute('data-use-restricted')).toBe('yes');
+    // The pre-existing chip counts are unchanged — an OpenRAIL model is neither
+    // "Commercial OK" (incomplete) nor "Non-commercial" (false), so it does not
+    // borrow either class, and it is not OFL or copyleft.
+    expect(container.querySelectorAll('.tpn__chip--ok')).toHaveLength(4);
+    expect(container.querySelectorAll('.tpn__chip--nc')).toHaveLength(1);
+    expect(container.querySelectorAll('.tpn__chip--ofl')).toHaveLength(3);
+    expect(container.querySelectorAll('.tpn__chip--copyleft')).toHaveLength(1);
+  });
+
+  it('keeps opt-in models OUT of the bundled-model list', () => {
+    // THIRD_PARTY_NOTICES documents what SHIPS. Listing an un-shipped weight
+    // there would misreport the build, and would silently break the "exactly one
+    // non-commercial model" invariant above.
+    const bundled = THIRD_PARTY_NOTICES.map((n) => n.name);
+    for (const n of OPT_IN_MODEL_NOTICES) expect(bundled).not.toContain(n.name);
+  });
+
+  it('exports exactly the two OpenRAIL engines, both commercial-OK and use-restricted', () => {
+    expect(OPT_IN_MODEL_NOTICES.map((n) => n.name)).toEqual(['LatentSync', 'MuseTalk']);
+    expect(OPT_IN_MODEL_NOTICES.every((n) => n.commercial)).toBe(true);
+    expect(OPT_IN_MODEL_NOTICES.every((n) => n.useRestricted)).toBe(true);
+    expect(OPT_IN_MODEL_NOTICES.every((n) => n.gatedBy === 'lipSyncEnabled')).toBe(true);
+    // Wav2Lip is genuinely non-commercial and must never appear here.
+    expect(OPT_IN_MODEL_NOTICES.map((n) => n.name.toLowerCase())).not.toContain('wav2lip');
+  });
+
+  it('renders the optional-paper branch for LatentSync and omits it for MuseTalk', async () => {
+    await mount();
+    const items = Array.from(container.querySelectorAll('.tpn__optin .tpn__item'));
+    expect(items).toHaveLength(2);
+    expect(items[0]?.querySelector('.tpn__paper')?.textContent).toContain('arXiv:2412.09262');
+    expect(items[1]?.querySelector('.tpn__paper')).toBeNull();
   });
 });
