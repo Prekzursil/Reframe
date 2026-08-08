@@ -427,9 +427,14 @@ def load_decision_sidecar(clip: str, *, read_text: Callable[[str], str] = _read_
     return dict(payload)
 
 
+def parse_overrides(raw: Any, field: str = "overrides") -> tuple[ShotOverride, ...]:
+    """Parse a wire array of overrides (loud on a non-array or a bad entry)."""
+    return tuple(ShotOverride.from_dict(o) for o in _seq(raw, field))
+
+
 def sidecar_overrides(payload: Mapping[str, Any]) -> tuple[ShotOverride, ...]:
     """The corrections already persisted into ``payload`` (empty when none)."""
-    return tuple(ShotOverride.from_dict(o) for o in _seq(payload.get("overrides", []), "sidecar.overrides"))
+    return parse_overrides(payload.get("overrides", []), "sidecar.overrides")
 
 
 def plan_from_sidecar(payload: Mapping[str, Any]) -> ShotPlan:
