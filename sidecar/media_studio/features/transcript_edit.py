@@ -210,7 +210,7 @@ def _ms_bounds(edit: Mapping[str, Any]) -> Span | None:
     return (start / 1000.0, end / 1000.0)
 
 
-def _word_bounds(edit: Mapping[str, Any], index: dict[str, Mapping[str, Any]]) -> tuple[Span | None, bool]:
+def _word_bounds(edit: Mapping[str, Any], index: Mapping[str, Mapping[str, Any]]) -> tuple[Span | None, bool]:
     """Resolve a word address to its ``[start, end]``.
 
     Returns ``(span, addressed)`` — ``addressed`` is ``True`` when the edit DID
