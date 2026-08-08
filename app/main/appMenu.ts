@@ -8,8 +8,9 @@
 //        the FRAMING lied twice. "Edit" is a rail destination in this app's IA
 //        (views/Edit.tsx = "edit this video"), so an `Edit` menu reads as
 //        video-edit undo; and a bare "Undo" claims an app-wide stack that does
-//        not exist. editing-surface-audit-2026-08.md row 25 measures the real
-//        state: "PARTIAL — two disjoint mechanisms, no app-wide stack" —
+//        not exist. docs/plans/v1.5/editing-surface-audit-2026-08.md row 25
+//        measures the real state: "PARTIAL — two disjoint mechanisms, no
+//        app-wide stack" —
 //        `director.undo` inverts DIRECTOR ops only, and `timelineOps.ts` keeps a
 //        100-entry history for SUBTITLE CUES only. Neither can back a global
 //        Ctrl+Z, and this module does not pretend otherwise.

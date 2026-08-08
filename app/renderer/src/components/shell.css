@@ -861,6 +861,34 @@ button {
   color: var(--text-muted);
 }
 
+/* M2: the way forward out of the empty Edit section. Deliberately the SAME
+   ghost/raised voice as .caption-view__back (caption.css:17) and
+   .export-view__back (export.css:17) rather than a fourth CTA treatment — M3
+   flags four different CTA styles for this one "you need media" state. No accent
+   fill: an empty landing is not an active state (see .edit--empty above). */
+.edit__empty-back {
+  margin-top: var(--space-3);
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.edit__empty-back:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.edit__empty-back:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .library__list {
   list-style: none;
   margin: 0;

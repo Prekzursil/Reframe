@@ -120,6 +120,39 @@ describe('<Edit />', () => {
     expect(workspace()).toBeNull();
   });
 
+  // C3 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §5) — the empty state PROMISED
+  // "trim, cut, join, reframe, caption, and more — every edit tool lives here".
+  // The merged editing-surface audit measures the opposite for the first three:
+  // docs/plans/v1.5/editing-surface-audit-2026-08.md:44 — "no trim, no cut, no
+  // join tab"; :45-48 — those engines are reachable "only through" the AI
+  // Director, and "a user cannot drag a cut"; rows 1-3 (:82-84) mark trim, cut
+  // and split "engine BUILT ... UI MISSING". Nothing named in this copy may be a
+  // verb the user cannot reach from here.
+  it('does not promise editing verbs the app cannot deliver', () => {
+    act(() => root.render(<Edit video={null} onBack={() => undefined} />));
+    const hint = container.querySelector('.edit__empty-hint')!.textContent!;
+    // Guard the guard: the copy must actually be present, or the absence checks
+    // below would pass over an empty string.
+    expect(hint.length).toBeGreaterThan(20);
+    for (const unreachable of ['trim', 'cut', 'join']) {
+      expect(hint.toLowerCase()).not.toContain(unreachable);
+    }
+    // ...and it must still say something true about what IS reachable.
+    expect(hint.toLowerCase()).toContain('subtitle');
+  });
+
+  // M2 — Edit was the only one of eight empty states with no way forward. The
+  // sibling views already ship this affordance (views/Caption.tsx:102-104,
+  // views/Export.tsx:251-253); Edit did not.
+  it('offers a way forward to the Library', () => {
+    const onBack = vi.fn();
+    act(() => root.render(<Edit video={null} onBack={onBack} />));
+    const back = container.querySelector<HTMLButtonElement>('.edit__empty-back');
+    expect(back).not.toBeNull();
+    act(() => back!.click());
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
   it('lands on the Task Hub (not the Workspace) when a video is opened', async () => {
     act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
     await flush();
