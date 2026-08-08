@@ -18,7 +18,16 @@
 // build.
 
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
-import { findBuiltApp, seedEnvironment, type SeededEnv } from './fixtures';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import {
+  SIDECAR_DIR,
+  bundledFfmpegPath,
+  findBuiltApp,
+  seedEnvironment,
+  type BuiltApp,
+  type SeededEnv,
+} from './fixtures';
 
 // The packaged artifact is ONLY produced on the Windows leg (electron-builder.yml
 // has a win: target; the embeddable CPython + ffmpeg staging is Windows-only —
@@ -30,6 +39,9 @@ test.describe('packaged (shipped binary) E2E', () => {
 
   let seeded: SeededEnv;
   let app: ElectronApplication;
+  // Kept at suite scope so the artifact-level checks below can reach the
+  // packaged tree (its resources/bin) without re-resolving it.
+  let built: BuiltApp;
   const consoleErrors: string[] = [];
   // Capture the packaged MAIN process stdout/stderr — that is where the spawned
   // sidecar's startup errors (Python ENOENT, import traceback, first-run
@@ -44,7 +56,6 @@ test.describe('packaged (shipped binary) E2E', () => {
     // require a package — preview.spec must stay free to use RF_E2E_DEV.
     const prev = process.env.RF_E2E_REQUIRE_PACKAGED;
     process.env.RF_E2E_REQUIRE_PACKAGED = '1';
-    let built: ReturnType<typeof findBuiltApp>;
     try {
       built = findBuiltApp();
     } finally {
@@ -67,6 +78,50 @@ test.describe('packaged (shipped binary) E2E', () => {
 
   test.afterAll(async () => {
     await app?.close();
+  });
+
+  // ── THE ANTI-RECURRENCE CHECK ────────────────────────────────────────────
+  // v1.4 shipped a bundled ffmpeg (BtbN win64-LGPL, --disable-libx264
+  // --disable-libx265) that cannot encode H.264, while the sidecar passes the
+  // literal token "libx264" to -c:v from 13 sites across 9 modules. Every
+  // export on the shipped product died with "Unknown encoder 'libx264'".
+  //
+  // WHY NOTHING CAUGHT IT — and why this check belongs HERE specifically:
+  // golden-journey.spec.ts DOES independently ffprobe the produced clip for
+  // h264/1080x1920, but it never requires the packaged artifact, so on the
+  // Windows leg (e2e.yml sets RF_E2E_DEV=1) findBuiltApp returns the DEV build.
+  // A dev build leaves MEDIA_STUDIO_FFMPEG unset (sidecar.env.test.ts §A3), so
+  // the sidecar falls through to the choco ffmpeg on PATH — a GPL build that
+  // HAS libx264. The journey's codec assertion was therefore measuring a binary
+  // the user never runs. packaged.spec is the ONLY spec that hard-requires the
+  // real artifact, so it is the only place this can be checked honestly.
+  //
+  // Delegating to `python -m media_studio.encoders` keeps ONE source of truth
+  // for the required-encoder list (media_studio/encoders.py REQUIRED_ENCODERS,
+  // itself kept in sync with the tree by an AST scan) instead of a second,
+  // drift-prone copy in TypeScript.
+  test('the packaged bundled ffmpeg provides every encoder the pipeline hardcodes', () => {
+    const bundled = bundledFfmpegPath(built.executablePath!);
+    expect(
+      existsSync(bundled),
+      `the packaged artifact must ship resources/bin/ffmpeg — missing at ${bundled}`,
+    ).toBe(true);
+
+    const probe = spawnSync(
+      seeded.python,
+      ['-m', 'media_studio.encoders', '--ffmpeg', bundled],
+      { cwd: SIDECAR_DIR, encoding: 'utf8' },
+    );
+    const report = `${probe.stdout ?? ''}${probe.stderr ?? ''}`.trim();
+    // Surface the verdict on green runs too, so the smoke self-documents WHICH
+    // binary it measured — a capability claim that does not name the binary it
+    // probed is unfalsifiable.
+    console.log(`[packaged] encoder-capability report:\n${report}`);
+    expect(
+      probe.status,
+      'the SHIPPED ffmpeg cannot encode what the pipeline hardcodes — every affected ' +
+        `export will fail with "Unknown encoder" on the user's machine.\n${report}`,
+    ).toBe(0);
   });
 
   test('the shipped package reports app.isPackaged === true', async () => {
