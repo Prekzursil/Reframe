@@ -380,7 +380,7 @@ def test_export_renders_valid_delivery_mp4(sample: Path, tmp_path: Path) -> None
 
 @_SKIP
 def test_reorder_renders_a_real_resequenced_mp4_and_undo_round_trips(sample: Path, tmp_path: Path) -> None:
-    # v1.5 SCOPE.md O-3: ``reorder`` used to hit the "no engine for kind" path.
+    # v1.5 docs/plans/v1.5/SCOPE.md O-3: ``reorder`` used to hit "no engine for kind".
     # It now renders for real. The falsifiable, non-no-op proof available to
     # ffprobe is DURATION: the three kept segments total 1.1 s out of a 1.5 s
     # source, so a no-op copy (1.5 s) is excluded.
