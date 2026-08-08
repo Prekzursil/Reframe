@@ -42,7 +42,44 @@ const TARGET_LANGS: Array<{ code: string; label: string }> = [
   { code: 'zh', label: 'Chinese' },
 ];
 
-type Busy = 'none' | 'generating' | 'translating' | 'exporting' | 'saving';
+type Busy = 'none' | 'generating' | 'translating' | 'exporting' | 'saving' | 'importing';
+
+/** File-picker filter for the import control (`ssa` is an alias of `ass`). */
+const IMPORT_ACCEPT = '.srt,.vtt,.ass,.ssa';
+
+/**
+ * The format token to send for a picked file: everything after the LAST dot, so a
+ * dotted stem (`ep.01.final.vtt`) still resolves to `vtt`. A name with no dot is
+ * forwarded unchanged and the sidecar rejects it with a named, typed error rather
+ * than this panel inventing its own format vocabulary.
+ */
+export function formatFromFilename(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot === -1 ? name : name.slice(dot + 1);
+}
+
+/**
+ * Read a picked file as UTF-8 text.
+ *
+ * Deliberately `FileReader` and not `Blob.text()`: `Blob.prototype.text` is
+ * MISSING in jsdom 24.1.3 (measured — `typeof Blob.prototype.text === 'undefined'`)
+ * while `FileReader` is implemented, and Chromium (the real Electron renderer) has
+ * both. One code path that works in production AND under test beats a `.text()`
+ * call that needs a polyfill shim in the suite — a shim would mean the test
+ * exercises the polyfill rather than the code that ships.
+ *
+ * A read failure (file deleted or permissions revoked between pick and read) is a
+ * real, reachable path, so it rejects rather than resolving empty text — an empty
+ * string would reach the sidecar as a bogus "no cues found".
+ */
+export function readFileText(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.readAsText(file);
+  });
+}
 
 export function Subtitles({
   videoId,
@@ -162,6 +199,41 @@ export function Subtitles({
     [track],
   );
 
+  // Import a hand-corrected subtitle file (v1.5 captions audit §5.1). Reads the
+  // picked file's TEXT with the standard File API and sends the text, so no
+  // Electron dialog/preload channel is needed and the sidecar never opens a
+  // renderer-supplied path. Deliberately available with NO track present — a user
+  // who already has their own SRT should not have to generate one first.
+  const importFile = useCallback(
+    async (ev: React.ChangeEvent<HTMLInputElement>) => {
+      const input = ev.target;
+      const file = input.files?.[0];
+      if (!file) return; // picker dismissed
+      setBusy('importing');
+      setError('');
+      setStatus(`Importing ${file.name}…`);
+      try {
+        const text = await readFileText(file);
+        const res = await getApi().rpc<{ track: SubtitleTrack }>('subtitles.import', {
+          videoId,
+          text,
+          format: formatFromFilename(file.name),
+          name: file.name,
+        });
+        applyTrack(res.track);
+        setStatus(`Imported ${res.track.cues.length} cues from ${file.name}`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setStatus('');
+      } finally {
+        setBusy('none');
+        // Clear the input so re-picking the SAME file fires `change` again.
+        input.value = '';
+      }
+    },
+    [videoId, applyTrack],
+  );
+
   const translate = useCallback(async () => {
     // defensive null-narrowing: the Translate button renders only inside
     // `track && (...)`, so track is non-null here.
@@ -254,6 +326,21 @@ export function Subtitles({
         <button type="button" onClick={generate} disabled={anyBusy || !videoId}>
           {busy === 'generating' ? 'Generating…' : 'Generate subtitles'}
         </button>
+      </div>
+
+      {/* Import sits OUTSIDE the `track && (...)` block on purpose: a user who
+          already hand-corrected an SRT must not have to generate one first. */}
+      <div className="field import-row">
+        <label htmlFor="subtitles-import-file">
+          {busy === 'importing' ? 'Importing…' : 'Import subtitle file'}
+        </label>
+        <input
+          id="subtitles-import-file"
+          type="file"
+          accept={IMPORT_ACCEPT}
+          disabled={anyBusy || !videoId}
+          onChange={importFile}
+        />
       </div>
 
       {track && (
