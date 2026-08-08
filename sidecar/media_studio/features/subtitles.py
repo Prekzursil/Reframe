@@ -750,13 +750,28 @@ _PARSERS: dict[str, Callable[[str], list[Cue]]] = {
 }
 
 
-def _normalize_format(fmt: str) -> str:
+def normalize_format(fmt: str) -> str:
+    """Canonicalize a user-supplied format string to one of :data:`FORMATS`.
+
+    Tolerates the shapes a file picker actually produces — surrounding space, a
+    leading dot, upper case — and folds the ``ssa`` alias onto ``ass``. Raises
+    :class:`ValueError` for anything else, which the handler layer maps to a
+    typed ``INVALID_PARAMS``.
+
+    Public because ``subtitles.import`` must stamp the NORMALIZED format onto the
+    track it builds (``new_track`` stores ``fmt`` verbatim); re-deriving it in the
+    handler would be a second, drifting copy of this rule.
+    """
     f = str(fmt).strip().lower().lstrip(".")
     if f == "ssa":
         f = "ass"
     if f not in FORMATS:
         raise ValueError(f"unsupported subtitle format: {fmt!r} (want one of {FORMATS})")
     return f
+
+
+#: Back-compat private alias — this module's own callers were written against it.
+_normalize_format = normalize_format
 
 
 def serialize(track: SubtitleTrack, fmt: str) -> str:

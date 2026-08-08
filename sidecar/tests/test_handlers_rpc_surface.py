@@ -123,6 +123,10 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "subtitles.edit",
         "subtitles.export",
         "subtitles.generate",
+        # v1.5 DELIBERATE addition (captions audit section 5.1): the hand-corrected
+        # SRT/VTT/ASS import. Verified this gate is not vacuous — registering the
+        # method with the set unchanged failed test_rpc_surface_is_byte_identical.
+        "subtitles.import",
         "subtitles.translate",
         "system.advisor",
         "system.health",

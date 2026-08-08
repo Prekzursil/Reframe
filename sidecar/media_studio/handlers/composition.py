@@ -129,6 +129,11 @@ def register_all(
     reg("subtitles.edit", svc.subtitles_edit)
     reg("subtitles.translate", svc.subtitles_translate)
     reg("subtitles.export", svc.subtitles_export)
+    # v1.5 escape hatch: bring a hand-corrected SRT/VTT/ASS back IN. The tolerant
+    # parsers existed since v1 with no production caller; this is that caller.
+    # Direct-return, and the wire carries the subtitle TEXT (not a path), so the
+    # sidecar never opens a renderer-supplied filesystem path.
+    reg("subtitles.import", svc.subtitles_import)
 
     reg("tracks.list", svc.tracks_list)
     reg("tracks.rename", svc.tracks_rename)
