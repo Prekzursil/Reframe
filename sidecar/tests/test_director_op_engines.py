@@ -107,7 +107,7 @@ def test_deferred_subsystems_cover_every_deferred_kind() -> None:
 
 
 def test_deferred_subsystems_name_modules_that_exist() -> None:
-    # v1.5 SCOPE.md O-3 anti-drift. The deferral text used to claim these kinds
+    # v1.5 docs/plans/v1.5/SCOPE.md O-3 anti-drift. The deferral text claimed these kinds were
     # were missing "the panorama/stitch engine" / "an OCR engine" — false: each
     # engine SHIPS and is unit-tested; only the apply-time adapter is missing.
     # Pin every module the text names to a real importable module so the

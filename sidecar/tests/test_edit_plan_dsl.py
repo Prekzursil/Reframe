@@ -291,7 +291,7 @@ def test_regen_precondition_can_be_disabled():
 
 
 # --------------------------------------------------------------------------- #
-# regenScroll panorama shape (v1.5 SCOPE.md O-3 — a CONFIRMED contradiction).
+# regenScroll panorama shape (docs/plans/v1.5/SCOPE.md O-3 — a CONFIRMED contradiction).
 #
 # Measured on the pre-fix tree, two independent probes:
 #   panorama as STRING -> validator 'planned'                / engine REJECTED

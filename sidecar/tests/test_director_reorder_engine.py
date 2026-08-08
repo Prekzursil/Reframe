@@ -1,4 +1,4 @@
-"""Unit tests for the ``reorder`` director op-engine (v1.5 O-3, SCOPE.md).
+"""Unit tests for the ``reorder`` director op-engine (docs/plans/v1.5/SCOPE.md O-3).
 
 ``reorder`` was the ONE op kind in ``models/edit_plan.OpKind`` with no engine
 ANYWHERE in the tree (``stitchPanorama``/``regenScroll``/``ocrExtractList`` each
