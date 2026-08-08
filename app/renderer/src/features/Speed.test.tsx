@@ -220,7 +220,9 @@ describe('Speed panel', () => {
 
   it('surfaces an rpc rejection as an alert', async () => {
     const fake = makeFakeApi();
-    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('ffmpeg is missing'));
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('ffmpeg is missing'),
+    );
     await mount({ api: fake.api });
     await clickAction('apply');
     expect(q('[role="alert"]')?.textContent).toContain('ffmpeg is missing');
