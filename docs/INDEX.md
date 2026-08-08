@@ -179,3 +179,13 @@ now. Their bodies are left intact as historical record; the header is the correc
 | `plans/_archive/v1.4-experience-overhaul.md` | the v1.4 plan. Its one unshipped sub-unit (WU-3a3) is open item O-2 in `plans/v1.5/SCOPE.md`. |
 | `_archive/2026-06/` | pre-v1.3 plan/gate artifacts (`PLAN-P1`, `PLAN-P2`, `PLAN-P4-REFRAME-OPUSCLIP`, `DESIGN`, `DESIGN-GATE-1`, `V1-GRILL-DECISIONS`, `reframe-v1.3-settings-gaps`), the two P2 build reports, `docs/_archive/2026-06/LLM-BACKEND.md`, and `docs/_archive/2026-06/PR-PURGE-CHECKLIST.md`. |
 | `_archive/2026-07/` | `docs/_archive/2026-07/reframe-visual-audit.md` and `docs/_archive/2026-07/reframe-reconcile-audit.md` (both actively wrong — kept as a lesson, see `plans/v1.5/README.md`), and `handoff/` (two v1.4 handoff docs). |
+
+### v1.5 audit fleet (2026-08)
+
+| Doc | What it decides |
+|---|---|
+| [`plans/v1.5/captions-translation-audit-2026-08.md`](plans/v1.5/captions-translation-audit-2026-08.md) | captions / subtitles / transcription / translation audit + design |
+| [`plans/v1.5/competitor-matrix-2026-08.md`](plans/v1.5/competitor-matrix-2026-08.md) | competitor capability matrix vs the measured repo state |
+| [`plans/v1.5/distribution-audit-2026-08.md`](plans/v1.5/distribution-audit-2026-08.md) | installer, updater, code-signing and backward-compatibility audit |
+| [`plans/v1.5/editing-surface-audit-2026-08.md`](plans/v1.5/editing-surface-audit-2026-08.md) | general video-editing surface audit (what exists vs what a pro editor needs) |
+| [`plans/v1.5/uiux-qol-audit-2026-08.md`](plans/v1.5/uiux-qol-audit-2026-08.md) | UI/UX + quality-of-life audit driven against the INSTALLED app |
