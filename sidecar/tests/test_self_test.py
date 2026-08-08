@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from media_studio import ffmpeg as _ff
 from media_studio.features import self_test as st
 from media_studio.features.system_advisor import HardwareInfo
 from runtime_setup.bootstrap import SIDECAR_REQUIREMENTS, load_requirements
@@ -57,6 +58,12 @@ def _run(tmp_path: Path, **over: Any) -> st.SelfTestReport:
         "resolve_tool": lambda name: f"/usr/bin/{name}",
         "find_spec": _find_spec(_all_present()),
         "disk_usage": _disk(50_000),
+        # `resolve_tool` above hands back a FICTIONAL path, so the real
+        # `ffmpeg -encoders` seam would (correctly) fail on it. Stub the encoder
+        # probe to a capable build so these cases keep testing what they are about.
+        # The encoder check's own behaviour is covered in test_ffmpeg_encoders.py,
+        # against the REAL captured output of both the GPL and LGPL builds.
+        "probe_encoders": lambda _p: {_ff.H264_ENCODER, "aac"},
     }
     base.update(over)
     return st.run(**base)
@@ -70,7 +77,10 @@ def test_ok_path_all_green(tmp_path: Path) -> None:
     assert report.ok is True
     assert report.problems == ()
     assert all(c.ok for c in report.checks)
-    assert [c.id for c in report.checks] == ["data", "device", "cv2", "asr", "ffmpeg"]
+    # `encoder` follows `ffmpeg` deliberately: presence first, then CAPABILITY on
+    # that same resolved binary (a resolvable ffmpeg that cannot encode H.264 is
+    # exactly the state that shipped a fully-green panel over a broken product).
+    assert [c.id for c in report.checks] == ["data", "device", "cv2", "asr", "ffmpeg", "encoder"]
 
 
 def test_missing_cv2_is_reported_with_fix_hint(tmp_path: Path) -> None:
