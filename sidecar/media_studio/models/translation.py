@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from ..assets.manifest import AssetEntry, register_asset
+from ..features import languages as _languages
 from ..pathsafe import ensure_within
 from ..util import get_logger
 from . import provider as provider_mod
@@ -101,51 +102,14 @@ TIER2_ASSET_NAME: str = "translategemma-12b-gguf"
 # --------------------------------------------------------------------------- #
 # Routing table (survey §3) — normalized ISO 639-1 code -> tier
 # --------------------------------------------------------------------------- #
-TIER1_LANGS: frozenset = frozenset(
-    {
-        "ar",
-        "bg",
-        "ca",
-        "cs",
-        "da",
-        "de",
-        "el",
-        "en",
-        "es",
-        "et",
-        "fa",
-        "fi",
-        "fr",
-        "he",
-        "hi",
-        "hr",
-        "hu",
-        "id",
-        "it",
-        "ja",
-        "ko",
-        "lt",
-        "lv",
-        "ms",
-        "nb",
-        "nl",
-        "no",
-        "pl",
-        "pt",
-        "ro",
-        "ru",
-        "sk",
-        "sl",
-        "sr",
-        "sv",
-        "th",
-        "tr",
-        "uk",
-        "vi",
-        "zh",
-    }
-)
-TIER2_LANGS: frozenset = frozenset({"bn", "gu", "is", "kn", "ml", "mr", "pa", "sw", "ta", "te", "ur", "zu"})
+# The two coverage sets are DEFINED in ``features.languages`` (the language-
+# inventory SSOT the renderer mirrors and a conformance test pins) and re-exported
+# here under their historical names, so the routing table and the UI cannot drift.
+# The dependency runs this way round because ``features.languages`` is pure stdlib
+# with no import-time side effects, while THIS module registers HF assets on
+# import — a vocabulary module must not pull that in.
+TIER1_LANGS: frozenset = _languages.TIER1_LANGS
+TIER2_LANGS: frozenset = _languages.TIER2_LANGS
 
 ROUTING_TABLE: dict[str, str] = {
     **dict.fromkeys(TIER1_LANGS, TIER_LOCAL),
