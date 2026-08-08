@@ -60,9 +60,7 @@ def _add_video(services: Services, video_file: Path) -> str:
 # --------------------------------------------------------------------------- #
 # happy path — the parser finally has a production caller
 # --------------------------------------------------------------------------- #
-def test_import_srt_returns_a_track_with_the_parsed_cues(
-    services: Services, ctx: RpcContext, video_file: Path
-) -> None:
+def test_import_srt_returns_a_track_with_the_parsed_cues(services: Services, ctx: RpcContext, video_file: Path) -> None:
     vid = _add_video(services, video_file)
     res = services.subtitles_import({"videoId": vid, "text": SRT_TEXT, "format": "srt"}, ctx)
     track = res["track"]
@@ -74,9 +72,7 @@ def test_import_srt_returns_a_track_with_the_parsed_cues(
     assert track["kind"] == "soft"
 
 
-def test_import_persists_the_track_onto_the_project(
-    services: Services, ctx: RpcContext, video_file: Path
-) -> None:
+def test_import_persists_the_track_onto_the_project(services: Services, ctx: RpcContext, video_file: Path) -> None:
     vid = _add_video(services, video_file)
     imported = services.subtitles_import({"videoId": vid, "text": SRT_TEXT, "format": "srt"}, ctx)["track"]
     # Re-open from disk: the import must SURVIVE, or "bring my SRT back in" is a lie.
@@ -85,9 +81,7 @@ def test_import_persists_the_track_onto_the_project(
     assert imported["id"] in ids
 
 
-def test_import_honours_name_and_lang_and_defaults_them(
-    services: Services, ctx: RpcContext, video_file: Path
-) -> None:
+def test_import_honours_name_and_lang_and_defaults_them(services: Services, ctx: RpcContext, video_file: Path) -> None:
     vid = _add_video(services, video_file)
     named = services.subtitles_import(
         {"videoId": vid, "text": SRT_TEXT, "format": "srt", "name": "my-fixes.srt", "lang": "ro"}, ctx
@@ -112,9 +106,9 @@ def test_import_vtt_and_ass_round_trip_through_the_same_handler(
     assert services.subtitles_import({"videoId": vid, "text": vtt, "format": "vtt"}, ctx)["track"]["cues"][0][
         "text"
     ] == ("From VTT")
-    assert services.subtitles_import({"videoId": vid, "text": ass_text, "format": "ass"}, ctx)["track"]["cues"][
-        0
-    ]["text"] == ("From ASS")
+    assert services.subtitles_import({"videoId": vid, "text": ass_text, "format": "ass"}, ctx)["track"]["cues"][0][
+        "text"
+    ] == ("From ASS")
 
 
 def test_import_normalizes_the_format_string(services: Services, ctx: RpcContext, video_file: Path) -> None:
@@ -123,9 +117,7 @@ def test_import_normalizes_the_format_string(services: Services, ctx: RpcContext
     track = services.subtitles_import({"videoId": vid, "text": SRT_TEXT, "format": ".SRT"}, ctx)["track"]
     assert track["format"] == "srt"
     ssa = "[Events]\nDialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,Hi\n"
-    assert services.subtitles_import({"videoId": vid, "text": ssa, "format": "ssa"}, ctx)["track"]["format"] == (
-        "ass"
-    )
+    assert services.subtitles_import({"videoId": vid, "text": ssa, "format": "ssa"}, ctx)["track"]["format"] == ("ass")
 
 
 def test_import_tolerates_crlf_and_bom_and_missing_indices(
@@ -148,9 +140,7 @@ def test_import_requires_video_id(services: Services, ctx: RpcContext) -> None:
 
 
 @pytest.mark.parametrize("bad", [None, "", "   \n  ", 123, ["nope"]])
-def test_import_rejects_missing_or_blank_text(
-    services: Services, ctx: RpcContext, video_file: Path, bad: Any
-) -> None:
+def test_import_rejects_missing_or_blank_text(services: Services, ctx: RpcContext, video_file: Path, bad: Any) -> None:
     vid = _add_video(services, video_file)
     with pytest.raises(RpcError) as exc:
         services.subtitles_import({"videoId": vid, "text": bad, "format": "srt"}, ctx)
@@ -165,9 +155,7 @@ def test_import_rejects_an_unsupported_format(services: Services, ctx: RpcContex
     assert "docx" in str(exc.value)
 
 
-def test_import_rejects_text_that_parses_to_zero_cues(
-    services: Services, ctx: RpcContext, video_file: Path
-) -> None:
+def test_import_rejects_text_that_parses_to_zero_cues(services: Services, ctx: RpcContext, video_file: Path) -> None:
     """Silently adding an EMPTY track would look like success and lose the user's file."""
     vid = _add_video(services, video_file)
     with pytest.raises(RpcError) as exc:
