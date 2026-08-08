@@ -24,7 +24,7 @@
 
 import { type CaptionDesign, DEFAULT_CAPTION_DESIGN, sanitizeCaptionDesign } from './captionDesign';
 import { type SubtitleMode, DEFAULT_OUTPUT_OPTIONS, coerceSubtitleMode } from './outputOptions';
-import { LANGUAGES } from './languages';
+import { AUTO_DETECT, LANGUAGES, normalizeCode } from './languages';
 
 /** The default language id when none is persisted (most common creator lang). */
 export const DEFAULT_LANGUAGE = 'en';
@@ -69,9 +69,23 @@ export const PREFERENCE_KEYS = {
   captionSpeakerLabels: 'captionSpeakerLabels',
 } as const;
 
-/** A known language code, or the default (dropdown-only — never a free-typed id). */
+/**
+ * A known language code, the auto-detect sentinel, or the default (dropdown-only —
+ * never a free-typed id).
+ *
+ * AUTO_DETECT is accepted deliberately. The default caption language is a
+ * transcription SOURCE hint, where "let the model detect it" is a meaningful
+ * choice — but `LANGUAGES` excludes the sentinel, so this used to rewrite `'auto'`
+ * to English on save. Offering the option in the dropdown WITHOUT this would have
+ * shipped a control that appears to work and does not (audit §2.1): fix both or
+ * neither.
+ *
+ * The value is also NORMALIZED rather than exact-matched, so a region-tagged code
+ * (`pt-BR`) resolves to `pt` instead of silently falling back to English.
+ */
 export function coerceLanguage(raw: unknown): string {
-  const v = typeof raw === 'string' ? raw.trim() : '';
+  const v = normalizeCode(raw);
+  if (v === AUTO_DETECT) return AUTO_DETECT;
   return LANGUAGES.some((l) => l.code === v) ? v : DEFAULT_LANGUAGE;
 }
 

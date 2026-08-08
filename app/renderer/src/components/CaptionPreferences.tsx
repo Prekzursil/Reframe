@@ -160,9 +160,12 @@ export function CaptionPreferences({
 
       <div className="caption-prefs__group caption-prefs__row">
         <span>Default language</span>
+        {/* Auto-detect IS offered here: this is a transcription SOURCE hint, not a
+            translation target, so "let the model detect it" is a real choice.
+            `coerceLanguage` accepts the sentinel too — without that, saving it
+            would silently rewrite it to English (audit §2.1). */}
         <LanguageSelect
           value={prefs.language}
-          includeAuto={false}
           label="Default language"
           onChange={(code) => editPrefs((p) => ({ ...p, language: code }))}
         />

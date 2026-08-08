@@ -8,6 +8,7 @@ import {
   readPreferences,
 } from './captionPreferences';
 import { DEFAULT_CAPTION_DESIGN } from './captionDesign';
+import { AUTO_DETECT } from './languages';
 
 describe('coerceLanguage', () => {
   it('accepts a known code', () => {
@@ -16,6 +17,22 @@ describe('coerceLanguage', () => {
   it('falls back for unknown / non-string', () => {
     expect(coerceLanguage('zz')).toBe(DEFAULT_LANGUAGE);
     expect(coerceLanguage(5)).toBe(DEFAULT_LANGUAGE);
+  });
+  it('accepts the auto-detect sentinel', () => {
+    // The caption default language is a transcription SOURCE hint, where
+    // auto-detect is a meaningful choice. It used to be rewritten to English on
+    // save, so flipping the dropdown alone would have produced a control that
+    // LOOKS like it works and does not (audit §2.1).
+    expect(coerceLanguage(AUTO_DETECT)).toBe(AUTO_DETECT);
+    expect(coerceLanguage('  AUTO ')).toBe(AUTO_DETECT);
+  });
+  it('normalizes a region-tagged code instead of discarding it', () => {
+    // 'pt-BR' used to miss the exact-match and silently become English.
+    expect(coerceLanguage('pt-BR')).toBe('pt');
+    expect(coerceLanguage('ZH_Hant')).toBe('zh');
+  });
+  it('reaches a language the old 19-entry list could not', () => {
+    expect(coerceLanguage('ro')).toBe('ro');
   });
 });
 

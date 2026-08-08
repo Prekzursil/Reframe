@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { CaptionPreferences, type SettingsBridge } from './CaptionPreferences';
 import { PREFERENCE_KEYS } from '../lib/captionPreferences';
+import { AUTO_DETECT } from '../lib/languages';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -58,6 +59,34 @@ describe('<CaptionPreferences />', () => {
     container.querySelector('#prefs-caption-polish') as HTMLInputElement;
   const speakersToggle = (): HTMLInputElement =>
     container.querySelector('#prefs-caption-speakers') as HTMLInputElement;
+
+  it('offers Auto-detect as the default language, and can persist it', async () => {
+    // The default caption language is a transcription SOURCE hint, so auto-detect
+    // is exactly the meaningful choice — it used to be suppressed here
+    // (includeAuto={false}) AND unrepresentable in persisted state (audit §2.1).
+    const rpc: SettingsBridge = { get: vi.fn().mockResolvedValue({}), set: vi.fn() };
+    mountWith(rpc);
+    await flush();
+    const lang = container.querySelector(
+      'select[aria-label="Default language"]',
+    ) as HTMLSelectElement;
+    const codes = [...lang.querySelectorAll('option')].map((o) => o.value);
+    expect(codes).toContain(AUTO_DETECT);
+    // ...and a previously-unreachable language is now offered here too.
+    expect(codes).toContain('ro');
+    act(() => {
+      lang.value = AUTO_DETECT;
+      lang.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(lang.value).toBe(AUTO_DETECT);
+    await act(async () => {
+      saveBtn().click();
+      await Promise.resolve();
+    });
+    expect(rpc.set).toHaveBeenCalledWith(
+      expect.objectContaining({ [PREFERENCE_KEYS.language]: AUTO_DETECT }),
+    );
+  });
 
   it('loads + reflects persisted preferences', async () => {
     const rpc: SettingsBridge = {

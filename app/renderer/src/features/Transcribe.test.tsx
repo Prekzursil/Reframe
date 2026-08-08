@@ -12,6 +12,7 @@ import { createRoot, type Root } from 'react-dom/client';
 
 import Transcribe from './Transcribe';
 import type { DoneEvent, MediaStudioApi, ProgressEvent, Transcript } from './_api';
+import { AUTO_DETECT, LANGUAGES } from '../lib/languages';
 
 interface FakeApi {
   api: MediaStudioApi;
@@ -118,6 +119,44 @@ describe('<Transcribe />', () => {
     expect(startBtn().disabled).toBe(true);
   });
 
+  it('consumes the shared language SSOT instead of its own hardcoded 9-item list', async () => {
+    // This panel used to declare its own array of 9 languages and never import
+    // lib/languages, with a DIFFERENT auto sentinel ('' vs 'auto') — audit §1.1.
+    install(makeFakeApi());
+    await mount('v1');
+    const select = container.querySelector('#transcribe-language') as HTMLSelectElement;
+    const codes = [...select.querySelectorAll('option')].map((o) => o.value);
+    // Auto first, then every language in the shared inventory.
+    expect(codes[0]).toBe(AUTO_DETECT);
+    expect(codes).not.toContain('');
+    expect(codes.length).toBe(LANGUAGES.length + 1);
+    for (const code of ['ro', 'sv', 'he', 'yue']) {
+      expect(codes).toContain(code);
+    }
+    // The shared advice affordance comes with it.
+    expect(container.querySelector('.lang-select__advice')).toBeTruthy();
+    // ...and the picker is still unlocked before a run starts.
+    expect(select.disabled).toBe(false);
+  });
+
+  it('locks the language picker while a transcription is running', async () => {
+    const fake = makeFakeApi();
+    install(fake);
+    await mount('v1');
+    const select = (): HTMLSelectElement =>
+      container.querySelector('#transcribe-language') as HTMLSelectElement;
+    await act(async () => {
+      startBtn().click();
+      await Promise.resolve();
+    });
+    expect(select().disabled).toBe(true);
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-t', result: { transcript: transcript() } });
+      await Promise.resolve();
+    });
+    expect(select().disabled).toBe(false);
+  });
+
   it('starts transcribe.start with the chosen language, streams progress, then shows the transcript', async () => {
     const fake = makeFakeApi();
     install(fake);
@@ -164,13 +203,17 @@ describe('<Transcribe />', () => {
     const fake = makeFakeApi();
     install(fake);
     await mount('v1');
+    // The sentinel must NEVER reach the wire: transcribe.py accepts any string and
+    // hands it to faster-whisper, which would read "auto" as a language id.
+    const select = container.querySelector('#transcribe-language') as HTMLSelectElement;
+    expect(select.value).toBe(AUTO_DETECT);
     await act(async () => {
       startBtn().click();
       await Promise.resolve();
     });
-    expect(fake.calls.find((c) => c.method === 'transcribe.start')?.params).toEqual({
-      videoId: 'v1',
-    });
+    const params = fake.calls.find((c) => c.method === 'transcribe.start')?.params;
+    expect(params).toEqual({ videoId: 'v1' });
+    expect(params).not.toHaveProperty('language');
   });
 
   it('honors an inlined fast-path transcript on the rpc resolution', async () => {
