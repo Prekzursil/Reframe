@@ -33,9 +33,17 @@ def sample_file(tmp_path):
 # --------------------------------------------------------------------------- #
 class TestVoiceStore:
     def test_add_copies_and_persists(self, store, sample_file, tmp_path):
-        sample = store.add(str(sample_file))
-        # A3 VoiceSample shape (frozen field names)
-        assert set(sample) == {"id", "name", "path", "durationSec"}
+        sample = store.add(str(sample_file), consent_attested=True)
+        # A3 VoiceSample shape (frozen field names) + the WU-A2 consent record
+        assert set(sample) == {
+            "id",
+            "name",
+            "path",
+            "durationSec",
+            "consentAttested",
+            "consentAt",
+            "consentNote",
+        }
         assert sample["name"] == "my voice"
         assert sample["durationSec"] == 3.5
         copied = Path(sample["path"])
@@ -48,20 +56,20 @@ class TestVoiceStore:
 
     def test_add_missing_file_raises(self, store, tmp_path):
         with pytest.raises(TtsError, match="not found"):
-            store.add(str(tmp_path / "ghost.wav"))
+            store.add(str(tmp_path / "ghost.wav"), consent_attested=True)
 
     def test_add_unsupported_format_raises(self, store, tmp_path):
         bad = tmp_path / "notes.txt"
         bad.write_text("hi", encoding="utf-8")
         with pytest.raises(TtsError, match="unsupported"):
-            store.add(str(bad))
+            store.add(str(bad), consent_attested=True)
 
     def test_probe_failure_stores_zero(self, tmp_path, sample_file):
         def boom(path):
             raise RuntimeError("no ffprobe")
 
         store = v.VoiceStore(tmp_path / "voices", duration_probe=boom)
-        assert store.add(str(sample_file))["durationSec"] == 0.0
+        assert store.add(str(sample_file), consent_attested=True)["durationSec"] == 0.0
 
     def test_corrupt_index_starts_empty(self, tmp_path):
         d = tmp_path / "voices"
@@ -78,8 +86,8 @@ class TestVoiceStore:
         first.write_bytes(b"RIFF0000WAVEa")
         second = tmp_path / "second.wav"
         second.write_bytes(b"RIFF0000WAVEb")
-        s1 = store.add(str(first))
-        s2 = store.add(str(second))
+        s1 = store.add(str(first), consent_attested=True)
+        s2 = store.add(str(second), consent_attested=True)
         # the SECOND id forces the loop to skip s1 before matching s2.
         assert s1["id"] != s2["id"]
         assert store.get(s2["id"])["path"] == s2["path"]
@@ -104,7 +112,7 @@ class StaticEngine(TtsEngine):
 
 class TestHandlers:
     def test_voices_aggregates_engines_and_samples(self, store, sample_file):
-        sample = store.add(str(sample_file))
+        sample = store.add(str(sample_file), consent_attested=True)
         rows = [{"id": "af_x", "engine": "kokoro", "lang": "en-us", "name": "X"}]
         handler = v.make_voices_handler([StaticEngine(rows)], store)
         result = handler({}, ctx())
@@ -134,13 +142,21 @@ class TestHandlers:
 
     def test_sample_add_handler_shape_and_validation(self, store, sample_file):
         handler = v.make_sample_add_handler(store)
-        result = handler({"path": str(sample_file)}, ctx())
+        result = handler({"path": str(sample_file), "consentAttested": True}, ctx())
         assert set(result) == {"sample"}
-        assert set(result["sample"]) == {"id", "name", "path", "durationSec"}
+        assert set(result["sample"]) == {
+            "id",
+            "name",
+            "path",
+            "durationSec",
+            "consentAttested",
+            "consentAt",
+            "consentNote",
+        }
         with pytest.raises(RpcError):
             handler({}, ctx())
         with pytest.raises(RpcError):
-            handler({"path": "C:/nope.wav"}, ctx())
+            handler({"path": "C:/nope.wav", "consentAttested": True}, ctx())
 
 
 # --------------------------------------------------------------------------- #
