@@ -302,6 +302,34 @@ class TestSubprocessBackend:
                 )
             )
 
+    def test_the_refusal_does_not_point_at_an_asset_that_cannot_install(self, tmp_path):
+        """The env has NO manifest entry, so the message must not send the user to
+        ``assets.ensure`` — that would fail with "unknown asset" and read as a bug
+        in the installer rather than as unfinished provisioning.
+
+        This pairs the message with the manifest state, so registering the asset
+        later forces this message to be updated in the same commit.
+        """
+        from media_studio.assets import manifest
+
+        assert ls.LIPSYNC_ENV_ASSET not in manifest.registry_snapshot(), (
+            "the env is now a real asset — update the refusal message to point at assets.ensure"
+        )
+        backend = ls.SubprocessLipSyncBackend(
+            env_dir=str(tmp_path / "absent"),
+            python_exe="/py/python.exe",
+            run_cmd=lambda argv, env=None: pytest.fail("must not spawn"),
+        )
+        with pytest.raises(ls.LipSyncError) as exc:
+            backend.relip(
+                ls.build_relip_job_payload(
+                    video_path="a.mp4", audio_path="b.m4a", out_video=str(tmp_path / "o.mp4"), engine_id="latentsync"
+                )
+            )
+        message = str(exc.value)
+        assert "NOT YET PROVISIONED" in message
+        assert "assets.ensure cannot install it" in message
+
     def test_nonzero_exit_surfaces_the_output_tail(self, tmp_path):
         env_dir = tmp_path / "env"
         env_dir.mkdir()

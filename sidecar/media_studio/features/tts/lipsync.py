@@ -253,8 +253,23 @@ def require_sample_consent(sample_id: str, sample: Mapping[str, Any] | None) -> 
 
 
 # --------------------------------------------------------------------------- #
-# U4 env asset (PERSONAL/opt-in tier — never in the default commercial set)
+# the isolated env — NOT YET A REGISTERED U4 ASSET (deliberately)
 # --------------------------------------------------------------------------- #
+#: The env dir the runner is executed against. The NAME is reserved here so the
+#: install layout is decided in one place, but **no ``register_asset`` call
+#: exists** and :func:`assets.ensure` cannot materialize it.
+#:
+#: That is deliberate, not an omission. The manifest validator requires exact
+#: ``pkg==ver`` pins, and plan §10 D makes resolving LatentSync's real
+#: torch/diffusers closure — and therefore whether it shares the chatterbox
+#: py3.14 interpreter or needs a third embed — an explicit WU-B1 task that needs
+#: a live pip resolve this lane could not run. Writing plausible-looking pins
+#: would put a manifest LIE in the shipped asset set, the exact failure
+#: ``chatterbox.py`` documents ("pinning torch 2.10 would be a manifest lie").
+#: So the refusal below names the missing provisioning instead of pointing the
+#: user at an ``assets.ensure`` call that would fail with "unknown asset".
+#: ``test_tts_lipsync.py`` asserts the name is NOT in the manifest, so if someone
+#: later registers it they are forced to update this message in the same commit.
 LIPSYNC_ENV_ASSET = "latentsync-env"
 LIPSYNC_ENV_DEST = "envs/latentsync"
 
@@ -420,9 +435,11 @@ class SubprocessLipSyncBackend:
         """Spawn the runner and verify it produced the video."""
         if not Path(ensure_within(self.env_dir)).is_dir():
             raise LipSyncError(
-                f"lip-sync env missing at {self.env_dir} — install the "
-                f"{LIPSYNC_ENV_ASSET!r} asset first (assets.ensure), which also "
-                "carries the model's OpenRAIL licence acceptance"
+                f"lip-sync env missing at {self.env_dir}: the {LIPSYNC_ENV_ASSET!r} "
+                "environment is NOT YET PROVISIONED — it has no manifest entry, so "
+                "assets.ensure cannot install it. Provisioning it requires pinned "
+                "torch/diffusers versions plus a hashed lock, and an accepted "
+                "OpenRAIL licence for the weights (plan WU-B1 / §10 D)"
             )
         out = Path(payload["outVideo"])
         out.parent.mkdir(parents=True, exist_ok=True)
