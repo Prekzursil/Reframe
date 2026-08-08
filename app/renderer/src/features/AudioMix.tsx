@@ -333,9 +333,14 @@ export function AudioMix({ videoId, api }: AudioMixProps): React.ReactElement {
         </label>
       </div>
 
+      {/* HONEST WORDING: the engine makes ONE `loudnorm` pass with no measured
+          first pass (audiomix.py:151, :225 — zero `measured_*` params), which is
+          ffmpeg's dynamic mode. That lands NEAR the target, not exactly on it,
+          so this says "toward", not "to". Saying "to" would be an overclaim. */}
       <p className="audiomix-target-note">
-        Exports are normalised to <strong>{formatLufs(target.lufs)}</strong> integrated loudness (
-        {target.label}).
+        Exports are loudness-normalised toward <strong>{formatLufs(target.lufs)}</strong> integrated
+        ({target.label}). One-pass normalisation, so expect to land close to the target rather than
+        exactly on it.
       </p>
 
       <details className="audiomix-advanced">
