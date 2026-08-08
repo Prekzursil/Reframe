@@ -118,20 +118,14 @@ class TestRenderThreadsStyling:
     def test_hook_title_reaches_the_document(self, fake_ffmpeg, monkeypatch):
         doc = render_karaoke_ass(monkeypatch, hook_title="Watch this")
         assert style_line(doc, "HookTitle").startswith("Style: HookTitle,Arial,")
-        assert event_lines(doc, "HookTitle") == [
-            "Dialogue: 0,0:00:00.00,0:01:00.00,HookTitle,,0,0,0,,Watch this"
-        ]
+        assert event_lines(doc, "HookTitle") == ["Dialogue: 0,0:00:00.00,0:01:00.00,HookTitle,,0,0,0,,Watch this"]
 
     def test_total_sec_bounds_the_hook_title_span(self, fake_ffmpeg, monkeypatch):
         doc = render_karaoke_ass(monkeypatch, hook_title="Watch this", total_sec=12.0)
-        assert event_lines(doc, "HookTitle") == [
-            "Dialogue: 0,0:00:00.00,0:00:12.00,HookTitle,,0,0,0,,Watch this"
-        ]
+        assert event_lines(doc, "HookTitle") == ["Dialogue: 0,0:00:00.00,0:00:12.00,HookTitle,,0,0,0,,Watch this"]
 
     def test_hook_card_reaches_the_document(self, fake_ffmpeg, monkeypatch):
-        doc = render_karaoke_ass(
-            monkeypatch, hook_title="Watch this", hook_card=True, hook_card_sec=5.0
-        )
+        doc = render_karaoke_ass(monkeypatch, hook_title="Watch this", hook_card=True, hook_card_sec=5.0)
         assert style_line(doc, hc.HOOK_CARD_STYLE_NAME) == hc.hook_card_style_line(1080, 1920)
         assert event_lines(doc, hc.HOOK_CARD_STYLE_NAME) == [
             "Dialogue: 0,0:00:00.00,0:00:05.00,HookCard,,0,0,0,,Watch this"
@@ -140,9 +134,7 @@ class TestRenderThreadsStyling:
         assert "Style: HookTitle," not in doc
 
     def test_hook_card_sec_bounds_the_card(self, fake_ffmpeg, monkeypatch):
-        doc = render_karaoke_ass(
-            monkeypatch, hook_title="Watch this", hook_card=True, hook_card_sec=2.0
-        )
+        doc = render_karaoke_ass(monkeypatch, hook_title="Watch this", hook_card=True, hook_card_sec=2.0)
         assert event_lines(doc, hc.HOOK_CARD_STYLE_NAME) == [
             "Dialogue: 0,0:00:00.00,0:00:02.00,HookCard,,0,0,0,,Watch this"
         ]
@@ -289,9 +281,7 @@ class TestBuildKaraokeAssStyling:
         assert style_line(doc).endswith(",5,65,65,0,1")
 
     def test_position_box_sets_alignment_and_margins(self):
-        doc = ck.build_karaoke_ass(
-            [KARAOKE_CUE], position={"x": 0.1, "y": 0.05, "w": 0.8, "h": 0.1}
-        )
+        doc = ck.build_karaoke_ass([KARAOKE_CUE], position={"x": 0.1, "y": 0.05, "w": 0.8, "h": 0.1})
         assert style_line(doc).endswith(",8,108,108,96,1")
 
     def test_malformed_position_box_falls_back_to_the_band(self):
@@ -313,23 +303,17 @@ class TestBuildKaraokeAssStyling:
             "Style: HookTitle,Arial,106,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,"
             "-1,0,0,0,100,100,0,0,1,4,2,8,60,60,134,1"
         )
-        assert event_lines(doc, "HookTitle") == [
-            "Dialogue: 0,0:00:00.00,0:01:00.00,HookTitle,,0,0,0,,Watch this"
-        ]
+        assert event_lines(doc, "HookTitle") == ["Dialogue: 0,0:00:00.00,0:01:00.00,HookTitle,,0,0,0,,Watch this"]
 
     def test_blank_hook_title_adds_nothing(self):
-        assert ck.build_karaoke_ass([KARAOKE_CUE], hook_title="   ") == ck.build_karaoke_ass(
-            [KARAOKE_CUE]
-        )
+        assert ck.build_karaoke_ass([KARAOKE_CUE], hook_title="   ") == ck.build_karaoke_ass([KARAOKE_CUE])
 
     def test_hook_title_is_escaped(self):
         doc = ck.build_karaoke_ass([KARAOKE_CUE], hook_title=r"{\fake}pwn")
         assert r"{\fake}" not in doc
 
     def test_hook_card_replaces_the_headline(self):
-        doc = ck.build_karaoke_ass(
-            [KARAOKE_CUE], hook_title="Watch this", hook_card=True, hook_card_sec=5.0
-        )
+        doc = ck.build_karaoke_ass([KARAOKE_CUE], hook_title="Watch this", hook_card=True, hook_card_sec=5.0)
         assert style_line(doc, hc.HOOK_CARD_STYLE_NAME) == hc.hook_card_style_line(1080, 1920)
         assert "Style: HookTitle," not in doc
 
