@@ -53,13 +53,20 @@ export function CaptionPreferences({
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  // The ASR engine is NOT a preference this panel owns or writes — Settings ▸
+  // Models does that. It is read here only so the language picker can warn when
+  // the chosen engine cannot transcribe the chosen default language, and it comes
+  // out of the SAME settings payload, so it costs no extra rpc.
+  const [asrEngine, setAsrEngine] = useState('');
 
   useEffect(() => {
     let alive = true;
     rpc
       .get()
       .then((raw) => {
-        if (alive) setPrefs(readPreferences(raw));
+        if (!alive) return;
+        setPrefs(readPreferences(raw));
+        setAsrEngine(typeof raw.asrEngine === 'string' ? raw.asrEngine : '');
       })
       .catch((err) => {
         if (alive) setError(`Could not load preferences: ${errText(err)}`);
@@ -160,10 +167,14 @@ export function CaptionPreferences({
 
       <div className="caption-prefs__group caption-prefs__row">
         <span>Default language</span>
+        {/* Auto-detect IS offered here: this is a transcription SOURCE hint, not a
+            translation target, so "let the model detect it" is a real choice.
+            `coerceLanguage` accepts the sentinel too — without that, saving it
+            would silently rewrite it to English (audit §2.1). */}
         <LanguageSelect
           value={prefs.language}
-          includeAuto={false}
           label="Default language"
+          engine={asrEngine}
           onChange={(code) => editPrefs((p) => ({ ...p, language: code }))}
         />
       </div>

@@ -37,7 +37,7 @@ import {
   captionDesignWire,
   sampleCaptionCues,
 } from '../lib/captionDesign';
-import { readPreferences } from '../lib/captionPreferences';
+import { readPreferences, translationTargetLanguage } from '../lib/captionPreferences';
 import { client, hasApi, type Candidate, type ShortReexportHint, type Video } from '../lib/rpc';
 import './makeShorts.css';
 
@@ -121,7 +121,14 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
         if (cancelled) return;
         const prefs = readPreferences(raw);
         setDesign(prefs.design);
-        setTray((t) => ({ ...t, subtitleMode: prefs.subtitleMode, language: prefs.language }));
+        // `prefs.language` may be the auto-detect sentinel (it is a transcription
+        // SOURCE hint), but the tray field it seeds doubles as the translation
+        // TARGET, which cannot be auto-detected — so funnel it.
+        setTray((t) => ({
+          ...t,
+          subtitleMode: prefs.subtitleMode,
+          language: translationTargetLanguage(prefs.language),
+        }));
         setPrefsLoaded(true);
       })
       .catch(() => {

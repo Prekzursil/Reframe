@@ -13,6 +13,8 @@ import {
   pickField,
   waitForJobDone,
 } from './_api';
+import { LanguageSelect } from '../components/LanguageSelect';
+import { AUTO_DETECT, toWireLanguage } from '../lib/languages';
 
 export interface TranscribeProps {
   videoId: string;
@@ -22,23 +24,8 @@ export interface TranscribeProps {
 
 type Phase = 'idle' | 'running' | 'done' | 'error';
 
-// CONTRACT-NOTE: BCP-47 language hint is optional in `transcribe.start`
-// ({videoId, language?}); empty = auto-detect (sent as undefined, not "").
-const LANGUAGES: Array<{ code: string; label: string }> = [
-  { code: '', label: 'Auto-detect' },
-  { code: 'en', label: 'English' },
-  { code: 'es', label: 'Spanish' },
-  { code: 'fr', label: 'French' },
-  { code: 'de', label: 'German' },
-  { code: 'it', label: 'Italian' },
-  { code: 'pt', label: 'Portuguese' },
-  { code: 'ja', label: 'Japanese' },
-  { code: 'ko', label: 'Korean' },
-  { code: 'zh', label: 'Chinese' },
-];
-
 export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.ReactElement {
-  const [language, setLanguage] = useState<string>('');
+  const [language, setLanguage] = useState<string>(AUTO_DETECT);
   const [phase, setPhase] = useState<Phase>('idle');
   const [jobId, setJobId] = useState<string | null>(null);
   const [pct, setPct] = useState<number>(0);
@@ -75,7 +62,13 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
     abortRef.current = ctrl;
     try {
       const params: Record<string, unknown> = { videoId };
-      if (language) params.language = language;
+      // CONTRACT-NOTE: the BCP-47 language hint is optional in `transcribe.start`
+      // ({videoId, language?}) and AUTO-DETECT IS THE ABSENCE OF THE FIELD. The
+      // sidecar validates `language` only as "a string when given" and hands it
+      // straight to faster-whisper, so sending the literal "auto" would have it
+      // read as a language id. `toWireLanguage` is that translation.
+      const wireLanguage = toWireLanguage(language);
+      if (wireLanguage !== undefined) params.language = wireLanguage;
       // §2 long job: rpc resolves IMMEDIATELY with {jobId} only; the terminal
       // {transcript} arrives later as a `job.done` notification. So we read the
       // jobId for progress/cancel, then await job.done for the transcript
@@ -158,18 +151,15 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
 
       <div className="field">
         <label htmlFor="transcribe-language">Language</label>
-        <select
+        {/* The shared picker, NOT a second hardcoded list. This panel used to
+            declare its own 9-language array with a different auto sentinel ('' vs
+            'auto') and never import lib/languages at all (audit §1.1). */}
+        <LanguageSelect
           id="transcribe-language"
           value={language}
+          onChange={setLanguage}
           disabled={running}
-          onChange={(e) => setLanguage(e.target.value)}
-        >
-          {LANGUAGES.map((l) => (
-            <option key={l.code || 'auto'} value={l.code}>
-              {l.label}
-            </option>
-          ))}
-        </select>
+        />
       </div>
 
       <div className="actions">

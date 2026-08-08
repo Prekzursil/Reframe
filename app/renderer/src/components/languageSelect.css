@@ -14,3 +14,12 @@
   font-size: var(--type-body-size);
   color: var(--status-warn);
 }
+
+/* The per-language capability caveat (no ASR coverage, wrong engine, hosted or
+   slow translation tier). Same weight as the auto-detect advice: both are
+   "read this before you run the job", not errors. */
+.lang-select__capability {
+  margin: 0;
+  font-size: var(--type-body-size);
+  color: var(--status-warn);
+}
