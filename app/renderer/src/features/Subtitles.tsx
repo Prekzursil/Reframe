@@ -71,11 +71,20 @@ export function formatFromFilename(name: string): string {
  * A read failure (file deleted or permissions revoked between pick and read) is a
  * real, reachable path, so it rejects rather than resolving empty text — an empty
  * string would reach the sidecar as a bogus "no cues found".
+ *
+ * The `load` handler casts instead of guarding: `readAsText` always leaves a
+ * string in `result`, because the `ArrayBuffer` and `null` arms of the union
+ * belong to `readAsArrayBuffer` and to the pre-read state respectively. A
+ * `?? ''` fallback here was measured as the ONE uncovered branch in the whole
+ * renderer suite (6606/6607) — it is unreachable, so the only way to keep it
+ * would be a coverage-ignore comment papering over a branch no test can enter.
+ * Deleting the dead arm is the honest fix; the reachable failure mode is
+ * `onerror`, and that one IS tested.
  */
 export function readFileText(file: File): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
     reader.readAsText(file);
   });
