@@ -27,9 +27,15 @@ Four stages, each its own function so each is separately testable:
     honest answer to "no confident match" is no insert.
 
 ``diversify``
-    Near-duplicate suppression across the accepted suggestions, delegated to the
+    Diversity RE-RANKING across the accepted suggestions, delegated to the
     shipped :func:`diversity.dedupe_candidates` (MMR or DPP) over the matched
-    assets' own embeddings.
+    assets' own embeddings. Read that verb literally: with no ``k`` it re-ranks
+    and drops NOTHING (``dedupe_candidates`` at ``budget == n`` returns all ``n``
+    rows), so on the default path the thing that actually stops one asset
+    repeating is ``place``'s per-asset COOLDOWN, not MMR. An earlier draft of
+    this docstring said "near-duplicate suppression" flatly; measured, that was
+    wider than the code — ``diversify(3 suggestions, k=None)`` returns 3.
+    Suppression here requires an explicit ``k`` (``plan(max_inserts=…)``).
 
 ``place``
     The editorial constraints: clamp each insert's duration, keep it inside its
@@ -235,14 +241,21 @@ def diversify(
     method: diversity.Method = "mmr",
     k: int | None = None,
 ) -> list[BrollSuggestion]:
-    """Suppress near-duplicate picks across ``suggestions`` (MMR or DPP).
+    """Diversity-rank ``suggestions`` by their matched assets (MMR or DPP).
 
     Each suggestion is represented by its MATCHED ASSET's embedding, so two
-    segments that both landed on visually-identical assets compete and only one
-    survives. Delegates to the shipped :func:`diversity.dedupe_candidates`
-    (which reads each candidate's ``score`` as relevance) and then restores
-    chronological order, because the diversity ranking is a *selection*, not the
-    edit order.
+    segments that landed on visually-identical assets compete. Delegates to the
+    shipped :func:`diversity.dedupe_candidates` (which reads each candidate's
+    ``score`` as relevance) and then restores chronological order, because the
+    diversity ranking is a *selection*, not the edit order.
+
+    ``k`` IS THE SUPPRESSION KNOB, and without it nothing is dropped. At the
+    default ``k=None`` the underlying budget is ``n``, so MMR returns every row
+    — re-ordered, then re-sorted chronologically here, i.e. a no-op on the
+    OUTPUT SET. Measured: three suggestions all matching one asset come back as
+    three at ``k=None`` and as one at ``k=1``. Pass ``k`` (or
+    ``plan(max_inserts=…)``) when you want a cap; otherwise repetition is held
+    down by ``place``'s per-asset cooldown instead.
 
     A suggestion naming an asset absent from ``assets`` is a caller bug and
     raises :class:`KeyError` rather than being silently dropped.
@@ -376,10 +389,15 @@ def plan(
     boundaries: Sequence[float] = (),
     snap_window_sec: float = DEFAULT_SNAP_WINDOW_SEC,
 ) -> list[BrollInsertion]:
-    """The composed pipeline: gate, then dedupe, then time.
+    """The composed pipeline: gate, then diversity-rank, then time.
 
     Returns ``[]`` — never a low-confidence filler insert — when nothing clears
     the threshold or the library is empty.
+
+    ``max_inserts`` is :func:`diversify`'s ``k``. Leave it ``None`` and the
+    diversity stage drops nothing; what keeps one asset from repeating is then
+    ``cooldown_sec``, and what bounds the total is ``max_coverage_pct``. Set it
+    when you want a hard cap on how many suggestions survive ranking.
     """
     gated = suggest(
         segments,

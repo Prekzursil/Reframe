@@ -167,6 +167,46 @@ def test_diversify_returns_chronological_order():
     assert [s["start"] for s in kept] == [0.0, 20.0]
 
 
+def test_diversify_without_k_drops_NOTHING_it_only_re_ranks():
+    # Pins the corrected claim. dedupe_candidates at budget == n returns all n
+    # rows, so the default diversify() is a no-op on the OUTPUT SET. An earlier
+    # docstring called this "near-duplicate suppression" flatly, which was wider
+    # than the code; on the default path the cooldown does the suppressing.
+    segments = [_seg(0.0, 4.0), _seg(10.0, 14.0), _seg(20.0, 24.0)]
+    out = bp.suggest(segments, [Q_DOG, Q_DOG, Q_DOG], ASSETS, ASSET_VECS, threshold=0.5)
+    assert [s["assetId"] for s in bp.diversify(out, ASSETS, ASSET_VECS)] == ["a-dog"] * 3
+    assert [s["assetId"] for s in bp.diversify(out, ASSETS, ASSET_VECS, k=1)] == ["a-dog"]
+
+
+def test_the_default_plan_thins_repeats_via_the_COOLDOWN_not_via_mmr():
+    # The companion half: with the cooldown disabled, all three repeats survive
+    # the default plan() - proving MMR was never what removed them.
+    segments = [_seg(0.0, 4.0), _seg(10.0, 14.0), _seg(20.0, 24.0)]
+    vecs = [Q_DOG, Q_DOG, Q_DOG]
+    with_cooldown = bp.plan(segments, vecs, ASSETS, ASSET_VECS, total_sec=300.0, threshold=0.5)
+    without = bp.plan(
+        segments, vecs, ASSETS, ASSET_VECS, total_sec=300.0, threshold=0.5, cooldown_sec=0.0, min_gap_sec=0.0
+    )
+    assert len(with_cooldown) == 1
+    assert len(without) == 3
+
+
+def test_plan_max_inserts_caps_the_surviving_suggestions():
+    segments = [_seg(0.0, 4.0), _seg(10.0, 14.0)]
+    out = bp.plan(
+        segments,
+        [Q_DOG, Q_CITY],
+        ASSETS,
+        ASSET_VECS,
+        total_sec=300.0,
+        threshold=0.5,
+        max_inserts=1,
+        min_gap_sec=0.0,
+        cooldown_sec=0.0,
+    )
+    assert len(out) == 1
+
+
 def test_diversify_of_nothing_is_nothing():
     assert bp.diversify([], ASSETS, ASSET_VECS) == []
 
