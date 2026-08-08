@@ -548,3 +548,95 @@
   color: var(--status-warn);
   font-size: var(--type-caption-size);
 }
+
+/* ---- Audio mix (v1.5 audiomix-ui) --------------------------------------------- */
+/* Shares the Dub panel's wrapping-label rhythm; the advanced ducking block is a
+   native <details> so the two ffmpeg-level tunables stay out of the primary path
+   without being hidden from a power user. */
+
+.audiomix-panel .audiomix-intro {
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  margin-bottom: var(--space-4);
+}
+
+.audiomix-panel .audiomix-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-4);
+  margin: 0 0 var(--space-3);
+}
+
+.audiomix-panel .audiomix-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  color: var(--text-muted);
+}
+
+.audiomix-panel .audiomix-controls input,
+.audiomix-panel .audiomix-controls select {
+  font-weight: var(--type-body-weight);
+}
+
+/* the loudness a user is about to ship is the one number worth restating */
+.audiomix-panel .audiomix-target-note {
+  margin: 0 0 var(--space-4);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+}
+
+.audiomix-panel .audiomix-advanced {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.audiomix-panel .audiomix-advanced > summary {
+  cursor: pointer;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.audiomix-panel .audiomix-advanced > summary:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.audiomix-panel .audiomix-advanced .audiomix-controls {
+  margin-top: var(--space-3);
+}
+
+.audiomix-panel .audiomix-advanced-hint {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}
+
+/* a produced mix is a DONE status — same success rail as a finished dub */
+.audiomix-panel .audiomix-result {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-success);
+  border-radius: var(--radius-sm);
+  background: var(--status-success-soft);
+}
+
+.audiomix-panel .audiomix-result h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--status-success);
+}
+
+.audiomix-panel .audiomix-result-path {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+}
