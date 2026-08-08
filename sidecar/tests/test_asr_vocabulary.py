@@ -101,6 +101,13 @@ def test_parse_terms_accepts_a_tuple_value():
     assert V.parse_terms({V.VOCAB_SETTINGS_KEY: ("Reframe",)}) == (V.VocabTerm("Reframe", ()),)
 
 
+def test_parse_terms_skips_a_term_with_no_word_characters():
+    # A punctuation-only phrase can never satisfy the (?<!\w)/(?!\w) boundaries
+    # a rule is built with, so it is refused rather than compiled into a rule
+    # that can never fire.
+    assert V.parse_terms({V.VOCAB_SETTINGS_KEY: ["...", "Reframe"]}) == (V.VocabTerm("Reframe", ()),)
+
+
 # --------------------------------------------------------------------------- #
 # build_initial_prompt / build_hotwords — the faster-whisper biasing strings
 # --------------------------------------------------------------------------- #
@@ -327,3 +334,29 @@ def test_apply_corrections_matches_across_a_word_carrying_inner_punctuation():
     t = _transcript(_seg(' "re frame."', [(' "re', 0.0, 0.5), (' frame."', 0.5, 1.0)]))
     out = V.apply_corrections(t, terms)
     assert out["segments"][0]["words"][0]["text"] == ' "Reframe."'
+
+
+def test_apply_corrections_with_only_blank_hand_built_terms_is_identity():
+    # apply_corrections is public: a caller can hand it a VocabTerm that never
+    # went through parse_terms. No compilable phrase => the transcript is
+    # returned untouched (an empty alternation would match everywhere).
+    t = _transcript(_seg(" reframe", [(" reframe", 0.0, 1.0)]))
+    assert V.apply_corrections(t, (V.VocabTerm("   ", ()),)) is t
+
+
+def test_apply_corrections_skips_a_span_whose_words_are_blank():
+    # A blank word inside a candidate span makes the joined phrase ambiguous, so
+    # the merge is refused and the single-word pass runs instead.
+    terms = V.parse_terms({V.VOCAB_SETTINGS_KEY: [{"term": "Reframe", "soundsLike": ["re frame"]}]})
+    t = _transcript(_seg(" re  frame", [(" re", 0.0, 0.5), ("   ", 0.5, 0.6), (" frame", 0.6, 1.0)]))
+    out = V.apply_corrections(t, terms)
+    assert [w["text"] for w in out["segments"][0]["words"]] == [" re", "   ", " frame"]
+
+
+def test_apply_corrections_does_not_merge_a_span_that_runs_into_a_longer_word():
+    # "re frame-shift" is NOT the phrase "re frame": the span match is a
+    # fullmatch, so a half-rewrite ("Reframe-shift" losing "-shift") is refused.
+    terms = V.parse_terms({V.VOCAB_SETTINGS_KEY: [{"term": "Reframe", "soundsLike": ["re frame"]}]})
+    t = _transcript(_seg(" re frame-shift", [(" re", 0.0, 0.5), (" frame-shift", 0.5, 1.0)]))
+    out = V.apply_corrections(t, terms)
+    assert [w["text"] for w in out["segments"][0]["words"]] == [" re", " frame-shift"]
