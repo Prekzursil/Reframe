@@ -60,6 +60,16 @@ vi.mock('../lib/rpc', () => ({
 }));
 
 // NOTE: ../features/Subtitles is deliberately NOT mocked here.
+//
+// ../features/TranscriptEditor IS mocked: this suite pins the Subtitles seam, it
+// never selects the Transcript-edit tab, and leaving that panel real only adds
+// its module graph to the race this test is already timing. Measured: with the
+// panel real the case intermittently trips the 5s default (2/5 full-suite runs)
+// while passing in isolation at ~2.2s of test time, i.e. a transform-cost cliff
+// under parallel load, not a behaviour change. UNVERIFIED whether CI's Linux
+// runner ever crosses that cliff — settled by dropping this mock and reading the
+// gate-tests-coverage vitest step; the stub is correct either way.
+vi.mock('../features/TranscriptEditor', () => ({ default: () => <div /> }));
 
 import { Workspace } from './Workspace';
 import type { Project, SubtitleTrack, Video } from '../components/api';
