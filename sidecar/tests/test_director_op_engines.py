@@ -79,10 +79,14 @@ def test_build_engines_defaults_runner_to_ffmpeg_run() -> None:
 def test_deferred_kinds_have_no_engine() -> None:
     table = build_engines(runner=FakeRunner())
     assert not (set(DEFERRED_KINDS) & set(table))
-    # The honestly-deferred subsystem ops stay out of the table; reorder too.
-    assert {"stitchPanorama", "regenScroll", "ocrExtractList", "reorder"} <= set(DEFERRED_KINDS)
-    # The ffmpeg-achievable ops moved INTO the wired table.
+    # The honestly-deferred subsystem ops stay out of the table.
+    assert {"stitchPanorama", "regenScroll", "ocrExtractList"} <= set(DEFERRED_KINDS)
+    # The ffmpeg-achievable ops moved INTO the wired table. ``reorder`` joined
+    # them in v1.5 (SCOPE.md O-3): it is a permutation of spans within ONE
+    # source, which the shipped segment-cut concat already expresses, so the
+    # "needs a multi-clip timeline engine" deferral premise was simply wrong.
     assert {
+        "reorder",
         "reframe",
         "zoomPan",
         "retime",
@@ -92,6 +96,7 @@ def test_deferred_kinds_have_no_engine() -> None:
         "translateCaption",
         "export",
     } <= set(WIRED_KINDS)
+    assert "reorder" not in set(DEFERRED_KINDS)
 
 
 def test_deferred_subsystems_cover_every_deferred_kind() -> None:
