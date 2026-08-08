@@ -6,6 +6,7 @@ import {
   coerceLanguage,
   preferencesPatch,
   readPreferences,
+  translationTargetLanguage,
 } from './captionPreferences';
 import { DEFAULT_CAPTION_DESIGN } from './captionDesign';
 import { AUTO_DETECT } from './languages';
@@ -33,6 +34,21 @@ describe('coerceLanguage', () => {
   });
   it('reaches a language the old 19-entry list could not', () => {
     expect(coerceLanguage('ro')).toBe('ro');
+  });
+});
+
+describe('translationTargetLanguage', () => {
+  it('replaces the auto sentinel with a real code (a target cannot be detected)', () => {
+    expect(translationTargetLanguage(AUTO_DETECT)).toBe(DEFAULT_LANGUAGE);
+    expect(translationTargetLanguage('  Auto  ')).toBe(DEFAULT_LANGUAGE);
+  });
+  it('passes a real target language through, region tag normalized', () => {
+    expect(translationTargetLanguage('ro')).toBe('ro');
+    expect(translationTargetLanguage('pt-BR')).toBe('pt');
+  });
+  it('falls back for junk, exactly like coerceLanguage', () => {
+    expect(translationTargetLanguage('zz')).toBe(DEFAULT_LANGUAGE);
+    expect(translationTargetLanguage(null)).toBe(DEFAULT_LANGUAGE);
   });
 });
 

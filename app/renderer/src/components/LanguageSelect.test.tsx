@@ -87,6 +87,21 @@ describe('<LanguageSelect />', () => {
     expect(sel().value).toBe('zz');
   });
 
+  it('never DISPLAYS a different language than its value, even for auto with includeAuto=false', () => {
+    // A <select> whose value matches no option silently shows the FIRST option
+    // instead. On a translate-TARGET picker (includeAuto={false}) seeded with the
+    // 'auto' sentinel that means the control reads "English" while its state — and
+    // therefore the wire value — is 'auto'. A lying control is worse than an ugly
+    // one, so the value always gets an option.
+    const onChange = vi.fn();
+    act(() =>
+      root.render(<LanguageSelect value={AUTO_DETECT} onChange={onChange} includeAuto={false} />),
+    );
+    expect(sel().value).toBe(AUTO_DETECT);
+    const opt = [...sel().options].find((o) => o.value === AUTO_DETECT);
+    expect(opt?.textContent).toBe(languageLabel(AUTO_DETECT));
+  });
+
   it('groups the common creator languages ahead of the full list', () => {
     // 102 flat options is a wall of text; the curated head goes in its own group
     // so the common choices stay one glance away (V1-GRILL §h intent preserved).

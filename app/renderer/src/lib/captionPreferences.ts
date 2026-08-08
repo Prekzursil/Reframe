@@ -90,6 +90,26 @@ export function coerceLanguage(raw: unknown): string {
 }
 
 /**
+ * The persisted default language reduced to something valid as a translation
+ * TARGET — i.e. never the auto-detect sentinel.
+ *
+ * `language` is a transcription SOURCE hint, so it may legitimately be
+ * AUTO_DETECT. But the Output Tray reuses that one field as the translate target
+ * (`OutputTrayState.language`, rendered with `includeAuto={false}`), and a target
+ * cannot be auto-detected — forwarding 'auto' would ask the MT model to translate
+ * into a language called "auto". Any surface seeding a TARGET from the persisted
+ * default must funnel through this.
+ *
+ * KNOWN RESIDUAL: one state field serving both roles is the underlying smell.
+ * Splitting `OutputTrayState.language` into separate source/target fields is the
+ * real fix and is out of scope here; this makes the conflation safe meanwhile.
+ */
+export function translationTargetLanguage(raw: unknown): string {
+  const code = coerceLanguage(raw);
+  return code === AUTO_DETECT ? DEFAULT_LANGUAGE : code;
+}
+
+/**
  * Read preferences out of a raw `settings.get` result, tolerating absent keys
  * (the keys may not be in DEFAULT_SETTINGS yet). A non-object input yields the
  * out-of-box defaults; each field is independently validated.

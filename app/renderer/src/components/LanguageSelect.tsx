@@ -72,7 +72,13 @@ export function LanguageSelect({
   // The value is selectable even if it is not in the inventory (e.g. a code
   // persisted by an older build) — add a fallback option so the <select> never
   // silently drops the current choice.
-  const known = value === AUTO_DETECT || LANGUAGES.some((l) => l.code === value);
+  //
+  // The sentinel counts as "known" ONLY when the auto option is actually rendered.
+  // Otherwise a target-language picker (includeAuto={false}) seeded with 'auto'
+  // would have no matching option, and a <select> in that state silently displays
+  // its FIRST option — reading "English" while its value, and the wire value, is
+  // 'auto'. A control that lies about its own state is the worse failure.
+  const known = value === AUTO_DETECT ? includeAuto : LANGUAGES.some((l) => l.code === value);
   const showAdvice = includeAuto && value === AUTO_DETECT;
   const caveat = capabilityNote(value, engine);
   return (
@@ -86,7 +92,7 @@ export function LanguageSelect({
         onChange={(e) => onChange(e.target.value)}
       >
         {includeAuto ? <option value={AUTO_DETECT}>{languageLabel(AUTO_DETECT)}</option> : null}
-        {known ? null : <option value={value}>{value}</option>}
+        {known ? null : <option value={value}>{languageLabel(value)}</option>}
         <optgroup label="Common">
           {COMMON_OPTIONS.map((l) => (
             <option key={l.code} value={l.code}>
