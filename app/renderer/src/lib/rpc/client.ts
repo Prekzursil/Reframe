@@ -226,8 +226,19 @@ export const client = {
   },
 
   convert: {
+    /**
+     * `convert.start({videoId|path, options, out?})`.
+     *
+     * `out` names the destination file explicitly. It is NOT new wire surface —
+     * the sidecar has always read it (`convert.start_handler` builds its item
+     * with `"out": params.get("out")`) and CONFINES it to the source's own
+     * directory or the app data root (`convert._confined_output`), because
+     * ffmpeg runs with `-y`. Only the renderer's type was narrower than the
+     * handler. The aspect fan-out needs it: without a per-target name every
+     * target derives the SAME `<stem>.mp4` and the files overwrite each other.
+     */
     start: (
-      target: { videoId?: string; path?: string },
+      target: { videoId?: string; path?: string; out?: string },
       options: ConvertOptions,
     ): Promise<JobHandle & { path?: string }> => rpc('convert.start', { ...target, options }),
     batch: (

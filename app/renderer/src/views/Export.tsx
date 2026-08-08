@@ -27,7 +27,12 @@ import { ExportStage } from '../features/export/ExportStage';
 import { ExportInspector } from '../features/export/ExportInspector';
 import { ExportProgress } from '../features/export/ExportProgress';
 import { ExportResult, type ExportOutcome } from '../features/export/ExportResult';
-import type { PlatformPreset } from '../features/export/exportModel';
+import {
+  type PlatformPreset,
+  aspectFanoutPlan,
+  fanoutDestinationLabel,
+  fanoutOutPath,
+} from '../features/export/exportModel';
 import './export.css';
 
 /** idle → running → a terminal outcome (done / failed / cancelled). */
@@ -95,60 +100,83 @@ function ExportWorkspace({
   }, [video.id, dispatch]);
 
   const onCommit = useCallback(
-    async (preset: PlatformPreset, options: ConvertOptions): Promise<void> => {
+    async (presets: PlatformPreset[], options: ConvertOptions): Promise<void> => {
       if (!hasApi()) return;
+      // The FAN-OUT plan, not the destination list: several destinations that
+      // share an aspect (TikTok + Reels + Shorts are all 9:16) collapse to ONE
+      // render, so the user gets one file per distinct aspect and never three
+      // byte-identical copies. Each target gets its own `out` name — without it
+      // every render derives the same `<stem>.mp4` and overwrites the last.
+      const plan = aspectFanoutPlan(presets);
       cancelRequested.current = false;
       setPhase('running');
       setPct(0);
       setMessage('Starting…');
-      setDestination(preset.name);
+      setDestination(fanoutDestinationLabel(presets));
       setPaths([]);
       setError('');
       const controller = new AbortController();
       abort.current = controller;
       let offProgress = (): void => {};
       try {
-        const res = await client.convert.start({ videoId: video.id }, options);
-        const id = res.jobId;
-        jobId.current = id;
-        offProgress = onProgress((event) => {
-          if (event.jobId !== id) return;
-          setPct(event.pct);
-          setMessage(event.message);
-        });
-        // Drain a cancel that landed before this id existed. TERMINAL, not
-        // advisory: the `res.path` fast path below skips `waitForJobDone`, so
-        // without the early return a cancelled job would render a terminal SUCCESS
-        // with a "Show in folder" reveal. Fire-and-forget preserves the
-        // abort-settles-the-UI-first ordering documented in `cancel` below — an
-        // awaited RPC on a queued stdio channel would strand the user on a stale
-        // "Exporting…" panel and invite a duplicate cancel.
-        if (cancelRequested.current) {
-          void client.job.cancel(id).catch(() => {
-            // best-effort: the UI is already settling to 'cancelled'.
-          });
-          setPhase('cancelled');
-          return;
-        }
-        let outPath: string | null = res.path ?? null;
-        if (!outPath) {
-          outPath = await waitForJobDone(
-            { onJobDone },
-            id,
-            (result) => pickField<string>(result, 'path'),
-            DEFAULT_JOB_TIMEOUT_MS,
-            controller.signal,
+        const written: string[] = [];
+        for (let i = 0; i < plan.length; i += 1) {
+          const target = plan[i];
+          const res = await client.convert.start(
+            { videoId: video.id, out: fanoutOutPath(video.path, target) },
+            options,
           );
+          const id = res.jobId;
+          jobId.current = id;
+          // Detach the PREVIOUS target's listener before attaching this one, so a
+          // fan-out cannot leak one subscription per file.
+          offProgress();
+          offProgress = onProgress((event) => {
+            if (event.jobId !== id) return;
+            // Spread each target's 0..100 across its slice of the whole fan-out,
+            // so the bar climbs once end-to-end instead of resetting per file.
+            setPct((i * 100 + event.pct) / plan.length);
+            setMessage(
+              plan.length > 1 ? `[${i + 1}/${plan.length}] ${event.message}` : event.message,
+            );
+          });
+          // Drain a cancel that landed before this id existed. TERMINAL, not
+          // advisory: the `res.path` fast path below skips `waitForJobDone`, so
+          // without the early return a cancelled job would render a terminal SUCCESS
+          // with a "Show in folder" reveal. Fire-and-forget preserves the
+          // abort-settles-the-UI-first ordering documented in `cancel` below — an
+          // awaited RPC on a queued stdio channel would strand the user on a stale
+          // "Exporting…" panel and invite a duplicate cancel.
+          if (cancelRequested.current) {
+            void client.job.cancel(id).catch(() => {
+              // best-effort: the UI is already settling to 'cancelled'.
+            });
+            setPhase('cancelled');
+            return;
+          }
+          let outPath: string | null = res.path ?? null;
+          if (!outPath) {
+            outPath = await waitForJobDone(
+              { onJobDone },
+              id,
+              (result) => pickField<string>(result, 'path'),
+              DEFAULT_JOB_TIMEOUT_MS,
+              controller.signal,
+            );
+          }
+          if (!outPath) {
+            // Stop the whole fan-out on the first target that produced nothing —
+            // reporting a partial success would hide the missing file.
+            setError('The export finished without producing a file.');
+            setPhase('failed');
+            return;
+          }
+          written.push(outPath);
         }
-        if (outPath) {
-          setPaths([outPath]);
-          setPct(100);
-          setMessage('Done');
-          setPhase('done');
-        } else {
-          setError('The export finished without producing a file.');
-          setPhase('failed');
-        }
+        setPaths(written);
+        setPct(100);
+        setMessage('Done');
+        setPhase('done');
       } catch (err) {
         if (err instanceof JobAbortedError) {
           setPhase('cancelled');
@@ -161,7 +189,7 @@ function ExportWorkspace({
         jobId.current = null;
       }
     },
-    [video.id],
+    [video.id, video.path],
   );
 
   const cancel = useCallback(async (): Promise<void> => {
@@ -214,7 +242,7 @@ function ExportWorkspace({
         </div>
         <div className="export-view__panel">
           {phase === 'idle' ? (
-            <ExportInspector onCommit={(preset, options) => void onCommit(preset, options)} />
+            <ExportInspector onCommit={(presets, options) => void onCommit(presets, options)} />
           ) : phase === 'running' ? (
             <ExportProgress
               destination={destination}
