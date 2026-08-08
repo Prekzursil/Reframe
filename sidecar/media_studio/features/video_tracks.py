@@ -75,6 +75,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import ffmpeg, protocol
+from ..jobs import JobContext
 from ..protocol import ErrorCode, RpcContext, RpcError
 from ..util import get_logger
 from . import fillers as _fillers
@@ -610,11 +611,6 @@ class VideoTracksService:
         project["videoTracks"] = [normalize_video_track({"index": 0, "name": "Video 1", "clips": clips}, fps=fps)]
         return True
 
-    def _run_or_raise(self, argv: list[str], total_sec: float, what: str) -> None:
-        code = self._run(argv, total_sec=total_sec)
-        if code != 0:
-            raise RpcError(f"{what} failed (ffmpeg exit {code})", ErrorCode.INTERNAL_ERROR)
-
     def _tracks_payload(self, project: dict[str, Any]) -> list[VideoTrack]:
         return [{**t, "clips": [dict(c) for c in clips_of(t)]} for t in video_tracks_of(project) if isinstance(t, dict)]
 
@@ -792,14 +788,25 @@ class VideoTracksService:
             return {"removed": removed["id"]}
 
     def render(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-        """``tracks.video.render({videoId, fps?})`` -> ``{path, segments, durationSec}``.
+        """``tracks.video.render({videoId, fps?})`` -> ``{jobId}``.
 
-        Renders the CURRENT timeline through the shipped frame-accurate engine.
-        Refuses (rather than half-renders) when the timeline is empty or holds an
-        overlap.
+        ``job.done.result`` is ``{path, segments, durationSec}``.
+
+        A JOB, not a direct handler: encoding a long timeline takes minutes and
+        the sidecar has ONE stdio loop, so a blocking encode would freeze the
+        whole app (the same reason ``stabilize.run`` / ``audiomix.merge`` /
+        ``silence.trim`` all defer). Cooperatively cancellable via the drained
+        ``run`` seam.
+
+        The timeline is flattened and the argv BUILT BEFORE the job starts, so an
+        empty or overlapping timeline is a typed refusal on the CALL — the user
+        finds out immediately instead of watching a job fail later. Nothing is
+        half-rendered either way.
         """
         video_id = _require_str(params, "videoId")
         fps = self._fps(params)
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
         with self._lock_for(video_id):
             project = self._load_project(video_id)
             try:
@@ -807,15 +814,30 @@ class VideoTracksService:
             except VideoTrackError as exc:
                 raise _invalid(str(exc)) from exc
         total = timeline_duration(segments)
-        self._out_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(self._out_dir / f"timeline-{video_id}-{int(time.time())}.mp4")
         try:
             argv = build_timeline_render_argv(segments, out_path, self._settings())
         except VideoTrackError as exc:
             raise _invalid(str(exc)) from exc
-        self._run_or_raise(argv, total, "timeline render")
-        log.info("rendered %d timeline segment(s) for %s -> %s", len(segments), video_id, out_path)
-        return {"path": out_path, "segments": segments, "durationSec": round(total, 3)}
+        out_dir = self._out_dir
+        run = self._run
+
+        def job_body(job_ctx: JobContext) -> dict[str, Any]:
+            job_ctx.raise_if_cancelled()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            job_ctx.progress(1, f"rendering {len(segments)} clip(s)")
+            code = run(
+                argv,
+                total_sec=total,
+                on_progress=lambda pct, msg: job_ctx.progress(pct, msg),
+                should_cancel=lambda: job_ctx.cancelled,
+            )
+            if code != 0:
+                raise RpcError(f"timeline render failed (ffmpeg exit {code})", ErrorCode.INTERNAL_ERROR)
+            log.info("rendered %d timeline segment(s) for %s -> %s", len(segments), video_id, out_path)
+            return {"path": out_path, "segments": segments, "durationSec": round(total, 3)}
+
+        return {"jobId": ctx.jobs.start(job_body).id}
 
 
 # --------------------------------------------------------------------------- #
