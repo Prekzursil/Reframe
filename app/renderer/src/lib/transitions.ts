@@ -51,13 +51,41 @@ export interface TransitionStyle {
  * would be invisible at runtime until a render failed with "unknown style".
  */
 export const TRANSITION_STYLES: readonly TransitionStyle[] = [
-  { id: 'circleClose', label: 'Circle close', blurb: 'The next clip closes in from a shrinking circle.' },
-  { id: 'circleOpen', label: 'Circle open', blurb: 'The next clip opens out from a growing circle.' },
-  { id: 'dissolve', label: 'Cross dissolve', blurb: 'The two clips blend through each other. The safe default.' },
-  { id: 'fadeBlack', label: 'Fade through black', blurb: 'Dips to black between the clips — reads as a scene break.' },
-  { id: 'fadeWhite', label: 'Fade through white', blurb: 'Dips to white between the clips — brighter, more upbeat.' },
-  { id: 'slideLeft', label: 'Slide left', blurb: 'The next clip pushes the current one off to the left.' },
-  { id: 'slideRight', label: 'Slide right', blurb: 'The next clip pushes the current one off to the right.' },
+  {
+    id: 'circleClose',
+    label: 'Circle close',
+    blurb: 'The next clip closes in from a shrinking circle.',
+  },
+  {
+    id: 'circleOpen',
+    label: 'Circle open',
+    blurb: 'The next clip opens out from a growing circle.',
+  },
+  {
+    id: 'dissolve',
+    label: 'Cross dissolve',
+    blurb: 'The two clips blend through each other. The safe default.',
+  },
+  {
+    id: 'fadeBlack',
+    label: 'Fade through black',
+    blurb: 'Dips to black between the clips — reads as a scene break.',
+  },
+  {
+    id: 'fadeWhite',
+    label: 'Fade through white',
+    blurb: 'Dips to white between the clips — brighter, more upbeat.',
+  },
+  {
+    id: 'slideLeft',
+    label: 'Slide left',
+    blurb: 'The next clip pushes the current one off to the left.',
+  },
+  {
+    id: 'slideRight',
+    label: 'Slide right',
+    blurb: 'The next clip pushes the current one off to the right.',
+  },
   { id: 'wipeDown', label: 'Wipe down', blurb: 'The next clip sweeps in from the top edge.' },
   { id: 'wipeLeft', label: 'Wipe left', blurb: 'The next clip sweeps in from the right edge.' },
   { id: 'wipeRight', label: 'Wipe right', blurb: 'The next clip sweeps in from the left edge.' },
@@ -80,6 +108,18 @@ export function transitionStyleLabel(id: TransitionStyleId): string {
 }
 
 /**
+ * The blurb for a style id, or `''` for an unknown one.
+ *
+ * The unknown arm is real: a plan restored from a newer sidecar can name a style
+ * this build has no copy for. The guard lives HERE rather than at the call site
+ * so it is directly testable — a defensive `?? ''` inside the component would be
+ * an unreachable branch that could only be silenced with a coverage ignore.
+ */
+export function transitionStyleBlurb(id: TransitionStyleId): string {
+  return TRANSITION_STYLES.find((style) => style.id === id)?.blurb ?? '';
+}
+
+/**
  * Coerce a requested length to whole milliseconds inside the sidecar's accepted
  * range. A non-finite value (an empty/garbled number input) falls back to the
  * default rather than propagating NaN into the op params.
@@ -97,7 +137,10 @@ export function clampTransitionMs(ms: number): number {
  * makes it shorter than that by the overlap. Mirrors the sidecar's
  * `transitions.total_duration_sec`.
  */
-export function transitionOutputMs(clipDurationsMs: readonly number[], transitionMs: number): number {
+export function transitionOutputMs(
+  clipDurationsMs: readonly number[],
+  transitionMs: number,
+): number {
   const total = clipDurationsMs.reduce((sum, ms) => sum + ms, 0);
   return total - Math.max(0, clipDurationsMs.length - 1) * transitionMs;
 }
