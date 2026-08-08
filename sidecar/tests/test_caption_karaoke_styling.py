@@ -24,6 +24,7 @@ import pytest
 from media_studio import ffmpeg
 from media_studio.features import caption
 from media_studio.features import caption_karaoke as ck
+from media_studio.features import caption_polish as cp
 from media_studio.features import hook_card as hc
 from media_studio.features.caption import CaptionEngine
 
@@ -346,3 +347,70 @@ class TestBuildKaraokeAssStyling:
         )
         assert r"\t(0,120,\fscx115\fscy115)" in doc
         assert len(event_lines(doc, "Default")) == 2
+
+
+# --------------------------------------------------------------------------- #
+# DoD guard: EVERY settable CaptionOverride field, enumerated
+# --------------------------------------------------------------------------- #
+#: Every field of the renderer's ``CaptionOverride`` interface
+#: (``app/renderer/src/lib/captionOverride.ts:27-50``), with two distinguishable
+#: values. Adding a field there without wiring it here makes this go RED — which is
+#: the point: a silent drop is exactly the defect this module exists to prevent.
+OVERRIDE_FIELD_CASES: list[tuple[str, Any, Any]] = [
+    ("fontFamily", "Anton", "Bebas Neue"),
+    ("sizeScale", 0.8, 1.6),
+    ("textColor", "#FF0000", "#0000FF"),
+    ("activeColor", "#FF00FF", "#00FFFF"),
+    ("spokenColor", "#123456", "#654321"),
+    ("outline", True, False),
+    ("box", True, False),
+    ("uppercase", True, False),
+    ("positionBand", "top", "bottom"),
+    ("maxLines", 1, 2),
+    ("maxCps", 10, 30),
+]
+
+#: The only fields that legitimately do NOT change the karaoke ASS: they are
+#: consumed at cue GENERATION (upstream of all three caption engines), so they were
+#: never karaoke drops. Proven executable by
+#: :meth:`TestEverySettableFieldReachesTheBurn.test_upstream_fields_are_really_consumed_upstream`.
+UPSTREAM_ONLY_FIELDS = frozenset({"maxLines", "maxCps"})
+
+
+class TestEverySettableFieldReachesTheBurn:
+    """The Definition of Done, enumerated field by field."""
+
+    @pytest.mark.parametrize(("field", "value_a", "value_b"), OVERRIDE_FIELD_CASES)
+    def test_field_moves_the_ass_unless_it_is_an_upstream_field(self, field: str, value_a: Any, value_b: Any) -> None:
+        doc_a = ck.build_karaoke_ass([KARAOKE_CUE], override={field: value_a})
+        doc_b = ck.build_karaoke_ass([KARAOKE_CUE], override={field: value_b})
+        if field in UPSTREAM_ONLY_FIELDS:
+            assert doc_a == doc_b, f"{field} unexpectedly reached the karaoke ASS"
+        else:
+            assert doc_a != doc_b, f"{field} is SILENTLY DROPPED by the karaoke renderer"
+
+    def test_upstream_fields_are_really_consumed_upstream(self) -> None:
+        # Makes the UPSTREAM_ONLY_FIELDS exemption evidence rather than an assertion:
+        # caption_polish reads both off captionOverride at cue generation
+        # (caption_polish.py:104-109), i.e. before any engine sees a cue.
+        max_cps, max_lines = cp.resolve_caption_limits({"captionOverride": {"maxCps": 11, "maxLines": 1}})
+        assert (max_cps, max_lines) == (11.0, 1)
+        default_cps, default_lines = cp.resolve_caption_limits({})
+        assert (max_cps, max_lines) != (default_cps, default_lines)
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            None,
+            {},
+            # a present override whose OTHER fields are absent must not disturb the
+            # preset — the trap `ResolvedCaptionStyle` would have sprung by resolving
+            # the outline against the libass-normal base and thinning it 4 -> 3.
+            {"uppercase": True},
+            {"maxCps": 17},
+            {"fontFamily": "not-a-curated-font"},
+            {"textColor": "not-a-hex"},
+        ],
+    )
+    def test_untouched_fields_keep_the_preset_byte_for_byte(self, override: Any) -> None:
+        assert ck.build_karaoke_ass([KARAOKE_CUE], override=override) == ck.build_karaoke_ass([KARAOKE_CUE])
