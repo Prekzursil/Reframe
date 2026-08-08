@@ -406,6 +406,23 @@ def register_all(
         register_fn=reg,
     )
 
+    # speed.retime — the USER-DRIVEN door onto the re-time engine. The engine
+    # (director_op_engines.build_retime_argv, `retime` in WIRED_KINDS) was already
+    # wired, but only an LLM-planned Director op could reach it, so changing
+    # playback speed meant phrasing a prompt and hoping the planner emitted the op.
+    # Same seams as the audio-stabilize group above; the argv is DELEGATED to the
+    # Director builder so the two paths cannot render differently.
+    from ..features import speed as _speed  # local: import-light
+
+    _speed.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "retimed",
+        settings_provider=svc.settings.get,
+        run=svc._ffmpeg_run,
+        duration=svc._ffprobe_duration,
+        register_fn=reg,
+    )
+
     # ---------------------------------------------------------------------- #
     # system-advanced group (this build) — health / recipes / diarize.
     # Each module owns its own register() (mirrors shorts / cues / assets).

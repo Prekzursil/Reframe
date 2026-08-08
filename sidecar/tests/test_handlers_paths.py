@@ -80,12 +80,17 @@ def test_paths_describe_names_the_managed_copy_store(services: Services, ctx: Rp
 def test_paths_describe_subdirs_cover_required_features(services: Services, ctx: RpcContext) -> None:
     result = services.paths_describe({}, ctx)
     sub = result["subDirs"]
-    assert {"shorts", "dubs", "stabilized", "audiomix", "trimmed"} <= set(sub)
+    assert {"shorts", "dubs", "stabilized", "audiomix", "trimmed", "retimed"} <= set(sub)
     # dubs lives under the data dir; the exports-rooted ones under exports.
     assert sub["dubs"] == str(services.data_dir / "dubs")
     assert sub["stabilized"] == str(services.exports_dir / "stabilized")
     assert sub["audiomix"] == str(services.exports_dir / "audiomix")
     assert sub["trimmed"] == str(services.exports_dir / "trimmed")
+    # speed.retime writes here. The docstring on ``paths_describe`` promises this
+    # list MATCHES register_all's wiring, so a new ffmpeg-derivative folder that is
+    # not reported makes that promise false — and PathsPanel iterates subDirs
+    # generically, so the omission would silently hide the folder from the UI.
+    assert sub["retimed"] == str(services.exports_dir / "retimed")
     # Shorts are written PER-VIDEO under exports as ``shorts-<videoId>`` (see
     # register_all's ``out_dir_for=lambda vid: exports_dir / f"shorts-{vid}"``);
     # there is no flat ``exports_dir/shorts`` dir, so report the honest pattern.

@@ -119,6 +119,9 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "shorts.reexport",
         "shorts.thumbnail",
         "silence.trim",
+        # The user-driven door onto the already-wired `retime` engine: before it
+        # the ONLY way to change playback speed was an LLM-planned Director op.
+        "speed.retime",
         "stabilize.run",
         "subtitles.edit",
         "subtitles.export",
