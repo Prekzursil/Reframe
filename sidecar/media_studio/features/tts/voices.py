@@ -32,7 +32,7 @@ legal exposure (EU AI Act Art. 50 transparency duties), so:
 CONTRACT-NOTE: this is a SEPARATE gate from :mod:`media_studio.models.consent`,
 which is a per-provider text/frames EGRESS gate. That module is the *idiom*
 mirrored here (typed refusal + default-deny), not the mechanism — see
-``flagship-lip-sync-dub.md:57``. This gate has NO settings opt-out in this
+``docs/plans/v1.5/flagship-lip-sync-dub.md:57``. This gate has NO settings opt-out in this
 lane; ``requireVoiceConsent`` belongs to WU-A4 (settings surface).
 
 Pure logic + filesystem I/O; the duration probe is injectable (defaults to
@@ -116,8 +116,7 @@ class VoiceConsentError(TtsError):
         self.sample_id = sample_id
         subject = f"voice sample {sample_id!r}" if sample_id else "this voice sample"
         super().__init__(
-            f"voice clone refused: no consent attestation on record for {subject} — "
-            f"{CONSENT_ATTESTATION_TEXT}"
+            f"voice clone refused: no consent attestation on record for {subject} — {CONSENT_ATTESTATION_TEXT}"
         )
 
 
