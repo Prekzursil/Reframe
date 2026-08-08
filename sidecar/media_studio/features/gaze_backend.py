@@ -136,7 +136,13 @@ class RealGazeBackend:  # pragma: no cover - requires the heavy native stack + t
 
         fd, silent_path = tempfile.mkstemp(prefix=WORK_PREFIX, suffix=".mp4")
         os.close(fd)
-        writer = cv2.VideoWriter(silent_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        # ``cv2.VideoWriter.fourcc`` (the static method), NOT the legacy module-level
+        # ``cv2.VideoWriter_fourcc`` alias: the alias is GONE in OpenCV 5.x, and this
+        # repo's gate installs opencv-python-headless UNPINNED, so it resolves to 5.x.
+        # Both spellings exist on 4.x (measured on 4.13.0), so this form is correct on
+        # both. Only the types gate can catch this — the class is ``# pragma: no
+        # cover``, so no test executes this line.
+        writer = cv2.VideoWriter(silent_path, cv2.VideoWriter.fourcc(*"mp4v"), fps, (width, height))
 
         frames_total = 0
         frames_corrected = 0
