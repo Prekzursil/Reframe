@@ -19,7 +19,7 @@ import { CaptionStylePicker } from './CaptionStylePicker';
 import { CaptionCustomizer } from './CaptionCustomizer';
 import { activeLine, wordColor } from './CaptionOverlay';
 import { isNoCaption } from '../lib/captionTemplates';
-import { isKaraokeStyle, karaokeActiveColor } from '../lib/captionKaraokePreset';
+import { isKaraokeStyle, karaokeActiveColorFor } from '../lib/captionKaraokePreset';
 import { captionSampleStyle, previewSizeScale, previewVisual } from '../lib/captionOverridePreview';
 import { type CaptionBand, bandBox, boxBand } from '../lib/captionPosition';
 import type { CaptionContentContext } from '../lib/captionDefaults';
@@ -107,7 +107,9 @@ export function CaptionDesigner({
                       color: wordColor(
                         w,
                         visual,
-                        karaoke ? karaokeActiveColor(w.index) : undefined,
+                        karaoke
+                          ? karaokeActiveColorFor(w.index, design.override?.activeColor)
+                          : undefined,
                       ),
                       backgroundColor: w.active ? visual.activeBackground : 'transparent',
                     }}

@@ -168,3 +168,57 @@ def test_build_karaoke_ass_burns_through_real_libass_to_nonzero_frames(tmp_path:
 
     frames = _frame_count(out)
     assert frames > 0, f"karaoke burn produced no decodable frames ({frames})"
+
+
+def test_tuned_karaoke_ass_also_burns_through_real_libass(tmp_path: Path) -> None:
+    r"""A STYLED karaoke document must rasterise too (v1.5 lane-karaoke).
+
+    The unit suite proves a ``CaptionOverride`` now changes the emitted karaoke ASS,
+    and the test above proves the UN-tuned document is valid libass. Neither proves
+    the TUNED document is: an override rewrites ``Fontname``, the ``&H`` colour
+    slots, ``BorderStyle``/``Outline``, ``Alignment``/``MarginV``, and adds a
+    ``HookTitle`` style + event. This burns that document through real
+    ffmpeg/libass so the styling path cannot ship a document libass rejects.
+    """
+    override = {
+        "fontFamily": "Bebas Neue",  # a curated face (in the burn fontconfig set)
+        "sizeScale": 1.4,
+        "textColor": "#101010",
+        "activeColor": "#FF00FF",
+        "box": True,  # BorderStyle=3, the opaque-card branch
+        "uppercase": False,
+        "positionBand": "top",
+    }
+    ass = build_karaoke_ass(
+        _CUES,
+        width=_W,
+        height=_H,
+        override=override,
+        position={"x": 0.1, "y": 0.05, "w": 0.8, "h": 0.2},
+        hook_title="Tuned karaoke hook",
+    )
+    # The tuned document really is tuned (else this test would prove nothing).
+    assert "Bebas Neue" in ass and ",100,100,0,0,3," in ass and "Style: HookTitle," in ass
+    assert ass != build_karaoke_ass(_CUES, width=_W, height=_H)
+
+    clip = tmp_path / "src.mp4"
+    out = tmp_path / "karaoke_tuned.mp4"
+    _make_clip(clip)
+
+    returned = CaptionEngine().render(
+        str(clip),
+        _CUES,
+        str(out),
+        burn=True,
+        width=_W,
+        height=_H,
+        karaoke=True,
+        override=override,
+        position={"x": 0.1, "y": 0.05, "w": 0.8, "h": 0.2},
+        hook_title="Tuned karaoke hook",
+    )
+    assert returned == str(out)
+    assert out.exists() and out.stat().st_size > 0
+
+    frames = _frame_count(out)
+    assert frames > 0, f"tuned karaoke burn produced no decodable frames ({frames})"
