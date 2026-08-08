@@ -43,6 +43,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..hf_auth import fetch_with_anonymous_retry
 from ..util import get_logger
 from .diarize_backend import UnpinnedModelRevisionError, resolve_pinned_hf_source
 from .parakeet_asr import ASSET_NAME, DEFAULT_MODEL
@@ -90,10 +91,25 @@ def _default_snapshot_fetch(  # pragma: no cover - prod seam (huggingface_hub + 
 
     Mirrors ``assets.manager._default_hf_fetch`` but adds ``local_files_only`` so a
     RUNTIME load can be confined to what ``assets.ensure`` already downloaded.
+
+    Shares that function's expired-token fallback (``media_studio.hf_auth``): an ambient
+    HF_TOKEN that has expired makes the Hub answer 401 for a PUBLIC repo, so a stale
+    credential in the environment would otherwise break Parakeet model resolution exactly
+    as it broke asset provisioning. Both call sites were fixed together rather than only
+    the one observed failing.
+
+    ``local_files_only=True`` never reaches the network, so the retry is inert there.
     """
     from huggingface_hub import snapshot_download  # noqa: PLC0415 - lazy seam
 
-    return str(snapshot_download(repo_id=repo_id, revision=revision, local_files_only=local_files_only))
+    return str(
+        fetch_with_anonymous_retry(
+            snapshot_download,
+            repo_id=repo_id,
+            revision=revision,
+            local_files_only=local_files_only,
+        )
+    )
 
 
 def resolve_pinned_checkpoint(

@@ -30,6 +30,7 @@ from media_studio.assets.manager import (
     part_path,
     preflight_disk,
 )
+from media_studio.hf_auth import HfAuthError, hf_token_env_var, is_hf_auth_failure
 from media_studio.jobs import JobCancelled
 
 
@@ -249,6 +250,128 @@ def test_default_hf_fetch_calls_snapshot_download(monkeypatch):
     out = _default_hf_fetch("org/model", "rev1")
     assert out == str(Path("/cache/snap"))
     assert seen == {"repo_id": "org/model", "revision": "rev1"}
+
+
+# --------------------------------------------------------------------------- #
+# AN EXPIRED HF TOKEN IS WORSE THAN NO TOKEN.
+#
+# huggingface_hub reads HF_TOKEN from the ambient environment with no opt-in and attaches
+# it to every request, so an expired token makes the Hub answer 401 for a PUBLIC repo that
+# downloads fine anonymously — and it renders that 401 as the misleading "Repository Not
+# Found". Measured on the shipped app 2026-08-08: google/siglip2-so400m-patch16-384 and
+# teowu/DOVER each returned HTTP 401 with the ambient token and HTTP 200 without it (both
+# gated=False, private=False). Two model downloads failed for a user whose token was
+# exported at User *and* Machine scope.
+# --------------------------------------------------------------------------- #
+def _hub(*results):
+    """A fake huggingface_hub whose snapshot_download replays `results` in order.
+
+    An element that is an exception INSTANCE is raised; anything else is returned. Records
+    whether each call passed `token=False` so the anonymous retry is observable.
+    """
+    calls = []
+
+    def snapshot_download(repo_id=None, revision=None, token="unset"):
+        calls.append({"repo_id": repo_id, "revision": revision, "token": token})
+        outcome = results[len(calls) - 1]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    return SimpleNamespace(snapshot_download=snapshot_download), calls
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, None),
+        ({"HF_TOKEN": "hf_x"}, "HF_TOKEN"),
+        ({"HUGGINGFACE_TOKEN": "hf_x"}, "HUGGINGFACE_TOKEN"),
+        # Whitespace-only is not a credential.
+        ({"HF_TOKEN": "   "}, None),
+        # Preference order: HF_TOKEN wins over the later spellings.
+        ({"HF_TOKEN": "a", "HUGGINGFACE_TOKEN": "b"}, "HF_TOKEN"),
+    ],
+)
+def test_hf_token_env_var_reports_the_NAME_not_the_value(env, expected):
+    """It must return the variable NAME: this string reaches user-facing error text."""
+    assert hf_token_env_var(env) == expected
+
+
+class RepositoryNotFoundError(Exception):
+    """Stand-in for huggingface_hub's class — matching is by NAME, not by import.
+
+    The name must be EXACT. A first draft called it `RepositoryNotFoundError` and the
+    test went red against correct production code: an unfaithful stand-in tests the
+    fixture, not the subject.
+    """
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (RepositoryNotFoundError("Repository Not Found"), True),
+        (RuntimeError("401 Client Error"), True),
+        (RuntimeError("403 Forbidden"), True),
+        (RuntimeError("Connection reset by peer"), False),
+        (OSError("No space left on device"), False),
+    ],
+)
+def test_is_hf_auth_failure_separates_credential_refusal_from_everything_else(exc, expected):
+    assert is_hf_auth_failure(exc) is expected
+
+
+def test_expired_token_falls_back_to_an_ANONYMOUS_download(monkeypatch):
+    """The headline case: public repo + expired ambient token -> retry without it."""
+    monkeypatch.setenv("HF_TOKEN", "hf_expired")
+    hub, calls = _hub(RepositoryNotFoundError("401 ... token is expired"), Path("/cache/snap"))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+
+    assert _default_hf_fetch("google/siglip2-so400m-patch16-384", "rev") == str(Path("/cache/snap"))
+    assert len(calls) == 2, "expected exactly one retry"
+    assert calls[0]["token"] == "unset", "the first attempt must use the ambient credential"
+    assert calls[1]["token"] is False, "the retry must explicitly send NO credential"
+
+
+def test_no_ambient_token_means_no_retry(monkeypatch):
+    """Without a token there is nothing to blame, so the original error must surface."""
+    for var in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_TOKEN", "HF_HUB_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    hub, calls = _hub(RepositoryNotFoundError("401 nope"))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+
+    with pytest.raises(RepositoryNotFoundError):
+        _default_hf_fetch("org/model", None)
+    assert len(calls) == 1, "must not retry when no ambient token could be at fault"
+
+
+def test_a_non_auth_failure_is_not_retried(monkeypatch):
+    """A disk-full or network error is not a credential problem — do not mask it."""
+    monkeypatch.setenv("HF_TOKEN", "hf_valid")
+    hub, calls = _hub(OSError("No space left on device"))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+
+    with pytest.raises(OSError, match="No space left"):
+        _default_hf_fetch("org/model", None)
+    assert len(calls) == 1
+
+
+def test_gated_repo_survives_the_anonymous_retry_and_says_so(monkeypatch):
+    """When the retry ALSO fails the repo is genuinely gated — the message must say that,
+    name the offending variable, and not claim it is merely an auth hiccup."""
+    monkeypatch.setenv("HF_TOKEN", "hf_expired")
+    hub, calls = _hub(
+        RepositoryNotFoundError("401 expired"),
+        RepositoryNotFoundError("401 still no"),
+    )
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+
+    with pytest.raises(HfAuthError) as excinfo:
+        _default_hf_fetch("meta-llama/gated", None)
+    msg = str(excinfo.value)
+    assert "HF_TOKEN" in msg, "must name the variable the user has to change"
+    assert "gated or missing" in msg
+    assert len(calls) == 2
 
 
 # --------------------------------------------------------------------------- #
