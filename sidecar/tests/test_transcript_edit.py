@@ -245,6 +245,17 @@ class TestResolveEdits:
         assert removed == [(1.0, 1.4)]
         assert rejected == []
 
+    def test_explicit_bounds_win_over_the_word_address_on_the_same_edit(self):
+        # Precedence is deterministic: a caller that sends BOTH an address and
+        # explicit ms bounds is nudging a boundary, so the bounds are authoritative.
+        removed, rejected = te.resolve_edits(
+            [{"op": "delete", "wordId": "w0-3", "startMs": 3100, "endMs": 3300}],
+            _transcript(),
+            10.0,
+        )
+        assert removed == [(3.1, 3.3)]
+        assert rejected == []
+
     def test_unknown_word_id_is_dropped_with_a_typed_reason(self):
         removed, rejected = te.resolve_edits([{"op": "delete", "wordId": "w9-9"}], _transcript(), 10.0)
         assert removed == []
