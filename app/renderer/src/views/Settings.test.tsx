@@ -213,6 +213,41 @@ describe('Settings sub-nav', () => {
     expect(container.querySelector('[data-testid="providers"]')).toBeNull();
   });
 
+  // C1 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §5): Settings LANDS SCROLLED, so
+  // the section's own title and its primary CTA start above the fold — measured on
+  // the installed app at ~503 px for MODELS & SYSTEM, which is the DEFAULT tab.
+  //
+  // `.settings__panel` (views/settings.css:12, `overflow: auto`) is the ONE scroll
+  // container, and React reuses that DOM node across sections (it carries no `key`
+  // and the switch only swaps its children) — so the previous section's offset
+  // survives the switch. These assert the OFFSET on the container itself, never a
+  // prop: the panel must read `scrollTop === 0` after any section change.
+  it('returns the panel to the top when the section changes', async () => {
+    await mount('health');
+    const panel = container.querySelector<HTMLElement>('.settings__panel')!;
+    panel.scrollTop = 503;
+    // Detector control: if this read is not 503, jsdom is not retaining the offset
+    // and the assertion below would be vacuous. Fail loud instead.
+    expect(panel.scrollTop).toBe(503);
+    await act(async () => {
+      subtab('Models & System').click();
+    });
+    await flush();
+    expect(panel.scrollTop).toBe(0);
+  });
+
+  it('returns the panel to the top when a section routes programmatically', async () => {
+    await mount('providers');
+    const panel = container.querySelector<HTMLElement>('.settings__panel')!;
+    panel.scrollTop = 412;
+    expect(panel.scrollTop).toBe(412);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="open-models"]')!.click();
+    });
+    await flush();
+    expect(panel.scrollTop).toBe(0);
+  });
+
   it('routes a Models readiness key/consent action to the Providers section', async () => {
     await mount('models');
     expect(container.querySelector('[data-testid="models"]')).not.toBeNull();

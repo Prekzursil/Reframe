@@ -14,7 +14,15 @@
 //   * providers — NEW "Providers & Keys" placeholder (real empty-state; later
 //                 WUs wire components/ProviderKeyRow + AddKeyRow here),
 //   * health    — the existing app-global System Health diagnostic screen.
-import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import React, {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { TabBar, tabId, tabPanelId, type TabDef } from '../components/TabBar';
 import { SystemHealth } from '../features/SystemHealth';
 import { ProvidersKeys } from '../features/ProvidersKeys';
@@ -227,11 +235,46 @@ export function Settings({ initialSection }: SettingsProps): React.ReactElement 
   /* v8 ignore next -- find always resolves for a known active id. */
   const current = SETTINGS_SECTIONS.find((s) => s.id === active) ?? SETTINGS_SECTIONS[0];
 
+  // C1 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §5) — Settings LANDED SCROLLED,
+  // so a section's own title and its primary CTA started above the fold. Measured
+  // on the installed app at ~503 px for MODELS & SYSTEM — the DEFAULT tab, hence
+  // the first screen a new user sees, with the ONLY "Download the Multimodal
+  // model" button off-screen.
+  //
+  // `.settings__panel` (settings.css:12, `overflow: auto`) is this view's ONE
+  // scroll container, and React reuses that DOM node across sections — it carries
+  // no `key`, and a section change only swaps its children — so the offset the
+  // user left on the PREVIOUS section survives into the next one. Measured in
+  // Settings.test.tsx by reading the container's own `scrollTop`.
+  //
+  // A layout effect (not `useEffect`) so the reset lands in the same frame as the
+  // swap and the user never sees the mid-panel paint. `panelRef` is always
+  // attached by the time an effect runs, so assert non-null rather than adding an
+  // unreachable branch (the `btnRefs.current[nextId]!` / `goalRef.current!`
+  // convention already used in TabBar.tsx:201 and DirectorPanel.tsx:473).
+  //
+  // SCOPE — this fixes the offset CARRIED ACROSS a section change, which is the
+  // audit's HEALTH→MODELS entry. UNVERIFIED: whether the audit's other entry
+  // (Library→Settings, a fresh mount, which starts at 0 and is reset again here)
+  // shares this cause; no renderer code scrolls this container (`scrollIntoView`,
+  // `scrollTo` and `window.scroll` have zero hits under renderer/src), so any
+  // residual offset there would have to come from the browser (focus restoration
+  // or scroll anchoring) AFTER this effect, which a mount-time reset would not
+  // catch. Settling experiment: open the packaged app with `Ctrl+Shift+I`, enter
+  // Settings from the Library, and log `.settings__panel.scrollTop` on an
+  // interval across the first second — a value that starts 0 and grows names an
+  // asynchronous scroller this reset cannot see.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    panelRef.current!.scrollTop = 0;
+  }, [active]);
+
   return (
     <div className="settings" aria-label="Settings">
       <TabBar tabs={SUB_TABS} active={active} onSelect={setActive} />
       <div
         className="settings__panel"
+        ref={panelRef}
         role="tabpanel"
         id={tabPanelId(active)}
         aria-labelledby={tabId(active)}
