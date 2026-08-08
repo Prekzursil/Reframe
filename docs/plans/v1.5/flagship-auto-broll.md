@@ -1,5 +1,7 @@
 # Reframe v1.5 Flagship — Local Auto-B-Roll: Implementation Plan + Go/No-Go
 
+> **Status:** DRAFT
+
 **Scope:** ONE locked v1.5 flagship — *Local auto-B-roll* (auto-insert relevant B-roll clips/images UNDER the
 speaker based on the transcript, using LOCAL assets + LOCAL relevance matching, fully offline).
 **Type:** asset RETRIEVAL + compositing (NOT AI dubbing/lip-sync). The TTS/voice-clone licensing minefield does

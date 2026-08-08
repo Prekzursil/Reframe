@@ -1,5 +1,7 @@
 # Quality Charter — Lean Deterministic Gate Model
 
+> **Status:** ACTIVE
+
 This repository runs a **closed set of 6 deterministic, local-first quality gates**
 behind **one** CI status check named `quality`. Every gate is a tool that runs the
 same way locally and in CI, with **pinned versions** and an in-repo config. There is
@@ -16,7 +18,7 @@ gates that exist in the source charter do not apply here and have been dropped.
 
 | # | Gate | Tool(s) (pinned) | What it enforces |
 |---|------|------------------|------------------|
-| 1 | lint-format | ruff 0.15.17 · oxlint 1.69.0 · biome 2.5.0 | Lint + format + security-lint across Python (sidecar) and JS/TS (app). Auto-fixers: `ruff check --fix` + `ruff format`; `oxlint --fix --deny-warnings`; `biome format --write`. |
+| 1 | lint-format | ruff 0.15.17 · oxlint 1.69.0 · biome 2.5.0 · docs_check (stdlib) | Lint + format + security-lint across Python (sidecar) and JS/TS (app), **plus documentation anti-drift**. Auto-fixers: `ruff check --fix` + `ruff format`; `oxlint --fix --deny-warnings`; `biome format --write`. `.quality/docs_check.py` enforces the four anti-drift rules in [`docs/INDEX.md`](docs/INDEX.md#anti-drift) — status line, no dangling `docs/**` citation, every live doc indexed, no gitignored path cited. |
 | 2 | types | tsc (typescript 5.x) · basedpyright 1.39.8 | `tsc --noEmit` for `app/` (main + renderer) and `app/render-cli/`; basedpyright (`typeCheckingMode=standard`) for `sidecar/media_studio`. |
 | 3 | tests-coverage | pytest 9 + pytest-cov (branch, `--cov-fail-under=100`) · vitest 3 (100% thresholds) | Strict 100% line+branch coverage **everywhere** — sidecar (`media_studio`) **and** the renderer (`renderer/src/**`). No hybrid/ratchet floor. Reasoned `# pragma: no cover — <reason>` / `/* v8 ignore — <reason> */` allowed only for genuinely-untestable platform/defensive branches. |
 | 4 | sast | opengrep 1.22.0 (CI) / semgrep 1.166.0 (local) | Static security analysis using the curated in-repo ruleset under `.quality/opengrep/` (NOT `--config auto`). Clean-zero lock: 0 findings, no baseline. |

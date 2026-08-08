@@ -1,20 +1,24 @@
 # v1.5 plan corpus
 
+> **Status:** ACTIVE
+
 Everything in this directory was authored during the v1.5 planning work and lived
 **untracked** on one machine (`~/.reframe-review/`) until this commit. It is landed
 here **verbatim**, so that the corrections in the follow-up passes are reviewable as
 diffs rather than arriving pre-applied.
 
-## R1 — Authority lives in the repo, or it is not authority
+## The anti-drift rule
 
-A document that is not in this tree cannot be reviewed, cannot be diffed, cannot be
-found by the next person, and is one disk failure from gone. If a decision matters,
-it is committed. If it is not committed, it is a draft, no matter how carefully it
-was written.
+R1 ("Authority lives in the repo, or it is not authority") used to be restated in full
+here. It is now tree-wide, stated once with R2-R4 alongside it, and mechanically
+enforced: see [`docs/INDEX.md` § Anti-drift](../../INDEX.md#anti-drift) and
+`.quality/docs_check.py`. Duplicating it here is exactly the failure the rule exists
+to stop.
 
-Corollary: **when a doc and the code disagree, the code wins and the doc is a bug.**
-Every contradiction resolved in this pass was a doc asserting something the code had
-already changed — never the reverse.
+What is worth keeping local to this corpus is the corollary it was landed under:
+**when a doc and the code disagree, the code wins and the doc is a bug.** Every
+contradiction resolved in this pass was a doc asserting something the code had already
+changed — never the reverse.
 
 ## What each file is authoritative for
 

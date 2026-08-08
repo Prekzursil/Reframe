@@ -85,7 +85,7 @@ StartJob = Callable[..., Any]
 ShapeOf = Callable[[str], Hashable]
 #: The pure pre-flight planner seam: ``shape_key -> plan`` (the fake ``ai.planJob``
 #: in tests). Called ONCE per distinct shape; returns a plan dict with
-#: ``{willEgress, cacheHit, costEst, budget, cacheKey}`` (``handlers.py:1696``).
+#: ``{willEgress, cacheHit, costEst, budget, cacheKey}`` (``handlers/composition.py``).
 PlanJob = Callable[[Hashable], dict[str, Any]]
 
 #: visible-skip reason tokens (DESIGN §9.1) — never a silent absence.
@@ -369,7 +369,7 @@ def _run_source(
     When the WU9 consent supplied a ``confirmBudget`` token (the plan's
     ``cacheKey`` for an acknowledged egressing source), it is passed as the
     ``confirm_budget`` keyword so the underlying AI step satisfies
-    ``_enforce_cloud_budget_ack`` (``handlers.py:1672``). With no token (local /
+    ``_enforce_cloud_budget_ack`` (``handlers/composition.py``). With no token (local /
     cache-hit / gate-off / no consent), the runner is called with its plain
     ``(video_id, ctx)`` signature — the WU7 path, unchanged.
     """
@@ -554,7 +554,7 @@ def resume_batch(
 def _has_headroom(plan: dict[str, Any]) -> bool:
     """``True`` iff the plan's budget stays within the free-limit ceiling.
 
-    The pre-flight plan carries a ``budget`` (``handlers.py:1696``) whose
+    The pre-flight plan carries a ``budget`` (``handlers/composition.py``) whose
     ``withinFreeLimits`` flag is ``False`` once the run exceeds any involved
     provider's free cap (``budget.py``). A missing flag is treated as headroom
     present (the planner only sets it ``False`` when it KNOWS the cap is busted).
@@ -579,7 +579,7 @@ def consent_decision(
     acknowledged egress with NO budget headroom is ``skip`` (``SKIP_NO_HEADROOM``);
     an acknowledged egress with headroom RUNS and threads the plan's ``cacheKey``
     as ``confirm_budget`` (satisfying ``_enforce_cloud_budget_ack``,
-    ``handlers.py:1672``, without changing the envelope).
+    ``handlers/composition.py``, without changing the envelope).
     """
     if not plan.get("willEgress"):
         return ("run", None, None)

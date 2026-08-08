@@ -1,6 +1,6 @@
 """Device-ranked LOCAL model recommendation + local-runner advice (WU-models/device).
 
-The pure brain behind two V1 surfaces (docs/V1-GRILL-DECISIONS.md (f)/(h)):
+The pure brain behind two V1 surfaces (docs/_archive/2026-06/V1-GRILL-DECISIONS.md (f)/(h)):
 
   * **Device-ranked model recommendation** ("recommended for your machine: X
     because RAM/VRAM Y"): given the host's probed VRAM / RAM / GPU, pick the best

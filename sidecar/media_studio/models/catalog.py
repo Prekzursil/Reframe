@@ -4,7 +4,7 @@ A hand-curated, **dated** catalog ranking each free/paid LLM by fitness for
 Reframe's five tasks (Moment-Find/Select, Caption/Title/Hook, Translation,
 Vision/OCR, Edit-Plan Gen), with a privacy axis (a ``trains_on_input`` flag plus
 a coarse ``privacy_tier``) so the UI can warn before private data leaves the
-machine. Seeded VERBATIM from ``docs/plans/provider-hub/CATALOG-SEED.md`` (research pass
+machine. Seeded VERBATIM from ``docs/plans/_archive/provider-hub/CATALOG-SEED.md`` (research pass
 ``wf_e4773258``, 2026-06-16).
 
 This is **pure data + pure helpers** — no network, no model, no ``time`` import,
@@ -161,7 +161,7 @@ _MULTI: tuple[Capability, ...] = (Capability.TEXT, Capability.VISION)
 
 
 # --------------------------------------------------------------------------- #
-# CATALOG — seeded VERBATIM from docs/plans/provider-hub/CATALOG-SEED.md
+# CATALOG — seeded VERBATIM from docs/plans/_archive/provider-hub/CATALOG-SEED.md
 # --------------------------------------------------------------------------- #
 
 CATALOG: tuple[CatalogEntry, ...] = (

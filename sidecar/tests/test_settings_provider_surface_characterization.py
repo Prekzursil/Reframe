@@ -6,7 +6,7 @@ provider key / usage RPC handlers (``handlers/providers_ops.py``) plus the setti
 pinned here MUST update this file, which surfaces the behaviour change in review.
 
 It documents (it does NOT endorse) the confirmed v1.3 settings gaps — see
-``docs/reframe-v1.3-settings-gaps.md``:
+``docs/_archive/2026-06/reframe-v1.3-settings-gaps.md``:
 
   * G-1  keys are PLAINTEXT AT REST — the on-disk ``settings.json`` holds the raw key.
           (D2 replaces this with an Electron ``safeStorage`` DPAPI chain.)

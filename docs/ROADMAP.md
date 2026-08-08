@@ -1,9 +1,15 @@
 # Reframe — Roadmap
 
+> **Status:** ACTIVE
 > What the shipping app deliberately does and does not do, and what is deferred.
-> Authoritative scope decisions live in [`V1-GRILL-DECISIONS.md`](V1-GRILL-DECISIONS.md)
+> Authoritative scope decisions live in [`V1-GRILL-DECISIONS.md`](_archive/2026-06/V1-GRILL-DECISIONS.md)
 > (see G-21/G-22 and section (e) "Speaker framing"). This file is the honest,
 > user-facing summary of the capability boundary.
+>
+> Every other doc in this tree is mapped from [`INDEX.md`](INDEX.md); the forward
+> program is [`plans/v1.5/SCOPE.md`](plans/v1.5/SCOPE.md). What the v1.5 audit actually
+> confirmed and refuted is [`validation/v15-audit-ledger.md`](validation/v15-audit-ledger.md)
+> — 225 findings checked, 94 of them refuted; read the tier before acting on an item.
 
 ## Release status
 
@@ -45,7 +51,7 @@ Implementation: `sidecar/media_studio/features/reframe_claudeshorts.py`
 Automatic **multi-speaker switching** — detecting *who is talking now* across
 multiple people and **cutting between them** (e.g. an interview where the crop
 follows the conversation back and forth) — was the V1 slice's deferred item (per
-[`V1-GRILL-DECISIONS.md`](V1-GRILL-DECISIONS.md) G-21) and **shipped in v1.1.0**
+[`V1-GRILL-DECISIONS.md`](_archive/2026-06/V1-GRILL-DECISIONS.md) G-21) and **shipped in v1.1.0**
 as the **HYBRID multi-speaker reframe engine** (`reframe_multispeaker`). It fuses
 active-speaker diarization with face tracking and a shot-change policy to decide a
 per-segment **cut / 50-50 split / 3-up composite** vertical layout. It is an

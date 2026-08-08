@@ -1,5 +1,7 @@
 # Reframe — "Reconcile, Don't Rebuild" Gap Dossier
 
+> **Status:** ARCHIVED 2026-08-08
+
 **Scope:** four read-only audits (WS-C readiness, WS-D keys, WS-D usage, WS-E Director) folded into one build-ready plan.
 **Governing principle:** almost everything asked for already exists and ships. The work is to RECONCILE new capability requirements onto existing wire types / RPCs / components — NOT to rebuild. The single true build-out is the WS-D *storage* side (OS secret store) plus three small key-management RPCs and the Director current-video wiring.
 

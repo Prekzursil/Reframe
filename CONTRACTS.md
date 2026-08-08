@@ -1,5 +1,7 @@
 # media-studio — FROZEN BUILD CONTRACT (read first, do not change)
 
+> **Status:** SUPERSEDED BY docs/rpc-contract-v2.md (2026-08-08)
+
 This is the single source of truth every build agent shares. It defines the directory layout, the IPC
 protocol, the data schemas, and the engine interfaces. **Build to this contract exactly.** If something is
 underspecified, choose the simplest thing consistent with it and note the assumption in a `# CONTRACT-NOTE:`
@@ -18,7 +20,7 @@ no multi-tenancy). Electron UI + Python compute sidecar. Features:
 manage a library of videos; transcribe; subtitles (generate/edit/translate, SRT/ASS/VTT); subtitle-track
 management (rename/relabel/add/remove/burn-in/soft-mux/strip); ffmpeg conversion; and the star — a
 prompt-driven **short-maker** (select → boundary-snap → cut → reframe → captions → export). Lean plan:
-`docs/PLAN-P1.md`.
+`docs/_archive/2026-06/PLAN-P1.md`.
 
 ## 1. Directory layout (write ONLY in your assigned dir)
 ```

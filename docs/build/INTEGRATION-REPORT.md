@@ -1,5 +1,7 @@
 # media-studio — INTEGRATION REPORT (app ↔ sidecar contract drift)
 
+> **Status:** SUPERSEDED BY docs/_archive/2026-06/P2-INTEGRATION-REPORT.md (2026-08-08)
+
 Scope: cross-check **every** RPC method the Electron renderer/main calls against
 the sidecar's actual `protocol.METHODS` registry and the §3 data schemas. The #1
 integration risk is **app↔sidecar contract drift** — a renamed method or a

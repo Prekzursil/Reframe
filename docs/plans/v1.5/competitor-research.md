@@ -1,5 +1,7 @@
 # Reframe v1.5 — competitor feature research (redo of the bugged workflow agent)
 
+> **Status:** DRAFT
+
 Base: ~16 web searches (WebSearch/Exa/Tavily) across OpusClip, Submagic, Descript, CapCut, Kapwing, Veed, Vizard, Klap, Riverside, HeyGen/Captions + local-first rivals (AetherCut, Diffusion Studio, Bitcut, Reelify). Effort grades calibrated vs what media_studio already ships.
 
 ## Top 5 to steal for v1.5

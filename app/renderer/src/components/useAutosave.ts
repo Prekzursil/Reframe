@@ -1,6 +1,6 @@
 // useAutosave.ts — debounced, gated workspace autosave (UX/QoL WU-11).
 //
-// The workspace persists edits with `project.save` (handlers.py:276-287,
+// The workspace persists edits with `project.save` (handlers/composition.py,
 // caller-driven — the sidecar never auto-persists). WU-11 wires the renderer to
 // fire that save automatically a short, COALESCED moment after the user stops
 // editing, gated on the WU-0 `autosave.enabled` setting:

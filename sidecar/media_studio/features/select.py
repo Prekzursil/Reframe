@@ -52,7 +52,7 @@ MIN_CLIP_SEC: float = 20.0
 MAX_CLIP_SEC: float = 60.0
 
 # N1 (V1.1 SEL1) — duration policy relax. The verified OpusClip teardown
-# (docs/research/OPUSCLIP-PARITY-IMPROVEMENT-NOTE) shows real clips run 16-160 s,
+# (never committed; its finding is inlined here) shows real clips run 16-160 s,
 # NOT 60-capped, with the same top moment shipped at BOTH a long and a punchy-short
 # length. ``durationMode`` picks the hard envelope: "standard" keeps the frozen
 # 20-60 s window; "midform" relaxes it to 16-180 s. The envelope table is the

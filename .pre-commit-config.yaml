@@ -59,6 +59,20 @@ repos:
         additional_dependencies: ["@biomejs/biome@2.5.0"]
         files: '^app/(main|renderer/src|render-cli/src)/.*\.(ts|tsx|js|jsx|css|json)$'
 
+  # --- Gate 1: documentation anti-drift (stdlib python, no network) ---
+  # Deliberately a `repo: local` hook inside gate:1, NOT a new `gate-<slug>` step in
+  # quality.yml: QUALITY-CHARTER.md rule 2 declares the 6-gate list closed, and
+  # `.quality/charter_check.py:79-81` requires every `gate-<slug>` step to map to a
+  # charter row — a 7th step would breach the rule AND fail that check.
+  - repo: local
+    hooks:
+      - id: docs-check
+        name: docs-check (SSOT anti-drift R1-R4)
+        entry: python .quality/docs_check.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # --- Gate 5: secrets (gitleaks 8.30.1) ---
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1

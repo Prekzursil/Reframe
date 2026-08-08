@@ -1,5 +1,7 @@
 # Reframe Model Guide — best-for, cost, limits, privacy
 
+> **Status:** ACTIVE
+
 **Dated guidance · as of 2026-06-16.** These are *our picks*, not objective
 benchmarks. Free tiers churn constantly — re-verify each provider's current
 limits and training policy at signup. You bring your own API key for every

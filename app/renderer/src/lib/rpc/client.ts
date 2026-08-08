@@ -716,7 +716,7 @@ export const client = {
    * WU-evaluate). `plan`/`apply`/`undo` are JOB-based (resolve `{jobId}`; the
    * typed result arrives on `job.done`); `previewCost`/`evaluate` are SYNCHRONOUS
    * (resolve their payload directly). Field names are FROZEN, identical to the
-   * sidecar `director_*` handlers (`handlers.py:1778+`).
+   * sidecar `director_*` handlers (`handlers/composition.py`).
    */
   director: {
     /** `director.plan {videoId, goal}` -> {jobId}; job.done = {planId, editPlan, preview}. */

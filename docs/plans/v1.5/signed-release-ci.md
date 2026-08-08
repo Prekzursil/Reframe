@@ -1,5 +1,7 @@
 # Reframe — Signed Release CI Pipeline Design
 
+> **Status:** DRAFT
+
 **Repo:** `Prekzursil/Reframe` · **Verified against:** `origin/main @ 7502e3a` (fetched 2026-07-12)
 **Scope:** READ-ONLY design. No repo files changed. The owner decides local-vs-CI builds.
 **Drivers:** Issue **#283** (MERGED — offline Ed25519 auto-update auth) · Issue **#285** (OPEN — private key stays OFFLINE-only) · the #283 review's "add GitHub build-provenance once/if the build moves into Actions".

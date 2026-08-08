@@ -1,8 +1,10 @@
 # WU R1 — Hybrid Multi-Speaker Reframe Engine (the flagship)
 
-> **Status:** PURE LAYER + SEAM SHIPPED (100% line+branch). GPU/real-frame tier
-> is an **OPERATOR-BLOCKER** (see §7) — the engine is registered + selectable but
-> NOT marked "validated" until it clears the R0 eval-harness gate on real frames.
+> **Status:** SHIPPED v1.1.0 (2026-06-29)
+> The pure layer and the seam shipped at 100% line+branch. The GPU/real-frame tier
+> was carried here as an **OPERATOR-BLOCKER** (see §7); it is no longer one —
+> `sidecar/media_studio/assets/manifest.py:444-475` registers LightASD against a
+> sha256 pin and `docs/V1.1-BUILD-NOTES.md:119-132` records the passed R0 gate.
 > **Branch:** `feat/v1.1.0` · **Design:** `docs/V1.1-FEATURES.md` §GATE-2 (R1) +
 > the R1 design-gate required-changes; basic-memory
 > `reframe-multi-speaker-engine-approach-decided-hybrid` /

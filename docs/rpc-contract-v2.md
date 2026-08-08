@@ -1,5 +1,7 @@
 # RPC Contract v2 — schema-first, generated (v1.5 KEYSTONE)
 
+> **Status:** ACTIVE
+
 Status: **MERGED** (#282, `68036fdc`) — proof-of-concept scope (5 methods), not yet
 load-bearing for dispatch. It *is* load-bearing for the coverage gate:
 `app/vitest.config.ts` excludes `renderer/src/lib/rpc/generated/**`.

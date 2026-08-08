@@ -1,5 +1,7 @@
 # Reframe v1.5 — Program Plan (locked from owner decisions 2026-07-11)
 
+> **Status:** ACTIVE
+
 Synthesized from: 15-agent audit + competitor redo + live visual audit. Owner grill decisions below are FINAL scope.
 
 ## Owner decisions (final)

@@ -1,5 +1,7 @@
 # Reframe v1.5 Zero-Defect — Grill Decision Queue
 
+> **Status:** ACTIVE
+
 Modes: **expansion + red-team + prioritization**. Started 2026-07-26.
 Method: `grill-me-extensive`. One question per turn, each with a recommendation.
 This file is the audit trail — every answer gets appended as it lands.
@@ -15,10 +17,10 @@ This file is the audit trail — every answer gets appended as it lands.
 | Visual failures | 8 `toHaveScreenshot` diffs: Library, Make Shorts, Director, Edit, Settings x2, Spend-cap, Workspace preview |
 | `e2e-sidecar` failure | 3 tests; `provider pool exhausted (text): local -> no GGUF model configured`. **Pre-existing, cause-verified identical at baseline `97600e86`** |
 | `macos-13` leg | Retired runner, queued forever. Dropped on `fix/v1.5-zero-defect` |
-| Branch classification (deterministic, `.audit/classify_branches.py`) | **BR-AHEAD = 0 on all 11 branches**; 2592 MAIN-AHEAD; 333 DIVERGED |
+| Branch classification (deterministic, `.audit/classify_branches.py` <!-- ssot-allow: names the throwaway probe that produced the number -->) | **BR-AHEAD = 0 on all 11 branches**; 2592 MAIN-AHEAD; 333 DIVERGED |
 | Falsification of "main wins everywhere" | **REFUTED IN PART** — 264 paths hold real branch-only lines; 3 declare identifiers main lacks |
 | `feat/v1.5-bundle-fonts` | **100% already in main** — font work is landed |
-| 12 lens reports in `.audit/v15/` | **UNFILLED SKELETONS** — agents died pre-measurement. MUST NOT BE CITED |
+| 12 lens reports in `.audit/v15/` <!-- ssot-allow: names scratch that MUST NOT be cited as authority --> | **UNFILLED SKELETONS** — agents died pre-measurement. MUST NOT BE CITED |
 | Installed app | Reframe **1.4.1**, `D:\Program Files\Reframe`, uninstaller `/allusers` (needs elevation) |
 | Data root | `MEDIA_STUDIO_CONFIG_DIR=D:\Reframe\data` (owner chose **CLEAN WIPE**) |
 

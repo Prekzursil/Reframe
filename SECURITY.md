@@ -1,5 +1,7 @@
 # Security Policy
 
+> **Status:** ACTIVE
+
 ## Supported Versions
 
 Security fixes are applied to the `main` branch.

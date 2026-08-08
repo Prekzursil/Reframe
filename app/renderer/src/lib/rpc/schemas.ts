@@ -195,7 +195,7 @@ export interface IndexHit {
 /**
  * WU-A6 semantic-index status (`index.status` → this shape). An unbuilt video
  * reports `{built:false, segmentCount:0, model:null, builtAt:null, dim:0}`
- * (`handlers.py:1178`).
+ * (`handlers/composition.py`).
  */
 export interface IndexStatus {
   built: boolean;
@@ -1181,7 +1181,7 @@ export interface Project {
 // ---- Director (prompt-driven editing) wire shapes ------------------------
 //
 // Field names are FROZEN, identical to the sidecar `director_*` handler payloads
-// (`handlers.py:1778+`) + the `edit_plan.py` canonical serializer + the
+// (`handlers/composition.py`) + the `edit_plan.py` canonical serializer + the
 // `director_eval.evaluate` result. Spans are `[startMs, endMs]` integer pairs or
 // null (whole-timeline ops); kind/status enumerate the frozen vocabularies.
 
@@ -1234,7 +1234,7 @@ export interface DirectorEditPlan {
   inverse: DirectorOp[];
 }
 
-/** `director.plan` job.done payload (`handlers.py:1816`). */
+/** `director.plan` job.done payload (`handlers/composition.py`). */
 export interface DirectorPlanResult {
   planId: string;
   editPlan: DirectorEditPlan;
@@ -1242,7 +1242,7 @@ export interface DirectorPlanResult {
   preview: string;
 }
 
-/** `director.apply` / `director.undo` job.done payload (`handlers.py:1940`). */
+/** `director.apply` / `director.undo` job.done payload (`handlers/composition.py`). */
 export interface DirectorApplyResult {
   planId: string;
   /** Per-op status rows after the apply walk (serialized ops). */
@@ -1252,7 +1252,7 @@ export interface DirectorApplyResult {
   projectCopyPath: string;
 }
 
-/** One per-data-type cost/route row (`director.previewCost`, `handlers.py:1846`). */
+/** One per-data-type cost/route row (`director.previewCost`, `handlers/composition.py`). */
 /**
  * The resolved route for one planned AI call — the EXACT wire shape the sidecar
  * emits from `ai_job.py:164-171` (`_route_json`), reached verbatim by
@@ -1286,7 +1286,7 @@ export interface DirectorCostRow {
   cacheKey: string;
 }
 
-/** `director.previewCost` payload (`handlers.py:1856`). */
+/** `director.previewCost` payload (`handlers/composition.py`). */
 export interface DirectorPreview {
   perFunction: DirectorCostRow[];
 }
@@ -1299,7 +1299,7 @@ export interface DirectorMetrics {
   ocrCoverage: number;
 }
 
-/** `director.evaluate` payload (`director_eval.evaluate`, `handlers.py:2062`). */
+/** `director.evaluate` payload (`director_eval.evaluate`, `handlers/composition.py`). */
 export interface DirectorEval {
   /** Single [0,1] summary derived ONLY from the objective deltas. */
   score: number;

@@ -1,5 +1,7 @@
 # Reframe — Technical Best-Practice Dossier
 
+> **Status:** DRAFT
+
 Build-ready synthesis of four research streams (FFmpeg bundling · llama-server lifecycle · Electron secret handling · on-demand model-download UX). Each section states the concrete recommendation Reframe should adopt, then the licensing/robustness gotchas that must not be forgotten. Dated 2026-07-04.
 
 ---

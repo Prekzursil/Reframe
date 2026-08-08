@@ -1,5 +1,7 @@
 # Golden-Journey Findings — "shorts don't generate" root-caused + fixed (2026-07-07)
 
+> **Status:** ACTIVE
+
 A held-out end-to-end acceptance test (`app/e2e/golden-journey.spec.ts`) was added as the single
 external **done-signal** for Make Shorts, then run against the real Electron GUI + live Python
 sidecar. It red-repro'd "shorts don't generate" and, iterating red→fix→red, uncovered **four**

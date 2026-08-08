@@ -1,5 +1,7 @@
 # Reframe Design System (v1.4)
 
+> **Status:** ACTIVE
+
 Codified from the v1.4 token system (`app/renderer/src/styles/tokens.css`) — guarded by
 `tokens.conformance.test.ts` (WCAG-AA on every plane, cool-cast, monotonic ladder, one-accent discipline,
 no undefined tokens, no raw font-weight/size). Mood: **cool blue-gray dark-editorial** + a single **signal-amber**

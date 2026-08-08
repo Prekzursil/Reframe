@@ -1,5 +1,7 @@
 # Reframe v1.5 Flagship — Transcript-Native Editing: Implementation Plan + Go/No-Go
 
+> **Status:** DRAFT
+
 **Status:** RESEARCH + DESIGN + PLAN (no repo modified).
 **Grounding:** read from `origin/main` @ `7502e3a` (#288 Caption pilot) — local checkout is stale, every seam below was read via `git show origin/main:<path>`.
 **Licenses:** independently re-verified on HuggingFace 2026-07-12 (not taken from the design on faith).

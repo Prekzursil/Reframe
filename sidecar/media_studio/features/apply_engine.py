@@ -3,7 +3,7 @@
 
 This is the reversibility layer the in-place handlers lack. Today every handler
 mutates ``project.data`` in place and ``project.save()``s with **no undo**
-(``subtitles_edit`` walks tracks then saves, ``handlers.py:234/743``).
+(``subtitles_edit`` walks tracks then saves, ``handlers/composition.py``).
 :func:`apply_plan` instead:
 
   * applies ``plan.ops`` **in order** over a project COPY (never the source);

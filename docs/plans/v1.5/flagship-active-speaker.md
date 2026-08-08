@@ -1,5 +1,7 @@
 # Reframe Flagship — Active-Speaker + Multi-Speaker Reframing: Spec + Implementation Plan + Go/No-Go
 
+> **Status:** DRAFT
+
 **Author:** workflow subagent (research + design + plan; **no repo files modified**)
 **Date:** 2026-07-11
 **Repo:** `Prekzursil/Reframe` · checkout `C:/Users/Prekzursil/Documents/GitHub/Reframe`

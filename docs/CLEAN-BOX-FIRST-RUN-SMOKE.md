@@ -1,5 +1,7 @@
 # Clean-box first-run smoke (packaged Windows app)
 
+> **Status:** ACTIVE
+
 The CI e2e suite proves the app works end-to-end **on the dev build** (`golden-journey`
 passes on Windows + Linux; `preview.spec` everywhere) and proves the **packaged `.exe`**
 launches (`packaged.spec`: `isPackaged`, asar path, the FirstRunSetup gate renders, the

@@ -3,7 +3,7 @@
 The Director's reversibility contract is: **apply writes to a project COPY, never
 the source manifest** (DESIGN §5; today every handler mutates ``project.data`` in
 place and ``project.save()``s — there is no copy, no undo, e.g. ``subtitles_edit``
-``handlers.py:746-761``). :func:`copy_project` produces that COPY:
+``handlers/composition.py``). :func:`copy_project` produces that COPY:
 
   * it **deep-copies** ``project.data`` so mutating the COPY can never reach the
     source (the immutability contract the in-place handlers lack);

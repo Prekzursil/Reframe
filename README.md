@@ -1,5 +1,10 @@
 # Reframe — Media Studio
 
+> **Status:** ACTIVE
+> Documentation map: [`docs/INDEX.md`](docs/INDEX.md) — a doc not reachable from there
+> does not exist. Release history: [`CHANGELOG.md`](CHANGELOG.md). Gate composition:
+> [`QUALITY-CHARTER.md`](QUALITY-CHARTER.md).
+
 **A local-first desktop video studio that turns long videos into shorts.** Manage your
 library, then do AI things to your footage: make vertical 9:16 shorts (the star),
 prompt-driven edits, batch repurposing, transcribe, generate / edit / translate subtitles,

@@ -1,5 +1,7 @@
 # Reframe Trust-Wave Plan — Auto-Updater Authenticity + Electron 39→43
 
+> **Status:** DRAFT
+
 **Date:** 2026-07-11
 **Repo:** `Prekzursil/Reframe` (local `C:/Users/Prekzursil/Documents/GitHub/Reframe`)
 **Audit P0:** the electron-updater feed is UNSIGNED — integrity (SHA512 in `latest.yml`) but NOT authenticity. A party controlling the feed serves a matching malicious `(latest.yml, installer)` pair → silent RCE via auto-update.

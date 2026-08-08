@@ -2,7 +2,7 @@
 
 The store is the only genuinely new substrate in the UX/QoL bundle (jobs.py is
 100% in-memory today). These tests pin the falsifiable acceptance from
-docs/plans/ux-qol/PLAN.md WU-5:
+docs/plans/_archive/ux-qol/PLAN.md WU-5:
 
 * ``write(r)`` then ``load_all()`` round-trips field-for-field;
 * a second ``write`` with the same ``jobId`` UPDATES (one file, not a duplicate);
