@@ -182,7 +182,9 @@ describe('editedText', () => {
   });
 
   it('trims stray whitespace from each token', () => {
-    const spaced = [{ wordId: 'a', segmentIndex: 0, wordIndex: 0, text: '  hi  ', start: 0, end: 1 }];
+    const spaced = [
+      { wordId: 'a', segmentIndex: 0, wordIndex: 0, text: '  hi  ', start: 0, end: 1 },
+    ];
     expect(editedText(spaced, new Set())).toBe('hi');
   });
 });
