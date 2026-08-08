@@ -1215,6 +1215,13 @@ function bootstrap(): void {
     );
   }
 
+  // WU-I1: pull the NSIS component page's choice into the data root BEFORE the
+  // first-run classification reads it. Packaged-only (dev has no installer) and
+  // lock-holder-only (never write into a tree a live copy owns). The RETURN value —
+  // "an installer choice was adopted on THIS launch" — is what suppresses the picker
+  // below; see shouldAwaitProfileChoice for why mere existence would be wrong.
+  const installerAdopted = app.isPackaged && lock.ok ? adoptInstallerProfile() : false;
+
   // T5: in a packaged build whose runtime env was never built, stage 2 must
   // run BEFORE the sidecar starts (the embeddable python cannot serve
   // `-m media_studio` until bootstrap.py rewrites its ._pth). Dev builds (and
@@ -1226,13 +1233,6 @@ function bootstrap(): void {
   // fingerprint (unreadable resources) or `null` persisted (legacy pre-feature
   // marker) is treated as in-sync — the latter is BACKFILLED below so future bumps
   // are caught without a surprise re-provision now.
-  // WU-I1: pull the NSIS component page's choice into the data root BEFORE the
-  // first-run classification reads it. Packaged-only (dev has no installer) and
-  // lock-holder-only (never write into a tree a live copy owns). The RETURN value —
-  // "an installer choice was adopted on THIS launch" — is what suppresses the picker
-  // below; see shouldAwaitProfileChoice for why mere existence would be wrong.
-  const installerAdopted = app.isPackaged && lock.ok ? adoptInstallerProfile() : false;
-
   const markerExists = existsSync(firstRunCompletePath());
   const shippedFp = shippedRequirementsFingerprint();
   const persistedFp = markerExists ? readPersistedRequirementsFingerprint() : null;
