@@ -72,12 +72,19 @@ FAIL-CLOSED attestation gate every entry point must pass through first; see
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import os
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol
 
 import numpy as np
 
+from .. import protocol
+from ..jobs import JobContext
+from ..models.likeness import SCOPE_GAZE, LikenessError, resolve_attestation
+from ..protocol import ErrorCode, RpcContext, RpcError
 from ..util import get_logger
 
 log = get_logger("media_studio.features.gaze")
@@ -115,6 +122,10 @@ IRIS_DARK_QUANTILE: float = 0.25
 #: Fraction of the warp radius that moves RIGIDLY before the falloff starts, so
 #: the iris translates as a disc instead of smearing.
 WARP_CORE_FRACTION: float = 0.6
+#: Warp radius as a fraction of the eye-crop side. Kept BELOW 0.5 so the falloff
+#: reaches zero before the crop edge — otherwise the eyelid boundary would move,
+#: which is the single most visible way a warped eye reads as broken.
+WARP_RADIUS_FRACTION: float = 0.42
 
 
 class GazeError(RuntimeError):
@@ -382,6 +393,317 @@ def build_warp_maps(
     return map_x, map_y
 
 
+# --------------------------------------------------------------------------- #
+# The per-face plan (pure decisions; the backend only APPLIES them)
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class EyeEdit:
+    """One eye's correction: where to warp, from where, and by how much."""
+
+    box: EyeBox
+    iris: tuple[float, float]
+    shift: tuple[float, float]
+    radius: float
+
+
+@dataclass(frozen=True)
+class FacePlan:
+    """What to do with one detected face.
+
+    Either ``skipped`` names why the face was left PRISTINE (and ``eyes`` is
+    empty), or ``skipped`` is ``None`` and ``eyes`` carries one
+    :class:`EyeEdit` per usable eye. An eye whose crop fell outside the frame is
+    simply absent — a partially-cropped face still gets its visible eye corrected.
+    """
+
+    skipped: SkipReason | None
+    eyes: tuple[EyeEdit, ...]
+
+
+@dataclass(frozen=True)
+class GazeReport:
+    """What a completed run actually did — the honest tally, including skips."""
+
+    frames_total: int
+    frames_corrected: int
+    eyes_corrected: int
+    skipped: dict[str, int] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        """The camelCase JSON shape the RPC result carries."""
+        return {
+            "framesTotal": self.frames_total,
+            "framesCorrected": self.frames_corrected,
+            "eyesCorrected": self.eyes_corrected,
+            "skipped": dict(self.skipped),
+        }
+
+
+#: Reads the pixels of one eye crop. Injected so planning stays pure/testable.
+PatchReader = Callable[[EyeBox], Any]
+#: The planner the backend calls per detected face.
+Planner = Callable[..., FacePlan]
+
+
+def warp_radius(box: EyeBox) -> float:
+    """The warp radius for an eye crop — always > 0, always inside the crop."""
+    return max(float(max(box.w, box.h)) * WARP_RADIUS_FRACTION, 1.0)
+
+
+def plan_face(
+    pair: EyePair,
+    *,
+    frame_w: int,
+    frame_h: int,
+    strength: float,
+    read_patch: PatchReader,
+    scale: float = DEFAULT_EYE_BOX_SCALE,
+) -> FacePlan:
+    """Decide this face's correction, or why it is being left alone.
+
+    The gate runs FIRST, so a skipped face never has its pixels read at all —
+    cheaper, and it means a low-confidence detection cannot influence anything.
+    The displacement cap is derived from THIS face's interocular distance, so the
+    limit is scale-invariant across close-ups and wide shots.
+    """
+    reason = skip_reason(pair)
+    if reason is not None:
+        return FacePlan(skipped=reason, eyes=())
+    interocular = interocular_px(pair)
+    cap = max_shift_px(interocular)
+    edits: list[EyeEdit] = []
+    for center in (pair.right, pair.left):
+        box = eye_box(center, interocular, frame_w=frame_w, frame_h=frame_h, scale=scale)
+        if box is None:
+            continue
+        iris = locate_iris(read_patch(box))
+        edits.append(
+            EyeEdit(
+                box=box,
+                iris=iris,
+                shift=iris_shift(iris, box, strength=strength, max_shift=cap),
+                radius=warp_radius(box),
+            )
+        )
+    return FacePlan(skipped=None, eyes=tuple(edits))
+
+
+# --------------------------------------------------------------------------- #
+# Heavy-ML seam (Protocol — NEVER imported at module load)
+# --------------------------------------------------------------------------- #
+class GazeBackend(Protocol):
+    """The heavy slice: the YuNet model plus video decode/encode.
+
+    Control is INVERTED on purpose: the backend does not decide anything. It
+    detects faces, hands each one to the pure ``plan`` callable along with a
+    reader for that eye's pixels, and applies whatever comes back. Every
+    threshold, cap and skip decision therefore lives in the covered pure half.
+    """
+
+    def process(
+        self,
+        in_path: str,
+        out_path: str,
+        *,
+        plan: Planner,
+        on_progress: Callable[[float, str], None],
+        should_cancel: Callable[[], bool],
+    ) -> GazeReport:
+        """Warp ``in_path`` to ``out_path``; return the tally."""
+        ...  # pragma: no cover - Protocol stub
+
+    def release(self) -> None:
+        """Free the model/decoder held by this run."""
+        ...  # pragma: no cover - Protocol stub
+
+
+BackendFactory = Callable[[dict[str, Any]], GazeBackend]
+AvailableFn = Callable[[dict[str, Any]], bool]
+ModelResolver = Callable[[dict[str, Any]], str | None]
+Resolver = Callable[[str], str | None]
+
+
+def _default_backend_factory(
+    settings: dict[str, Any],
+) -> GazeBackend:  # pragma: no cover - prod seam (imports the heavy native stack)
+    """Build the real backend (LAZY import inside the function)."""
+    from .gaze_backend import RealGazeBackend  # noqa: PLC0415 - heavy seam
+
+    return RealGazeBackend(settings)
+
+
+def _default_model_resolver(
+    settings: dict[str, Any],
+) -> str | None:  # pragma: no cover - prod seam (asset-manager path resolution)
+    """Resolve the ALREADY-vendored, sha256-pinned YuNet ONNX (MIT)."""
+    from .reframe_claudeshorts import resolve_yunet_model_path  # noqa: PLC0415 - heavy seam
+
+    return resolve_yunet_model_path(settings)
+
+
+#: Message for an EXPLICIT request that cannot run. NAMES the missing asset.
+UNAVAILABLE_MESSAGE = (
+    "gaze correction requires the YuNet face-detection model "
+    "(yunet-face-detection) — run first-run setup (or assets.ensure) to install "
+    "the sha256-pinned ONNX"
+)
+
+
+def gaze_available(
+    settings: dict[str, Any] | None = None,
+    *,
+    resolve_model: ModelResolver = _default_model_resolver,
+) -> bool:
+    """True when the YuNet model this feature reuses is installed.
+
+    Mirrors ``stabilize.vidstab_available``: any probe failure (no asset manager,
+    a raising resolver) counts as "not available" and NEVER propagates, so a
+    caller can surface a typed notice instead of crashing.
+    """
+    try:
+        return bool(resolve_model(dict(settings) if settings else {}))
+    except Exception:  # noqa: BLE001 - any probe failure == not available
+        log.warning("gaze availability probe failed to resolve the YuNet model")
+        return False
+
+
+# --------------------------------------------------------------------------- #
+# the RPC service (gaze.run -> a job, gaze.probe -> availability)
+# --------------------------------------------------------------------------- #
+class GazeService:
+    """Owns ``gaze.run`` and ``gaze.probe``.
+
+    ``gaze.run`` is gated: :func:`media_studio.models.likeness.resolve_attestation`
+    runs BEFORE the media is resolved and before any backend is constructed, so an
+    unattested request cannot cause a single frame to be decoded.
+    """
+
+    def __init__(
+        self,
+        *,
+        resolver: Resolver,
+        out_dir: str | os.PathLike,
+        settings_provider: Callable[[], dict[str, Any]] | None = None,
+        backend_factory: BackendFactory = _default_backend_factory,
+        available: AvailableFn = gaze_available,
+    ) -> None:
+        self._resolver = resolver
+        self._out_dir = Path(out_dir)
+        self._settings_provider = settings_provider or (lambda: {})
+        self._backend_factory = backend_factory
+        self._available = available
+
+    def _settings(self) -> dict[str, Any]:
+        try:
+            return dict(self._settings_provider() or {})
+        except Exception:  # noqa: BLE001 - settings must never break an op
+            return {}
+
+    def _resolve(self, params: dict[str, Any]) -> str:
+        """Resolve a ``{videoId}`` or ``{path}`` request to a concrete media path."""
+        path = params.get("path")
+        if isinstance(path, str) and path:
+            return path
+        video_id = params.get("videoId")
+        if not isinstance(video_id, str) or not video_id:
+            raise RpcError("videoId (str) is required", ErrorCode.INVALID_PARAMS)
+        resolved = self._resolver(video_id)
+        if not resolved:
+            raise RpcError(f"unknown video: {video_id}", ErrorCode.INVALID_PARAMS)
+        return str(resolved)
+
+    def probe(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``gaze.probe()`` -> ``{available}`` (direct-return, offline)."""
+        return {"available": bool(self._available(self._settings()))}
+
+    def run(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``gaze.run({videoId|path, strength, likeness*})`` -> ``{jobId}``.
+
+        ``job.done.result`` is
+        ``{path, strength, report, likeness: {subject, scope, source}}`` — the
+        ``likeness`` block is the AUDIT TRAIL recording which attestation
+        authorised altering this person's face.
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        settings = self._settings()
+        # ETHICS GATE — first, before the media is resolved and before any model
+        # is touched. FAIL CLOSED (models/likeness.py).
+        try:
+            attestation = resolve_attestation(settings, params, scope=SCOPE_GAZE)
+        except LikenessError as exc:
+            raise RpcError(str(exc), ErrorCode.INVALID_PARAMS) from exc
+        in_path = self._resolve(params)
+        strength = clamp_strength(params.get("strength", DEFAULT_STRENGTH))
+        out_dir = self._out_dir
+        factory = self._backend_factory
+        available = self._available
+
+        def job_body(job_ctx: JobContext) -> dict[str, Any]:
+            job_ctx.raise_if_cancelled()
+            if not available(settings):
+                raise GazeUnavailableError(UNAVAILABLE_MESSAGE)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = str(out_dir / f"{Path(in_path).stem or 'clip'}.gaze.mp4")
+
+            def plan(pair: EyePair, *, frame_w: int, frame_h: int, read_patch: PatchReader) -> FacePlan:
+                return plan_face(
+                    pair, frame_w=frame_w, frame_h=frame_h, strength=strength, read_patch=read_patch
+                )
+
+            backend = factory(settings)
+            try:
+                report = backend.process(
+                    in_path,
+                    out_path,
+                    plan=plan,
+                    on_progress=lambda pct, msg: job_ctx.progress(pct, msg),
+                    should_cancel=lambda: job_ctx.cancelled,
+                )
+            finally:
+                # Always release: a raising backend must not leak a resident model.
+                backend.release()
+            return {
+                "path": out_path,
+                "strength": strength,
+                "report": report.as_dict(),
+                "likeness": {
+                    "subject": attestation.subject,
+                    "scope": attestation.scope,
+                    "source": attestation.source,
+                },
+            }
+
+        return {"jobId": ctx.jobs.start(job_body).id}
+
+
+def register(
+    *,
+    resolver: Resolver,
+    out_dir: str | os.PathLike,
+    settings_provider: Callable[[], dict[str, Any]] | None = None,
+    backend_factory: BackendFactory = _default_backend_factory,
+    available: AvailableFn = gaze_available,
+    register_fn: Callable[[str, Any], None] = protocol.register,
+) -> GazeService:
+    """Create the service and register ``gaze.run`` + ``gaze.probe``.
+
+    Mirrors ``stabilize.register``. ``register_fn`` defaults to
+    :func:`protocol.register` (duplicates fail loudly); tests inject a fake.
+    """
+    service = GazeService(
+        resolver=resolver,
+        out_dir=out_dir,
+        settings_provider=settings_provider,
+        backend_factory=backend_factory,
+        available=available,
+    )
+    register_fn("gaze.run", service.run)
+    register_fn("gaze.probe", service.probe)
+    log.info("registered gaze.run + gaze.probe")
+    return service
+
+
 __all__ = [
     "DEFAULT_EYE_BOX_SCALE",
     "DEFAULT_STRENGTH",
@@ -392,20 +714,31 @@ __all__ = [
     "MAX_SHIFT_FRACTION",
     "MIN_FACE_SCORE",
     "MIN_INTEROCULAR_PX",
+    "UNAVAILABLE_MESSAGE",
     "WARP_CORE_FRACTION",
+    "WARP_RADIUS_FRACTION",
     "YUNET_ROW_WIDTH",
     "EyeBox",
+    "EyeEdit",
     "EyePair",
+    "FacePlan",
+    "GazeBackend",
     "GazeError",
+    "GazeReport",
+    "GazeService",
     "GazeUnavailableError",
     "SkipReason",
     "build_warp_maps",
     "clamp_strength",
     "eye_box",
+    "gaze_available",
     "interocular_px",
     "iris_shift",
     "locate_iris",
     "max_shift_px",
+    "plan_face",
+    "register",
     "skip_reason",
+    "warp_radius",
     "yunet_eye_pairs",
 ]
