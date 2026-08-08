@@ -280,6 +280,35 @@ describe('<Stabilize />', () => {
     expect(container.querySelector('[data-section="result"]')).toBeNull();
   });
 
+  it('settles cleanly on a job.done that carries no result field at all', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await clickRun();
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-s' }); // no `result` key
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-section="result"]')).toBeNull();
+    expect(container.querySelector('[data-section="notice"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('falls back to the global window.api bridge when no api prop is given', async () => {
+    const fake = makeFakeApi();
+    (globalThis as { api?: unknown }).api = fake.api;
+    try {
+      await act(async () => {
+        root.render(<Stabilize videoId="v1" />);
+      });
+      await clickRun();
+      expect(fake.calls.find((c) => c.method === 'stabilize.run')?.params).toEqual({
+        videoId: 'v1',
+      });
+    } finally {
+      delete (globalThis as { api?: unknown }).api;
+    }
+  });
+
   it('ignores a job.done that carries no usable outcome', async () => {
     const fake = makeFakeApi();
     await mount(fake.api);
