@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from media_studio import ffmpeg
 from media_studio.features import video_tracks as vt
+from media_studio.features.nle_export import seconds_to_frames
 from media_studio.protocol import RpcContext, RpcError
 
 SETTINGS = {"ffmpegPath": "C:/tools/ffmpeg/ffmpeg.exe"}
@@ -74,6 +75,21 @@ class TestResolveFps:
     def test_snap_quantizes_and_clamps(self):
         assert vt.snap(1.017, 30) == pytest.approx(31 / 30)
         assert vt.snap(-5.0, 30) == 0.0
+
+    def test_half_frame_ties_are_pinned_for_the_renderer_mirror(self):
+        """The exact tie values the client mirror must reproduce.
+
+        ``app/renderer/src/lib/videoTimelineOps.ts`` re-implements this quantizer
+        so a drag preview can be clamped locally. Python's ``round`` is
+        half-to-EVEN while JS ``Math.round`` is half-UP, so on a tie the two
+        disagree by ONE FRAME and the preview jumps when the sidecar commits its
+        own value. Measured: ``2.5 / 30 * 30 == 2.5`` exactly in both runtimes, so
+        the tie is reachable, not theoretical. These two assertions and the
+        matching pair in ``videoTimelineOps.test.ts`` pin BOTH sides to the same
+        numbers — change one and the other goes red.
+        """
+        assert seconds_to_frames(2.5 / 30, 30) == 2  # NOT 3 (half-up would give 3)
+        assert seconds_to_frames(3.5 / 30, 30) == 4
 
 
 # --------------------------------------------------------------------------- #
