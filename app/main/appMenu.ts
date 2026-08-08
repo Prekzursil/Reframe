@@ -23,8 +23,15 @@
 // preset names) instead of deleting a working feature to silence a wording bug.
 //
 // Accelerators are deliberately NOT set on role items: an explicit `accelerator`
-// overrides the role's per-platform default, and Windows' native redo is Ctrl+Y,
-// not Ctrl+Shift+Z. Only the labels are ours; the bindings stay the platform's.
+// OVERRIDES the role's per-platform default. Only the labels are ours; the
+// bindings stay the platform's. MEASURED, not assumed — Electron 43.3.0 on
+// win32, reading `Menu.getApplicationMenu()` back after installing this exact
+// template:
+//     role=undo      -> CommandOrControl+Z
+//     role=redo      -> Control+Y        <-- NOT Ctrl+Shift+Z
+//     role=cut/copy/paste/selectAll -> CommandOrControl+X/C/V/A
+// So pinning `CmdOrCtrl+Shift+Z` on redo (an early draft did) would have traded
+// the C2 wording defect for a broken Windows redo binding.
 //
 // This is a PURE template builder — it touches no Electron runtime object — so it
 // is unit-testable without a live app (appMenu.test.ts). `main.ts` feeds it
