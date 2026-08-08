@@ -264,14 +264,15 @@ test('Workspace tabs mount, including SemanticSearch', async () => {
   await expect(win.locator('section.semantic-search-panel h2')).toHaveText('Search the transcript');
   await expect(win.locator('input[aria-label="Search the transcript"]')).toBeVisible();
 
-  // "Timeline export" (tab id `nle`) lives in the Deliver cluster, which is
-  // collapsed by default — so REVEAL it first or Playwright's actionability gate
-  // cannot click a `display:none` button. Use `.tabbar__export` (Workspace
-  // handleExport → `setAdvancedOpen(true)`), which is IDEMPOTENT; the
-  // `.tabbar__advanced-toggle` would flip the cluster shut on a second caller.
+  // "NLE export" (tab id `nle`, relabelled from "Timeline export" by the v1.5
+  // timeline-naming lane) lives in the Deliver cluster, which is collapsed by
+  // default — so REVEAL it first or Playwright's actionability gate cannot click
+  // a `display:none` button. Use `.tabbar__export` (Workspace handleExport →
+  // `setAdvancedOpen(true)`), which is IDEMPOTENT; the `.tabbar__advanced-toggle`
+  // would flip the cluster shut on a second caller.
   await win.locator('.tabbar__export').click();
-  // Switch to Timeline export and assert the NleExport panel ITSELF mounted.
-  await win.locator('button', { hasText: 'Timeline export' }).first().click();
+  // Switch to NLE export and assert the NleExport panel ITSELF mounted.
+  await win.locator('button', { hasText: 'NLE export' }).first().click();
   await expect(win.locator('section.nle-panel')).toBeVisible();
   await expect(
     win.locator('section.nle-panel button', { hasText: 'Export timeline' }),
@@ -286,7 +287,7 @@ test('export action yields a real file (NLE timeline export, real button)', asyn
   // Reveal the Deliver cluster first (see the note above): this test must not
   // depend on a sibling test having left it open.
   await win.locator('.tabbar__export').click();
-  await win.locator('button', { hasText: 'Timeline export' }).first().click();
+  await win.locator('button', { hasText: 'NLE export' }).first().click();
   await expect(win.locator('section.nle-panel')).toBeVisible();
   await win.locator('section.nle-panel button', { hasText: 'Export timeline' }).click();
 

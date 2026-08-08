@@ -59,9 +59,21 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'tracks', label: 'Tracks' },
   { id: 'convert', label: 'Convert' },
   { id: 'shortmaker', label: 'Short-maker' },
-  { id: 'timeline', label: 'Timeline' },
+  // v1.5 timeline-naming: LABEL only — the `timeline` id is load-bearing
+  // (deep-links, taskHub, useJob's FEATURE_LABELS) and does NOT move. This tab
+  // mounts features/Timeline.tsx, a waveform + draggable subtitle-CUE lane
+  // (Timeline.tsx:1-8); the sidecar behind it registers exactly one method,
+  // `timeline.peaks` (timeline.py:324). Calling it "Timeline" promised a video
+  // timeline that does not exist here, so the label names its real subject. A
+  // genuine video-timeline tab is free to claim the bare name later.
+  { id: 'timeline', label: 'Subtitle timeline' },
   { id: 'dub', label: 'Dub' },
-  { id: 'nle', label: 'Timeline export' },
+  // v1.5 timeline-naming: LABEL only, same reason. This is the CMX3600 EDL /
+  // CSV handoff for Premiere & Resolve (NleExport.tsx:1-9), built by laying
+  // approved short-maker clips back-to-back — it does not export a timeline the
+  // user authored. Deliver.tsx already calls the same panel "Pro handoff"; this
+  // was the outlier. "NLE export" matches the module, the RPC and the CSS class.
+  { id: 'nle', label: 'NLE export' },
   { id: 'recipes', label: 'Recipes' },
   { id: 'assets', label: 'Assets' },
 ];

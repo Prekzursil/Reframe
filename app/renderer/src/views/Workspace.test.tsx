@@ -657,7 +657,7 @@ describe('Workspace tab clusters (WU-3a2)', () => {
 });
 
 // design-review P1: EXPORT is the terminal goal but the "Deliver" cluster
-// (Convert/Timeline export/Recipes/Assets/Tracks) is collapsed behind Advanced.
+// (Convert/NLE export/Recipes/Assets/Tracks) is collapsed behind Advanced.
 // A persistent Export action surfaces it from the default view WITHOUT un-hiding
 // the whole cluster by default — clicking it jumps to the primary export panel
 // (Convert) and reveals the Deliver cluster so its siblings are reachable.
