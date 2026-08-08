@@ -206,6 +206,32 @@ class TestSampleConsentGate:
 
 
 # --------------------------------------------------------------------------- #
+# the face-box gate — the LICENCE-critical one (never S3FD)
+# --------------------------------------------------------------------------- #
+class TestFaceBoxGate:
+    def test_no_probe_refuses_rather_than_letting_the_engine_detect(self):
+        # Returning [] here would let a MuseTalk-class backend fall back to its
+        # bundled S3FD weight, which ships under NO licence — silently
+        # reintroducing exactly what #287 removed. So it must refuse.
+        with pytest.raises(ls.LipSyncError, match="S3FD"):
+            ls.require_face_boxes(None, "v.mp4")
+
+    def test_an_empty_detection_refuses_instead_of_relipping_nothing(self):
+        with pytest.raises(ls.LipSyncError, match="no faces"):
+            ls.require_face_boxes(lambda p: [], "v.mp4")
+
+    def test_boxes_are_coerced_to_ints_and_passed_through(self):
+        seen: list[str] = []
+
+        def probe(path):
+            seen.append(path)
+            return [(1.7, 2.2, 3.9, 4.0), [5, 6, 7, 8]]
+
+        assert ls.require_face_boxes(probe, "v.mp4") == [[1, 2, 3, 4], [5, 6, 7, 8]]
+        assert seen == ["v.mp4"]
+
+
+# --------------------------------------------------------------------------- #
 # pure builders
 # --------------------------------------------------------------------------- #
 class TestJobPayload:
@@ -535,6 +561,8 @@ def make_service(tmp_path, **overrides):
         "backend_factory": lambda engine_id, settings: FakeBackend(),
         "settings_provider": lambda: {ls.SETTING_ENABLED: True},
         "run": passthrough_run,
+        # Stands in for the vendored MIT YuNet output the real wiring supplies.
+        "face_boxes_probe": lambda path: [(10, 20, 30, 40)],
         "out_dir": str(tmp_path / "lipsync"),
     }
     kwargs.update(overrides)
@@ -693,6 +721,41 @@ class TestHandler:
         backend = ls.default_backend_factory("latentsync", {})
         assert isinstance(backend, ls.SubprocessLipSyncBackend)
 
+    def test_an_unwired_face_box_probe_fails_the_JOB_not_the_request(self, tmp_path, registry, collected):
+        # It is unfinished WIRING, not bad user input, so it must surface as a
+        # job failure naming S3FD — never as a silent run with no boxes.
+        service = make_service(tmp_path, face_boxes_probe=None)
+        ctx = RpcContext(emit_notification=lambda o: None, jobs=registry)
+        job_id = service.lipsync_start(ok_params(), ctx)["jobId"]
+        registry.join(timeout=10)
+        done = [payload for kind, payload in collected if kind == "done"]
+        assert len(done) == 1
+        _job_id, payload = done[0]
+        # A failure emits job.done WITH an error payload (never a hang, never a
+        # payload that looks like success).
+        assert "path" not in payload
+        assert payload["error"]["type"] == "LipSyncError"
+        assert "S3FD" in payload["error"]["message"]
+        assert "S3FD" in str(registry.get(job_id).error)
+
+    def test_the_boxes_reach_the_backend_payload(self, tmp_path, registry):
+        seen: list[dict[str, Any]] = []
+
+        class Recording(FakeBackend):
+            def relip(self, payload):
+                seen.append(payload)
+                return super().relip(payload)
+
+        service = make_service(
+            tmp_path,
+            backend_factory=lambda engine_id, settings: Recording(),
+            face_boxes_probe=lambda path: [(1, 2, 3, 4), (5, 6, 7, 8)],
+        )
+        ctx = RpcContext(emit_notification=lambda o: None, jobs=registry)
+        service.lipsync_start(ok_params(), ctx)
+        registry.join(timeout=10)
+        assert seen and seen[0]["boxes"] == [[1, 2, 3, 4], [5, 6, 7, 8]]
+
 
 # --------------------------------------------------------------------------- #
 # the package register() wiring
@@ -755,6 +818,7 @@ class TestRegisterWiring:
             voice_store=VoiceStore(tmp_path / "voices", duration_probe=lambda p: 1.0),
             settings_provider=lambda: {ls.SETTING_ENABLED: True},
             lipsync_backend_factory=lambda engine_id, settings: FakeBackend(),
+            lipsync_face_boxes_probe=lambda path: [(1, 2, 3, 4)],
             out_dir=str(tmp_path / "out"),
             register_fn=lambda name, handler: registered.__setitem__(name, handler),
         )
