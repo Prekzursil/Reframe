@@ -185,9 +185,20 @@ class TestAddressing:
         src = {"segments": [None, {"words": None}, {"words": ["not-a-dict", w("ok", 1.0, 2.0)]}]}
         out = te.address_transcript(src)
         assert out is not None
-        assert [seg.get("words") for seg in out["segments"]][2] == [
-            {"text": "ok", "start": 1.0, "end": 2.0, "wordId": "w2-1", "segmentIndex": 2, "wordIndex": 1}
+        # a non-mapping segment passes through VERBATIM; a non-mapping word too;
+        # only the real word is stamped, and its index reflects its true slot.
+        assert out["segments"] == [
+            None,
+            {"words": None},
+            {
+                "words": [
+                    "not-a-dict",
+                    {"text": "ok", "start": 1.0, "end": 2.0, "wordId": "w2-1", "segmentIndex": 2, "wordIndex": 1},
+                ]
+            },
         ]
+        # ...and the flat view skips both junk entries
+        assert [x["wordId"] for x in te.addressed_words(src)] == ["w2-1"]
 
     def test_addressed_words_flattens_across_segments(self):
         src = {
@@ -636,6 +647,76 @@ class TestApplyEdit:
         result = self._apply(svc, registry, {"videoId": "v1", "edits": [{"op": "delete", "wordId": "w0-3"}]})
         assert result["editId"] == "tedit-1"
         assert len(data["transcriptEdits"]) == 1
+
+
+    def test_apply_by_path_only_records_nothing_but_still_cuts(self, tmp_path, settings, registry):
+        # No videoId -> no project to write a ledger entry to. The cut STILL
+        # happens (silence removal needs no transcript) and editId is None, so a
+        # caller cannot later "undo" an edit that was never recorded.
+        run = RecordingRun()
+        svc, data = _service(tmp_path=tmp_path, settings=settings, run=run)
+        result = self._apply(
+            svc, registry, {"path": "/lib/in.mp4", "removeSilence": True, "padSec": 0.0}
+        )
+        assert result["path"].endswith(".edited.mp4")
+        assert result["removedSec"] > 0.0
+        assert result["editId"] is None
+        assert len(run.calls) == 1
+        assert te.EDITS_KEY not in data
+
+
+class TestDefaultSeams:
+    def test_default_run_is_ffmpeg_run(self):
+        from media_studio import ffmpeg as _ffmpeg
+
+        assert te._default_run() is _ffmpeg.run
+
+    def test_default_duration_is_ffprobe_duration(self):
+        from media_studio import ffmpeg as _ffmpeg
+
+        assert te._default_duration() is _ffmpeg.ffprobe_duration
+
+    def test_apply_uses_the_default_duration_seam_when_none(self, tmp_path, settings, registry):
+        # duration=None -> the REAL ffprobe seam runs on a bogus path, throws,
+        # _probe_total returns 0.0 -> pass-through (the fake run is never hit).
+        run = RecordingRun()
+        data = {"id": "p1", "transcript": _transcript()}
+        svc = te.TranscriptEditService(
+            resolver=lambda vid: "/no/such/clip.mp4",
+            out_dir=tmp_path / "edited",
+            load_project=lambda vid: data,
+            save_project=lambda vid, payload: None,
+            settings_provider=lambda: settings,
+            run=run,
+            duration=None,  # exercises _default_duration() + the probe-failure branch
+            detect_run=detect_with(SILENCE_STDERR),
+        )
+        out = svc.applyEdit({"videoId": "v1", "edits": [{"op": "delete", "wordId": "w0-3"}]}, _ctx(registry))
+        job = registry.get(out["jobId"])
+        job.wait(timeout=5)
+        assert job.result["path"] == "/no/such/clip.mp4"
+        assert job.result["removedSec"] == 0.0
+        assert run.calls == []
+
+    def test_apply_uses_the_default_run_seam_when_none(self, tmp_path, settings, registry):
+        # run=None -> _default_run() resolves the real ffmpeg.run; the duration
+        # probe returns 0.0 first, so the pass-through short-circuits BEFORE any
+        # subprocess is spawned (the seam is resolved, never invoked).
+        data = {"id": "p1", "transcript": _transcript()}
+        svc = te.TranscriptEditService(
+            resolver=lambda vid: "/lib/in.mp4",
+            out_dir=tmp_path / "edited",
+            load_project=lambda vid: data,
+            save_project=lambda vid, payload: None,
+            settings_provider=lambda: settings,
+            run=None,  # exercises _default_run()
+            duration=lambda p, s=None: 0.0,
+            detect_run=detect_with(""),
+        )
+        out = svc.applyEdit({"videoId": "v1", "edits": []}, _ctx(registry))
+        job = registry.get(out["jobId"])
+        job.wait(timeout=5)
+        assert job.result["path"] == "/lib/in.mp4"
 
 
 class TestUndoEdit:
