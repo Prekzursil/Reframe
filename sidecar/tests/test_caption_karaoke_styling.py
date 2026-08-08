@@ -24,6 +24,7 @@ import pytest
 from media_studio import ffmpeg
 from media_studio.features import caption
 from media_studio.features import caption_karaoke as ck
+from media_studio.features import caption_override as co
 from media_studio.features import caption_polish as cp
 from media_studio.features import hook_card as hc
 from media_studio.features.caption import CaptionEngine
@@ -172,6 +173,15 @@ class TestResolveKaraokeStyle:
         assert ck.resolve_karaoke_style({"fontFamily": "Oswald"}).font_name == "Oswald"
         # an off-allowlist face would not exist in the burn fontconfig set -> preset.
         assert ck.resolve_karaoke_style({"fontFamily": "Comic Sans MS"}).font_name == ck.KARAOKE_FONT
+
+    def test_base_font_stays_off_the_allowlist(self):
+        # LOAD-BEARING for resolve_karaoke_style: it detects "fontFamily untouched"
+        # by comparing apply_override's result to caption_override.BASE_FONT. That
+        # sentinel is only unambiguous while BASE_FONT is NOT a font a user can pick.
+        # Adding "Arial" to CURATED_CAPTION_FONTS would make an explicit Arial pick
+        # silently render as Anton — so this fails the day that happens, pointing here.
+        assert co.BASE_FONT not in co.CURATED_CAPTION_FONTS
+        assert ck.KARAOKE_FONT in co.CURATED_CAPTION_FONTS
 
     def test_size_scale_is_clamped(self):
         assert ck.resolve_karaoke_style({"sizeScale": 1.5}).size_scale == 1.5
