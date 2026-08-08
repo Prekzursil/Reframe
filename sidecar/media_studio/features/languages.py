@@ -47,9 +47,6 @@ from __future__ import annotations
 #: through to ``whisper_model.transcribe(language=...)``).
 AUTO_DETECT: str = "auto"
 
-#: Every spelling of "auto-detect" a persisted setting or an older build may carry.
-_AUTO_ALIASES: frozenset[str] = frozenset({"auto", "auto-detect", "autodetect", "detect"})
-
 # --------------------------------------------------------------------------- #
 # ASR engines
 # --------------------------------------------------------------------------- #
@@ -454,13 +451,15 @@ def resolve_source_language(raw: object) -> str | None:
     reads the detected code off ``info.language``). Auto-detect therefore needed
     EXPOSING, not implementing.
 
-    Every auto spelling collapses to ``None``. An unrecognized-but-non-blank code
-    passes through unchanged: rewriting it would hide a bad request behind a
-    silent auto-detect, and it also lets a model bump support a code before this
-    table lists it.
+    Blank and every spelling of the sentinel collapse to ``None`` — note that
+    :func:`normalize_code` already folds ``"auto-detect"`` and ``"Auto"`` onto
+    ``"auto"``, so one comparison covers them and no alias table is needed. An
+    unrecognized-but-non-blank code passes through unchanged: rewriting it would
+    hide a bad request behind a silent auto-detect, and it also lets a model bump
+    support a code before this table lists it.
     """
     code = normalize_code(raw)
-    if not code or code in _AUTO_ALIASES:
+    if not code or code == AUTO_DETECT:
         return None
     return code
 
