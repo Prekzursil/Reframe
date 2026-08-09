@@ -69,7 +69,11 @@ _COMPONENT_ASSETS: dict[str, str] = {
     "emotion": "hsemotion-onnx",
     "ocr": "rapidocr-onnx",
     "parakeet": "parakeet-tdt-0.6b-v3",
-    "ctc_aligner": "ctc-forced-aligner-mms",
+    # WU-T0/B1: the packaged default is the Apache-2.0 wav2vec2 aligner, so THAT
+    # is the download to propose. Pointing this at the CC-BY-NC MMS asset would
+    # install a model `ctc_align._resolve_model_id` refuses unless the user has
+    # turned on `allowNonCommercialAligner`.
+    "ctc_aligner": "ctc-forced-aligner-wav2vec2",
     "pyannote": "pyannote-speaker-diarization-31",
     "smolvlm2": "smolvlm2-2.2b",
 }

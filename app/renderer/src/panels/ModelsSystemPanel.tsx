@@ -315,8 +315,12 @@ interface SettingsShape {
   // M3 POINT: non-default local-runner base URLs the detector probes.
   ollamaBaseUrl?: string;
   lmStudioBaseUrl?: string;
-  // M5 RO alignment opt-in: the word-timing CTC model id ('' = MMS default).
+  // M5 RO alignment opt-in: the word-timing CTC model id ('' = the packaged
+  // Apache-2.0 default; WU-T0/B1 flipped that away from the CC-BY-NC MMS model).
   ctcModelId?: string;
+  // WU-T0/B1: unlocks the CC-BY-NC-4.0 MMS aligner. The sidecar refuses that
+  // model unless this is truthy, so the picker must read the SAME key.
+  allowNonCommercialAligner?: boolean;
 }
 
 export function ModelsSystemPanel({
@@ -902,12 +906,24 @@ export function ModelsSystemPanel({
         />
       )}
 
-      {/* M5: RO alignment opt-in — exposes gigant/romanian-wav2vec2 (and the MIT
-          English wav2vec2) over the MMS-300m default via settings.ctcModelId. */}
+      {/* M5 + WU-T0/B1: the alignment-model picker over settings.ctcModelId,
+          plus the allowNonCommercialAligner opt-in that unlocks (never selects)
+          the CC-BY-NC MMS model. Both keys are read by the sidecar's single
+          `ctc_align._resolve_model_id`.
+          This comment used to claim "so the UI cannot drift from the gate" — it
+          could, and it did: sharing an input says nothing about agreeing on the
+          output, and the drift shipped green because each suite only checked its
+          own side. The actual guard is the cross-file
+          test_the_settings_dropdown_label_matches_the_model_that_will_actually_run
+          in sidecar/tests/test_ctc_align.py. */}
       {analyzed && (
         <AlignModelSelect
           value={settings.ctcModelId ?? ''}
           onChange={(ctcModelId) => void patchSettings({ ctcModelId })}
+          allowNonCommercial={settings.allowNonCommercialAligner ?? false}
+          onAllowNonCommercialChange={(allowNonCommercialAligner) =>
+            void patchSettings({ allowNonCommercialAligner })
+          }
         />
       )}
 

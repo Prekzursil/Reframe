@@ -24,11 +24,13 @@
 }
 
 /* The sub-blocks below the model list — bundled programs, optional downloads,
- * bundled fonts — each sit behind a hairline so the license categories read as
- * distinct groups under one heading. (`.tpn__binaries` was added without a rule
- * and rendered as an unseparated block; folded in here so all three match.) */
+ * word-timing aligners, bundled fonts — each sit behind a hairline so the license
+ * categories read as distinct groups under one heading. (`.tpn__binaries` was
+ * added without a rule and rendered as an unseparated block; folded in here so
+ * all of them match.) */
 .tpn__binaries,
 .tpn__optin,
+.tpn__aligners,
 .tpn__fonts {
   display: flex;
   flex-direction: column;
@@ -125,6 +127,29 @@
   background: var(--status-warn-soft);
   color: var(--status-warn);
   white-space: normal;
+}
+
+/* Word-timing aligners are a CHOICE, not a fixed fact about the build: the same
+ * list holds permissive models and one non-commercial one. A single neutral chip
+ * class keeps the model/font/binary chip counts independent, and the chip TEXT
+ * carries the licence id plus "commercial OK" / "non-commercial only", so the
+ * meaning never rides on hue. The non-commercial member is additionally tinted
+ * by its data attribute rather than by a second class. */
+.tpn__chip--aligner {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  white-space: normal;
+}
+
+.tpn__chip--aligner[data-commercial="no"] {
+  background: var(--status-error-soft);
+  color: var(--status-error);
+}
+
+.tpn__gate {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
 }
 
 .tpn__role {

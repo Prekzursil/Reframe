@@ -1018,6 +1018,38 @@ describe('<ModelsSystemPanel />', () => {
     });
   });
 
+  // WU-T0/B1: the CC-BY-NC MMS aligner is unlocked by its own persisted setting.
+  it('persists allowNonCommercialAligner from the aligner opt-in toggle', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    const toggle = container.querySelector(
+      'input[data-action="allow-non-commercial-aligner"]',
+    ) as HTMLInputElement;
+    expect(toggle).not.toBeNull();
+    // Default-off is the licence-safe state, and it is what the sidecar assumes.
+    expect(toggle.checked).toBe(false);
+    await act(async () => {
+      toggle.click();
+      await Promise.resolve();
+    });
+    expect(c.calls.find((x) => x.method === 'settings.set')?.args[0]).toEqual({
+      allowNonCommercialAligner: true,
+    });
+  });
+
+  it('reflects a persisted allowNonCommercialAligner opt-in', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, allowNonCommercialAligner: true },
+    });
+    await mount(c);
+    await analyze();
+    const toggle = container.querySelector(
+      'input[data-action="allow-non-commercial-aligner"]',
+    ) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+  });
+
   it('mergeOverviewRoutingPolicy folds the policy in (and passes null through) (M5)', () => {
     expect(mergeOverviewRoutingPolicy(null, { global: 'cloud', overrides: {} })).toBeNull();
     const ov = modelsOverview({ routingPolicy: { global: 'local', overrides: {} } });

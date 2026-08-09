@@ -1,31 +1,62 @@
-// AlignModelSelect.tsx — M5 word-timing alignment model opt-in (incl. Romanian).
+// AlignModelSelect.tsx — word-timing alignment model picker + the WU-T0 licence gate.
 //
-// The CTC forced-aligner default is MMS-300M (CC-BY-NC, 158 languages); this
-// control exposes the opt-in overrides the sidecar `ctc_align._resolve_model_id`
-// understands via `settings['ctcModelId']`: the Romanian wav2vec2
-// (gigant/romanian-wav2vec2) for RO-language alignment, plus the MIT English
-// wav2vec2 for a commercial build. Selecting the default persists an EMPTY
-// `ctcModelId` so the package default applies (no silent override).
+// The picker exposes the overrides the sidecar `ctc_align._resolve_model_id`
+// understands via `settings['ctcModelId']`. Since WU-T0/B1 the PACKAGED default
+// is the Apache-2.0 English wav2vec2 (`facebook/wav2vec2-large-960h-lv60-self`),
+// NOT the CC-BY-NC-4.0 MMS model it used to be, and MMS is reachable only when
+// `settings['allowNonCommercialAligner']` is on AND MMS is explicitly selected.
+// Selecting the default persists an EMPTY `ctcModelId` so the package default
+// applies (no silent override).
+//
+// The MMS row is rendered but DISABLED until the opt-in is on: the sidecar
+// silently downgrades an MMS request when the flag is off, and an option whose
+// effect the backend discards is worse than one that visibly cannot be chosen.
+//
+// The opt-in is an UNLOCK, never a selection. It briefly was both — the sidecar
+// fell back to MMS whenever the flag was on and nothing was chosen — so this
+// dropdown showed "Apache-2.0, commercial-safe" as the selected row over a
+// CC-BY-NC job. The sidecar fallback is gone; the label is now true in every
+// state, and `ctc_align`'s cross-file test joins these two halves so neither can
+// drift again (a comment saying they cannot drift is not a gate).
+// Licence facts: HF Hub metadata probe, 2026-08-09 (the previous "MIT" label on
+// the wav2vec2 row was wrong — the Hub reports apache-2.0).
 import React from 'react';
 
 /** One selectable alignment model. `id` is the `ctcModelId` value ('' = default). */
 export interface AlignModelChoice {
   id: string;
   label: string;
+  /** True when picking it requires the non-commercial opt-in (CC-BY-NC weights). */
+  nonCommercial?: boolean;
 }
 
-/** The default MMS pick + the M5 opt-ins (aliases the sidecar resolves). */
+/** The `ctcModelId` alias for the CC-BY-NC MMS aligner (sidecar `_MODEL_ALIASES`). */
+export const MMS_ALIGNER_ALIAS = 'mms-300m';
+/** Its full HF id — a hand-typed `ctcModelId` can carry this instead of the alias. */
+export const MMS_ALIGNER_MODEL_ID = 'MahmoudAshraf/mms-300m-1130-forced-aligner';
+
+/** The permissive default + the opt-ins (aliases the sidecar resolves). */
 export const ALIGN_MODEL_CHOICES: AlignModelChoice[] = [
-  { id: '', label: 'MMS-300M — default (158 languages)' },
-  { id: 'romanian-wav2vec2', label: 'Romanian — gigant/romanian-wav2vec2' },
-  { id: 'wav2vec2-960h-lv60', label: 'English wav2vec2 (MIT, commercial)' },
+  { id: '', label: 'English wav2vec2 — default (Apache-2.0, commercial-safe)' },
+  { id: 'romanian-wav2vec2', label: 'Romanian — gigant/romanian-wav2vec2 (Apache-2.0)' },
+  { id: 'wav2vec2-960h-lv60', label: 'English wav2vec2 lv60-self (Apache-2.0)' },
+  { id: 'hubert-large', label: 'English HuBERT-Large (Apache-2.0)' },
+  {
+    id: MMS_ALIGNER_ALIAS,
+    label: 'MMS-300M — 158 languages (CC-BY-NC-4.0, non-commercial)',
+    nonCommercial: true,
+  },
 ];
 
 export interface AlignModelSelectProps {
-  /** Current persisted `ctcModelId` ('' / undefined = the MMS default). */
+  /** Current persisted `ctcModelId` ('' / undefined = the packaged default). */
   value: string;
   /** Persist the chosen alignment model id (the parent writes `ctcModelId`). */
   onChange: (ctcModelId: string) => void;
+  /** Current persisted `allowNonCommercialAligner`. */
+  allowNonCommercial: boolean;
+  /** Persist the opt-in (the parent writes `allowNonCommercialAligner`). */
+  onAllowNonCommercialChange: (allow: boolean) => void;
   /** Disable the control while a write is in flight. */
   busy?: boolean;
 }
@@ -33,11 +64,24 @@ export interface AlignModelSelectProps {
 export function AlignModelSelect({
   value,
   onChange,
+  allowNonCommercial,
+  onAllowNonCommercialChange,
   busy,
 }: AlignModelSelectProps): React.ReactElement {
   // An unknown persisted id (e.g. a hand-typed full HF id) shows as the default
   // row visually but is NOT lost — we only overwrite it when the user picks a row.
   const known = ALIGN_MODEL_CHOICES.some((c) => c.id === value);
+  const disabled = Boolean(busy);
+  const mmsSelected = value === MMS_ALIGNER_ALIAS || value === MMS_ALIGNER_MODEL_ID;
+
+  function handleAllowChange(next: boolean): void {
+    onAllowNonCommercialChange(next);
+    // Withdrawing the opt-in must also drop an MMS selection: the sidecar would
+    // refuse it and silently align with the permissive default, so leaving it
+    // persisted would leave the UI stating something untrue about the next job.
+    if (!next && mmsSelected) onChange('');
+  }
+
   return (
     <div className="align-model" data-section="align-model">
       <label htmlFor="align-model-select">Word-timing alignment model</label>
@@ -45,11 +89,15 @@ export function AlignModelSelect({
         id="align-model-select"
         data-action="align-model"
         value={known ? value : ''}
-        disabled={Boolean(busy)}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
       >
         {ALIGN_MODEL_CHOICES.map((choice) => (
-          <option key={choice.id || 'default'} value={choice.id}>
+          <option
+            key={choice.id || 'default'}
+            value={choice.id}
+            disabled={Boolean(choice.nonCommercial) && !allowNonCommercial}
+          >
             {choice.label}
           </option>
         ))}
@@ -59,6 +107,21 @@ export function AlignModelSelect({
           custom: {value}
         </span>
       )}
+      <label className="align-model__nc" htmlFor="align-model-allow-nc">
+        <input
+          id="align-model-allow-nc"
+          type="checkbox"
+          data-action="allow-non-commercial-aligner"
+          checked={allowNonCommercial}
+          disabled={disabled}
+          onChange={(e) => handleAllowChange(e.target.checked)}
+        />
+        <span>
+          Allow non-commercial alignment models (CC-BY-NC-4.0). Off by default. Turning this on only
+          UNLOCKS MMS-300M and its 158 languages in the list above — it does not switch to it. Pick
+          it there to use it; anything you then align with it is non-commercial.
+        </span>
+      </label>
     </div>
   );
 }
