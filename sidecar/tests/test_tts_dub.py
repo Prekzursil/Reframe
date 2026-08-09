@@ -11,6 +11,7 @@ DONE criteria covered:
 
 from __future__ import annotations
 
+import json
 import threading
 import wave
 from pathlib import Path
@@ -414,6 +415,38 @@ class TestDubStartHandler:
                 ctx,
             )
 
+    def test_chatterbox_refuses_a_sample_with_no_consent_attestation(self, tmp_path, registry):
+        """WU-A2 clone-time gate: a LEGACY (pre-consent) row must not be clonable.
+
+        Gating only ``tts.sample.add`` would leave the back door open — rows
+        written before the gate existed backfill to ``consentAttested: False``
+        and would still reach the clone engine. ``_resolve_voice`` closes it.
+        """
+        voices_dir = tmp_path / "voices"
+        voices_dir.mkdir()
+        legacy = tmp_path / "legacy.wav"
+        legacy.write_bytes(b"RIFF0000WAVEfake")
+        (voices_dir / "voices.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "samples": [{"id": "old1", "name": "n", "path": str(legacy), "durationSec": 2.0}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        service = make_service(
+            tmp_path,
+            engines={"chatterbox": lambda: RecordingEngine([])},
+            voice_store=VoiceStore(voices_dir, duration_probe=lambda p: 1.0),
+        )
+        ctx = RpcContext(emit_notification=lambda o: None, jobs=registry)
+        with pytest.raises(RpcError, match="consent"):
+            service.dub_start(
+                {"videoId": "v1", "trackId": "t1", "engine": "chatterbox", "sampleId": "old1"},
+                ctx,
+            )
+
     def test_voice_required_for_named_voice_engines(self, tmp_path, registry):
         service = make_service(tmp_path)
         ctx = RpcContext(emit_notification=lambda o: None, jobs=registry)
@@ -478,10 +511,13 @@ class TestDubStartHandler:
             )
 
     def test_chatterbox_valid_sample_id_resolves_path(self, tmp_path, registry, collected):
+        # The healthy-state half of the WU-A2 both-states pair: an ATTESTED
+        # sample must still clone end-to-end (the refusal above is the broken
+        # half). A gate that fired in both states would measure nothing.
         store = VoiceStore(tmp_path / "voices", duration_probe=lambda p: 1.0)
         sample_src = tmp_path / "ref.wav"
         sample_src.write_bytes(b"RIFF0000WAVEfake")
-        sample = store.add(str(sample_src))
+        sample = store.add(str(sample_src), consent_attested=True)
         seen_voice: list[str] = []
 
         class SampleEngine(RecordingEngine):

@@ -524,7 +524,12 @@ class Project:
     Manifest on disk::
 
         {"version": 1, "id", "video", "transcript"?, "tracks": [...],
-         "clips": [{"candidate", "path"}], "audioTracks": [...], "settings": {...}}
+         "clips": [{"candidate", "path"}], "audioTracks": [...],
+         "videoTracks": [{"id", "name", "index", "clips": [...]}], "settings": {...}}
+
+    ``clips`` are ALTERNATIVE OUTPUTS (candidate renders), NOT timeline lanes.
+    The stacked video lanes of the editor live in ``videoTracks`` — see
+    ``features/video_tracks.py``.
 
     Refs (the video path and each clip/track ``path``) are stored as written by
     the caller. ``consolidate`` copies those assets *into* the project folder and
@@ -562,6 +567,9 @@ class Project:
             "tracks": raw.get("tracks") or [],
             "clips": raw.get("clips") or [],
             "audioTracks": raw.get("audioTracks") or [],  # A3 (T2)
+            # The multi-lane VIDEO timeline (features/video_tracks.py). Backfilled
+            # empty so a manifest written before the editor existed still opens.
+            "videoTracks": raw.get("videoTracks") or [],
             "settings": raw.get("settings") or {},
         }
         # transcript is optional (only present once transcribed).
@@ -599,6 +607,17 @@ class Project:
         for atrack in self.data.get("audioTracks") or []:
             if isinstance(atrack, dict) and atrack.get("path"):
                 refs.append(atrack["path"])
+        # Same reasoning for the VIDEO timeline: every lane clip references a source
+        # file by path (its own, which may be B-roll rather than the project video),
+        # so a deleted clip source must be reported missing and consolidate must be
+        # able to rebase it. Omitting these would leave a "portable" folder whose
+        # timeline still points at absolute paths outside it.
+        for vtrack in self.data.get("videoTracks") or []:
+            if not isinstance(vtrack, dict):
+                continue
+            for clip in vtrack.get("clips") or []:
+                if isinstance(clip, dict) and clip.get("path"):
+                    refs.append(clip["path"])
         return refs
 
     def find_missing_sources(self) -> list[str]:
@@ -667,6 +686,14 @@ class Project:
         for atrack in self.data.get("audioTracks") or []:
             if isinstance(atrack, dict) and atrack.get("path"):
                 atrack["path"] = _copy_in(atrack["path"])
+        # ... and every VIDEO-timeline lane clip (the _copy_in memo dedups a clip that
+        # references the same file as the project video, so one copy serves both refs).
+        for vtrack in self.data.get("videoTracks") or []:
+            if not isinstance(vtrack, dict):
+                continue
+            for clip in vtrack.get("clips") or []:
+                if isinstance(clip, dict) and clip.get("path"):
+                    clip["path"] = _copy_in(clip["path"])
         # Rebase the source-video poster too so a MOVED portable folder still finds
         # its thumbnail relative. Kept OUT of _ref_paths/find_missing_sources on
         # purpose: the poster is a REGENERABLE derived artifact, not a relinkable

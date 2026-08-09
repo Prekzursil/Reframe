@@ -41,6 +41,11 @@ OpKind = Literal[
     "trim",
     "cut",
     "join",
+    # ``join`` butts clips together (a HARD CUT); ``transition`` OVERLAPS them by
+    # ``params['durationMs']`` with an xfade/acrossfade, so its output is SHORTER
+    # than the sum of the parts. Two kinds, not one param, because the durations
+    # differ and only one of the two can ever be a stream copy.
+    "transition",
     "removeSilence",
     "removeFillers",
     "reorder",
