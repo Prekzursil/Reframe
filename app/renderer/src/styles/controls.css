@@ -44,7 +44,8 @@ select {
   border-radius: var(--radius-sm);
   background-color: var(--surface-raised);
   /* Chevron drawn in the muted text colour, matching the label voice. */
-  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
     linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
   background-position:
     calc(100% - 15px) calc(50% - 2px),
