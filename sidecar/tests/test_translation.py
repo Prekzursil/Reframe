@@ -650,6 +650,25 @@ def test_cancelled_mid_batch_returns_partial():
     assert len(provider.chats) == 1
 
 
+def test_translate_preserves_the_diarized_speaker_label():
+    """The tiered batch must NOT erase the speaker it is demonstrably aware of.
+
+    ``group_cues_for_translation`` reads ``cue["speaker"]`` to break sentence
+    groups on a speaker change, yet ``_make_cue`` rebuilt a bare
+    ``{index,start,end,text}`` on the way out — so the module used the label and
+    then threw it away. Mutation that must turn this RED: drop the ``speaker``
+    argument from the ``_make_cue`` call in ``_translate_batch``.
+    """
+    cues = [
+        {"index": 1, "start": 0.0, "end": 1.5, "text": "Hello there.", "speaker": "A"},
+        {"index": 2, "start": 1.5, "end": 3.0, "text": "Good night."},  # not diarized
+    ]
+    out = make_translator(runner=FakeRunner(), local=[FakeProvider()]).translate(cues, "es")
+    assert [c["text"] for c in out] == ["XX:Hello there.", "XX:Good night."]
+    assert out[0]["speaker"] == "A"
+    assert "speaker" not in out[1]  # no ``speaker: None`` leakage
+
+
 def test_cancelled_before_start_returns_empty():
     runner = FakeRunner()
     provider = FakeProvider()
