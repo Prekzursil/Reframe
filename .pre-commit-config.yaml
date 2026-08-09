@@ -62,8 +62,10 @@ repos:
   # --- Gate 1: documentation anti-drift (stdlib python, no network) ---
   # Deliberately a `repo: local` hook inside gate:1, NOT a new `gate-<slug>` step in
   # quality.yml: QUALITY-CHARTER.md rule 2 declares the 6-gate list closed, and
-  # `.quality/charter_check.py:79-81` requires every `gate-<slug>` step to map to a
-  # charter row — a 7th step would breach the rule AND fail that check.
+  # the reverse-direction loop in `.quality/charter_check.py` `main()` requires every
+  # `gate-<slug>` step in quality.yml to map to a charter row — a 7th step would breach
+  # the rule AND fail that check. (Named, not line-numbered: the W30 fix shifted the
+  # `:79-81` anchor this comment used to carry.)
   - repo: local
     hooks:
       - id: docs-check

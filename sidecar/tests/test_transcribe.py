@@ -9,11 +9,15 @@ wiring are covered without any heavy-ML import.
 
 from __future__ import annotations
 
+import contextlib
 import threading
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
 from media_studio import protocol
+from media_studio.assets import manifest
 from media_studio.features import transcribe
 from media_studio.jobs import JobRegistry
 from media_studio.protocol import RpcContext, RpcError
@@ -545,14 +549,22 @@ class _FakeFasterWhisperModel:
 
 
 @pytest.fixture()
-def _stub_faster_whisper(monkeypatch):
-    """Install a fake ``faster_whisper`` module so .load() never downloads."""
+def _stub_faster_whisper(monkeypatch, tmp_path):
+    """Install a fake ``faster_whisper`` module so .load() never downloads.
+
+    Also points the HF cache at an EMPTY tmp dir. ``load()`` now runs
+    ``resolve_model_source``, which reads the real cache location from the
+    environment — without this the result would depend on whether the developer's
+    machine happens to have the 1.6 GB turbo snapshot (it does on the author's
+    box, which is how this hazard was found).
+    """
     _FakeFasterWhisperModel.instances = []
     fake_mod = types.ModuleType("faster_whisper")
     fake_mod.WhisperModel = _FakeFasterWhisperModel  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "faster_whisper", fake_mod)
     # Don't let the Windows CUDA-DLL hook fire on real sys.path during this test.
     monkeypatch.setattr(transcribe, "_register_cuda_dll_dirs", lambda: None)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "empty-hf-cache"))
     return fake_mod
 
 
@@ -583,6 +595,150 @@ def test_faster_whisper_loader_release_drops_cache(_stub_faster_whisper):
     rebuilt = loader.load("large-v3-turbo", "cuda", "float16")
     assert rebuilt is not first
     assert len(_FakeFasterWhisperModel.instances) == 2
+
+
+# --------------------------------------------------------------------------- #
+# T0 (second half) — the OFFLINE resolution path.
+#
+# Resolving the CPU auto-path to the installed model id is NOT sufficient:
+# ``WhisperModel("<id>")`` asks huggingface_hub for revision "main", and a cache
+# populated by ``assets.ensure`` (which installs by 40-hex commit pin) has NO
+# ``refs/main``, so the offline lookup raises LocalEntryNotFoundError even though
+# the weights are right there. These tests build the pin-shaped cache on a real
+# filesystem and assert we hand faster-whisper the snapshot DIRECTORY instead.
+#
+# The mechanism itself is proved against the real huggingface_hub (both states:
+# "main" raises, the pin resolves) in tests/e2e/test_whisper_offline_e2e.py; that
+# leg is e2e-marked because huggingface_hub is deliberately NOT installed in the
+# blocking gate env.
+# --------------------------------------------------------------------------- #
+def _pin_shaped_cache(root, repo: str, revision: str):
+    """A cache exactly as ``snapshot_download(revision=<pin>)`` leaves it.
+
+    snapshots/<pin>/ with content, and NO refs/ dir — huggingface_hub writes
+    ``refs/<revision>`` only when the requested revision differs from the commit
+    hash it resolved to (file_download._cache_commit_hash_for_specific_revision).
+    """
+    snap = root / ("models--" + repo.replace("/", "--")) / "snapshots" / revision
+    snap.mkdir(parents=True)
+    (snap / "model.bin").write_bytes(b"ct2-weights")
+    (snap / "config.json").write_text("{}")
+    return snap
+
+
+def test_whisper_snapshot_dir_finds_the_pinned_snapshot(tmp_path):
+    entry = manifest.get_asset(manifest.WHISPER_ASSET_NAME)
+    assert entry is not None and entry.hf_repo and entry.hf_revision
+    snap = _pin_shaped_cache(tmp_path, entry.hf_repo, entry.hf_revision)
+    assert not (snap.parent.parent / "refs").exists()  # the whole point
+
+    found = transcribe.whisper_snapshot_dir(manifest.WHISPER_MODEL_ID, env_vars={"HF_HUB_CACHE": str(tmp_path)})
+    assert found == str(snap)
+
+
+def test_whisper_snapshot_dir_is_none_when_the_cache_is_empty(tmp_path):
+    assert transcribe.whisper_snapshot_dir(manifest.WHISPER_MODEL_ID, env_vars={"HF_HUB_CACHE": str(tmp_path)}) is None
+
+
+def test_whisper_snapshot_dir_is_none_for_an_empty_snapshot_dir(tmp_path):
+    # An interrupted install can leave the directory with nothing in it.
+    entry = manifest.get_asset(manifest.WHISPER_ASSET_NAME)
+    assert entry is not None and entry.hf_repo and entry.hf_revision
+    (tmp_path / ("models--" + entry.hf_repo.replace("/", "--")) / "snapshots" / entry.hf_revision).mkdir(parents=True)
+    assert transcribe.whisper_snapshot_dir(manifest.WHISPER_MODEL_ID, env_vars={"HF_HUB_CACHE": str(tmp_path)}) is None
+
+
+def test_whisper_snapshot_dir_is_none_for_an_unmapped_model_id(tmp_path):
+    # A user-forced ``transcribeModel`` the manifest knows nothing about.
+    assert transcribe.whisper_snapshot_dir("medium", env_vars={"HF_HUB_CACHE": str(tmp_path)}) is None
+
+
+def test_whisper_snapshot_dir_is_none_when_the_asset_is_unregistered(tmp_path):
+    # ``small`` is MAPPED but no asset is registered for it (the open follow-up).
+    assert (
+        transcribe.whisper_snapshot_dir(manifest.CPU_WHISPER_MODEL_ID, env_vars={"HF_HUB_CACHE": str(tmp_path)}) is None
+    )
+
+
+def test_whisper_snapshot_dir_is_none_when_the_registered_asset_is_not_pinned(tmp_path):
+    # Defense in depth: an entry that is not an ``installer="hf"`` commit pin must
+    # never be used as a load source (mirrors WU-S5's fail-closed contract).
+    snapshot = manifest.registry_snapshot()
+    try:
+        manifest.register_asset(
+            manifest.AssetEntry(
+                name=manifest.CPU_WHISPER_ASSET_NAME,
+                kind="model",
+                size_mb=500,
+                dest="models/whisper-small.bin",
+                tier="core",
+                installer="download",
+                url="https://example.invalid/whisper-small.bin",
+                sha256="a" * 64,
+            )
+        )
+        assert (
+            transcribe.whisper_snapshot_dir(manifest.CPU_WHISPER_MODEL_ID, env_vars={"HF_HUB_CACHE": str(tmp_path)})
+            is None
+        )
+    finally:
+        manifest.registry_restore(snapshot)
+
+
+def test_resolve_model_source_returns_the_pinned_dir(tmp_path):
+    entry = manifest.get_asset(manifest.WHISPER_ASSET_NAME)
+    assert entry is not None and entry.hf_repo and entry.hf_revision
+    snap = _pin_shaped_cache(tmp_path, entry.hf_repo, entry.hf_revision)
+    source = transcribe.resolve_model_source(manifest.WHISPER_MODEL_ID, env_vars={"HF_HUB_CACHE": str(tmp_path)})
+    assert source == str(snap)
+    # It must be a DIRECTORY, because that is the only input faster-whisper
+    # accepts without going through hub revision resolution.
+    assert Path(source).is_dir()
+
+
+def test_resolve_model_source_falls_back_to_the_bare_id_when_absent(tmp_path):
+    source = transcribe.resolve_model_source(manifest.WHISPER_MODEL_ID, env_vars={"HF_HUB_CACHE": str(tmp_path)})
+    assert source == manifest.WHISPER_MODEL_ID
+
+
+def test_default_snapshot_locator_reads_the_hf_cache_env(tmp_path):
+    snap = _pin_shaped_cache(tmp_path, "org/repo", "b" * 40)
+    assert transcribe.default_snapshot_locator(
+        repo_id="org/repo", revision="b" * 40, env_vars={"HF_HUB_CACHE": str(tmp_path)}
+    ) == str(snap)
+    assert (
+        transcribe.default_snapshot_locator(
+            repo_id="org/repo", revision="c" * 40, env_vars={"HF_HUB_CACHE": str(tmp_path)}
+        )
+        is None
+    )
+
+
+def test_faster_whisper_loader_passes_the_pinned_snapshot_dir(_stub_faster_whisper, tmp_path, monkeypatch):
+    """The load site must receive the DIRECTORY, not the model id.
+
+    RED without the fix: reverting ``FasterWhisperLoader.load`` to
+    ``_WhisperModel(model, ...)`` makes this assert see "large-v3-turbo".
+    """
+    entry = manifest.get_asset(manifest.WHISPER_ASSET_NAME)
+    assert entry is not None and entry.hf_repo and entry.hf_revision
+    cache = tmp_path / "hf"
+    snap = _pin_shaped_cache(cache, entry.hf_repo, entry.hf_revision)
+    monkeypatch.setenv("HF_HUB_CACHE", str(cache))
+
+    loader = transcribe.FasterWhisperLoader()
+    built = loader.load(manifest.WHISPER_MODEL_ID, "cpu", "int8")
+    assert built.model == str(snap)
+    # The CACHE key stays the logical id, so a repeat load still hits the cache.
+    assert loader.load(manifest.WHISPER_MODEL_ID, "cpu", "int8") is built
+    assert len(_FakeFasterWhisperModel.instances) == 1
+
+
+def test_faster_whisper_loader_falls_back_to_the_id_with_no_snapshot(_stub_faster_whisper):
+    # _stub_faster_whisper points HF_HUB_CACHE at an empty dir.
+    loader = transcribe.FasterWhisperLoader()
+    built = loader.load(manifest.WHISPER_MODEL_ID, "cpu", "int8")
+    assert built.model == manifest.WHISPER_MODEL_ID
 
 
 # --------------------------------------------------------------------------- #
@@ -787,8 +943,101 @@ def test_resolve_target_auto_cpu_uses_cpu_model():
     model, device, compute = transcribe.resolve_transcribe_target({}, probe=lambda: False)
     assert device == transcribe.CPU_DEVICE
     assert compute == transcribe.CPU_COMPUTE
-    assert model == transcribe.CPU_MODEL
-    assert model != transcribe.DEFAULT_MODEL
+    # Compare against the expected CONSTANT, never against cpu_auto_model() —
+    # a self-comparison is satisfied by an implementation with no CPU branch at
+    # all (measured: it dropped this file from 7 RED to 1 RED under the
+    # "delete the CPU branch" mutant). Today no core-tier asset provisions the
+    # cheap CPU model, so the CPU auto model IS the turbo default; the
+    # discriminating case lives in the ``_with_provisioned_cpu_model`` twins
+    # below, which the same mutant fails.
+    assert model == transcribe.DEFAULT_MODEL
+
+
+# --------------------------------------------------------------------------- #
+# T0 — a CPU-only install must auto-resolve to a whisper model the install
+# actually has, and must hand faster-whisper something it can resolve OFFLINE.
+#
+# Reframe is offline-first: faster-whisper only finds a model without a network
+# round-trip when that exact snapshot is already in HF_HOME, and the ONLY thing
+# that puts one there is a registered core-tier manifest asset. Auto-resolving an
+# id no asset installs turns a CPU user's FIRST transcribe into an unpinned
+# download that fails outright offline.
+# --------------------------------------------------------------------------- #
+def test_default_profile_whisper_model_ids_is_turbo_only_today():
+    ids = manifest.default_profile_whisper_model_ids()
+    assert ids == frozenset({manifest.WHISPER_MODEL_ID})
+    # The faster CPU model is KNOWN but the Default profile installs no asset
+    # for it (no pinned asset registered yet).
+    assert manifest.CPU_WHISPER_MODEL_ID not in ids
+
+
+def test_cpu_auto_model_is_backed_by_a_default_profile_manifest_asset():
+    model, device, _ = transcribe.resolve_transcribe_target({}, probe=lambda: False)
+    assert device == transcribe.CPU_DEVICE
+    assert model in manifest.default_profile_whisper_model_ids()
+
+
+def test_transcribe_with_engine_cpu_loads_a_default_profile_model():
+    loader = FakeLoader(_two_segment_model())
+    transcribe.transcribe_with_engine("/v.mp4", loader=loader, settings={}, detect_probe=lambda: False)
+    (loaded_model, loaded_device, _compute) = loader.loads[0]
+    assert loaded_device == transcribe.CPU_DEVICE
+    assert loaded_model in manifest.default_profile_whisper_model_ids()
+
+
+def _register_cpu_whisper(tier: str) -> None:
+    """Register a stand-in CPU whisper asset (test double; dummy revision)."""
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=manifest.CPU_WHISPER_ASSET_NAME,
+            kind="model",
+            size_mb=500,
+            label="Whisper small (CPU)",
+            tier=tier,
+            why="test double",
+            installer="hf",
+            hf_repo=f"Systran/faster-whisper-{manifest.CPU_WHISPER_MODEL_ID}",
+            hf_revision="0" * 40,
+        )
+    )
+
+
+@contextlib.contextmanager
+def _cpu_whisper_registered(tier: str = "core") -> Iterator[None]:
+    """Registry state in which the Default profile DOES install the CPU model.
+
+    This is the state that discriminates a real CPU branch from its absence: the
+    CPU auto model becomes ``small`` while the GPU model stays ``large-v3-turbo``.
+    Every CPU-path assertion below has a twin that runs inside this block, so
+    deleting the CPU branch turns them RED instead of leaving them satisfied.
+    """
+    snapshot = manifest.registry_snapshot()
+    try:
+        _register_cpu_whisper(tier)
+        yield
+    finally:
+        manifest.registry_restore(snapshot)
+
+
+def test_cpu_auto_model_prefers_small_once_a_core_asset_provisions_it():
+    with _cpu_whisper_registered("core"):
+        assert transcribe.cpu_auto_model() == manifest.CPU_WHISPER_MODEL_ID
+        model, _, _ = transcribe.resolve_transcribe_target({}, probe=lambda: False)
+        assert model == manifest.CPU_WHISPER_MODEL_ID
+
+
+def test_cpu_auto_model_ignores_a_non_default_profile_cpu_asset():
+    # "optional" is NOT pulled by the Default installer profile, so a CPU-only
+    # user would still have no snapshot on disk -> auto must not select it.
+    with _cpu_whisper_registered("optional"):
+        assert transcribe.cpu_auto_model() == transcribe.DEFAULT_MODEL
+
+
+def test_resolve_target_auto_cpu_with_provisioned_cpu_model():
+    with _cpu_whisper_registered():
+        model, device, _ = transcribe.resolve_transcribe_target({}, probe=lambda: False)
+        assert device == transcribe.CPU_DEVICE
+        assert model == manifest.CPU_WHISPER_MODEL_ID
 
 
 def test_resolve_target_explicit_device_cpu_override_skips_probe():
@@ -801,8 +1050,15 @@ def test_resolve_target_explicit_device_cpu_override_skips_probe():
     model, device, compute = transcribe.resolve_transcribe_target({"transcribeDevice": "cpu"}, probe=probe)
     assert device == transcribe.CPU_DEVICE
     assert compute == transcribe.CPU_COMPUTE
-    assert model == transcribe.CPU_MODEL
+    assert model == transcribe.DEFAULT_MODEL
     assert probed["n"] == 0
+
+
+def test_resolve_target_explicit_device_cpu_with_provisioned_cpu_model():
+    with _cpu_whisper_registered():
+        model, device, _ = transcribe.resolve_transcribe_target({"transcribeDevice": "cpu"}, probe=lambda: True)
+        assert device == transcribe.CPU_DEVICE
+        assert model == manifest.CPU_WHISPER_MODEL_ID
 
 
 def test_resolve_target_explicit_device_cuda_override():
@@ -822,7 +1078,14 @@ def test_resolve_target_unknown_device_value_falls_back_to_auto():
     model, device, compute = transcribe.resolve_transcribe_target({"transcribeDevice": "gpu-9000"}, probe=lambda: False)
     assert device == transcribe.CPU_DEVICE
     assert compute == transcribe.CPU_COMPUTE
-    assert model == transcribe.CPU_MODEL
+    assert model == transcribe.DEFAULT_MODEL
+
+
+def test_resolve_target_unknown_device_with_provisioned_cpu_model():
+    with _cpu_whisper_registered():
+        model, device, _ = transcribe.resolve_transcribe_target({"transcribeDevice": "gpu-9000"}, probe=lambda: False)
+        assert device == transcribe.CPU_DEVICE
+        assert model == manifest.CPU_WHISPER_MODEL_ID
 
 
 def test_resolve_target_non_string_device_value_falls_back_to_auto():
@@ -837,7 +1100,14 @@ def test_transcribe_with_engine_no_cuda_loads_cpu_int8_only():
     loader = FakeLoader(_two_segment_model())
     t = transcribe.transcribe_with_engine("/v.mp4", loader=loader, settings={}, detect_probe=lambda: False)
     assert len(t["segments"]) == 2
-    assert loader.loads == [(transcribe.CPU_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+    assert loader.loads == [(transcribe.DEFAULT_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+
+
+def test_transcribe_with_engine_no_cuda_with_provisioned_cpu_model():
+    with _cpu_whisper_registered():
+        loader = FakeLoader(_two_segment_model())
+        transcribe.transcribe_with_engine("/v.mp4", loader=loader, settings={}, detect_probe=lambda: False)
+        assert loader.loads == [(manifest.CPU_WHISPER_MODEL_ID, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
 
 
 def test_transcribe_with_engine_cuda_loads_gpu_default():
@@ -854,7 +1124,19 @@ def test_transcribe_with_engine_settings_device_override():
         settings={"transcribeDevice": "cpu"},
         detect_probe=lambda: True,
     )
-    assert loader.loads == [(transcribe.CPU_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+    assert loader.loads == [(transcribe.DEFAULT_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+
+
+def test_transcribe_with_engine_settings_device_override_with_provisioned_cpu_model():
+    with _cpu_whisper_registered():
+        loader = FakeLoader(_two_segment_model())
+        transcribe.transcribe_with_engine(
+            "/v.mp4",
+            loader=loader,
+            settings={"transcribeDevice": "cpu"},
+            detect_probe=lambda: True,
+        )
+        assert loader.loads == [(manifest.CPU_WHISPER_MODEL_ID, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
 
 
 def test_transcribe_with_engine_parakeet_degrade_uses_resolved_cpu_target():
@@ -870,7 +1152,23 @@ def test_transcribe_with_engine_parakeet_degrade_uses_resolved_cpu_target():
         parakeet_runner=empty_parakeet,
         detect_probe=lambda: False,
     )
-    assert loader.loads == [(transcribe.CPU_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+    assert loader.loads == [(transcribe.DEFAULT_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+
+
+def test_transcribe_with_engine_parakeet_degrade_with_provisioned_cpu_model():
+    def empty_parakeet(audio_path: str, **kwargs: Any):
+        return {"language": "", "segments": [], "durationSec": 0.0}
+
+    with _cpu_whisper_registered():
+        loader = FakeLoader(_two_segment_model())
+        transcribe.transcribe_with_engine(
+            "/v.mp4",
+            loader=loader,
+            settings={"asrEngine": "parakeet"},
+            parakeet_runner=empty_parakeet,
+            detect_probe=lambda: False,
+        )
+        assert loader.loads == [(manifest.CPU_WHISPER_MODEL_ID, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
 
 
 def test_default_cuda_probe_is_callable_and_safe():
@@ -931,8 +1229,15 @@ def test_resolve_target_empty_model_string_keeps_auto_model():
     # An empty/whitespace transcribeModel is ignored -> the auto model stands
     # (covers the falsy-trimmed short-circuit branch).
     model, device, _ = transcribe.resolve_transcribe_target({"transcribeModel": "   "}, probe=lambda: False)
-    assert model == transcribe.CPU_MODEL
+    assert model == transcribe.DEFAULT_MODEL
     assert device == transcribe.CPU_DEVICE
+
+
+def test_resolve_target_empty_model_string_with_provisioned_cpu_model():
+    with _cpu_whisper_registered():
+        model, device, _ = transcribe.resolve_transcribe_target({"transcribeModel": "   "}, probe=lambda: False)
+        assert model == manifest.CPU_WHISPER_MODEL_ID
+        assert device == transcribe.CPU_DEVICE
 
 
 def test_resolve_target_auto_literal_model_keeps_auto_model():

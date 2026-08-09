@@ -63,6 +63,19 @@ _TRACK_KINDS: frozenset[str] = frozenset({"caption", "translateCaption", "overla
 #: them — both are impossible with nothing to join to.
 _CLIPS_REQUIRED_KINDS: frozenset[str] = frozenset({"join", "transition"})
 
+#: Op kinds this pure pass deliberately places NO precondition on. ``export`` is
+#: a whole-timeline artifact op: it has no source range, no named track and no
+#: extra clips, so every check above would be wrong rather than merely absent.
+#:
+#: This exists so "unconstrained" is a DECLARED classification rather than the
+#: default that silence produces. Together with the three sets above it must
+#: partition :data:`~media_studio.models.edit_plan.OP_KINDS` exactly — a 19th kind
+#: added to the union and to none of the four would otherwise be waved through as
+#: span-free, track-free and clips-free with nobody having decided that. The
+#: partition is enforced by
+#: ``tests/test_director_op_kind_parity.py::test_the_validator_classifies_every_op_kind``.
+_UNCONSTRAINED_KINDS: frozenset[str] = frozenset({"export"})
+
 
 @dataclass(frozen=True)
 class Understanding:

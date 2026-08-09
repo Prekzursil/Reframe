@@ -283,14 +283,69 @@ def resolve_profile(profile: str, custom: Sequence[str] | None = None) -> list[s
 # --------------------------------------------------------------------------- #
 
 WHISPER_ASSET_NAME = "whisper-large-v3-turbo"
+#: The faster-whisper model id this asset provisions (== transcribe.DEFAULT_MODEL).
+WHISPER_MODEL_ID = "large-v3-turbo"
 # §7 / transcribe.py DEFAULT_MODEL="large-v3-turbo" resolves to this CT2 repo via
 # faster-whisper; ensuring it through huggingface_hub lands in the SAME HF_HOME
 # cache faster-whisper reads, so transcribe.start finds it pre-downloaded.
-WHISPER_HF_REPO = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+WHISPER_HF_REPO = f"mobiuslabsgmbh/faster-whisper-{WHISPER_MODEL_ID}"
 # F3c: pin the HF snapshot to a COMMIT HASH (never floating "main"). Verified via
 # the HF revision API (commit of refs/heads/main on 2026-06-28).
 WHISPER_HF_REVISION = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
 WHISPER_SIZE_MB = 1600
+
+# W01/T0: the CPU auto-path wants a materially cheaper model than the turbo
+# snapshot, but a model id is only usable OFFLINE when a registered core-tier
+# asset has put that exact snapshot in HF_HOME. These two names reserve the
+# CPU rung; the asset itself is NOT registered yet because that needs a real
+# pinned HF commit hash + verified size, which is a deliberate follow-up (a
+# fabricated pin is worse than a missing one). Registering an entry named
+# CPU_WHISPER_ASSET_NAME with tier="core" is the ONLY change needed to flip
+# ``transcribe.cpu_auto_model()`` over to it — see WHISPER_MODEL_ASSETS.
+# NOTE: a core-tier registration makes the Default profile DOWNLOAD it; it is
+# still the load path (``transcribe.resolve_model_source``) that decides whether
+# the bytes are actually on disk before pointing faster-whisper at them.
+CPU_WHISPER_MODEL_ID = "small"
+CPU_WHISPER_ASSET_NAME = "whisper-small"
+
+#: faster-whisper model id -> the manifest asset name that provisions it.
+#: An id absent from this map (or mapped to an unregistered/non-Default-profile
+#: asset) can only be reached by an on-demand network download, so automatic
+#: resolution must never pick one — see :func:`default_profile_whisper_model_ids`.
+WHISPER_MODEL_ASSETS: dict[str, str] = {
+    WHISPER_MODEL_ID: WHISPER_ASSET_NAME,
+    CPU_WHISPER_MODEL_ID: CPU_WHISPER_ASSET_NAME,
+}
+
+
+def default_profile_whisper_model_ids() -> frozenset[str]:
+    """faster-whisper model ids the **Default** install profile is CONFIGURED to pull.
+
+    REGISTRY-ONLY, and deliberately named for what it computes. An id is included
+    when its :data:`WHISPER_MODEL_ASSETS` asset is (a) registered and (b) in a tier
+    ``PROFILE_TIERS["default"]`` pulls (``core``). An ``optional``/``gpu`` entry is
+    excluded because a Default install never downloads it.
+
+    THIS IS NOT AN OFFLINE GUARANTEE, and must not be read as one — an earlier
+    revision of this function was named ``provisioned_whisper_model_ids`` and
+    documented as "ids an offline install is guaranteed to have", which was false
+    in two measured states: (1) the **Minimum** profile pulls nothing at all
+    (``PROFILE_TIERS["minimum"] == ()``) and a Custom profile need not include
+    transcription, and (2) nothing here touches the disk, while the whisper
+    snapshot is explicitly excluded from the renderer's first-run completion gate
+    (``app/tests/main/firstRunGate.test.ts``), so a first run can complete with the
+    weights absent. The only honest disk-level answer is
+    :func:`media_studio.features.transcribe.whisper_snapshot_dir`, which looks in
+    the HF cache; this function answers the narrower "did we configure Default to
+    install it".
+    """
+    default_tiers = PROFILE_TIERS["default"]
+    return frozenset(
+        model_id
+        for model_id, asset_name in WHISPER_MODEL_ASSETS.items()
+        if (entry := get_asset(asset_name)) is not None and entry.tier in default_tiers
+    )
+
 
 QWEN_ASSET_NAME = "qwen3-4b-gguf"
 # CONTRACT-NOTE: §7 default model is "Qwen3-4B GGUF". The URL pins the exact

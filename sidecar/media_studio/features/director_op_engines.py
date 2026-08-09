@@ -51,7 +51,7 @@ from media_studio.features import silencetrim as _silencetrim
 from media_studio.features import transitions as _transitions
 from media_studio.features.apply_engine import EngineTable, OpEngine
 from media_studio.features.project_copy import ProjectCopy
-from media_studio.models.edit_plan import EditOp
+from media_studio.models.edit_plan import DEFERRED_OP_KINDS, EXECUTABLE_OP_KINDS, EditOp
 
 #: A runner ``(argv, total_sec) -> exit_code`` — the injected ffmpeg subprocess
 #: seam. Default :func:`ffmpeg.run`; tests inject a fake that stubs the output.
@@ -76,23 +76,15 @@ _ATEMPO_MAX = 2.0
 #: removeSilence/caption) PLUS the ffmpeg-achievable Director ops added here.
 #: Every one of these renders REAL edited media (not a manifest no-op) over the
 #: COPY and records a restore-inverse for undo.
-WIRED_KINDS: tuple[str, ...] = (
-    "trim",
-    "cut",
-    "join",
-    "transition",
-    "removeSilence",
-    "caption",
-    "removeFillers",
-    "reorder",
-    "reframe",
-    "zoomPan",
-    "retime",
-    "overlayText",
-    "lowerThird",
-    "translateCaption",
-    "export",
-)
+#:
+#: DERIVED, not hand-written (v1.5 W14). This tuple used to be a third,
+#: independently-maintained copy of the vocabulary, which is how the planner
+#: prompt came to advertise 18 kinds against a 15-entry engine table. It is now
+#: ``OP_KINDS`` minus :data:`DEFERRED_KINDS`, and
+#: ``tests/test_director_op_kind_parity.py`` asserts ``set(build_engines()) ==
+#: set(WIRED_KINDS)``, so adding a 19th kind without either wiring an engine or
+#: declaring it deferred fails the suite instead of shipping a dead advertisement.
+WIRED_KINDS: tuple[str, ...] = EXECUTABLE_OP_KINDS
 
 #: The op kinds NOT wired into :func:`build_engines`. Logged up front (never
 #: silently skipped) so an op of one of these kinds surfaces as a clear per-op
@@ -117,11 +109,13 @@ WIRED_KINDS: tuple[str, ...] = (
 #:    these ops produce artifacts/text instead), and — for ``regenScroll`` — a
 #:    cross-op handoff, since ``apply_engine.apply_plan`` gives an op no way to
 #:    read a previous op's output. Those are deliberately NOT invented here.
-DEFERRED_KINDS: tuple[str, ...] = (
-    "stitchPanorama",
-    "regenScroll",
-    "ocrExtractList",
-)
+#:
+#: v1.5 W14: also DERIVED. The set itself now lives beside the ``OpKind`` union
+#: in ``models.edit_plan`` as :data:`~media_studio.models.edit_plan.DEFERRED_OP_KINDS`
+#: so the prompt builder (a PURE module that must not import this one) and the
+#: renderer can read the SAME decision. This name is kept as the module's public
+#: alias — every existing caller and test imports it from here.
+DEFERRED_KINDS: tuple[str, ...] = DEFERRED_OP_KINDS
 
 #: Each deferred kind -> the work it still needs, naming the SHIPPED module the
 #: adapter would drive. Surfaced verbatim in the deferral notice
