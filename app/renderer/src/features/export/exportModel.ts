@@ -94,9 +94,51 @@ export const PLATFORM_PRESETS: readonly PlatformPreset[] = [
   },
 ];
 
+/**
+ * Canonical output canvas per curated aspect — the renderer-side MIRROR of the
+ * sidecar registry (`sidecar/media_studio/features/aspect.py::ASPECT_PRESETS`).
+ * 16:9 joined the curated set in the v1.5 aspect-matrix lane; before that the
+ * sidecar's `require_supported_aspect` REJECTED it, so a 16:9 export preset could
+ * not be persisted at all even though this catalog already showed the badge.
+ *
+ * Kept as a literal (not fetched) because it is display + planning data on the
+ * synchronous render path; `ASPECT_DIMENSIONS covers every catalog aspect` in
+ * exportModel.test.ts is the drift guard against the destination list, and
+ * test_aspect.py pins the same four pairs on the sidecar side.
+ */
+export const ASPECT_DIMENSIONS: Readonly<Record<string, readonly [number, number]>> = {
+  '9:16': [1080, 1920],
+  '1:1': [1080, 1080],
+  '4:5': [1080, 1350],
+  '16:9': [1920, 1080],
+};
+
+/** One rendered target of a fan-out: a curated aspect and the canvas it fills. */
+export interface AspectTarget {
+  /** The canonical `"W:H"` aspect id. */
+  aspect: string;
+  /** Output width in pixels. */
+  width: number;
+  /** Output height in pixels. */
+  height: number;
+}
+
 /** Resolve a preset by id, falling back to the first when the id is unknown. */
 export function presetById(id: string): PlatformPreset {
   return PLATFORM_PRESETS.find((preset) => preset.id === id) ?? PLATFORM_PRESETS[0];
+}
+
+/**
+ * Resolve destination ids to presets in CATALOG order (never click order), so a
+ * fan-out plan and every label built from it read top-to-bottom exactly as the
+ * matrix does. Unknown ids are dropped rather than faked into the first preset —
+ * `presetById`'s fallback is right for a single selection, wrong for a set.
+ */
+export function presetsByIds(
+  ids: readonly string[],
+  presets: readonly PlatformPreset[] = PLATFORM_PRESETS,
+): PlatformPreset[] {
+  return presets.filter((preset) => ids.includes(preset.id));
 }
 
 /** A preset is selectable (`available`) or blocked with a stated `reason`. */
@@ -144,6 +186,85 @@ export function firstAvailablePresetId(
 }
 
 /**
+ * Multi-select toggle for the destination matrix. Adds an unselected id at the
+ * END (order-preserving) and removes a selected one — EXCEPT when it is the last
+ * one standing: the guarded commit has no meaning without a destination, so
+ * un-checking the final box is a deliberate no-op rather than a state the
+ * inspector would have to defend against downstream.
+ */
+export function togglePresetId(selected: readonly string[], id: string): string[] {
+  if (!selected.includes(id)) return [...selected, id];
+  if (selected.length === 1) return [...selected];
+  return selected.filter((current) => current !== id);
+}
+
+/**
+ * Re-validate a selection against the current clip length. A destination the clip
+ * has outgrown (the user trimmed longer, or opened a longer video) is dropped so
+ * the commit can never target a blocked platform; if that empties the set we fall
+ * back to the first destination that DOES fit, preserving the ≥1 invariant.
+ */
+export function sanitizeSelection(
+  selected: readonly string[],
+  durationSec: number,
+  presets: readonly PlatformPreset[] = PLATFORM_PRESETS,
+): string[] {
+  const kept = presetsByIds(selected, presets)
+    .filter((preset) => presetAvailability(preset, durationSec).status === 'available')
+    .map((preset) => preset.id);
+  return kept.length > 0 ? kept : [firstAvailablePresetId(durationSec, presets)];
+}
+
+/**
+ * The ONE-source -> N-aspect render matrix: one {@link AspectTarget} per DISTINCT
+ * aspect across the chosen destinations, in catalog order.
+ *
+ * The dedupe is what makes a fan-out honest at the destination level — TikTok,
+ * Reels and Shorts are three destinations but a single 9:16 render, so the plan
+ * holds one entry and the caller writes one file. Mirrors the sidecar's
+ * `aspect.fanout_plan`. A destination whose aspect has no canonical canvas is
+ * skipped rather than guessed at, so an unmapped badge can never invent a canvas.
+ */
+export function aspectFanoutPlan(presets: readonly PlatformPreset[]): AspectTarget[] {
+  const seen = new Set<string>();
+  const plan: AspectTarget[] = [];
+  for (const preset of presets) {
+    const dims = ASPECT_DIMENSIONS[preset.aspect];
+    if (!dims || seen.has(preset.aspect)) continue;
+    seen.add(preset.aspect);
+    plan.push({ aspect: preset.aspect, width: dims[0], height: dims[1] });
+  }
+  return plan;
+}
+
+/** "TikTok" / "TikTok + 2 more" — the destination phrase for buttons + headings. */
+export function fanoutDestinationLabel(presets: readonly PlatformPreset[]): string {
+  if (presets.length === 0) return 'your destinations';
+  if (presets.length === 1) return presets[0].name;
+  return `${presets[0].name} + ${presets.length - 1} more`;
+}
+
+/**
+ * The destination file for ONE fan-out target: `<stem>.<aspect>.<ext>` alongside
+ * the source, which is the location the sidecar's `_confined_output` permits by
+ * default (`sidecar/media_studio/features/convert.py`).
+ *
+ * The aspect is slugged with an "x" (`9x16`), never a colon: ':' is a reserved
+ * character in a Windows filename and `talk.9:16.mp4` would be parsed as an
+ * alternate data stream on `talk.9`, silently producing no visible file. The
+ * stem is split on the LAST separator first so a dotted DIRECTORY (`/a.b/talk`)
+ * cannot be mistaken for an extension.
+ */
+export function fanoutOutPath(sourcePath: string, target: AspectTarget, ext = 'mp4'): string {
+  const cut = Math.max(sourcePath.lastIndexOf('/'), sourcePath.lastIndexOf('\\'));
+  const dir = sourcePath.slice(0, cut + 1);
+  const name = sourcePath.slice(cut + 1);
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  return `${dir}${stem}.${target.aspect.replace(':', 'x')}.${ext}`;
+}
+
+/**
  * A rough LOCAL render-time estimate (seconds). A local h264 finish runs at a
  * fraction of real time; floored to a few seconds so a tiny clip never estimates
  * "0". Surfaced with a "~" so it always reads as an estimate, never a promise.
@@ -188,6 +309,48 @@ export function buildPreflight(state: EditorState, preset: PlatformPreset): Pref
     durationSec,
     durationLabel: fmtSeconds(durationSec),
     estRenderLabel: `~${fmtSeconds(estimateRenderSec(durationSec))}`,
+    estSpendLabel: formatDollars(0),
+  };
+}
+
+/** The pre-flight summary for a MULTI-aspect fan-out of one source. */
+export interface FanoutPreflight {
+  /** Files this commit produces — one per DISTINCT aspect, not per destination. */
+  clipCount: number;
+  /** The render matrix (aspect + canvas) this commit will execute. */
+  targets: readonly AspectTarget[];
+  /** The aspects as one line ("9:16 · 1:1"); '' when nothing is selected. */
+  aspectLabel: string;
+  /** The clip length in seconds. */
+  durationSec: number;
+  /** The clip length as M:SS. */
+  durationLabel: string;
+  /** The estimated render time for the WHOLE fan-out as ~M:SS. */
+  estRenderLabel: string;
+  /** The estimated spend ($0.00 — a local render never spends). */
+  estSpendLabel: string;
+}
+
+/**
+ * Build the fan-out pre-flight the confirm step restates before the guarded
+ * commit. `clipCount` counts DISTINCT ASPECTS, so picking three vertical
+ * destinations honestly says "1 file" rather than inflating to three, and the
+ * render estimate is the per-file estimate multiplied by that same count. An
+ * empty selection reports 0 — it does not round up to a comforting 1.
+ */
+export function buildFanoutPreflight(
+  state: EditorState,
+  presets: readonly PlatformPreset[],
+): FanoutPreflight {
+  const durationSec = windowDurationSec(state);
+  const targets = aspectFanoutPlan(presets);
+  return {
+    clipCount: targets.length,
+    targets,
+    aspectLabel: targets.map((target) => target.aspect).join(' · '),
+    durationSec,
+    durationLabel: fmtSeconds(durationSec),
+    estRenderLabel: `~${fmtSeconds(estimateRenderSec(durationSec) * targets.length)}`,
     estSpendLabel: formatDollars(0),
   };
 }

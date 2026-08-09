@@ -83,8 +83,9 @@ def _require_supported_aspect(raw_aspect: str) -> str:
     """Canonicalize + guard an aspect against the curated social export set (R3).
 
     Translates the shared registry's ``ValueError`` (garbage OR a parseable-but-
-    uncurated ratio like ``16:9``) into a fail-loud :class:`RpcError`, so a bad
-    save never persists an aspect the engines/UI don't offer.
+    uncurated ratio like ``21:9``) into a fail-loud :class:`RpcError`, so a bad
+    save never persists an aspect the engines/UI don't offer. The curated set is
+    9:16 / 1:1 / 4:5 / 16:9 — 16:9 joined in the v1.5 aspect-matrix lane.
     """
     try:
         return aspect_mod.require_supported_aspect(raw_aspect)
@@ -108,7 +109,7 @@ def normalize_preset(raw: Any) -> ExportPreset:
 
     Clamps the ``minSec``/``maxSec`` window into the hard ``[20, 60]`` range (and
     never lets it invert), floors ``count`` at 1, canonicalizes ``aspect`` and
-    guards it against the curated social set (9:16 / 1:1 / 4:5 — WU R3), and
+    guards it against the curated social set (9:16 / 1:1 / 4:5 / 16:9), and
     rejects an unknown ``captionStyle`` / ``reframeEngine`` with a fail-loud
     ``RpcError`` so a bad save can never persist a half-typed or unrenderable
     record. A missing ``id`` is generated.

@@ -170,8 +170,13 @@ describe('Export view', () => {
     render(VIDEO);
     await flush();
     await commit();
+    // SCOPE FIX (v1.5 aspect-matrix): the target now carries an explicit `out`.
+    // Without a per-aspect name every fan-out target derives the same
+    // `<stem>.mp4` and the renders overwrite each other; `out` is long-standing
+    // sidecar surface (convert.start_handler reads params["out"], confined by
+    // convert._confined_output) that the renderer's TYPE simply did not expose.
     expect(convertStartMock).toHaveBeenCalledWith(
-      { videoId: 'v1' },
+      { videoId: 'v1', out: '/clips/x.9x16.mp4' },
       expect.objectContaining({ container: 'mp4', vcodec: 'libx264' }),
     );
     // Determinate progress.
@@ -188,6 +193,78 @@ describe('Export view', () => {
     });
     expect(q('.export-result')?.className).toContain('is-done');
     expect(q('.export-result__path')?.textContent).toBe('/exports/final.mp4');
+  });
+
+  it('fans ONE source out to a file per DISTINCT aspect, each with its own name', async () => {
+    // Check Square (1:1) alongside the default TikTok (9:16) -> two aspects, two
+    // renders, two distinctly-named files from a single guarded commit.
+    convertStartMock
+      .mockResolvedValueOnce({ jobId: 'j1', path: '/clips/x.9x16.mp4' })
+      .mockResolvedValueOnce({ jobId: 'j2', path: '/clips/x.1x1.mp4' });
+    render(VIDEO);
+    await flush();
+    act(() => q<HTMLButtonElement>('[data-preset="square"]')?.click());
+    await commit();
+    expect(convertStartMock).toHaveBeenCalledTimes(2);
+    expect(convertStartMock.mock.calls[0][0]).toEqual({ videoId: 'v1', out: '/clips/x.9x16.mp4' });
+    expect(convertStartMock.mock.calls[1][0]).toEqual({ videoId: 'v1', out: '/clips/x.1x1.mp4' });
+    expect(q('.export-result')?.className).toContain('is-done');
+    const paths = Array.from(container.querySelectorAll('.export-result__path')).map(
+      (el) => el.textContent,
+    );
+    expect(paths).toEqual(['/clips/x.9x16.mp4', '/clips/x.1x1.mp4']);
+  });
+
+  it('collapses same-aspect destinations to ONE render (no duplicate files)', async () => {
+    // TikTok + Reels + Shorts are three destinations but all 9:16 — the fan-out
+    // plan dedupes, so exactly one render runs. This is the assertion that stops
+    // the matrix from shipping three byte-identical copies.
+    convertStartMock.mockResolvedValue({ jobId: 'j1', path: '/clips/x.9x16.mp4' });
+    render(VIDEO);
+    await flush();
+    act(() => q<HTMLButtonElement>('[data-preset="reels"]')?.click());
+    act(() => q<HTMLButtonElement>('[data-preset="shorts"]')?.click());
+    await commit();
+    expect(convertStartMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('spreads fan-out progress across the whole run and counts the files', async () => {
+    convertStartMock.mockResolvedValueOnce({ jobId: 'j1' }).mockResolvedValueOnce({ jobId: 'j2' });
+    render(VIDEO);
+    await flush();
+    act(() => q<HTMLButtonElement>('[data-preset="square"]')?.click());
+    await commit();
+    // File 1 at 60% is 30% of a two-file fan-out, and the message is counted.
+    act(() => progressCb?.({ jobId: 'j1', pct: 60, message: 'Rendering frames…' }));
+    expect(q('.export-progress__pct')?.textContent).toBe('30%');
+    expect(q('.export-progress__message')?.textContent).toBe('[1/2] Rendering frames…');
+    await act(async () => {
+      doneCb?.({ jobId: 'j1', result: { path: '/clips/x.9x16.mp4' } });
+      await flush();
+    });
+    act(() => progressCb?.({ jobId: 'j2', pct: 50, message: 'Rendering frames…' }));
+    expect(q('.export-progress__pct')?.textContent).toBe('75%');
+    expect(q('.export-progress__message')?.textContent).toBe('[2/2] Rendering frames…');
+    await act(async () => {
+      doneCb?.({ jobId: 'j2', result: { path: '/clips/x.1x1.mp4' } });
+      await flush();
+    });
+    expect(q('.export-result')?.className).toContain('is-done');
+  });
+
+  it('stops the fan-out on the first target that produces no file', async () => {
+    // A partial success would hide the missing file behind a green result.
+    convertStartMock.mockResolvedValueOnce({ jobId: 'j1' }).mockResolvedValueOnce({ jobId: 'j2' });
+    render(VIDEO);
+    await flush();
+    act(() => q<HTMLButtonElement>('[data-preset="square"]')?.click());
+    await commit();
+    await act(async () => {
+      doneCb?.({ jobId: 'j1', result: {} });
+      await flush();
+    });
+    expect(convertStartMock).toHaveBeenCalledTimes(1);
+    expect(q('.export-result')?.className).toContain('is-failed');
   });
 
   it('accepts an immediate output path (fast direct-return)', async () => {
