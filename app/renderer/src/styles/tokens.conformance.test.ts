@@ -842,8 +842,8 @@ describe('global form-control floor (H5)', () => {
 
   it('is imported by App.tsx AFTER tokens.css (so the properties resolve)', () => {
     const app = readFileSync(APP_TSX, 'utf8');
-    const tokensAt = app.indexOf("styles/tokens.css");
-    const controlsAt = app.indexOf("styles/controls.css");
+    const tokensAt = app.indexOf('styles/tokens.css');
+    const controlsAt = app.indexOf('styles/controls.css');
     expect(controlsAt, 'controls.css is imported').toBeGreaterThan(-1);
     expect(tokensAt, 'tokens.css is imported').toBeGreaterThan(-1);
     // A sheet that loads before its custom properties resolves them to nothing.
