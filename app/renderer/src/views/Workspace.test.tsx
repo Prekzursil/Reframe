@@ -687,12 +687,37 @@ describe('Workspace tab clusters (WU-3a2)', () => {
     expect(groupLabels()).toEqual(['Speech & Text', 'Frame & Cut', 'Audio', 'Deliver']);
   });
 
-  it('keeps every tab reachable: all 13 ids stay in the tablist across clusters', async () => {
+  it('keeps every tab reachable: every id stays in the tablist across clusters', async () => {
     await mount();
     const ids = Array.from(container.querySelectorAll('[role="tab"]'))
       .map((t) => t.getAttribute('data-tab-id'))
       .sort();
     expect(ids).toEqual(WORKSPACE_TABS.map((t) => t.id).sort());
+  });
+
+  // GATE LINK — deliberately LITERAL, and NOT a tautology.
+  //
+  // Every other tab assertion in this file compares the DOM against
+  // WORKSPACE_TABS, so all of them stay green when a tab is added. The nightly
+  // e2e strip assertions (`app/e2e/preview.spec.ts`, "Advanced disclosure
+  // actually COLLAPSES the Deliver cluster") hardcode these same two counts —
+  // and e2e is opt-in + nightly, so it gates no PR. The v1.5 wave added
+  // `transcriptEdit`, `timeline`, `speed` and `audiomix` and shipped that spec
+  // stale four times over; the strip had been 13/8 and was 17/12 before anyone
+  // measured it.
+  //
+  // These literals are the missing link: adding or regrouping a tab now fails
+  // HERE, in the suite `quality` actually runs on every PR, and says which file
+  // to update. Update both together, or the nightly goes red again.
+  it('pins the strip counts that the nightly e2e spec hardcodes', () => {
+    expect(WORKSPACE_TABS).toHaveLength(17);
+    const hiddenWhenCollapsed = WORKSPACE_TAB_GROUPS.filter((g) => g.advanced).reduce(
+      (n, g) => n + g.tabIds.length,
+      0,
+    );
+    expect(hiddenWhenCollapsed).toBe(5);
+    // What actually paints while the Advanced cluster is collapsed.
+    expect(WORKSPACE_TABS.length - hiddenWhenCollapsed).toBe(12);
   });
 
   it('collapses the Deliver cluster behind Advanced by default and toggles it open/closed', async () => {

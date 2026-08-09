@@ -101,7 +101,7 @@ export const WORKSPACE_TABS: TabDef[] = [
 ];
 
 /**
- * WU-3a2: the 13 flat tabs regrouped into 4 NAMED clusters for progressive
+ * WU-3a2: the flat tab list regrouped into 4 NAMED clusters for progressive
  * disclosure. This is an ADDITIVE VISUAL layer over WORKSPACE_TABS — every tab
  * id above appears in exactly one group and every panel stays reachable; the
  * ids/labels/behaviour are unchanged. "Deliver" is flagged `advanced` so it
