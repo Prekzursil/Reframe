@@ -42,6 +42,9 @@ const TimelinePanel = lazy(() => import('../features/Timeline'));
 const Dub = lazy(() => import('../features/Dub'));
 // v1.5: constant-factor speed / slow motion over the existing re-time engine.
 const SpeedPanel = lazy(() => import('../features/Speed'));
+// v1.5 audiomix-ui: the A/V mixer — music bed / VO under the speaker with
+// sidechain auto-ducking, plus EBU R128 loudness normalization of an export.
+const AudioMix = lazy(() => import('../features/AudioMix'));
 const Assets = lazy(() => import('../features/Assets'));
 // captions-export: EDL/CSV NLE timeline export of approved clips.
 const NleExport = lazy(() => import('../features/NleExport'));
@@ -91,6 +94,7 @@ export const WORKSPACE_TABS: TabDef[] = [
   // user had to prompt the planner and hope. This is the direct control.
   { id: 'speed', label: 'Speed' },
   { id: 'dub', label: 'Dub' },
+  { id: 'audiomix', label: 'Audio mix' },
   { id: 'nle', label: 'NLE export' },
   { id: 'recipes', label: 'Recipes' },
   { id: 'assets', label: 'Assets' },
@@ -110,7 +114,7 @@ export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
     tabIds: ['transcribe', 'search', 'subtitles', 'transcriptEdit', 'diarize', 'refine'],
   },
   { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline', 'stabilize', 'speed'] },
-  { id: 'audio', label: 'Audio', tabIds: ['dub'] },
+  { id: 'audio', label: 'Audio', tabIds: ['dub', 'audiomix'] },
   {
     id: 'deliver',
     label: 'Deliver',
@@ -323,6 +327,8 @@ export function Workspace({
         return <SpeedPanel videoId={video.id} sourceDurationSec={video.durationSec} />;
       case 'dub':
         return <Dub videoId={video.id} />;
+      case 'audiomix':
+        return <AudioMix videoId={video.id} />;
       case 'nle':
         return <NleExport videoId={video.id} />;
       case 'recipes':

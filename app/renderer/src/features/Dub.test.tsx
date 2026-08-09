@@ -10,10 +10,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import Dub, {
+  CONSENT_ATTESTATION_TEXT,
   ENGINES,
   type AudioTrack,
   type TtsVoice,
   buildDubParams,
+  buildSampleAddParams,
   dubMediaUrl,
   voicesForEngine,
 } from './Dub';
@@ -128,6 +130,36 @@ describe('buildDubParams', () => {
         targetLang: '   ',
       }),
     ).not.toHaveProperty('targetLang');
+  });
+});
+
+describe('buildSampleAddParams', () => {
+  it('always carries consentAttested:true and trims the path', () => {
+    expect(buildSampleAddParams({ path: '  C:/me.wav  ' })).toEqual({
+      path: 'C:/me.wav',
+      consentAttested: true,
+    });
+  });
+
+  it('includes a trimmed note and omits a blank one', () => {
+    expect(buildSampleAddParams({ path: 'p', consentNote: '  ok  ' })).toEqual({
+      path: 'p',
+      consentAttested: true,
+      consentNote: 'ok',
+    });
+    expect(buildSampleAddParams({ path: 'p', consentNote: '   ' })).not.toHaveProperty(
+      'consentNote',
+    );
+  });
+});
+
+describe('CONSENT_ATTESTATION_TEXT', () => {
+  it('is the exact sentence the sidecar records and quotes back on refusal', () => {
+    // Mirrors voices.CONSENT_ATTESTATION_TEXT — a drift here would promise the
+    // user something different from what the backend enforces.
+    expect(CONSENT_ATTESTATION_TEXT).toBe(
+      "I own this voice or have the speaker's documented permission to clone it.",
+    );
   });
 });
 
@@ -305,6 +337,14 @@ describe('<Dub />', () => {
       root.render(<Dub videoId={videoId} api={api} />);
     });
     await flush();
+  }
+
+  /** Toggle the WU-A2 blocking consent checkbox (a real click, as a user would). */
+  function attest() {
+    const box = container.querySelector('[data-input="consent-attest"]') as HTMLInputElement;
+    act(() => {
+      box.click();
+    });
   }
 
   function pick(selector: string, value: string) {
@@ -598,6 +638,7 @@ describe('<Dub />', () => {
     });
     await mount(api);
     pick('[data-input="sample-path"]', 'C:/x.wav');
+    attest();
     await act(async () => {
       (container.querySelector('[data-action="add-sample"]') as HTMLButtonElement).click();
       await Promise.resolve();
@@ -623,6 +664,7 @@ describe('<Dub />', () => {
       (container.querySelector('[data-action="add-sample"]') as HTMLButtonElement).disabled,
     ).toBe(true);
     pick('[data-input="sample-path"]', 'C:/bad.wav');
+    attest();
     await act(async () => {
       (container.querySelector('[data-action="add-sample"]') as HTMLButtonElement).click();
       await Promise.resolve();
@@ -636,7 +678,15 @@ describe('<Dub />', () => {
   it('adds a voice sample through tts.sample.add', async () => {
     const { api, calls } = makeBridge({
       'tts.sample.add': {
-        sample: { id: 's9', name: 'me', path: 'C:/voices/s9.wav', durationSec: 4 },
+        sample: {
+          id: 's9',
+          name: 'me',
+          path: 'C:/voices/s9.wav',
+          durationSec: 4,
+          consentAttested: true,
+          consentAt: '2026-08-08T10:20:30Z',
+          consentNote: null,
+        },
       },
     });
     await act(async () => {
@@ -650,12 +700,155 @@ describe('<Dub />', () => {
       setter.call(input, 'C:/me.wav');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    attest();
     await act(async () => {
       (container.querySelector('[data-action="add-sample"]') as HTMLButtonElement).click();
     });
     await flush();
     const call = calls.find((c) => c.method === 'tts.sample.add');
-    expect(call?.params).toEqual({ path: 'C:/me.wav' });
+    expect(call?.params).toEqual({ path: 'C:/me.wav', consentAttested: true });
     expect(container.textContent).toContain('Added sample "me"');
+  });
+
+  // ------------------------------------------------------------------------
+  // WU-A2 — the voice-clone consent gate in the UI (the BLOCKING attestation).
+  // docs/plans/v1.5/flagship-lip-sync-dub.md §4 WU-A2 / §5.1: "the checkbox is
+  // a first-class gate; add is refused without it".
+  // ------------------------------------------------------------------------
+  it('keeps add-sample disabled until the consent box is ticked, even with a path', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    const button = () => container.querySelector('[data-action="add-sample"]') as HTMLButtonElement;
+    pick('[data-input="sample-path"]', 'C:/me.wav');
+    // path alone is NOT enough — the attestation is the gate
+    expect(button().disabled).toBe(true);
+    attest();
+    expect(button().disabled).toBe(false);
+    // untick -> refused again (the gate is not one-way)
+    attest();
+    expect(button().disabled).toBe(true);
+  });
+
+  it('shows the same attestation sentence the sidecar enforces', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    const label = container.querySelector('[data-testid="consent-attest-label"]');
+    expect(label?.textContent).toContain(
+      "I own this voice or have the speaker's documented permission to clone it.",
+    );
+  });
+
+  it('forwards consentAttested + a trimmed consentNote to tts.sample.add', async () => {
+    const { api, calls } = makeBridge({
+      'tts.sample.add': {
+        sample: {
+          id: 's1',
+          name: 'ann',
+          path: 'C:/voices/s1.wav',
+          durationSec: 3,
+          consentAttested: true,
+          consentAt: '2026-08-08T10:20:30Z',
+          consentNote: 'signed release',
+        },
+      },
+    });
+    await mount(api);
+    pick('[data-input="sample-path"]', '  C:/ann.wav  ');
+    pick('[data-input="consent-note"]', '  signed release  ');
+    attest();
+    await act(async () => {
+      (container.querySelector('[data-action="add-sample"]') as HTMLButtonElement).click();
+    });
+    await flush();
+    expect(calls.find((c) => c.method === 'tts.sample.add')?.params).toEqual({
+      path: 'C:/ann.wav',
+      consentAttested: true,
+      consentNote: 'signed release',
+    });
+  });
+
+  it('omits a whitespace-only consentNote', async () => {
+    const { api, calls } = makeBridge({
+      'tts.sample.add': {
+        sample: {
+          id: 's2',
+          name: 'bo',
+          path: 'C:/voices/s2.wav',
+          durationSec: 3,
+          consentAttested: true,
+          consentAt: '2026-08-08T10:20:30Z',
+          consentNote: null,
+        },
+      },
+    });
+    await mount(api);
+    pick('[data-input="sample-path"]', 'C:/bo.wav');
+    pick('[data-input="consent-note"]', '    ');
+    attest();
+    await act(async () => {
+      (container.querySelector('[data-action="add-sample"]') as HTMLButtonElement).click();
+    });
+    await flush();
+    expect(calls.find((c) => c.method === 'tts.sample.add')?.params).toEqual({
+      path: 'C:/bo.wav',
+      consentAttested: true,
+    });
+  });
+
+  it('clears the attestation after a successful add (a fresh tick per clone)', async () => {
+    const { api } = makeBridge({
+      'tts.sample.add': {
+        sample: {
+          id: 's3',
+          name: 'cy',
+          path: 'C:/voices/s3.wav',
+          durationSec: 3,
+          consentAttested: true,
+          consentAt: '2026-08-08T10:20:30Z',
+          consentNote: 'note',
+        },
+      },
+    });
+    await mount(api);
+    pick('[data-input="sample-path"]', 'C:/cy.wav');
+    pick('[data-input="consent-note"]', 'note');
+    attest();
+    await act(async () => {
+      (container.querySelector('[data-action="add-sample"]') as HTMLButtonElement).click();
+    });
+    await flush();
+    const box = container.querySelector('[data-input="consent-attest"]') as HTMLInputElement;
+    const note = container.querySelector('[data-input="consent-note"]') as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(note.value).toBe('');
+    // and the button is disabled again — one tick can never cover a second clone
+    expect(
+      (container.querySelector('[data-action="add-sample"]') as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it('keeps the attestation ticked when the add FAILS so the user can retry', async () => {
+    const { api } = makeBridge();
+    (api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'tts.sample.add') throw new Error('unsupported sample format');
+      if (method === 'tts.voices') return { voices: VOICES };
+      if (method === 'tracks.list') return { tracks: [] };
+      if (method === 'tracks.audio.list') return { audioTracks: [] };
+      return {};
+    });
+    await mount(api);
+    pick('[data-input="sample-path"]', 'C:/bad.txt');
+    attest();
+    await act(async () => {
+      (container.querySelector('[data-action="add-sample"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(
+      (container.querySelector('[data-input="consent-attest"]') as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(container.querySelector('.dub-sample-message')?.textContent).toContain(
+      'unsupported sample format',
+    );
   });
 });

@@ -190,8 +190,12 @@ If the canonical client is being extended this round, the T2 methods are:
 tts: {
   voices: (): Promise<{ voices: { id: string; engine: string; lang: string; name: string }[] }> =>
     rpc('tts.voices'),
-  sampleAdd: (path: string): Promise<{ sample: { id: string; name: string; path: string; durationSec: number } }> =>
-    rpc('tts.sample.add', { path }),
+  // v1.5 WU-A2: `consentAttested` is REQUIRED and must be `true` (CONTRACTS.md
+  // "v1.5 ADDENDUM"); the sidecar refuses the add otherwise and stores nothing.
+  sampleAdd: (path: string, consentAttested: true, consentNote?: string):
+    Promise<{ sample: { id: string; name: string; path: string; durationSec: number;
+                        consentAttested: boolean; consentAt: string | null; consentNote: string | null } }> =>
+    rpc('tts.sample.add', { path, consentAttested, ...(consentNote ? { consentNote } : {}) }),
   dubStart: (p: { videoId: string; trackId: string; engine: string; voice?: string; sampleId?: string; targetLang?: string }):
     Promise<{ jobId: string }> => rpc('tts.dub.start', { ...p }),
 },

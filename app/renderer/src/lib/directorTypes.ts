@@ -43,6 +43,7 @@ const OP_KIND_LABELS: Record<DirectorOpKind, string> = {
   trim: 'trim',
   cut: 'cut',
   join: 'join',
+  transition: 'transition',
   removeSilence: 'silence removal',
   removeFillers: 'filler removal',
   reorder: 'reorder',
