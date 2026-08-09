@@ -658,8 +658,18 @@ function downloadBtn(model: string): HTMLButtonElement {
   ) as HTMLButtonElement;
 }
 
+// "The control that starts analysis", wherever it currently lives. Before H3 the
+// toolbar copy and the empty-state CTA both existed pre-analysis; now the CTA owns
+// that state and the toolbar owns the other two, so a single hard-coded selector
+// would silently resolve to null depending on when it is called.
+function analyzeStarter(): HTMLButtonElement {
+  return container.querySelector(
+    'button[data-action="analyze"], button[data-action="analyze-cta"]',
+  ) as HTMLButtonElement;
+}
+
 async function analyze(): Promise<void> {
-  const btn = container.querySelector('button[data-action="analyze"]') as HTMLButtonElement;
+  const btn = analyzeStarter();
   await act(async () => {
     btn.click();
   });
@@ -691,6 +701,63 @@ describe('<ModelsSystemPanel />', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(container.querySelector('[data-section="hardware"]')).not.toBeNull();
+  });
+
+  // H3 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §5). The toolbar button and the
+  // empty-state CTA both read "Analyze my system" and both call `analyze()`, so an
+  // un-analyzed panel shipped the SAME control twice — measured live at 552,161 and
+  // 576,326. The audit records C1 and H3 as masking each other: C1's landing-scrolled
+  // bug hid the toolbar copy, so fixing C1 is what made the pair visible together.
+  // Two buttons carrying an identical accessible name is also an ambiguous target for
+  // anyone navigating by name rather than by position.
+  it('offers exactly ONE analyze control while the empty-state prompt is showing', async () => {
+    const c = makeClient();
+    await mount(c);
+    expect(container.querySelector('[data-section="prompt"]')).not.toBeNull();
+    const starters = container.querySelectorAll(
+      'button[data-action="analyze"], button[data-action="analyze-cta"]',
+    );
+    expect(starters.length).toBe(1);
+    // The survivor is the CTA, not the toolbar copy: it is the one carrying the
+    // explanation, and dropping it instead would leave the empty state a paragraph
+    // with no way forward (the shape audit M2 flags on Edit).
+    expect((starters[0] as HTMLElement).dataset.action).toBe('analyze-cta');
+  });
+
+  // The other half of H3: suppressing the toolbar copy must not lose the control.
+  // It is the ONLY affordance once the prompt is gone, in both remaining states.
+  it('restores the toolbar analyze control as Re-analyze once analysis has run', async () => {
+    const c = makeClient();
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('[data-section="prompt"]')).toBeNull();
+    const toolbar = container.querySelector('button[data-action="analyze"]') as HTMLButtonElement;
+    expect(toolbar).not.toBeNull();
+    expect(toolbar.textContent).toContain('Re-analyze');
+  });
+
+  // …and clicking it must actually re-run the analysis. Nothing exercised the
+  // TOOLBAR button's own handler before H3: every test reached analysis through
+  // the pre-analysis copy of it, so the post-analysis "Re-analyze" path shipped
+  // unproven. Removing the duplicate made that hole measurable — the file went to
+  // 97.05% functions with this handler as the only uncovered one.
+  it('Re-analyze re-runs the probe from the toolbar control', async () => {
+    const c = makeClient();
+    await mount(c);
+    await analyze();
+    const probe = c.client.system.probe as ReturnType<typeof vi.fn>;
+    const callsAfterFirst = probe.mock.calls.length;
+    expect(callsAfterFirst).toBeGreaterThan(0);
+    const toolbar = container.querySelector('button[data-action="analyze"]') as HTMLButtonElement;
+    await act(async () => {
+      toolbar.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(probe.mock.calls.length).toBeGreaterThan(callsAfterFirst);
     expect(container.querySelector('[data-section="hardware"]')).not.toBeNull();
   });
 
@@ -1557,19 +1624,25 @@ describe('<ModelsSystemPanel />', () => {
         }),
     );
     await mount(c);
-    const btn = container.querySelector('button[data-action="analyze"]') as HTMLButtonElement;
     await act(async () => {
-      btn.click();
+      analyzeStarter().click();
     });
-    expect(btn.disabled).toBe(true);
-    expect(btn.textContent).toContain('Analyzing');
+    // RE-QUERY each phase rather than holding one node. Since H3 the control that
+    // starts analysis (the empty-state CTA) is NOT the control that reports progress
+    // (the toolbar button) — the first unmounts as `busy` flips. A captured
+    // reference would go detached and every assertion below would read a stale,
+    // off-DOM node, which is a vacuous pass rather than a real one.
+    const during = analyzeStarter();
+    expect(during.dataset.action).toBe('analyze');
+    expect(during.disabled).toBe(true);
+    expect(during.textContent).toContain('Analyzing');
     await act(async () => {
       release();
       await Promise.resolve();
       await Promise.resolve();
     });
     // After resolution the busy label clears.
-    expect(btn.textContent).not.toContain('Analyzing');
+    expect(analyzeStarter().textContent).not.toContain('Analyzing');
   });
 
   it('download tolerates a non-array asset list and a null advisor refresh', async () => {
@@ -2361,7 +2434,7 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
         }),
     );
     await mount(c);
-    const btn = container.querySelector('button[data-action="analyze"]') as HTMLButtonElement;
+    const btn = analyzeStarter();
     await act(async () => btn.click());
     const loading = container.querySelector('[data-section="recommend-loading"]') as HTMLElement;
     expect(loading).not.toBeNull();

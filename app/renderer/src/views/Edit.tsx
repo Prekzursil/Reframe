@@ -179,7 +179,7 @@ export function Edit({
           <span className="edit__empty-timecode">--:--</span>
         </div>
         <p className="edit__empty-title">No video open</p>
-        {/* C3 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §5) — this used to read
+        {/* docs/plans/v1.5/editing-surface-audit-2026-08.md:52 — this used to read
             "trim, cut, join, reframe, caption, and more — every edit tool lives
             here". Three of those verbs are not reachable from this section, and
             the "every tool lives here" clause was the widest part of the claim:
