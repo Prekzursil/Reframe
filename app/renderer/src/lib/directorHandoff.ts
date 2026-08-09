@@ -26,6 +26,7 @@ const PHASE_BY_OP_KIND: Readonly<Record<DirectorOpKind, HandoffPhase | null>> = 
   trim: 'edit',
   cut: 'edit',
   join: 'edit',
+  transition: 'edit',
   removeSilence: 'edit',
   removeFillers: 'edit',
   reorder: 'edit',
