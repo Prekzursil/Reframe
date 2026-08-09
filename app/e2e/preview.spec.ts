@@ -211,14 +211,23 @@ test('Advanced disclosure actually COLLAPSES the Deliver cluster (F17)', async (
   // ...so the cluster it owns must not paint. It does today: the author-origin
   // `display: flex` on `.tabbar--grouped .tabbar__advanced-panel` outranks the
   // UA `[hidden] { display: none }`, and no `[hidden]` selector anywhere under
-  // app/ restores it — so all 13 tabs paint instead of 8 and `aria-expanded`
+  // app/ restores it — so all 17 tabs paint instead of 12 and `aria-expanded`
   // lies about what is on screen.
   await expect(panel).toBeHidden();
   await expect(deliverTab).toBeHidden();
-  // The user-visible consequence: the default view paints the 8 primary tabs,
-  // not all 13. (`.tab` is exclusive to this strip — measured 13 total.)
-  await expect(win.locator('.tab')).toHaveCount(13);
-  await expect(win.locator('.tab:visible')).toHaveCount(8);
+  // The user-visible consequence: the default view paints the 12 primary tabs,
+  // not all 17. (`.tab` is exclusive to this strip.)
+  //
+  // These two numbers are DERIVED, not observed — they are `WORKSPACE_TABS.length`
+  // and that minus the `advanced: true` group's `tabIds.length`
+  // (`Workspace.tsx:80-124`): 17 tabs total; Deliver holds 5 (convert, nle,
+  // recipes, assets, tracks), so 12 paint while it is collapsed. They were 13/8
+  // until the v1.5 wave added `transcriptEdit`, `timeline`, `speed` and
+  // `audiomix`; e2e is opt-in and nightly, so it never gated those PRs and the
+  // stale pair merged four times over. Re-derive from the source when the tab
+  // list changes — do NOT read a number off a failing run and paste it back.
+  await expect(win.locator('.tab')).toHaveCount(17);
+  await expect(win.locator('.tab:visible')).toHaveCount(12);
   // ...and the disclosure's own toggle is reachable WITHOUT horizontally
   // scrolling `.workspace .tabbar` (workspace.css `overflow-x: auto`). With the
   // cluster always painted the strip overflowed its 1064px track by 587px and
