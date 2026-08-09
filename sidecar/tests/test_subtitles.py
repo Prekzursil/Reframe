@@ -257,6 +257,27 @@ def test_translate_honors_cancellation(simple_track):
     assert out["cues"] == []
 
 
+def test_translate_preserves_the_diarized_speaker_label():
+    """Translating a diarized track must NOT erase who was speaking.
+
+    Regression guard for the fresh-literal drop class: ``translate`` rebuilt
+    every cue via ``make_cue(index, start, end, new_text)`` with no ``speaker=``,
+    so translating a diarized track silently deleted every label. Mutation that
+    must turn this RED: drop the ``speaker=`` argument at the ``make_cue`` call.
+    """
+    track = S.new_track(
+        [
+            S.make_cue(1, 0.0, 1.0, "Hello.", speaker="SPEAKER_00"),
+            S.make_cue(2, 1.0, 2.0, "Bye."),  # not diarized
+        ],
+        lang="en",
+    )
+    out = S.translate(track, "es", translator=lambda t: t.upper())
+    assert out["cues"][0]["speaker"] == "SPEAKER_00"
+    # no ``speaker: None`` leakage onto the non-diarized cue (make_cue's rule)
+    assert "speaker" not in out["cues"][1]
+
+
 def test_make_provider_translator_blank_short_circuits():
     provider = FakeProvider()
     tr = S.make_provider_translator(provider, "fr")

@@ -719,6 +719,10 @@ def _rebase_cues(cues: list[Cue], source_start: float) -> list[Cue]:
     Used only on the filler path: the de-fill stage works in clip-local time, so
     the cues handed to ``remap_cues`` must already be clip-local. Cues that end
     at/before the clip in-point are dropped; indexes renumbered 1..N.
+
+    The source cue is SPREAD, not re-listed field by field: re-basing moves a cue
+    in time and must not silently destroy any other key it carries (``speaker``
+    is the one that costs — a bare literal here erased the diarized label).
     """
     out: list[Cue] = []
     for cue in cues or []:
@@ -726,7 +730,7 @@ def _rebase_cues(cues: list[Cue], source_start: float) -> list[Cue]:
         end = max(0.0, float(cue.get("end", 0.0)) - source_start)
         if end <= start:
             continue
-        out.append({"index": len(out) + 1, "start": start, "end": end, "text": str(cue.get("text", "") or "")})
+        out.append({**cue, "index": len(out) + 1, "start": start, "end": end, "text": str(cue.get("text", "") or "")})
     return out
 
 

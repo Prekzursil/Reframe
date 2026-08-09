@@ -71,6 +71,36 @@ OP_KINDS: tuple[str, ...] = get_args(OpKind)
 #: The set of valid statuses, derived from :data:`OpStatus`.
 OP_STATUSES: tuple[str, ...] = get_args(OpStatus)
 
+#: The op kinds ``director.apply`` has NO engine adapter for yet. THE single
+#: source of truth for the wired/unwired split — ``director_op_engines`` derives
+#: its ``DEFERRED_KINDS``/``WIRED_KINDS`` from here, the planner prompt advertises
+#: only :data:`EXECUTABLE_OP_KINDS`, and the renderer mirrors this tuple (pinned
+#: by ``tests/test_director_op_kind_parity.py``).
+#:
+#: It lives HERE, immediately under :data:`OpKind`, on purpose: adding a 19th kind
+#: to the union without deciding its executability is the exact drift this fix
+#: exists to stop, and the decision point is now adjacent to the edit. The
+#: parity gate makes that decision mandatory rather than merely visible —
+#: ``build_engines()`` must cover ``EXECUTABLE_OP_KINDS`` exactly, so a new kind
+#: either gets an engine or gets listed here.
+#:
+#: These three are NOT missing their engines (``panorama_stitch``/``scroll_regen``/
+#: ``ocr_list`` all ship and are unit-tested); they are missing the apply-time
+#: ADAPTER. ``director_op_engines.DEFERRED_SUBSYSTEMS`` names what each still needs.
+DEFERRED_OP_KINDS: tuple[str, ...] = (
+    "stitchPanorama",
+    "regenScroll",
+    "ocrExtractList",
+)
+
+#: The op kinds that can actually be executed today = :data:`OP_KINDS` minus
+#: :data:`DEFERRED_OP_KINDS`, in toolbox order. This is the set advertised to the
+#: planner LLM: before this existed the prompt offered all 18 kinds while the
+#: engine table held 15, so a plan could contain a step that fails at apply time
+#: and rolls the WHOLE plan back (measured: a trim that had already applied was
+#: reverted when a following ``ocrExtractList`` hit ``no engine for kind``).
+EXECUTABLE_OP_KINDS: tuple[str, ...] = tuple(k for k in OP_KINDS if k not in DEFERRED_OP_KINDS)
+
 
 class EditPlanError(ValueError):
     """Typed error for malformed EditPlan JSON / planner output (WU-dsl).

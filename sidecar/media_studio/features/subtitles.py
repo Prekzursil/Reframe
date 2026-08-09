@@ -381,7 +381,15 @@ def translate(
             break
         new_text = translator(str(cue.get("text", "")))
         out_cues.append(
-            make_cue(int(cue.get("index", i + 1)), float(cue.get("start", 0.0)), float(cue.get("end", 0.0)), new_text)
+            make_cue(
+                int(cue.get("index", i + 1)),
+                float(cue.get("start", 0.0)),
+                float(cue.get("end", 0.0)),
+                new_text,
+                # Translating changes the WORDS, never who said them: an absent
+                # ``speaker=`` here silently erased every diarized label.
+                speaker=cue.get("speaker"),
+            )
         )
         if progress is not None and total:
             progress(int(round((i + 1) / total * 100)), f"translated {i + 1}/{total}")
@@ -454,6 +462,10 @@ def stack_bilingual(
                 float(cue.get("start", 0.0)),
                 float(cue.get("end", 0.0)),
                 stack_cue_text(str(cue.get("text", "")), translated_text, order=order),
+                # The stacked cue is the ORIGINAL cue with a second line added, so
+                # it keeps the original's diarized label (the translation carries
+                # the same one; both sides agree by construction).
+                speaker=cue.get("speaker"),
             )
         )
 

@@ -406,8 +406,14 @@ def test_system_prompt_states_security_rule_and_kinds():
     assert DATA_FENCE_OPEN in sp and DATA_FENCE_CLOSE in sp
     assert "UNTRUSTED MEDIA CONTENT" in sp
     assert "never instructions" in sp or "never obey" in sp.lower() or "DATA, never instructions" in sp
-    for kind in ("trim", "ocrExtractList", "overlayText"):
+    # v1.5 W14 — this list USED to include "ocrExtractList", i.e. the test asserted
+    # the very defect: the prompt advertised three kinds `build_engines` has no
+    # adapter for, and an unwired op rolls the whole plan back at apply time. The
+    # advertised set is now `EXECUTABLE_OP_KINDS`; `test_director_op_kind_parity.py`
+    # owns the full advertised-vs-executable equality (this stays a spot check).
+    for kind in ("trim", "overlayText", "translateCaption"):
         assert kind in sp
+    assert "ocrExtractList" not in sp
 
 
 def test_user_prompt_fences_media_and_keeps_goal_outside():

@@ -327,6 +327,11 @@ def remap_cues(cues: Sequence[Mapping[str, Any]], keeps: Sequence[KeepSpan]) -> 
     Cues that collapse to zero length (they lived entirely inside a removed
     filler span) are dropped; indexes are renumbered 1..N. The result is
     clip-local — callers pass ``source_start=0`` to the caption stage.
+
+    The source cue is SPREAD, not re-listed field by field: re-timing moves a cue
+    and must not silently destroy any other key it carries (``speaker`` is the one
+    that costs — a bare literal here erased the diarized label on every de-fill,
+    silence-trim and transcript-edit pass).
     """
     out: list[dict[str, Any]] = []
     for cue in cues or []:
@@ -336,6 +341,7 @@ def remap_cues(cues: Sequence[Mapping[str, Any]], keeps: Sequence[KeepSpan]) -> 
             continue
         out.append(
             {
+                **cue,
                 "index": len(out) + 1,
                 "start": round(start, 3),
                 "end": round(end, 3),

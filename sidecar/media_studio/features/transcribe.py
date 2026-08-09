@@ -29,12 +29,15 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..assets import manager as _asset_manager
+from ..assets import manifest
 from ..util import clamp, get_logger
 from . import asr_vocabulary as _vocabulary
+from .diarize_backend import UnpinnedModelRevisionError, resolve_pinned_hf_source
 
 log = get_logger("media_studio.features.transcribe")
 
@@ -77,10 +80,126 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_GPU_COMPUTE = "float16"
 CPU_DEVICE = "cpu"
 CPU_COMPUTE = "int8"
-#: CPU-appropriate model: ``large-v3-turbo`` is impractically slow on CPU/int8.
-#: ``small`` is the sweet spot — multilingual, ~10x faster than large on CPU, and
-#: still good quality. Chosen as the auto CPU default; overridable via settings.
-CPU_MODEL = "small"
+
+
+def cpu_auto_model() -> str:
+    """The whisper model the CPU auto-path resolves to (W01/T0).
+
+    A smaller model (``small``) is materially cheaper than ``large-v3-turbo`` on
+    CPU/int8, so it is the model we *want* here. But Reframe is offline-first and
+    faster-whisper only avoids a network round-trip when that exact snapshot is
+    already in ``HF_HOME`` — which only a registered, Default-profile manifest
+    asset puts there. Today the only whisper snapshot the Default profile installs
+    is ``large-v3-turbo`` (``assets.manifest._register_day1``), so auto-resolving
+    ``small`` made a CPU-only user's FIRST transcribe an unpinned download that
+    fails outright with no network.
+
+    So: prefer the cheap CPU model when — and only when — the Default profile is
+    configured to install it, else stay on the turbo snapshot. A user who
+    knowingly accepts a download can still force any id via ``transcribeModel``.
+
+    SCOPE, stated precisely because the earlier wording overclaimed: this is a
+    REGISTRY decision, not a disk guarantee. Whether the chosen id is actually
+    resolvable offline is decided later, per load, by :func:`resolve_model_source`.
+    """
+    if manifest.CPU_WHISPER_MODEL_ID in manifest.default_profile_whisper_model_ids():
+        return manifest.CPU_WHISPER_MODEL_ID
+    return DEFAULT_MODEL
+
+
+#: Locates the on-disk dir of a PINNED HF snapshot: ``(repo_id, revision,
+#: env_vars) -> dir | None``. A seam so the offline-resolution logic is testable
+#: against a real temp cache without huggingface_hub or 1.6 GB of weights.
+SnapshotLocator = Callable[..., str | None]
+
+
+def default_snapshot_locator(*, repo_id: str, revision: str, env_vars: Mapping[str, str] | None = None) -> str | None:
+    """The local dir of ``repo_id`` at ``revision``, or ``None`` when absent.
+
+    Reads the SAME cache layout ``assets.ensure`` writes —
+    ``<HF cache>/models--<org>--<name>/snapshots/<commit>`` — through the asset
+    manager's env-derived cache resolver. Deliberately a plain filesystem probe:
+    it needs no ``huggingface_hub`` import, never touches the network, and cannot
+    be defeated by a missing ``refs/`` entry (which is exactly the failure this
+    whole function exists to route around — see :func:`resolve_model_source`).
+    """
+    snapshot = _asset_manager.hf_repo_dir(repo_id, env_vars) / "snapshots" / revision
+    if snapshot.is_dir() and any(snapshot.iterdir()):
+        return str(snapshot)
+    return None
+
+
+def whisper_snapshot_dir(
+    model: str,
+    *,
+    locator: SnapshotLocator = default_snapshot_locator,
+    env_vars: Mapping[str, str] | None = None,
+) -> str | None:
+    """Local dir holding ``model`` at its REGISTERED commit pin, or ``None``.
+
+    The honest disk-level answer to "can this model load offline". ``None`` means
+    either the manifest does not map the id to an asset, the asset is not
+    registered / not pinned to a 40-hex commit, or the pinned snapshot is simply
+    not on this machine (a Minimum-profile install, a cancelled first run, a
+    manually cleared HF cache).
+    """
+    asset_name = manifest.WHISPER_MODEL_ASSETS.get(model)
+    if asset_name is None:
+        return None
+    entry = manifest.get_asset(asset_name)
+    if entry is None:
+        return None
+    try:
+        repo, revision = resolve_pinned_hf_source(asset_name, str(entry.hf_repo or ""))
+    except UnpinnedModelRevisionError as exc:
+        log.warning("whisper asset %s is not usable as a pinned source: %s", asset_name, exc)
+        return None
+    return locator(repo_id=repo, revision=revision, env_vars=env_vars)
+
+
+def resolve_model_source(
+    model: str,
+    *,
+    locator: SnapshotLocator = default_snapshot_locator,
+    env_vars: Mapping[str, str] | None = None,
+) -> str:
+    """What to hand faster-whisper for ``model``: a local snapshot DIR, else the id.
+
+    W01/T0 second half — the part a bare "resolve the CPU path to the provisioned
+    model" does NOT fix. ``WhisperModel("<id>")`` funnels into
+    ``huggingface_hub.snapshot_download(repo)`` with the DEFAULT revision
+    ``"main"``. ``assets.ensure`` installs by 40-hex commit pin, and
+    ``huggingface_hub`` writes ``refs/<revision>`` only when the requested
+    revision differs from the resolved commit hash
+    (``file_download._cache_commit_hash_for_specific_revision``), so a pin-installed
+    repo has NO ``refs/main``. Offline, ``_snapshot_download`` resolves a cached
+    snapshot only from a commit-hash revision or an existing ``refs/<revision>``
+    and otherwise raises ``LocalEntryNotFoundError`` — i.e. the weights are on
+    disk and the loader still fails. MEASURED against huggingface_hub 1.22.0 with
+    a pin-shaped cache: ``revision="main"`` and the bare default both raise, while
+    ``revision=<pin>`` resolves (``sidecar/tests/e2e/test_whisper_offline_e2e.py``).
+
+    ``WhisperModel`` takes a DIRECTORY as well as an id (it short-circuits on
+    ``os.path.isdir``), so handing it the pinned snapshot dir skips hub resolution
+    altogether. That also closes a second hole: the id path resolved whatever
+    ``main`` points at TODAY, not the commit the manifest verified — the same
+    unpinned-runtime-load class WU-S5 fixed for the SpeechBrain/Parakeet backends.
+
+    Falls back to the bare id (a network resolve, which fails loudly offline) when
+    no pinned snapshot is on disk — an explicitly user-forced ``transcribeModel``,
+    or an install profile that never downloaded whisper at all.
+    """
+    snapshot = whisper_snapshot_dir(model, locator=locator, env_vars=env_vars)
+    if snapshot is None:
+        log.warning(
+            "no pinned local snapshot for whisper model %r; faster-whisper will resolve it "
+            "over the network (this FAILS offline). Install the transcription asset to fix.",
+            model,
+        )
+        return model
+    log.info("resolved whisper model %r to pinned local snapshot %s", model, snapshot)
+    return snapshot
+
 
 #: the settings key picking the transcribe device (``auto`` | ``cuda`` | ``cpu``).
 TRANSCRIBE_DEVICE_KEY = "transcribeDevice"
@@ -159,7 +278,10 @@ class FasterWhisperLoader:
         # Local import keeps the seam mockable and the module import-light.
         from faster_whisper import WhisperModel as _WhisperModel  # type: ignore
 
-        built = _WhisperModel(model, device=device, compute_type=compute_type)
+        # W01/T0: hand faster-whisper the PINNED local snapshot dir when we have
+        # one. Passing the bare id makes it ask the hub for revision "main", which
+        # a pin-installed cache cannot resolve offline (see resolve_model_source).
+        built = _WhisperModel(resolve_model_source(model), device=device, compute_type=compute_type)
         self._cache[key] = built
         return built
 
@@ -242,8 +364,8 @@ def resolve_transcribe_target(
         detection; == ``"cpu"`` -> force CPU (``int8``); anything else (``auto``,
         a typo, a non-string) -> :func:`detect_device`.
       * the model defaults to the device-appropriate auto model (large turbo on
-        GPU, :data:`CPU_MODEL` on CPU) and is overridden only by an explicit,
-        non-empty string ``transcribeModel``.
+        GPU, :func:`cpu_auto_model` on CPU) and is overridden only by an
+        explicit, non-empty string ``transcribeModel``.
 
     Returning the resolved triple lets the caller pass it straight into
     :func:`transcribe_file` (whose ``model``/``device``/``compute_type`` params
@@ -261,7 +383,7 @@ def resolve_transcribe_target(
     else:  # "auto" / unknown / non-string -> detect
         device, compute = detect_device(probe=probe)
 
-    model = DEFAULT_MODEL if device == DEFAULT_DEVICE else CPU_MODEL
+    model = DEFAULT_MODEL if device == DEFAULT_DEVICE else cpu_auto_model()
     model_raw = settings.get(TRANSCRIBE_MODEL_KEY)
     if isinstance(model_raw, str):
         trimmed = model_raw.strip()
