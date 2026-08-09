@@ -1,6 +1,15 @@
 # Reframe — Signed Release CI Pipeline Design
 
-> **Status:** DRAFT
+> **Status:** SUPERSEDED BY docs/plans/v1.5/GRILL-DECISION-QUEUE.md (2026-08-09)
+
+> **Why this is closed, not pending.** `GRILL-DECISION-QUEUE.md` §F-1 ruled
+> *"**Signing** stays NONE (already by design). No SmartScreen concern to solve."*
+> That ruling post-dates this design and reverses its premise, so the absent
+> `release.yml` is **correct** — it is not an unfinished item.
+>
+> Left in the tree deliberately rather than deleted: the threat model, the pinning
+> scheme and the SBOM/provenance work are reusable if signing is ever revisited.
+> Nothing here should be scheduled without first reversing F-1.
 
 **Repo:** `Prekzursil/Reframe` · **Verified against:** `origin/main @ 7502e3a` (fetched 2026-07-12)
 **Scope:** READ-ONLY design. No repo files changed. The owner decides local-vs-CI builds.
