@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 from media_studio import protocol
+from media_studio.assets import manifest
 from media_studio.features import transcribe
 from media_studio.jobs import JobRegistry
 from media_studio.protocol import RpcContext, RpcError
@@ -787,8 +788,76 @@ def test_resolve_target_auto_cpu_uses_cpu_model():
     model, device, compute = transcribe.resolve_transcribe_target({}, probe=lambda: False)
     assert device == transcribe.CPU_DEVICE
     assert compute == transcribe.CPU_COMPUTE
-    assert model == transcribe.CPU_MODEL
-    assert model != transcribe.DEFAULT_MODEL
+    assert model == transcribe.cpu_auto_model()
+
+
+# --------------------------------------------------------------------------- #
+# T0 — a CPU-only install must auto-resolve to a PROVISIONED whisper model.
+#
+# Reframe is offline-first: faster-whisper only finds a model without a network
+# round-trip when that exact snapshot is already in HF_HOME, and the ONLY thing
+# that puts one there is a registered core-tier manifest asset. Auto-resolving an
+# id that no asset provisions turns a CPU user's FIRST transcribe into an
+# unpinned download that fails outright offline.
+# --------------------------------------------------------------------------- #
+def test_provisioned_whisper_model_ids_is_turbo_only_today():
+    ids = manifest.provisioned_whisper_model_ids()
+    assert ids == frozenset({manifest.WHISPER_MODEL_ID})
+    # The faster CPU model is KNOWN but NOT provisioned (no pinned asset yet).
+    assert manifest.CPU_WHISPER_MODEL_ID not in ids
+
+
+def test_cpu_auto_model_is_backed_by_a_provisioned_manifest_asset():
+    model, device, _ = transcribe.resolve_transcribe_target({}, probe=lambda: False)
+    assert device == transcribe.CPU_DEVICE
+    assert model in manifest.provisioned_whisper_model_ids()
+
+
+def test_transcribe_with_engine_cpu_loads_a_provisioned_model():
+    loader = FakeLoader(_two_segment_model())
+    transcribe.transcribe_with_engine("/v.mp4", loader=loader, settings={}, detect_probe=lambda: False)
+    (loaded_model, loaded_device, _compute) = loader.loads[0]
+    assert loaded_device == transcribe.CPU_DEVICE
+    assert loaded_model in manifest.provisioned_whisper_model_ids()
+
+
+def _register_cpu_whisper(tier: str) -> None:
+    """Register a stand-in CPU whisper asset (test double; dummy revision)."""
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=manifest.CPU_WHISPER_ASSET_NAME,
+            kind="model",
+            size_mb=500,
+            label="Whisper small (CPU)",
+            tier=tier,
+            why="test double",
+            installer="hf",
+            hf_repo=f"Systran/faster-whisper-{manifest.CPU_WHISPER_MODEL_ID}",
+            hf_revision="0" * 40,
+        )
+    )
+
+
+def test_cpu_auto_model_prefers_small_once_a_core_asset_provisions_it():
+    snapshot = manifest.registry_snapshot()
+    try:
+        _register_cpu_whisper("core")
+        assert transcribe.cpu_auto_model() == manifest.CPU_WHISPER_MODEL_ID
+        model, _, _ = transcribe.resolve_transcribe_target({}, probe=lambda: False)
+        assert model == manifest.CPU_WHISPER_MODEL_ID
+    finally:
+        manifest.registry_restore(snapshot)
+
+
+def test_cpu_auto_model_ignores_a_non_default_profile_cpu_asset():
+    # "optional" is NOT pulled by the Default installer profile, so a CPU-only
+    # user would still have no snapshot on disk -> auto must not select it.
+    snapshot = manifest.registry_snapshot()
+    try:
+        _register_cpu_whisper("optional")
+        assert transcribe.cpu_auto_model() == transcribe.DEFAULT_MODEL
+    finally:
+        manifest.registry_restore(snapshot)
 
 
 def test_resolve_target_explicit_device_cpu_override_skips_probe():
@@ -801,7 +870,7 @@ def test_resolve_target_explicit_device_cpu_override_skips_probe():
     model, device, compute = transcribe.resolve_transcribe_target({"transcribeDevice": "cpu"}, probe=probe)
     assert device == transcribe.CPU_DEVICE
     assert compute == transcribe.CPU_COMPUTE
-    assert model == transcribe.CPU_MODEL
+    assert model == transcribe.cpu_auto_model()
     assert probed["n"] == 0
 
 
@@ -822,7 +891,7 @@ def test_resolve_target_unknown_device_value_falls_back_to_auto():
     model, device, compute = transcribe.resolve_transcribe_target({"transcribeDevice": "gpu-9000"}, probe=lambda: False)
     assert device == transcribe.CPU_DEVICE
     assert compute == transcribe.CPU_COMPUTE
-    assert model == transcribe.CPU_MODEL
+    assert model == transcribe.cpu_auto_model()
 
 
 def test_resolve_target_non_string_device_value_falls_back_to_auto():
@@ -837,7 +906,7 @@ def test_transcribe_with_engine_no_cuda_loads_cpu_int8_only():
     loader = FakeLoader(_two_segment_model())
     t = transcribe.transcribe_with_engine("/v.mp4", loader=loader, settings={}, detect_probe=lambda: False)
     assert len(t["segments"]) == 2
-    assert loader.loads == [(transcribe.CPU_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+    assert loader.loads == [(transcribe.cpu_auto_model(), transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
 
 
 def test_transcribe_with_engine_cuda_loads_gpu_default():
@@ -854,7 +923,7 @@ def test_transcribe_with_engine_settings_device_override():
         settings={"transcribeDevice": "cpu"},
         detect_probe=lambda: True,
     )
-    assert loader.loads == [(transcribe.CPU_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+    assert loader.loads == [(transcribe.cpu_auto_model(), transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
 
 
 def test_transcribe_with_engine_parakeet_degrade_uses_resolved_cpu_target():
@@ -870,7 +939,7 @@ def test_transcribe_with_engine_parakeet_degrade_uses_resolved_cpu_target():
         parakeet_runner=empty_parakeet,
         detect_probe=lambda: False,
     )
-    assert loader.loads == [(transcribe.CPU_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+    assert loader.loads == [(transcribe.cpu_auto_model(), transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
 
 
 def test_default_cuda_probe_is_callable_and_safe():
@@ -931,7 +1000,7 @@ def test_resolve_target_empty_model_string_keeps_auto_model():
     # An empty/whitespace transcribeModel is ignored -> the auto model stands
     # (covers the falsy-trimmed short-circuit branch).
     model, device, _ = transcribe.resolve_transcribe_target({"transcribeModel": "   "}, probe=lambda: False)
-    assert model == transcribe.CPU_MODEL
+    assert model == transcribe.cpu_auto_model()
     assert device == transcribe.CPU_DEVICE
 
 

@@ -33,6 +33,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..assets import manifest
 from ..util import clamp, get_logger
 from . import asr_vocabulary as _vocabulary
 
@@ -77,10 +78,28 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_GPU_COMPUTE = "float16"
 CPU_DEVICE = "cpu"
 CPU_COMPUTE = "int8"
-#: CPU-appropriate model: ``large-v3-turbo`` is impractically slow on CPU/int8.
-#: ``small`` is the sweet spot — multilingual, ~10x faster than large on CPU, and
-#: still good quality. Chosen as the auto CPU default; overridable via settings.
-CPU_MODEL = "small"
+
+
+def cpu_auto_model() -> str:
+    """The whisper model the CPU auto-path resolves to (W01/T0).
+
+    A smaller model (``small``) is materially cheaper than ``large-v3-turbo`` on
+    CPU/int8, so it is the model we *want* here. But Reframe is offline-first and
+    faster-whisper only avoids a network round-trip when that exact snapshot is
+    already in ``HF_HOME`` — which only a registered, Default-profile manifest
+    asset puts there. Today the ONLY provisioned whisper snapshot is
+    ``large-v3-turbo`` (``assets.manifest._register_day1``), so auto-resolving
+    ``small`` made a CPU-only user's FIRST transcribe an unpinned download that
+    fails outright with no network.
+
+    So: prefer the cheap CPU model when — and only when — the manifest actually
+    provisions it, else stay on the provisioned turbo snapshot. A user who
+    knowingly accepts a download can still force any id via ``transcribeModel``.
+    """
+    if manifest.CPU_WHISPER_MODEL_ID in manifest.provisioned_whisper_model_ids():
+        return manifest.CPU_WHISPER_MODEL_ID
+    return DEFAULT_MODEL
+
 
 #: the settings key picking the transcribe device (``auto`` | ``cuda`` | ``cpu``).
 TRANSCRIBE_DEVICE_KEY = "transcribeDevice"
@@ -242,8 +261,8 @@ def resolve_transcribe_target(
         detection; == ``"cpu"`` -> force CPU (``int8``); anything else (``auto``,
         a typo, a non-string) -> :func:`detect_device`.
       * the model defaults to the device-appropriate auto model (large turbo on
-        GPU, :data:`CPU_MODEL` on CPU) and is overridden only by an explicit,
-        non-empty string ``transcribeModel``.
+        GPU, :func:`cpu_auto_model` on CPU) and is overridden only by an
+        explicit, non-empty string ``transcribeModel``.
 
     Returning the resolved triple lets the caller pass it straight into
     :func:`transcribe_file` (whose ``model``/``device``/``compute_type`` params
@@ -261,7 +280,7 @@ def resolve_transcribe_target(
     else:  # "auto" / unknown / non-string -> detect
         device, compute = detect_device(probe=probe)
 
-    model = DEFAULT_MODEL if device == DEFAULT_DEVICE else CPU_MODEL
+    model = DEFAULT_MODEL if device == DEFAULT_DEVICE else cpu_auto_model()
     model_raw = settings.get(TRANSCRIBE_MODEL_KEY)
     if isinstance(model_raw, str):
         trimmed = model_raw.strip()
