@@ -156,9 +156,9 @@ function setValue(el: HTMLInputElement | HTMLSelectElement, value: string): void
 }
 
 function buttonByText(text: string): HTMLButtonElement | undefined {
-  return Array.from(dom().querySelectorAll('button')).find(
-    (b) => b.textContent?.trim() === text,
-  ) as HTMLButtonElement | undefined;
+  return Array.from(dom().querySelectorAll('button')).find((b) => b.textContent?.trim() === text) as
+    | HTMLButtonElement
+    | undefined;
 }
 
 /** The action/load error slot (distinct from the schedule-preview one). */
@@ -366,9 +366,7 @@ describe('<SocialPublishPanel /> — queueing', () => {
     await render();
     await act(async () => setValue(input('Post title'), 'My clip'));
     await act(async () => buttonByText('Publish now')?.click());
-    expect(errorText()).toBe(
-      'Could not queue that publish',
-    );
+    expect(errorText()).toBe('Could not queue that publish');
   });
 });
 
