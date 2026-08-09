@@ -82,6 +82,7 @@ WIRED_KINDS: tuple[str, ...] = (
     "removeSilence",
     "caption",
     "removeFillers",
+    "reorder",
     "reframe",
     "zoomPan",
     "retime",
@@ -91,32 +92,63 @@ WIRED_KINDS: tuple[str, ...] = (
     "export",
 )
 
-#: The op kinds NOT wired to a real engine — each needs a subsystem ffmpeg alone
-#: cannot provide. Logged up front (never silently skipped) so an op of one of
-#: these kinds surfaces as a clear per-op ``failed`` with auto-rollback (the
-#: graceful degradation), never a silent no-op. HONESTLY DEFERRED:
+#: The op kinds NOT wired into :func:`build_engines`. Logged up front (never
+#: silently skipped) so an op of one of these kinds surfaces as a clear per-op
+#: ``failed`` with auto-rollback (the graceful degradation), never a silent no-op.
 #:
-#:   * ``stitchPanorama`` -> the panorama/stitch engine (multi-frame mosaic);
-#:   * ``ocrExtractList``  -> an OCR engine (text recognition, not a render);
-#:   * ``regenScroll``     -> the scroll-regen engine (also needs a panorama).
+#: v1.5 (SCOPE.md O-3) corrects TWO false statements this block used to make.
 #:
-#: ``reorder`` is a multi-clip timeline permutation outside the single-clip
-#: render scope of these adapters and is likewise left deferred.
+#: 1. ``reorder`` is REMOVED from the set. It was deferred as needing "the
+#:    timeline clip-reorder engine (multi-clip permutation)". That premise was
+#:    wrong: it is a permutation of spans within ONE source, which the shipped
+#:    ``fillers.build_segment_cut_argv`` concat already expresses. It is now a
+#:    real wired engine (:func:`make_reorder_engine`) and needed no subsystem.
+#:
+#: 2. The remaining three are NOT missing their engines. ``panorama_stitch.py``,
+#:    ``scroll_regen.py`` and ``ocr_list.py`` each ship a complete, unit-tested
+#:    subsystem with its heavy half behind an injected seam. What is missing is
+#:    only the apply-time ADAPTER, and :data:`DEFERRED_SUBSYSTEMS` now names the
+#:    concrete mechanism each adapter still needs rather than pretending the
+#:    engine itself is absent. The three shared gaps are: span frame-sampling
+#:    (no helper exists anywhere in the tree), a manifest artifact slot plus a
+#:    non-video inverse sentinel (:data:`RESTORE_KEY` restores a video PATH, and
+#:    these ops produce artifacts/text instead), and — for ``regenScroll`` — a
+#:    cross-op handoff, since ``apply_engine.apply_plan`` gives an op no way to
+#:    read a previous op's output. Those are deliberately NOT invented here.
 DEFERRED_KINDS: tuple[str, ...] = (
-    "reorder",
     "stitchPanorama",
     "regenScroll",
     "ocrExtractList",
 )
 
-#: Each deferred kind -> the subsystem it requires. Surfaced verbatim in the
-#: deferral notice (:func:`log_deferred`) so the unwired set names WHY each is
-#: held back, not just THAT it is.
+#: Each deferred kind -> the work it still needs, naming the SHIPPED module the
+#: adapter would drive. Surfaced verbatim in the deferral notice
+#: (:func:`log_deferred`) so the unwired set says WHY each is held back — and,
+#: since v1.5, says it TRUTHFULLY (the engines exist; the adapters do not).
+#: ``test_deferred_subsystems_name_modules_that_exist`` pins every module named
+#: here to a real importable module, so this text cannot rot into a lie again.
 DEFERRED_SUBSYSTEMS: dict[str, str] = {
-    "reorder": "the timeline clip-reorder engine (multi-clip permutation)",
-    "stitchPanorama": "the panorama/stitch engine",
-    "regenScroll": "the scroll-regen engine (requires a stitched panorama)",
-    "ocrExtractList": "an OCR engine",
+    "stitchPanorama": (
+        "an apply-time adapter over the shipped panorama/stitch engine "
+        "media_studio.features.panorama_stitch (needs span frame-sampling + a manifest artifact slot)"
+    ),
+    "regenScroll": (
+        "an apply-time adapter over the shipped scroll-regen engine "
+        "media_studio.features.scroll_regen (needs a stitched panorama handed across ops + a span splice)"
+    ),
+    "ocrExtractList": (
+        "an apply-time adapter over the shipped OCR engine "
+        "media_studio.features.ocr_list (needs span frame-sampling + the on-demand rapidocr-onnx asset)"
+    ),
+}
+
+#: Deferred kind -> the SHIPPED engine module its adapter would drive. Kept
+#: beside :data:`DEFERRED_SUBSYSTEMS` so the "engine exists, adapter does not"
+#: claim is machine-checkable rather than prose.
+DEFERRED_ENGINE_MODULES: dict[str, str] = {
+    "stitchPanorama": "media_studio.features.panorama_stitch",
+    "regenScroll": "media_studio.features.scroll_regen",
+    "ocrExtractList": "media_studio.features.ocr_list",
 }
 
 
@@ -301,6 +333,100 @@ def make_cut_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None)
         if restored is not None:
             return restored
         keeps = _keep_for_cut(op)
+        return _render(
+            project_copy,
+            op,
+            lambda i, o: _fillers.build_segment_cut_argv(i, o, keeps, dict(settings or {})),
+            runner=runner,
+            settings=settings,
+        )
+
+    return engine
+
+
+def _is_index(value: Any) -> bool:
+    """True for a real ``int`` (``bool`` is an ``int`` subclass and is NOT one)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _require_segments(op: EditOp) -> list[tuple[float, float]]:
+    """Return the reorder op's ``params['segments']`` as ordered second spans.
+
+    ``segments`` is the ordered list of ``[startMs, endMs]`` source ranges the
+    timeline is built from — for transcript-native editing, one entry per
+    transcript block. Each must be a forward, non-negative pair; anything else
+    is a render error (per-op ``failed`` + rollback), never a silent no-op.
+    """
+    raw = op.params.get("segments")
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise DirectorEngineError(
+            f"reorder op {op.id!r} requires a non-empty params['segments'] list of [startMs, endMs] pairs"
+        )
+    spans: list[tuple[float, float]] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+            raise DirectorEngineError(
+                f"reorder op {op.id!r} params['segments'][{index}] must be a [startMs, endMs] pair"
+            )
+        start, end = entry
+        if not _is_index(start) or not _is_index(end):
+            raise DirectorEngineError(f"reorder op {op.id!r} params['segments'][{index}] bounds must be integers")
+        if start < 0 or end <= start:
+            raise DirectorEngineError(
+                f"reorder op {op.id!r} params['segments'][{index}] must be a forward, non-negative span"
+            )
+        spans.append((start / 1000.0, end / 1000.0))
+    return spans
+
+
+def _require_order(op: EditOp, count: int) -> list[int]:
+    """Return the reorder op's ``params['order']`` — a PERMUTATION of the indices.
+
+    Omitted ``order`` defaults to the identity, i.e. "keep the segments exactly
+    as listed" (still a real edit: it compacts the gaps BETWEEN segments away).
+    A supplied order must use every segment index exactly once — a subset would
+    silently DELETE a segment and a repeat would duplicate one, so neither is a
+    reorder and both are rejected rather than rendered.
+    """
+    raw = op.params.get("order")
+    if raw is None:
+        return list(range(count))
+    if not isinstance(raw, (list, tuple)):
+        raise DirectorEngineError(f"reorder op {op.id!r} params['order'] must be a list of segment indices")
+    order = [index for index in raw if _is_index(index)]
+    if len(order) != len(raw) or sorted(order) != list(range(count)):
+        raise DirectorEngineError(
+            f"reorder op {op.id!r} params['order'] must be a permutation of the {count} segment indices "
+            "(each index exactly once)"
+        )
+    return order
+
+
+def make_reorder_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None) -> OpEngine:
+    """Engine for ``reorder``: re-concatenate ``params['segments']`` in a new order.
+
+    The op carries the ordered source ranges (``segments``, ``[startMs, endMs]``
+    pairs — one per transcript block for transcript-native editing) plus the
+    permutation (``order``, defaulting to the identity). The forward render feeds
+    the PERMUTED keep list to ``fillers.build_segment_cut_argv``, whose
+    ``trim``/``atrim`` + ``concat`` graph emits the segments in exactly that
+    order, so the output really is the resequenced clip (the strongest non-no-op
+    proof: keep *i* of the graph is ``segments[order[i]]``).
+
+    This kind was previously DEFERRED as needing "the timeline clip-reorder
+    engine (multi-clip permutation)". That premise was wrong: a permutation of
+    spans within one source is precisely what the shipped segment-cut concat
+    already does, so no new subsystem is required. The inverse restores the
+    pre-reorder reference (undo, no re-render).
+    """
+
+    def engine(op: EditOp, project_copy: ProjectCopy) -> EditOp:
+        restored = _maybe_restore(op, project_copy)
+        if restored is not None:
+            return restored
+        segments = _require_segments(op)
+        order = _require_order(op, len(segments))
+        keeps = [segments[index] for index in order]
         return _render(
             project_copy,
             op,
@@ -934,6 +1060,7 @@ def build_engines(*, runner: RunFn | None = None, settings: Mapping[str, Any] | 
         "removeSilence": make_remove_silence_engine(runner=run, settings=settings),
         "caption": make_caption_engine(runner=run, settings=settings),
         "removeFillers": make_remove_fillers_engine(runner=run, settings=settings),
+        "reorder": make_reorder_engine(runner=run, settings=settings),
         "reframe": make_reframe_engine(runner=run, settings=settings),
         "zoomPan": make_zoom_pan_engine(runner=run, settings=settings),
         "retime": make_retime_engine(runner=run, settings=settings),
@@ -957,6 +1084,7 @@ def log_deferred(log: Any) -> None:
 
 
 __all__ = [
+    "DEFERRED_ENGINE_MODULES",
     "DEFERRED_KINDS",
     "DEFERRED_SUBSYSTEMS",
     "WIRED_KINDS",
@@ -978,6 +1106,7 @@ __all__ = [
     "make_reframe_engine",
     "make_remove_fillers_engine",
     "make_remove_silence_engine",
+    "make_reorder_engine",
     "make_retime_engine",
     "make_translate_caption_engine",
     "make_trim_engine",
