@@ -177,6 +177,11 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "tracks.video.splitClip",
         "tracks.video.trimClip",
         "transcribe.start",
+        # v1.5 flagship #2 — transcript-native editing (features/transcript_edit.py).
+        "transcript.applyEdit",
+        "transcript.get",
+        "transcript.previewEdit",
+        "transcript.undoEdit",
         "tts.dub.start",
         "tts.sample.add",
         "tts.voices",

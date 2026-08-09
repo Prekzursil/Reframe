@@ -1,6 +1,49 @@
 # Reframe v1.5 Flagship — Transcript-Native Editing: Implementation Plan + Go/No-Go
 
-> **Status:** DRAFT
+> **Status:** ACTIVE — partially executed: the DELETE vertical slice ships; see §0.
+
+## 0. Execution status (what is BUILT vs still DESIGN-ONLY)
+
+Branch `feat/v15-transcript-editing` landed a **working vertical slice**: strike a word →
+preview the cut → apply (ONE encode) → undo. The rest of this document remains the plan.
+
+**BUILT (tested, 100% line+branch on every new module):**
+
+| WU | State | Where |
+|---|---|---|
+| T1 (addressing half) | **BUILT** | `features/transcript_edit.py::address_transcript/addressed_words` stamp `wordId = w{seg}-{idx}` non-destructively at READ time, and `library.Project.open` now backfills the optional `transcriptEdits` ledger so it survives a manifest round-trip. |
+| T2 | **BUILT** | `app/renderer/src/lib/transcriptEdit.ts` — pure token model, `buildEditSpans`, local `keepSpansFor`/`remapTime` preview mirror. |
+| T3 | **BUILT (delete + trim)** | `features/transcript_edit.py::resolve_edits/plan_transcript_edit` + `TranscriptEditService`; word deletes UNION `refine.plan_refine`'s shipped filler/silence math into ONE keep-list → ONE `build_segment_cut_argv` encode → `*.edited.mp4` (source untouched). |
+| T5 (pane) | **BUILT (core)** | `app/renderer/src/features/TranscriptEditor.tsx`, mounted as the Workspace "Transcript edit" tab. |
+| — | **BUILT (net-new)** | `transcript.undoEdit` — a reversible per-project edit ledger (`transcriptEdits`), popped one edit at a time. |
+
+**NOT built (still design-only) — do not read the sections below as shipped:**
+
+- **T0** — the CC-BY-NC MMS aligner default is UNCHANGED. `ctc_align` was not touched, no
+  typed `ctcModelId`/`asrEngine`/`allowNonCommercialAligner` settings were added, and no
+  Parakeet NOTICE line was added. **The B1 commercial blocker is still open.**
+- **T4 (contract half)** — the three methods are registered at RUNTIME ONLY, via
+  `protocol.register` from `handlers/composition.py`. No `MethodSpec` entries were added to
+  `sidecar/contract/spec.py` and nothing was regenerated. §5's "dual registration is
+  mandatory" is a design aspiration, not the repo's current norm: only 6 of ~180 methods are
+  MethodSpec-migrated, and every other feature (including `refine.*`) is runtime-only. The
+  renderer calls `transcript.*` through the untyped `bridge.rpc` escape hatch, exactly like
+  `Refine.tsx`.
+- **T5 (rest)** — no waveform/karaoke playhead, no click-to-seek into the shared `Timeline`,
+  no filler underline, no NLE handoff button, no attribution surface. The pane is a word-token
+  list + preview/apply/undo.
+- **T6 (REORDER)** — untouched and still the ONE backend gap. `resolve_edits` DROPS a
+  `reorder` span with the typed reason `reorder-deferred` rather than mis-applying it, because
+  `fillers.remap_time` assumes monotonic keeps.
+- **T7** — no real-ffmpeg / re-transcribe functional tier. Every test is hermetic (injected
+  `run`/`duration`/`detect_run`/project-store fakes). **The unit suite therefore cannot
+  falsify "the rendered mp4 is actually cut"** — the argv values and keep-list are asserted,
+  the pixels are not. That is exactly the gap WU-T7 exists to close; it remains open.
+- Undo is a **project-ledger** undo (re-point to the previous path; the source file is never
+  touched), NOT the `apply_engine`/`director.undo` manifest walk §5 describes. Routing an
+  ordered EDL through `apply_engine` stays part of T6.
+
+---
 
 **Status:** RESEARCH + DESIGN + PLAN (no repo modified).
 **Grounding:** read from `origin/main` @ `7502e3a` (#288 Caption pilot) — local checkout is stale, every seam below was read via `git show origin/main:<path>`.

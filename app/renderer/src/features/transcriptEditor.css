@@ -1,0 +1,89 @@
+/* transcriptEditor.css — the transcript-native editing pane. Tokens only.
+ *
+ * The load-bearing visual is the STRIKE: a struck word must read as removed at a
+ * glance, and the reading must survive a monochrome / forced-colors / colour-blind
+ * view. So deletion is carried by THREE redundant channels — line-through, reduced
+ * opacity, and `aria-pressed` for assistive tech — never by hue alone. */
+
+.transcript-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1, 4px);
+  align-items: baseline;
+  max-height: 22rem;
+  overflow-y: auto;
+  padding: var(--space-3, 12px);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  line-height: 1.9;
+}
+
+/* A word token is a real <button> (keyboard-reachable, focusable) that must NOT
+ * look like a button — the transcript has to read as prose. */
+.transcript-token {
+  padding: 1px 3px;
+  margin: 0;
+  border: 0;
+  border-radius: var(--radius-sm, 3px);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.transcript-token:hover {
+  background: var(--surface-hover);
+}
+
+/* The one place a visible focus ring is non-negotiable: the tokens are the entire
+ * keyboard surface of this pane. `--focus-ring` is a two-stop BOX-SHADOW value
+ * (tokens.css), not a colour — so it is consumed the way the rest of the shell
+ * consumes it (library-cards.css / firstRunSetup.css), never as an `outline`
+ * colour. Never `:where()` this rule either — a zero-specificity focus style is
+ * how the v1.4 focus rings silently disappeared. */
+.transcript-token:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.transcript-token[data-deleted="true"] {
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  opacity: 0.5;
+}
+
+.transcript-summary {
+  display: flex;
+  gap: var(--space-4, 16px);
+  margin: var(--space-3, 12px) 0 0;
+}
+
+.transcript-summary dt,
+.transcript-plan dt {
+  font-size: var(--type-caption-size, 0.8rem);
+  color: var(--text-secondary);
+}
+
+.transcript-summary dd,
+.transcript-plan dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* The "how it will read after the cut" line — deliberately quiet: it is a
+ * consequence of the strikes above, not a second thing to act on. */
+.transcript-edited {
+  margin: var(--space-3, 12px) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading, 1.6);
+  max-width: 68ch;
+}
+
+.transcript-plan {
+  display: flex;
+  gap: var(--space-4, 16px);
+  flex-wrap: wrap;
+  margin: var(--space-3, 12px) 0 0;
+}
