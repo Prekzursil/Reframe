@@ -798,6 +798,36 @@ export const client = {
     }): Promise<{ plan: ShotPlan; affected: number[] }> =>
       rpc('reframe.applyOverrides', { plan: args.plan, overrides: args.overrides }),
   },
+
+  /**
+   * v1.5 expose-engines: two-pass vidstab camera-shake removal.
+   *
+   * The engine (`features/stabilize.py`), the RPC registration (`:496`) and a
+   * dedicated output directory (`handlers/library_ops.py:418` "stabilized") all
+   * predate this wrapper — `stabilize.run` simply had no typed caller, so it
+   * appeared ZERO times anywhere under `app/`. The Workspace "Stabilize" tab
+   * (`features/Stabilize.tsx`) is the first consumer.
+   */
+  stabilize: {
+    /**
+     * `stabilize.run {videoId|path}` -> `{jobId}` -> job.done
+     * `{path, stabilized[, notice]}`.
+     *
+     * A bare string is the common `videoId` case. `stabilized:false` with a
+     * `notice` is the ffmpeg-has-no-libvidstab SKIP (the source path comes back
+     * untouched) — it is REPORTED, never a silent success, so callers must not
+     * treat `path` as a steadied result without checking `stabilized`.
+     */
+    run: (
+      target: string | { videoId?: string; path?: string },
+    ): Promise<
+      JobHandle & {
+        path?: string;
+        stabilized?: boolean;
+        notice?: { type: string; message: string };
+      }
+    > => rpc('stabilize.run', typeof target === 'string' ? { videoId: target } : { ...target }),
+  },
 } as const;
 
 export default client;

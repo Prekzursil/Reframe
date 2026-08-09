@@ -46,6 +46,9 @@ const NleExport = lazy(() => import('../features/NleExport'));
 // system-advanced group: per-video Diarize + Refine + Recipes panels.
 const Diarize = lazy(() => import('../features/Diarize'));
 const Refine = lazy(() => import('../features/Refine'));
+// v1.5 expose-engines: per-video camera-shake removal. The `stabilize.run` RPC
+// and its output dir already existed; this tab is what makes them reachable.
+const Stabilize = lazy(() => import('../features/Stabilize'));
 const Recipes = lazy(() => import('../features/Recipes'));
 // intelligence A: semantic transcript search (seeks the player on a hit).
 const SemanticSearch = lazy(() => import('../features/SemanticSearch'));
@@ -77,6 +80,7 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'convert', label: 'Convert' },
   { id: 'shortmaker', label: 'Short-maker' },
   { id: 'timeline', label: 'Subtitle timeline' },
+  { id: 'stabilize', label: 'Stabilize' },
   { id: 'dub', label: 'Dub' },
   { id: 'nle', label: 'NLE export' },
   { id: 'recipes', label: 'Recipes' },
@@ -96,7 +100,7 @@ export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
     label: 'Speech & Text',
     tabIds: ['transcribe', 'search', 'subtitles', 'diarize', 'refine'],
   },
-  { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline'] },
+  { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline', 'stabilize'] },
   { id: 'audio', label: 'Audio', tabIds: ['dub'] },
   {
     id: 'deliver',
@@ -300,6 +304,8 @@ export function Workspace({
         return (
           <TimelinePanel videoId={video.id} durationSec={video.durationSec} playerRef={playerRef} />
         );
+      case 'stabilize':
+        return <Stabilize videoId={video.id} />;
       case 'dub':
         return <Dub videoId={video.id} />;
       case 'nle':

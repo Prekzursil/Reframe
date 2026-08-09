@@ -69,6 +69,7 @@ vi.mock('../features/Assets', () => stubPanel('Assets'));
 vi.mock('../features/NleExport', () => stubPanel('NleExport'));
 vi.mock('../features/Diarize', () => stubPanel('Diarize'));
 vi.mock('../features/Refine', () => stubPanel('Refine'));
+vi.mock('../features/Stabilize', () => stubPanel('Stabilize'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
 
@@ -133,14 +134,25 @@ async function flush(): Promise<void> {
 }
 
 describe('Workspace', () => {
-  // SCOPE CHANGE (v1.5 timeline-naming, deliberate): two LABELS moved, ids and
+  // SCOPE CHANGE #1 (v1.5 timeline-naming, deliberate): two LABELS moved, ids and
   // order untouched. 'Timeline' -> 'Subtitle timeline' and 'Timeline export' ->
   // 'NLE export'. Both old strings promised a video timeline this workspace does
   // not have: the `timeline` tab mounts features/Timeline.tsx, a subtitle-CUE
   // editor (`Timeline.tsx:1-8`), and the `nle` tab exports an EDL synthesized
   // from approved short-maker clips, not a user-authored timeline
-  // (`NleExport.tsx:1-9`). The assertion stays exact and order-sensitive.
-  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes)', () => {
+  // (`NleExport.tsx:1-9`).
+  //
+  // SCOPE CHANGE #2 (v1.5 expose-engines lane): this list gains 'Stabilize'. The
+  // assertion is WIDENED by exactly one entry, never weakened — every previously
+  // pinned label and its position relative to the others is unchanged. The new
+  // tab is what makes the already-registered `stabilize.run` RPC reachable at
+  // all (it had zero references anywhere under app/ before this lane).
+  //
+  // MERGE NOTE: the two lanes landed independently and both edited this line.
+  // The resolution keeps BOTH — the honest rename AND the new tab — because they
+  // are orthogonal: one corrects a label that lied, the other exposes an engine.
+  // The assertion remains exact and order-sensitive.
+  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Search',
@@ -151,6 +163,7 @@ describe('Workspace', () => {
       'Convert',
       'Short-maker',
       'Subtitle timeline',
+      'Stabilize',
       'Dub',
       'NLE export',
       'Recipes',
@@ -186,6 +199,12 @@ describe('Workspace', () => {
       container.querySelector(`[role="tab"][data-tab-id="${id}"]`)?.textContent;
     expect(tabText('timeline')).toBe('Subtitle timeline');
     expect(tabText('nle')).toBe('NLE export');
+  });
+
+  it('puts Stabilize in the "Frame & Cut" cluster so it is reachable without the Advanced disclosure', () => {
+    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
+    expect(frame?.tabIds).toContain('stabilize');
+    expect(frame?.advanced).not.toBe(true);
   });
 
   it('opens the project via project.open and shows the title + tabs', async () => {
@@ -303,6 +322,7 @@ describe('Workspace', () => {
     ['convert', 'Convert'],
     ['shortmaker', 'ShortMaker'],
     ['timeline', 'Timeline'],
+    ['stabilize', 'Stabilize'],
     ['dub', 'Dub'],
     ['nle', 'NleExport'],
     ['recipes', 'Recipes'],
