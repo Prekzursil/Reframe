@@ -408,7 +408,19 @@ export const client = {
     voices: (): Promise<{
       voices: { id: string; engine: string; lang: string; name: string }[];
     }> => rpc('tts.voices'),
-    sampleAdd: (path: string): Promise<{ sample: VoiceSample }> => rpc('tts.sample.add', { path }),
+    // WU-A2: `consentAttested` is REQUIRED by the sidecar and must be `true`;
+    // it is a positional argument here (not an options bag with a default) so
+    // a caller cannot omit the attestation by accident.
+    sampleAdd: (
+      path: string,
+      consentAttested: true,
+      consentNote?: string,
+    ): Promise<{ sample: VoiceSample }> =>
+      rpc('tts.sample.add', {
+        path,
+        consentAttested,
+        ...(consentNote ? { consentNote } : {}),
+      }),
     dubStart: (p: {
       videoId: string;
       trackId: string;
