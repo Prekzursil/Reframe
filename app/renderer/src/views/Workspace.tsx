@@ -50,6 +50,23 @@ const Recipes = lazy(() => import('../features/Recipes'));
 // intelligence A: semantic transcript search (seeks the player on a hit).
 const SemanticSearch = lazy(() => import('../features/SemanticSearch'));
 
+/**
+ * v1.5 timeline-naming — two LABELS name their real subject. Ids are untouched
+ * (`timeline` / `nle` are load-bearing for deep-links, taskHub and useJob's
+ * FEATURE_LABELS), and nothing is added, removed or reordered.
+ *
+ * `timeline` mounts features/Timeline.tsx — a waveform strip plus a lane of
+ * draggable subtitle CUES (Timeline.tsx:1-8), whose sidecar registers exactly
+ * one method, `timeline.peaks` (timeline.py:324). No clip lane, no razor. The
+ * bare name "Timeline" promised a video timeline that is not here; a genuine
+ * video-timeline tab is free to claim it later.
+ *
+ * `nle` mounts features/NleExport.tsx — a CMX3600 EDL / CSV handoff whose
+ * events are approved short-maker clips laid back-to-back
+ * (nle_export.py:162,175-177), i.e. a synthesized rough cut, not a timeline the
+ * user authored. Deliver.tsx already calls the same panel "Pro handoff"; this
+ * label was the outlier.
+ */
 export const WORKSPACE_TABS: TabDef[] = [
   { id: 'transcribe', label: 'Transcribe' },
   { id: 'search', label: 'Search' },
@@ -59,9 +76,9 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'tracks', label: 'Tracks' },
   { id: 'convert', label: 'Convert' },
   { id: 'shortmaker', label: 'Short-maker' },
-  { id: 'timeline', label: 'Timeline' },
+  { id: 'timeline', label: 'Subtitle timeline' },
   { id: 'dub', label: 'Dub' },
-  { id: 'nle', label: 'Timeline export' },
+  { id: 'nle', label: 'NLE export' },
   { id: 'recipes', label: 'Recipes' },
   { id: 'assets', label: 'Assets' },
 ];

@@ -616,6 +616,13 @@ describe('useJob helpers (pure)', () => {
       label: 'Short-maker',
     });
     expect(featureLabel('tts.dub.start')).toEqual({ feature: 'tts', label: 'Dub' });
+    // v1.5 timeline-naming: FEATURE_LABELS promises parity with the Workspace tab
+    // names, and the `timeline.*` namespace serves the subtitle-CUE editor — so a
+    // toast for it must not say "Timeline" either.
+    expect(featureLabel('timeline.peaks')).toEqual({
+      feature: 'timeline',
+      label: 'Subtitle timeline',
+    });
     expect(featureLabel(null)).toEqual({ feature: 'job', label: 'Job' });
     expect(featureLabel('')).toEqual({ feature: 'job', label: 'Job' });
     // Unknown features fall back to capitalization (forward-compatible).

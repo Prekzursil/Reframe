@@ -377,7 +377,25 @@ export function Timeline({
   const playheadLeftPct = duration > 0 ? (playhead / duration) * 100 : 0;
   return (
     <section className="timeline">
-      <h2 className="timeline__title">Timeline</h2>
+      <h2 className="timeline__title">Subtitle timeline</h2>
+
+      {/*
+        v1.5 timeline-naming: this panel used to be called "Timeline", which read
+        as the video timeline of an editor. It is not one — every rect below is a
+        subtitle cue and every toolbar action edits cue text or cue timing. State
+        the scope, then name the two surfaces that DO cut footage today so the
+        user is not left hunting: `director.apply` (trim/cut/join are wired op
+        kinds there) and Make Shorts' Manual interval control (typed timecodes ->
+        shortmaker.export). Static text on purpose — routing out of here would
+        need an onOpen* callback threaded from App.tsx, which is a shared file
+        several v1.5 lanes are already editing.
+      */}
+      <p className="timeline__scope-note">
+        Edits <strong>subtitle cues</strong> — split, merge, retime, and drag caption timings over
+        the waveform. It <strong>does not cut the video</strong>. To trim or cut the footage itself,
+        use <strong>Director</strong> (describe the edit, review the plan before it renders) or{' '}
+        <strong>Make Shorts → Manual interval</strong> (type an exact start and end time).
+      </p>
 
       {error && (
         <p role="alert" className="timeline__error">

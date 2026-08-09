@@ -114,7 +114,9 @@ const FEATURE_LABELS: Record<string, string> = {
   convert: 'Convert',
   shortmaker: 'Short-maker',
   media: 'Media',
-  timeline: 'Timeline',
+  // v1.5 timeline-naming: the `timeline.*` namespace (one method, `timeline.peaks`)
+  // serves the subtitle-CUE editor, and this map promises parity with the tab name.
+  timeline: 'Subtitle timeline',
   tts: 'Dub',
   assets: 'Assets',
   project: 'Project',

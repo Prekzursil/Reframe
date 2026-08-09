@@ -133,7 +133,14 @@ async function flush(): Promise<void> {
 }
 
 describe('Workspace', () => {
-  it('exposes the contract tabs in order (P2: +Timeline/Dub/Assets; captions-export: +Timeline export; system-advanced: +Diarize/Recipes)', () => {
+  // SCOPE CHANGE (v1.5 timeline-naming, deliberate): two LABELS moved, ids and
+  // order untouched. 'Timeline' -> 'Subtitle timeline' and 'Timeline export' ->
+  // 'NLE export'. Both old strings promised a video timeline this workspace does
+  // not have: the `timeline` tab mounts features/Timeline.tsx, a subtitle-CUE
+  // editor (`Timeline.tsx:1-8`), and the `nle` tab exports an EDL synthesized
+  // from approved short-maker clips, not a user-authored timeline
+  // (`NleExport.tsx:1-9`). The assertion stays exact and order-sensitive.
+  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Search',
@@ -143,12 +150,42 @@ describe('Workspace', () => {
       'Tracks',
       'Convert',
       'Short-maker',
-      'Timeline',
+      'Subtitle timeline',
       'Dub',
-      'Timeline export',
+      'NLE export',
       'Recipes',
       'Assets',
     ]);
+  });
+
+  // The naming invariant, pinned per-id so it survives a tab being inserted or
+  // reordered by another lane. This does NOT forbid a future tab labelled
+  // 'Timeline' — a real video timeline may legitimately claim that name. It
+  // forbids these two SPECIFIC panels from claiming it, because neither is one.
+  it('never lets the subtitle-cue editor or the EDL exporter claim the name "Timeline"', () => {
+    const byId = (id: string): string | undefined => WORKSPACE_TABS.find((t) => t.id === id)?.label;
+    // features/Timeline.tsx = waveform + draggable subtitle CUES.
+    expect(byId('timeline')).toBe('Subtitle timeline');
+    // features/NleExport.tsx = CMX3600 EDL / CSV handoff for Premiere/Resolve.
+    expect(byId('nle')).toBe('NLE export');
+    expect(WORKSPACE_TABS.map((t) => t.label)).not.toContain('Timeline export');
+  });
+
+  // A constant saying "Subtitle timeline" is not the same signal as a BUTTON
+  // showing it — the two tests above read WORKSPACE_TABS directly, so a rename
+  // that never reached the rendered strip would still pass them. This one goes
+  // through the real TabBar and reads the DOM, which is the thing a user sees.
+  // Verified as a real detector by mutation: reverting either label in
+  // Workspace.tsx turns this red (see the commit body for the captured output).
+  it('renders the honest labels on the real tab buttons, not just in the array', async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+    const tabText = (id: string): string | null | undefined =>
+      container.querySelector(`[role="tab"][data-tab-id="${id}"]`)?.textContent;
+    expect(tabText('timeline')).toBe('Subtitle timeline');
+    expect(tabText('nle')).toBe('NLE export');
   });
 
   it('opens the project via project.open and shows the title + tabs', async () => {
@@ -637,7 +674,7 @@ describe('Workspace tab clusters (WU-3a2)', () => {
 });
 
 // design-review P1: EXPORT is the terminal goal but the "Deliver" cluster
-// (Convert/Timeline export/Recipes/Assets/Tracks) is collapsed behind Advanced.
+// (Convert/NLE export/Recipes/Assets/Tracks) is collapsed behind Advanced.
 // A persistent Export action surfaces it from the default view WITHOUT un-hiding
 // the whole cluster by default — clicking it jumps to the primary export panel
 // (Convert) and reveals the Deliver cluster so its siblings are reachable.
