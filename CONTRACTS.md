@@ -74,6 +74,7 @@ response resolves when done — long jobs return `{"jobId"}` immediately and str
 - `transcribe.start({videoId, language?})` -> `{jobId}` ; streams progress ; `job.done.result` = `{transcript}`
 - `subtitles.generate({videoId})` -> `{track}` ; `subtitles.edit({trackId, cues})` -> `{track}`
 - `subtitles.translate({trackId, targetLang})` -> `{jobId}` -> `{track}` ; `subtitles.export({trackId, format})` -> `{path}` (format: srt|ass|vtt)
+- `subtitles.import({videoId, text, format, name?, lang?})` -> `{track}` (v1.5 AMENDMENT — an ADDITION, not a rename; format: srt|ass|vtt, `.SRT`/`ssa` folded). Direct-return. `text` is the subtitle file's CONTENT, not a path: the renderer reads the picked file with the File API, so the sidecar never opens a renderer-supplied filesystem path. Refuses a zero-cue parse rather than adding an empty track
 - `tracks.list({videoId})` -> `{tracks}` ; `tracks.rename({trackId,name})` ; `tracks.relabel({trackId,lang})`
 - `tracks.add({videoId, trackId})` ; `tracks.remove({videoId, trackId})` ; `tracks.burn({videoId, trackId})` -> `{jobId}` -> `{path}` ; `tracks.strip({videoId, trackId})` -> `{path}`
 - `convert.start({videoId|path, options})` -> `{jobId}` -> `{path}` ; options = `{container,vcodec,acodec,scale,fps,crf,audioOnly,audioFormat}`
@@ -81,7 +82,7 @@ response resolves when done — long jobs return `{"jobId"}` immediately and str
 - `shortmaker.select({videoId, prompt, controls})` -> `{jobId}` -> `{candidates}` ; controls = `{count,minSec,maxSec,aspect,language,captionStyle}`
 - `shortmaker.export({videoId, candidateIds})` -> `{jobId}` -> `{clips:[{path}]}`
 - `job.cancel({jobId})` -> `{ok}` ; `job.status({jobId})` -> `{status,pct}`
-- `settings.get()` / `settings.set({...})` -> includes `{useCloud:bool, cloudApiKey?, modelsDir, ffmpegPath}` (editing-refinement adds the `captionSpeakerLabels` setting key; the refine tunables are per-call RPC params, not settings — see §A5)
+- `settings.get()` / `settings.set({...})` -> includes `{useCloud:bool, cloudApiKey?, modelsDir, ffmpegPath}` (editing-refinement adds the `captionSpeakerLabels` setting key; the refine tunables are per-call RPC params, not settings — see §A5. The v1.5 custom ASR dictionary adds `asrVocabulary` — see §A9)
 
 ## 3. Data schemas (Python TypedDict / TS interface — keep field names identical both sides)
 - **Word** `{text:str, start:float, end:float}` ; **Segment** `{start:float, end:float, text:str, words:[Word]}`
@@ -256,3 +257,51 @@ system-advanced group **directly after `diarize`** —
 - T5: electron-builder.yml · build/* · sidecar runtime_setup/* + media_studio/tools_resolver.py(+tests)
 - WIRING (last, serialized): handlers.py · __main__.py · Workspace.tsx · App.tsx · preload.ts · main.ts ·
   lib/rpc.ts · app/package.json · CONTRACTS conformance.
+
+## A9. Custom ASR dictionary — the `asrVocabulary` settings key (v1.5, additive)
+
+ONE new persisted settings key. No new RPC method, no change to any frozen wire shape:
+it rides the existing `settings.get()` / `settings.set({...})` (base §2), exactly like the
+sibling `asrEngine` / `transcribeDevice` knobs.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `asrVocabulary` | `Array<string \| {term, soundsLike?[]}>` | `[]` | proper nouns / brand names / jargon the ASR must get right. A bare string is shorthand for `{term}`; `soundsLike` lists the mis-transcriptions to rewrite onto `term` (e.g. `"re frame"` -> `"Reframe"`). |
+
+TS shape: `AsrVocabularyTerm` / `AsrVocabularySetting` in `app/renderer/src/lib/rpc/schemas.ts`.
+Reader: `sidecar/media_studio/features/asr_vocabulary.py`. Empty (the default) is
+byte-identical to pre-v1.5: no biasing string is built and the transcript object is
+returned unchanged.
+
+**The two engines are treated DIFFERENTLY, because their backends differ:**
+
+- **whisper** — real decode-time biasing. faster-whisper (pinned `1.2.1`) accepts both
+  `initial_prompt` and `hotwords` on `WhisperModel.transcribe`; `features/transcribe.py`
+  now sends both, and forwards each ONLY when non-empty so the zero-vocabulary call is
+  unchanged. `hotwords` is the load-bearing one — upstream re-applies it on EVERY decode
+  window, while `initial_prompt` seeds only the first — and this wrapper never passes
+  `prefix`, so upstream's "hotwords has no effect if prefix is not None" cannot bite.
+- **parakeet** — post-correction ONLY. The NeMo adapter
+  (`features/parakeet_asr_backend.py` `_RealParakeetModel.transcribe`) calls
+  `model.transcribe([audio], timestamps=True)` and forwards no prompt/hotword argument,
+  so there is nothing to bias with on that path.
+
+The rule-based post-correction (`asr_vocabulary.apply_corrections`) therefore runs for
+BOTH engines — including the whisper fallback after a Parakeet degrade. It rewrites the
+segment text and the word list with the SAME compiled rules, whole-word and longest-match
+first, merging a multi-word alias into one word that keeps the first word's `start` and
+the last word's `end`. That keeps §3 `Segment.text` and `Segment.words` consistent, which
+is what karaoke/CTC consumers depend on. No timing is invented.
+
+SECURITY: the value crosses the untrusted renderer RPC boundary, so every pattern is
+`re.escape`-d (no user string is ever compiled as regex syntax) and term count, term
+length, alias count, alias word-span and biasing-string length are all capped. Every
+malformed shape degrades to "no vocabulary" — a typo'd setting can never fail a job. The
+key is pure DATA and must never join `EXECUTABLE_SETTING_KEYS` (asserted by a test).
+
+SCOPE NOTE (deliberate, disclosed): the captions/translation audit proposed a single
+unified `translationGlossary` shared by ASR **and** the MT prompt. Only the ASR half is
+built here — the translation flow was owned by a concurrent lane, and coupling the two
+keys across lanes would have created a cross-lane dependency. If the unified glossary is
+wanted later, the translation side can read this same key (or merge a second one); no
+migration is needed because `asrVocabulary` is additive and defaults to empty.

@@ -4,8 +4,13 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { EditorProvider } from '../EditorContext';
 import type { EditorSeed } from '../../lib/editorState';
-import { EXPORT_CONFIRM_BLURB, EXPORT_PRIVACY_NOTE, ExportInspector } from './ExportInspector';
-import { exportConvertOptions, presetById } from './exportModel';
+import {
+  EXPORT_CONFIRM_BLURB,
+  EXPORT_FRAMING_NOTE,
+  EXPORT_PRIVACY_NOTE,
+  ExportInspector,
+} from './ExportInspector';
+import { exportConvertOptions, presetsByIds } from './exportModel';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -48,28 +53,55 @@ describe('ExportInspector', () => {
     const values = Array.from(container.querySelectorAll('.export-inspector__cell-value')).map(
       (el) => el.textContent,
     );
-    // Honest pre-flight: the second cell states the FRAMING the export actually writes
-    // (the current framing) — never a per-destination aspect the export cannot produce.
-    expect(values).toEqual(['1', 'Original framing', '0:40', '~0:20', '$0.00']);
+    // SCOPE FIX (v1.5 aspect-matrix): the grid gained an ASPECTS cell and "Clips"
+    // became "Files", because a multi-select fan-out writes one file per DISTINCT
+    // aspect. The framing cell (now index 2) still states the framing the export
+    // actually writes — never a per-destination aspect Export cannot produce.
+    expect(values).toEqual(['1', '9:16', 'Original framing', '0:40', '~0:20', '$0.00']);
     expect(q('.export-inspector__privacy')?.textContent).toBe(EXPORT_PRIVACY_NOTE);
     // The primary CTA is present and NOT yet a confirm.
     expect(q('.export-inspector__primary')?.textContent).toBe('Export to TikTok');
     expect(q('.export-inspector__confirm')).toBeNull();
   });
 
-  it('re-summarizes the destination title/CTA but keeps framing destination-independent', () => {
+  it('discloses that the fan-out never re-crops, where the fan-out is chosen', () => {
     render(SEED);
-    const framingCell = (): string | null | undefined =>
-      container.querySelectorAll('.export-inspector__cell-value')[1]?.textContent;
-    expect(framingCell()).toBe('Original framing');
+    // The disclosure the matrix hint used to carry. It has to stay SOMEWHERE
+    // visible: the fan-out writes a file per aspect, but each file keeps the
+    // upstream framing, so a user picking 1:1 must not expect a square re-crop.
+    expect(q('.export-inspector__framing-note')?.textContent).toBe(EXPORT_FRAMING_NOTE);
+    expect(EXPORT_FRAMING_NOTE).toContain('never re-crops');
+  });
+
+  it('ADDS a destination to the fan-out and re-summarizes files + aspects', () => {
+    render(SEED);
+    const cells = (): (string | null)[] =>
+      Array.from(container.querySelectorAll('.export-inspector__cell-value')).map(
+        (el) => el.textContent,
+      );
+    expect(cells()[0]).toBe('1');
     act(() => q<HTMLButtonElement>('[data-preset="square"]')?.click());
+    // Two aspects -> two files, both listed, and the estimate doubles.
+    expect(cells()[0]).toBe('2');
+    expect(cells()[1]).toBe('9:16 · 1:1');
+    expect(cells()[4]).toBe('~0:40');
     expect(q('.export-inspector__preflight-title')?.textContent).toBe(
-      'Ready to export to Square post',
+      'Ready to export to TikTok + 1 more',
     );
-    expect(q('.export-inspector__primary')?.textContent).toBe('Export to Square post');
-    // Honest: switching destination re-summarizes the title + CTA but NEVER the framing —
-    // Export does not re-crop, so the output framing is identical for every destination.
-    expect(framingCell()).toBe('Original framing');
+    expect(q('.export-inspector__primary')?.textContent).toBe('Export to TikTok + 1 more');
+    // Honest: adding a destination NEVER changes the framing — Export does not re-crop.
+    expect(cells()[2]).toBe('Original framing');
+  });
+
+  it('collapses same-aspect destinations to a single file in the pre-flight', () => {
+    render(SEED);
+    act(() => q<HTMLButtonElement>('[data-preset="reels"]')?.click());
+    const cells = Array.from(container.querySelectorAll('.export-inspector__cell-value')).map(
+      (el) => el.textContent,
+    );
+    // TikTok + Reels are two destinations but one 9:16 render.
+    expect(cells[0]).toBe('1');
+    expect(cells[1]).toBe('9:16');
   });
 
   it('states the REFRAMED framing in the pre-flight when the clip carries a crop plan', () => {
@@ -77,7 +109,7 @@ describe('ExportInspector', () => {
       video: { videoId: 'v1', window: { start: 0, end: 40 } },
       cropPlan: { engine: 'verthor' },
     });
-    const framingCell = container.querySelectorAll('.export-inspector__cell-value')[1]?.textContent;
+    const framingCell = container.querySelectorAll('.export-inspector__cell-value')[2]?.textContent;
     expect(framingCell).toBe('Reframed');
   });
 
@@ -109,7 +141,10 @@ describe('ExportInspector', () => {
     // Step 2: "Export now" fires the commit with the chosen preset + render profile.
     act(() => q<HTMLButtonElement>('.export-inspector__confirm-approve')?.click());
     expect(onCommit).toHaveBeenCalledTimes(1);
-    expect(onCommit).toHaveBeenCalledWith(presetById('tiktok'), exportConvertOptions());
+    // SCOPE FIX (v1.5 aspect-matrix): the commit carries the whole ORDERED SET of
+    // destinations, not a single preset — the host de-dupes it into one render
+    // per aspect. Still exactly one commit, still behind the same confirm gate.
+    expect(onCommit).toHaveBeenCalledWith(presetsByIds(['tiktok']), exportConvertOptions());
     // The gate closes after committing.
     expect(q('.export-inspector__confirm')).toBeNull();
   });

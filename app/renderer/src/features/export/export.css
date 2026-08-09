@@ -220,6 +220,18 @@
   color: var(--text-primary);
 }
 
+/* The framing disclosure that sits UNDER the file count: the fan-out writes one
+ * file per aspect but never re-crops. Quiet (muted, caption scale) so it reads as
+ * a clarification of the grid above it rather than a competing claim — but it is
+ * body-adjacent, not --text-faint, because a caveat the user cannot read is not a
+ * caveat. */
+.export-inspector__framing-note {
+  margin: var(--space-3) 0 0;
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+  color: var(--text-muted);
+}
+
 /* The privacy beat — the AA-safe quiet step, never the rejected faint hex. */
 .export-inspector__privacy {
   margin: 0;
