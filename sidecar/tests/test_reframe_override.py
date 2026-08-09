@@ -8,6 +8,8 @@ synthetic, path-free fixtures — NO video, NO GPU, NO model import. This file I
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -352,7 +354,15 @@ class _Registry:
 def test_register_wires_both_methods() -> None:
     registry = _Registry()
     ro.register(register_fn=registry.reg)
-    assert set(registry.methods) == {"reframe.shotPlan", "reframe.applyOverrides"}
+    # SCOPE FIX (O-2): the method set GREW — `reframe.shotPlanFor` is the
+    # renderer-reachable half of the trust loop (the pure `reframe.shotPlan`
+    # needs a trace the renderer has no way to obtain). The assertion is
+    # widened to the new exact set, not weakened to a subset check.
+    assert set(registry.methods) == {
+        "reframe.shotPlan",
+        "reframe.shotPlanFor",
+        "reframe.applyOverrides",
+    }
 
 
 def test_rpc_shot_plan_happy_and_error() -> None:
@@ -377,4 +387,208 @@ def test_rpc_apply_overrides_happy_and_error() -> None:
     # A non-array overrides payload is a loud INVALID_PARAMS.
     with pytest.raises(RpcError) as err:
         apply_fn({"plan": plan, "overrides": "nope"}, None)
+    assert err.value.code == ErrorCode.INVALID_PARAMS
+
+
+# --------------------------------------------------------------------------- #
+# O-2 — the decision SIDECAR: the renderer-reachable trace producer
+#
+# `reframe.shotPlan` is pure and needs a `trace`, but no renderer code can ever
+# obtain one (docs/validation/v15-audit-ledger.md:1911). These cover the sidecar
+# the multi-speaker engine drops next to a rendered clip and the
+# `reframe.shotPlanFor {clip}` RPC that turns it into an editable plan.
+# --------------------------------------------------------------------------- #
+
+
+def _sidecar_payload() -> dict[str, Any]:
+    return ro.build_decision_sidecar(
+        engine="reframe_multispeaker",
+        aspect="9:16",
+        source_path="/v/in.mp4",
+        source_width=1920,
+        source_height=1080,
+        fps=30.0,
+        trace=re.ReframeTrace.from_dict(_TRACE),
+    )
+
+
+def test_sidecar_path_appends_the_suffix() -> None:
+    assert ro.sidecar_path("/out/clip.mp4") == "/out/clip.mp4.reframe.json"
+
+
+def test_trace_to_dict_round_trips_through_the_r0_parser() -> None:
+    parsed = re.ReframeTrace.from_dict(_TRACE)
+    assert re.ReframeTrace.from_dict(ro.trace_to_dict(parsed)) == parsed
+
+
+def test_build_decision_sidecar_carries_everything_a_rerender_needs() -> None:
+    payload = _sidecar_payload()
+    assert payload["version"] == ro.SIDECAR_VERSION
+    assert payload["engine"] == "reframe_multispeaker"
+    assert payload["aspect"] == "9:16"
+    assert payload["sourcePath"] == "/v/in.mp4"
+    assert (payload["sourceWidth"], payload["sourceHeight"], payload["fps"]) == (1920, 1080, 30.0)
+    assert payload["trace"]["speakerPerFrame"] == list(_TRACE["speakerPerFrame"])
+
+
+def test_load_decision_sidecar_absent_is_none_not_an_error() -> None:
+    def missing(path: str) -> str:
+        raise FileNotFoundError(path)
+
+    assert ro.load_decision_sidecar("/out/clip.mp4", read_text=missing) is None
+
+
+def test_load_decision_sidecar_is_loud_on_corruption() -> None:
+    with pytest.raises(ro.OverrideError, match="not valid JSON"):
+        ro.load_decision_sidecar("/c.mp4", read_text=lambda _p: "{oops")
+    with pytest.raises(ro.OverrideError, match="must be a JSON object"):
+        ro.load_decision_sidecar("/c.mp4", read_text=lambda _p: "[1]")
+    with pytest.raises(ro.OverrideError, match="unsupported reframe sidecar version"):
+        ro.load_decision_sidecar("/c.mp4", read_text=lambda _p: '{"version": 99}')
+
+
+def test_load_decision_sidecar_happy_reads_the_clip_suffixed_path() -> None:
+    seen: list[str] = []
+
+    def reader(path: str) -> str:
+        seen.append(path)
+        return json.dumps(_sidecar_payload())
+
+    payload = ro.load_decision_sidecar("/out/clip.mp4", read_text=reader)
+    assert seen == ["/out/clip.mp4.reframe.json"]
+    assert payload is not None
+    assert payload["engine"] == "reframe_multispeaker"
+
+
+def test_default_read_text_reads_a_real_file(tmp_path: Any) -> None:
+    target = tmp_path / "s.json"
+    target.write_text('{"a": 1}', encoding="utf-8")
+    assert ro._read_text(str(target)) == '{"a": 1}'
+
+
+def test_plan_from_sidecar_derives_the_editable_plan() -> None:
+    plan = ro.plan_from_sidecar(_sidecar_payload())
+    assert [s.index for s in plan.shots] == [0, 1]
+    assert plan.source_width == 1920
+    assert plan.fps == 30.0
+
+
+def test_rpc_shot_plan_for_absent_sidecar_returns_a_null_plan() -> None:
+    registry = _Registry()
+
+    def missing(path: str) -> str:
+        raise FileNotFoundError(path)
+
+    ro.register(register_fn=registry.reg, read_text=missing)
+    out = registry.methods["reframe.shotPlanFor"]({"clip": "/out/clip.mp4"}, None)
+    # HONEST empty state: a clip the multi-speaker engine never rendered has NO
+    # per-shot decisions, so the UI must be able to say so rather than mount a
+    # panel over invented data.
+    assert out == {"plan": None, "engine": "", "aspect": ""}
+
+
+def test_rpc_shot_plan_for_happy() -> None:
+    registry = _Registry()
+    ro.register(register_fn=registry.reg, read_text=lambda _p: json.dumps(_sidecar_payload()))
+    out = registry.methods["reframe.shotPlanFor"]({"clip": "/out/clip.mp4"}, None)
+    assert out["engine"] == "reframe_multispeaker"
+    assert out["aspect"] == "9:16"
+    assert out["plan"] is not None
+    assert len(out["plan"]["shots"]) == 2
+
+
+def test_shot_override_to_dict_omits_absent_fields() -> None:
+    assert ro.ShotOverride(index=2).to_dict() == {"index": 2}
+    assert ro.ShotOverride(index=1, speaker="b", layout="split", crop=(1.0, 2.0, 3.0, 4.0)).to_dict() == {
+        "index": 1,
+        "speaker": "b",
+        "layout": "split",
+        "crop": [1.0, 2.0, 3.0, 4.0],
+    }
+
+
+def test_speaker_candidate_crops_is_the_first_crop_each_speaker_held() -> None:
+    trace = re.ReframeTrace.from_dict(
+        {
+            "shotBoundaries": [],
+            "speakerPerFrame": ["a", "b", "a"],
+            "segments": [],
+            "crops": [[0, 0, 10, 10], [50, 0, 10, 10], [99, 0, 10, 10]],
+        }
+    )
+    shot = ro.plan_from_trace(
+        {
+            "shotBoundaries": [],
+            "speakerPerFrame": ["a", "b", "a"],
+            "segments": [],
+            "crops": [[0, 0, 10, 10], [50, 0, 10, 10], [99, 0, 10, 10]],
+        },
+        source_width=100,
+        source_height=100,
+        fps=25.0,
+    ).shots[0]
+    assert ro.speaker_candidate_crops(trace, shot) == {
+        "a": (0.0, 0.0, 10.0, 10.0),
+        "b": (50.0, 0.0, 10.0, 10.0),
+    }
+
+
+def test_resolved_crop_follows_a_speaker_flip_but_a_hand_moved_crop_wins() -> None:
+    base = ro.ShotDecision(0, 0, 3, "a", "single", (0.0, 0.0, 10.0, 10.0), ("a", "b"))
+    cands = {"a": (0.0, 0.0, 10.0, 10.0), "b": (50.0, 0.0, 10.0, 10.0)}
+    # untouched -> unchanged
+    assert ro.resolved_crop(base, base, cands) == (0.0, 0.0, 10.0, 10.0)
+    # speaker flip with no crop edit -> the crop MOVES to that speaker, otherwise
+    # "flip the speaker" would re-render the same wrong face.
+    flipped = replace(base, speaker="b")
+    assert ro.resolved_crop(base, flipped, cands) == (50.0, 0.0, 10.0, 10.0)
+    # a hand-moved crop is literal intent and wins over the candidate.
+    moved = replace(flipped, crop=(7.0, 0.0, 10.0, 10.0))
+    assert ro.resolved_crop(base, moved, cands) == (7.0, 0.0, 10.0, 10.0)
+    # a flip to a speaker with no recorded crop keeps the current rectangle.
+    assert ro.resolved_crop(base, replace(base, speaker="zz"), cands) == (0.0, 0.0, 10.0, 10.0)
+
+
+def test_effective_overrides_are_absolute_and_only_cover_changed_shots() -> None:
+    trace = re.ReframeTrace.from_dict(_TRACE)
+    base = _plan()
+    resolved = ro.apply_shot_overrides(base, [ro.ShotOverride(index=0, speaker="b")])
+    eff = ro.effective_overrides(base, resolved, trace)
+    assert [o.index for o in eff] == [0]
+    # Absolute, not a delta: every field is carried so a replay is idempotent.
+    assert eff[0].speaker == "b"
+    assert eff[0].layout == "single"
+    assert eff[0].crop == base.shots[0].crop  # 'b' shares the fixture crop
+    assert ro.effective_overrides(base, base, trace) == ()
+
+
+def test_with_overrides_merges_by_index_new_wins() -> None:
+    payload = _sidecar_payload()
+    once = ro.with_overrides(payload, [ro.ShotOverride(index=0, speaker="b")])
+    twice = ro.with_overrides(once, [ro.ShotOverride(index=0, speaker="c"), ro.ShotOverride(index=1, layout="single")])
+    assert {o["index"]: o for o in twice["overrides"]}[0]["speaker"] == "c"
+    assert len(twice["overrides"]) == 2
+    # The ORIGINAL trace is untouched, so the candidate speaker list survives every
+    # round and the user can keep flipping.
+    assert twice["trace"] == payload["trace"]
+
+
+def test_plan_from_sidecar_applies_persisted_overrides() -> None:
+    payload = ro.with_overrides(_sidecar_payload(), [ro.ShotOverride(index=0, speaker="b")])
+    plan = ro.plan_from_sidecar(payload)
+    assert plan.shots[0].speaker == "b"
+    assert plan.shots[0].speakers == ("a", "b")  # candidates preserved
+    with pytest.raises(ro.OverrideError, match="sidecar.overrides must be an array"):
+        ro.plan_from_sidecar({**payload, "overrides": "nope"})
+
+
+def test_rpc_shot_plan_for_is_loud_on_a_bad_clip_and_a_bad_sidecar() -> None:
+    registry = _Registry()
+    ro.register(register_fn=registry.reg, read_text=lambda _p: "{oops")
+    fn = registry.methods["reframe.shotPlanFor"]
+    with pytest.raises(RpcError) as err:
+        fn({"clip": 5}, None)
+    assert err.value.code == ErrorCode.INVALID_PARAMS
+    with pytest.raises(RpcError) as err:
+        fn({"clip": "/out/clip.mp4"}, None)
     assert err.value.code == ErrorCode.INVALID_PARAMS

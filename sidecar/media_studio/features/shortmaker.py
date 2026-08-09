@@ -251,6 +251,16 @@ def _lazy_remove_fillers(
     return out_path, remapped, stats
 
 
+#: v1.5 O-2 — the ``shortmaker.export`` param holding ``{clipPath: [override]}``.
+#: Keyed by the PRODUCED clip the user corrected (what the shorts gallery holds),
+#: so a re-export of the same candidate lands the correction on the right clip.
+REFRAME_OVERRIDES_PARAM = "reframeOverrides"
+
+#: The per-CLIP list ``_export_one`` injects into the reframe stage's settings
+#: after resolving :data:`REFRAME_OVERRIDES_PARAM` for that clip.
+REFRAME_SHOT_OVERRIDES_KEY = "reframeShotOverrides"
+
+
 def _lazy_reframe(in_path, out_path, aspect, *, settings=None, on_notice=None) -> str:
     from . import reframe as _reframe
 
@@ -258,8 +268,21 @@ def _lazy_reframe(in_path, out_path, aspect, *, settings=None, on_notice=None) -
     # ("verthor" | "claudeshorts"); "auto" (direct callers) re-resolves here.
     # WU-3: thread on_notice so the claudeshorts engine's speaker-tracking degrade
     # surfaces (the verthor engine accepts it for seam uniformity, never calls it).
-    engine, _notice = _reframe.get_engine((settings or {}).get("reframeEngine", "auto"), settings or {})
-    return engine.reframe(in_path, out_path, aspect, on_notice=on_notice)
+    name = (settings or {}).get("reframeEngine", "auto")
+    engine, _notice = _reframe.get_engine(name, settings or {})
+    raw = (settings or {}).get(REFRAME_SHOT_OVERRIDES_KEY)
+    if raw is None:
+        return engine.reframe(in_path, out_path, aspect, on_notice=on_notice)
+    # v1.5 O-2: the user corrected specific shots. Parse LOUDLY, and refuse if
+    # the resolved engine cannot honour a correction — running a plain reframe
+    # instead would hand back a clip that looks re-rendered but silently is not.
+    from . import reframe_override as _ro
+
+    overrides = _ro.parse_overrides(raw, REFRAME_SHOT_OVERRIDES_KEY)
+    rerender = getattr(engine, "rerender_with_overrides", None)
+    if rerender is None:
+        raise ValueError(f"the {name!r} reframe engine cannot apply per-shot reframe corrections")
+    return rerender(in_path, out_path, overrides)
 
 
 def _lazy_stabilize(in_path, out_path, *, settings=None, on_notice=None) -> str:
@@ -941,6 +964,12 @@ def _export_one(
     supplies it (the per-export de-duping sink), so stages can surface a skip /
     degrade without a silent fallback.
     """
+    # v1.5 O-2: the FINAL clip path is deterministic from (out_dir, final_stem),
+    # so it can be resolved BEFORE the pipeline runs — that is what lets a
+    # correction be keyed by the clip the user actually looked at.
+    final_path = str(out_dir / f"{final_stem or stem}.mp4")
+    reframe_settings = _reframe_settings_for_clip(settings, final_path)
+
     # CUT — frame-accurate carve; persist sourceStart on the clip record (§3).
     source_start = float(candidate.get("sourceStart", candidate.get("start", 0.0)))
     end = float(candidate.get("end", 0.0))
@@ -1036,7 +1065,7 @@ def _export_one(
         reframe_degraded["notice"] = notice
         on_notice(notice)
 
-    stages.reframe(stage_clip, reframed_path, aspect, settings=settings, on_notice=_reframe_notice)
+    stages.reframe(stage_clip, reframed_path, aspect, settings=reframe_settings, on_notice=_reframe_notice)
     caption_clip = reframed_path
 
     # P4 §8b / C16: AUTO PUNCH-IN ZOOM — inserted BETWEEN reframe and caption
@@ -1123,7 +1152,6 @@ def _export_one(
     # EXPORT — final libx264 encode. WU SP2: the FINAL clip carries the
     # rank-ordered ``NN-`` filename prefix (``final_stem``) so the exported set
     # sorts by virality rank; intermediates keep the plain working ``stem``.
-    final_path = str(out_dir / f"{final_stem or stem}.mp4")
     if audio_track is None:
         stages.export_clip(export_input, final_path, settings=settings)
     else:
@@ -1300,12 +1328,39 @@ def run_export(
         )
         items.append(item)
 
+    _assert_overrides_matched(settings, items)
     ctx.progress(100, f"exported {len(items)} clip(s)")
     # §2: shortmaker.export -> {clips:[{path}]}; P3-B adds the OPTIONAL per-clip
     # {fillersRemoved, fillerSeconds} when filler removal ran for that clip (the
     # base {path}-only shape is preserved when it did not — UI annotates only
     # when present).
     return {"clips": [_clip_payload(it) for it in items], "items": items}
+
+
+def _reframe_settings_for_clip(settings: dict[str, Any], final_path: str) -> dict[str, Any]:
+    """``settings`` plus this clip's per-shot reframe correction, when it has one.
+
+    v1.5 O-2. The correction map is keyed by the PRODUCED clip path, so a clip
+    with no entry gets the settings unchanged and its reframe stage is
+    byte-identical to the base pipeline.
+    """
+    overrides = settings.get(REFRAME_OVERRIDES_PARAM) or {}
+    entry = overrides.get(final_path)
+    if entry is None:
+        return settings
+    return {**settings, REFRAME_SHOT_OVERRIDES_KEY: entry}
+
+
+def _assert_overrides_matched(settings: dict[str, Any], items: list[dict[str, Any]]) -> None:
+    """Fail loud when a requested correction reached no exported clip.
+
+    A silent miss is the worst outcome the O-2 loop can produce: the user
+    corrects a shot, the export reports success, and nothing changed.
+    """
+    requested = set((settings.get(REFRAME_OVERRIDES_PARAM) or {}).keys())
+    missed = sorted(requested - {str(item["path"]) for item in items})
+    if missed:
+        raise ValueError(f"reframeOverrides: no exported clip matched {missed}")
 
 
 def _clip_payload(item: dict[str, Any]) -> dict[str, Any]:
@@ -1388,6 +1443,12 @@ class ShortMaker:
         caption_override = params.get("captionOverride")
         if isinstance(caption_override, dict):
             settings["captionOverride"] = caption_override
+        # v1.5 O-2: the per-shot reframe correction map ({clipPath: [override]}).
+        # Dict-only, mirroring captionOverride, so a malformed value can never
+        # poison the reframe stage — and each entry is parsed loudly downstream.
+        reframe_overrides = params.get(REFRAME_OVERRIDES_PARAM)
+        if isinstance(reframe_overrides, dict):
+            settings[REFRAME_OVERRIDES_PARAM] = reframe_overrides
         # P3/P4: optional per-export BOOLEAN toggles (frozen mini-contract):
         #   hookTitle (default true)  -> render the candidate's hook as a top
         #                                title in the CAPTION stage (P3-A);
