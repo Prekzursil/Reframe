@@ -79,10 +79,14 @@ def test_build_engines_defaults_runner_to_ffmpeg_run() -> None:
 def test_deferred_kinds_have_no_engine() -> None:
     table = build_engines(runner=FakeRunner())
     assert not (set(DEFERRED_KINDS) & set(table))
-    # The honestly-deferred subsystem ops stay out of the table; reorder too.
-    assert {"stitchPanorama", "regenScroll", "ocrExtractList", "reorder"} <= set(DEFERRED_KINDS)
-    # The ffmpeg-achievable ops moved INTO the wired table.
+    # The honestly-deferred subsystem ops stay out of the table.
+    assert {"stitchPanorama", "regenScroll", "ocrExtractList"} <= set(DEFERRED_KINDS)
+    # The ffmpeg-achievable ops moved INTO the wired table. ``reorder`` joined
+    # them in v1.5 (SCOPE.md O-3): it is a permutation of spans within ONE
+    # source, which the shipped segment-cut concat already expresses, so the
+    # "needs a multi-clip timeline engine" deferral premise was simply wrong.
     assert {
+        "reorder",
         "reframe",
         "zoomPan",
         "retime",
@@ -92,6 +96,7 @@ def test_deferred_kinds_have_no_engine() -> None:
         "translateCaption",
         "export",
     } <= set(WIRED_KINDS)
+    assert "reorder" not in set(DEFERRED_KINDS)
 
 
 def test_deferred_subsystems_cover_every_deferred_kind() -> None:
@@ -99,6 +104,24 @@ def test_deferred_subsystems_cover_every_deferred_kind() -> None:
     assert set(engines_mod.DEFERRED_SUBSYSTEMS) == set(DEFERRED_KINDS)
     assert "panorama" in engines_mod.DEFERRED_SUBSYSTEMS["stitchPanorama"]
     assert "OCR" in engines_mod.DEFERRED_SUBSYSTEMS["ocrExtractList"]
+
+
+def test_deferred_subsystems_name_modules_that_exist() -> None:
+    # v1.5 docs/plans/v1.5/SCOPE.md O-3 anti-drift. The deferral text claimed these kinds were
+    # were missing "the panorama/stitch engine" / "an OCR engine" — false: each
+    # engine SHIPS and is unit-tested; only the apply-time adapter is missing.
+    # Pin every module the text names to a real importable module so the
+    # corrected wording cannot rot back into that lie (delete panorama_stitch.py
+    # and this test fires).
+    import importlib
+
+    assert set(engines_mod.DEFERRED_ENGINE_MODULES) == set(DEFERRED_KINDS)
+    for kind, module_name in engines_mod.DEFERRED_ENGINE_MODULES.items():
+        assert importlib.import_module(module_name) is not None
+        # the human-readable deferral must cite the same module it claims to need
+        assert module_name in engines_mod.DEFERRED_SUBSYSTEMS[kind]
+        # ...and must say the ADAPTER is what is missing, not the engine
+        assert "adapter" in engines_mod.DEFERRED_SUBSYSTEMS[kind]
 
 
 def test_log_deferred_announces_unwired_kinds_with_subsystems() -> None:
