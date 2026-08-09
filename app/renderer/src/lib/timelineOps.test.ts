@@ -35,6 +35,15 @@ function cue(index: number, start: number, end: number, text: string): Cue {
   return { index, start, end, text };
 }
 
+/**
+ * A DIARIZED cue — `speaker` is the OPTIONAL §A3a `Cue` field (CONTRACTS.md:166-169),
+ * emitted by the sidecar (`features/subtitles.py:102-113` `make_cue`) and round-tripped
+ * by `subtitles.edit` (`reindex`, :116-133). Every op here must carry it through.
+ */
+function diarized(index: number, start: number, end: number, text: string, speaker: string): Cue {
+  return { index, start, end, text, speaker };
+}
+
 /** Three well-spaced cues: [0,2] [3,5] [6,8]. */
 function threeCues(): Cue[] {
   return [cue(1, 0, 2, 'hello world'), cue(2, 3, 5, 'second cue'), cue(3, 6, 8, 'third one')];
@@ -150,6 +159,26 @@ describe('mergeCues', () => {
     expect(mergeCues(cue(1, 0, 1, '  '), cue(2, 1, 2, 'kept')).text).toBe('kept');
     expect(mergeCues(cue(1, 0, 1, 'kept'), cue(2, 1, 2, '')).text).toBe('kept');
   });
+
+  it('preserves the diarized speaker label (§A3a optional Cue field)', () => {
+    const merged = mergeCues(
+      diarized(1, 0, 2, 'hello world', 'SPEAKER_00'),
+      diarized(2, 3, 5, 'second cue', 'SPEAKER_00'),
+    );
+    expect(merged.speaker).toBe('SPEAKER_00');
+  });
+
+  it('takes the speaker from the EARLIER cue, not the argument order', () => {
+    const merged = mergeCues(diarized(2, 3, 5, 'later', 'B'), diarized(1, 0, 2, 'earlier', 'A'));
+    expect(merged.speaker).toBe('A');
+  });
+
+  it('emits NO speaker key when the earlier cue is not diarized', () => {
+    // A `speaker: undefined` key would leak into the wire shape the sidecar
+    // deliberately keeps clean (`make_cue`: "no speaker: None leakage").
+    const merged = mergeCues(cue(1, 0, 2, 'plain'), diarized(2, 3, 5, 'later', 'B'));
+    expect('speaker' in merged).toBe(false);
+  });
 });
 
 describe('mergeAt', () => {
@@ -158,6 +187,15 @@ describe('mergeAt', () => {
     expect(out).toHaveLength(2);
     expect(out[0]).toEqual({ index: 1, start: 0, end: 5, text: 'hello world second cue' });
     expect(out[1].index).toBe(2);
+  });
+
+  it('carries the diarized speaker through the list-level merge + renumber', () => {
+    const out = mergeAt(
+      [diarized(1, 0, 2, 'a', 'S0'), diarized(2, 3, 5, 'b', 'S0'), cue(3, 6, 8, 'c')],
+      0,
+    );
+    expect(out[0].speaker).toBe('S0');
+    expect(out.map((c) => c.index)).toEqual([1, 2]);
   });
 
   it('returns the SAME array when pos is the last cue or invalid', () => {

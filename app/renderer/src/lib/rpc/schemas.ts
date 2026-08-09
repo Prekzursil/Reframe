@@ -31,6 +31,17 @@ export interface Cue {
   start: number;
   end: number;
   text: string;
+  /**
+   * The diarized speaker label — OPTIONAL and ADDITIVE (CONTRACTS.md §A3a:166-169:
+   * "Cue gains OPTIONAL `speaker?: string` … Frozen index/start/end/text are
+   * unchanged"). The sidecar has always emitted it (`features/subtitles.py`
+   * `make_cue`:102-113) and preserves it across `subtitles.edit`
+   * (`reindex`:116-133), but this declaration omitted it, so the renderer could
+   * neither read nor deliberately carry the field — which is how `mergeCues`
+   * came to drop it unnoticed. The key is ABSENT (never `undefined`) on a
+   * non-diarized cue, mirroring the sidecar's "no speaker: None leakage" rule.
+   */
+  speaker?: string;
 }
 
 export type SubtitleFormat = 'srt' | 'ass' | 'vtt';

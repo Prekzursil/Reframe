@@ -68,14 +68,28 @@ export function splitCue(cue: Cue, t: number): [Cue, Cue] | null {
 
 /**
  * Merge two cues into one spanning both: `[min(start), max(end)]`, texts
- * joined in time order with a single space (empty halves dropped). Keeps the
- * earlier cue's `index` (list-level callers renumber anyway).
+ * joined in time order with a single space (empty halves dropped).
+ *
+ * SPREADS the earlier cue, exactly like `splitCue` / `retimeCue` / `renumber`
+ * do — so the earlier cue's `index` survives (list-level callers renumber
+ * anyway) AND so do the fields this module does not name. That is not a
+ * stylistic choice: the §A3a `Cue` carries an OPTIONAL `speaker`
+ * (CONTRACTS.md:166-169) that the sidecar emits and round-trips
+ * (`features/subtitles.py` `make_cue`:102-113, `reindex`:116-133). The former
+ * fresh `{index,start,end,text}` literal silently DROPPED it, so merging two
+ * diarized cues erased the speaker label on the next `subtitles.edit` save.
+ *
+ * The earlier cue wins for the same reason it wins for `index`: a merge across
+ * a speaker change is inherently lossy and there is no correct second label to
+ * keep. When the earlier cue is NOT diarized the key is simply absent — never
+ * `speaker: undefined`, which would leak a null into the wire shape the sidecar
+ * deliberately keeps clean.
  */
 export function mergeCues(a: Cue, b: Cue): Cue {
   const [first, second] = a.start <= b.start ? [a, b] : [b, a];
   const text = [first.text.trim(), second.text.trim()].filter(Boolean).join(' ');
   return {
-    index: first.index,
+    ...first,
     start: Math.min(a.start, b.start),
     end: Math.max(a.end, b.end),
     text,

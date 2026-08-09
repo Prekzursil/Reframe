@@ -33,6 +33,13 @@ export interface Cue {
   start: number;
   end: number;
   text: string;
+  /**
+   * Diarized speaker label — OPTIONAL, additive (CONTRACTS.md §A3a:166-169).
+   * Declared on all THREE copies of this wire shape (here, `features/_api.ts`,
+   * `lib/rpc/schemas.ts`) so a consumer of this module's `SubtitleTrack` cannot
+   * silently re-introduce the drop the timeline editor just had.
+   */
+  speaker?: string;
 }
 
 export interface SubtitleTrack {

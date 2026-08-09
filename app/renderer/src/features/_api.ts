@@ -124,6 +124,13 @@ export interface Cue {
   start: number;
   end: number;
   text: string;
+  /**
+   * Diarized speaker label — OPTIONAL, additive (CONTRACTS.md §A3a:166-169).
+   * Absent (not `undefined`) on a non-diarized cue. This is the `Cue` the
+   * timeline editor operates on (`lib/timelineOps.ts` re-exports it), so the
+   * field must be declared here for the editor ops to carry it honestly.
+   */
+  speaker?: string;
 }
 
 export type SubtitleFormat = 'srt' | 'ass' | 'vtt';
