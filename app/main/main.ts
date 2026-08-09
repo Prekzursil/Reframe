@@ -10,7 +10,8 @@
 // server in development (ELECTRON_RENDERER_URL) and from the built bundle
 // (out/renderer/index.html) in production. Security baseline: contextIsolation
 // ON, nodeIntegration OFF, sandbox ON — the renderer only sees `window.api`.
-import { app, BrowserWindow, ipcMain, net, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, net, safeStorage, session, shell } from 'electron';
+import { buildAppMenuTemplate } from './appMenu';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
@@ -1551,6 +1552,14 @@ if (!app.requestSingleInstanceLock()) {
     // user-facing About surface. applicationName is the display brand "Reframe";
     // applicationVersion reads package.json.version (1.4.0) via Electron.
     app.setAboutPanelOptions({ applicationName: 'Reframe', applicationVersion: app.getVersion() });
+    // C2 + H1 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §4.1, §5): install a real
+    // menu. Until now Electron's STOCK menu shipped verbatim, which advertised
+    // `Edit ▸ Undo (Ctrl+Z)` — an app-wide undo this app does not have — and left
+    // DevTools + Force Reload reachable in a packaged consumer build. The template
+    // is pure and unit-tested in appMenu.test.ts; `isDev` gates the dev-only View
+    // items. This is also what finally gives `setAboutPanelOptions` above the
+    // "Help ▸ About" home its comment already claimed.
+    Menu.setApplicationMenu(Menu.buildFromTemplate(buildAppMenuTemplate({ isDev })));
     bootstrap();
 
     app.on('activate', () => {

@@ -73,11 +73,36 @@ DEFAULT_FPS = 30.0
 
 
 def _is_english(language: str) -> bool:
-    """True when ``language`` is an English BCP-47 / ISO code (``en``, ``en-US``, …)."""
+    """True when ``language`` is an English BCP-47 / ISO code (``en``, ``en-US``, …).
+
+    An empty/unknown tag is deliberately NOT English: every English-only stage in
+    this module treats "we do not know" as "do not run" (adverse inference), so a
+    caller that forgets to declare the language gets the harmless behaviour rather
+    than an English model applied to a foreign language.
+    """
     return language.startswith("en")
 
 
-def resolve_caption_limits(settings: dict[str, Any] | None) -> tuple[float, int]:
+def resolve_caption_language(settings: dict[str, Any] | None, language: str | None = None) -> str:
+    """The caption track's language code, lowercased and stripped (``""`` = unknown).
+
+    Precedence: the explicit ``language`` argument (the TRACK's own language, which
+    ``subtitles.generate_polished`` threads through from the transcript), then
+    ``settings['captionLanguage']``, then ``settings['language']``. Pure.
+
+    This is the module's SINGLE language-resolution path — both the reading-speed
+    default (:func:`resolve_caption_limits`) and the English-only punctuation gate
+    (:func:`polish_cues`) read it, so the two can never disagree.
+    """
+    settings = settings or {}
+    for raw in (language, settings.get("captionLanguage"), settings.get("language")):
+        code = str(raw or "").strip().lower()
+        if code:
+            return code
+    return ""
+
+
+def resolve_caption_limits(settings: dict[str, Any] | None, language: str | None = None) -> tuple[float, int]:
     """Resolve ``(max_cps, max_lines)`` for :func:`polish_cues` from ``settings``.
 
     The reading-speed default is **per-content / per-language** (§1.5): children's
@@ -88,7 +113,7 @@ def resolve_caption_limits(settings: dict[str, Any] | None) -> tuple[float, int]
     the wrap target between 1 and 2 lines (which scales the per-cue CPL capacity in
     :func:`enforce_cps_cpl`); anything else keeps :data:`MAX_LINES`.
 
-    Pure. The language is read from ``captionLanguage`` first, then ``language``.
+    Pure. The language comes from :func:`resolve_caption_language`.
     """
     settings = settings or {}
     override = settings.get("captionOverride")
@@ -98,8 +123,7 @@ def resolve_caption_limits(settings: dict[str, Any] | None) -> tuple[float, int]
     if settings.get("captionChildren"):
         max_cps: float = MAX_CPS_CHILDREN
     else:
-        language = str(settings.get("captionLanguage") or settings.get("language") or "").strip().lower()
-        max_cps = MAX_CPS_ENGLISH if _is_english(language) else MAX_CPS
+        max_cps = MAX_CPS_ENGLISH if _is_english(resolve_caption_language(settings, language)) else MAX_CPS
 
     raw_cps = override.get("maxCps")
     if isinstance(raw_cps, (int, float)) and not isinstance(raw_cps, bool) and math.isfinite(raw_cps):
@@ -328,6 +352,154 @@ def enforce_cps_cpl(
     return out
 
 
+# --------------------------------------------------------------------------- #
+# pure: sentence detection + re-segmentation of translated text onto fixed cues
+#   `docs/plans/v1.5/captions-translation-audit-2026-08.md` §3.1/§3.2 + T1: cues are
+#   segmented for READING SPEED, so one sentence spans several cues and translating
+#   each cue alone loses gender/number/tense agreement and referents. The fix
+#   translates a whole sentence and lays the result back over the SAME cue timings —
+#   these three functions are the "lay it back" half, and they are pure.
+# --------------------------------------------------------------------------- #
+#: Sentence-final marks across the scripts the app's language set covers: Latin /
+#: Cyrillic / Greek ``.!?``, the ellipsis, the CJK fullwidth stop + marks, the Arabic
+#: question mark, and the Devanagari danda.
+SENTENCE_FINAL_CHARS = ".!?…。！？؟।"
+#: Quote / bracket characters a sentence-final mark may hide behind.
+SENTENCE_CLOSERS = "\"')]}”’»›"
+
+
+def ends_sentence(text: str) -> bool:
+    """True when ``text`` ends a sentence (looking through trailing quotes/brackets).
+
+    Pure. Trailing whitespace and any run of :data:`SENTENCE_CLOSERS` are stripped
+    before the final character is tested against :data:`SENTENCE_FINAL_CHARS`.
+
+    Known imprecision, disclosed inline: an abbreviation (``Dr.``, ``etc.``) reads as
+    a sentence end. The cost is a SMALLER translation group, i.e. exactly today's
+    per-cue behaviour for that one boundary — never worse than the defect this
+    replaces. A real sentence segmenter would need a language model per language.
+    """
+    stripped = text.rstrip()
+    while stripped and stripped[-1] in SENTENCE_CLOSERS:
+        stripped = stripped[:-1].rstrip()
+    return bool(stripped) and stripped[-1] in SENTENCE_FINAL_CHARS
+
+
+def _char_budgets(body: str, weights: Sequence[float]) -> list[int]:
+    """Split ``len(body)`` characters across ``weights``, proportionally (pure).
+
+    The budgets always sum to exactly ``len(body)`` (the remainder lands on the last
+    piece), so no character can be dropped downstream. All-zero / negative weights
+    degrade to an even split rather than a division by zero.
+    """
+    total = len(body)
+    normalized = [max(float(w), 0.0) for w in weights]
+    weight_sum = sum(normalized)
+    if weight_sum <= 0.0:
+        normalized = [1.0] * len(normalized)
+        weight_sum = float(len(normalized))
+    budgets: list[int] = []
+    accumulated = 0.0
+    previous = 0
+    for weight in normalized[:-1]:
+        accumulated += weight
+        cut = int(round(total * accumulated / weight_sum))
+        budgets.append(max(cut - previous, 0))
+        previous = cut
+    budgets.append(max(total - previous, 0))
+    return budgets
+
+
+def _pack_words(words: list[str], budgets: list[int]) -> list[str]:
+    """Assign whole words to each budget, closest-fit (pure).
+
+    A word joins the current piece when doing so brings the piece's length CLOSER to
+    its budget. Every piece keeps at least one word (the loop never consumes the
+    words a later piece needs), and the last piece absorbs the remainder — so the
+    word sequence is partitioned, never truncated. Requires ``len(words) >= len(budgets)``
+    and ``len(budgets) >= 2`` — :func:`split_text_proportional` guarantees both.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    count = len(budgets)
+    for position, budget in enumerate(budgets[:-1]):
+        # Words the pieces AFTER this one must still be able to claim, so a greedy
+        # early piece can never leave a later cue with no text at all.
+        reserved = count - position - 1
+        take = 1
+        while cursor + take < len(words) - reserved:
+            current = len(" ".join(words[cursor : cursor + take]))
+            extended = len(" ".join(words[cursor : cursor + take + 1]))
+            if abs(extended - budget) >= abs(current - budget):
+                break
+            take += 1
+        pieces.append(" ".join(words[cursor : cursor + take]))
+        cursor += take
+    pieces.append(" ".join(words[cursor:]))
+    return pieces
+
+
+def _slice_chars(body: str, budgets: list[int]) -> list[str]:
+    """Cut ``body`` at exact character budgets (pure).
+
+    The fallback for scripts that carry no inter-word spaces (Japanese, Chinese,
+    Thai) — where a word split yields ONE token for a whole sentence and would
+    starve every piece but the first — and for the degenerate case of more pieces
+    than characters. Contiguous slices, so every character survives.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    for budget in budgets:
+        end = min(cursor + budget, len(body))
+        pieces.append(body[cursor:end].strip())
+        cursor = end
+    return pieces
+
+
+def split_text_proportional(text: str, weights: Sequence[float]) -> list[str]:
+    """Split ``text`` into ``len(weights)`` pieces sized proportionally to ``weights``.
+
+    Pure + deterministic. ``text`` is whitespace-normalized first (a hard line break
+    inserted by :func:`wrap_two_lines` must not become a phantom character), then cut
+    on word boundaries closest to each proportional target — falling back to exact
+    character boundaries when the text has fewer words than pieces.
+
+    **Losslessness:** every non-whitespace character of ``text`` lands in exactly one
+    piece, in order. That is the property that makes this safe to use on a
+    translation: no clause can be silently dropped.
+    """
+    if not weights:
+        return []
+    body = " ".join(str(text or "").split())
+    if len(weights) == 1:
+        return [body]
+    budgets = _char_budgets(body, weights)
+    words = body.split(" ")
+    if len(words) >= len(weights):
+        return _pack_words(words, budgets)
+    return _slice_chars(body, budgets)
+
+
+def redistribute_cue_text(cues: Sequence[Cue], text: str) -> list[Cue]:
+    """Lay ``text`` back over ``cues`` — the T1 re-segmentation step.
+
+    **Timing contract (hard):** the returned cues carry the SAME ``index``, ``start``
+    and ``end`` values as their inputs, and any extra keys (``speaker``, ``emphasis``)
+    are preserved. Only ``text`` changes, so re-segmentation cannot drift a cue's
+    timing by construction — there is no arithmetic on the time fields at all.
+
+    Each cue's share of ``text`` is proportional to its own VISIBLE character count
+    (whitespace-normalized), so a translation lands roughly where its source words
+    were spoken. Returns NEW dicts; the inputs are never mutated.
+    """
+    source = list(cues)
+    if not source:
+        return []
+    weights = [float(len(" ".join(str(cue.get("text", "") or "").split()))) for cue in source]
+    pieces = split_text_proportional(text, weights)
+    return [{**cue, "text": piece} for cue, piece in zip(source, pieces, strict=True)]
+
+
 def enforce_min_gap(cues: list[Cue], *, fps: float = DEFAULT_FPS) -> list[Cue]:
     """Pull back each cue's ``end`` so consecutive cues keep :data:`MIN_GAP_FRAMES`.
 
@@ -405,6 +577,7 @@ def polish_cues(
     cues: list[Cue],
     *,
     settings: dict[str, Any] | None = None,
+    language: str | None = None,
     punct_backend: PunctBackend | None = None,
     keyword_backend: KeywordBackend | None = None,
     profanity_backend: ProfanityBackend | None = None,
@@ -416,7 +589,14 @@ def polish_cues(
     degrade rule):
 
       1. **Punctuation + casing** (``punct_backend``) — restore sentence casing
-         and punctuation on each cue's text.
+         and punctuation on each cue's text. **Gated on language:** the shipped
+         backend is the English-only :data:`PUNCT_ASSET_NAME` model, so it runs ONLY
+         when :func:`resolve_caption_language` resolves to an ``en*`` code. On any
+         other language — or an unknown one — the stage is skipped, because applying
+         an English punctuation+casing model to foreign text makes the captions worse
+         (`docs/plans/v1.5/captions-translation-audit-2026-08.md` §3.5). Whisper
+         already emits native punctuation, so skipping is the safe default; a
+         multilingual restorer is a later upgrade.
       2. **Profanity masking** (``profanity_backend``) — replace profane words
          with asterisks.
       3. **Timing + segmentation gate** (PURE, always) — split/retime each cue to
@@ -431,8 +611,9 @@ def polish_cues(
          ``emphasis`` spans + a trailing ``emoji`` on each final cue.
 
     Returns brand-new cue dicts in time order, renumbered ``index`` 1..N. Inputs
-    are never mutated. ``settings`` selects the adult/children CPS limit; ``fps``
-    drives the min-gap conversion.
+    are never mutated. ``settings`` selects the adult/children CPS limit; ``language``
+    is the track's own language code (it wins over ``settings``) and gates stage 1;
+    ``fps`` drives the min-gap conversion.
     """
     settings = settings or {}
     if not cues:
@@ -441,15 +622,26 @@ def polish_cues(
     # Reading-speed (CPS) + line count are resolved per-content/per-language and
     # then overridden by an explicit ``captionOverride`` (§1.5). ``max_lines``
     # scales the per-cue CPL capacity in :func:`enforce_cps_cpl`.
-    max_cps, max_lines = resolve_caption_limits(settings)
+    resolved_language = resolve_caption_language(settings, language)
+    max_cps, max_lines = resolve_caption_limits(settings, resolved_language)
+
+    # Stage 1 is English-ONLY (see the docstring): drop the backend for any other
+    # language so the loop below cannot reach it.
+    punct = punct_backend
+    if punct is not None and not _is_english(resolved_language):
+        log.info(
+            "caption polish: skipping the EN-only punctuation restorer for language %r",
+            resolved_language or "unknown",
+        )
+        punct = None
 
     # Stage 1+2 operate per source cue, BEFORE the timing split (so casing +
     # masking see whole sentences). Then the timing gate splits into final cues.
     split_cues: list[Cue] = []
     for cue in cues:
         text = str(cue.get("text", "") or "")
-        if punct_backend is not None:
-            text = punct_backend.restore(text)
+        if punct is not None:
+            text = punct.restore(text)
         if profanity_backend is not None:
             text = mask_profanity(text, profanity_backend)
         retimed = enforce_cps_cpl({**cue, "text": text}, max_cps=max_cps, max_cpl=MAX_CPL, max_lines=max_lines)
@@ -565,6 +757,8 @@ __all__ = [
     "PUNCT_ASSET_NAME",
     "PUNCT_HF_REPO",
     "PUNCT_SIZE_MB",
+    "SENTENCE_CLOSERS",
+    "SENTENCE_FINAL_CHARS",
     "Cue",
     "KeywordBackend",
     "KeywordFactory",
@@ -575,11 +769,15 @@ __all__ = [
     "apply_emphasis_spans",
     "cps_of",
     "default_models_present",
+    "ends_sentence",
     "enforce_cps_cpl",
     "enforce_min_gap",
     "mask_profanity",
     "polish_cues",
+    "redistribute_cue_text",
     "register_caption_polish_assets",
+    "resolve_caption_language",
     "resolve_caption_limits",
+    "split_text_proportional",
     "wrap_two_lines",
 ]
