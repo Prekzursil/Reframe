@@ -24,6 +24,17 @@
 // plan first, render the card, defer the real call. Previously this panel read
 // the plan and answered the challenge itself, so a user who deliberately turned
 // the setting ON still got zero confirmation from this surface.
+//
+// TWO HONESTY INVARIANTS the deferral must not break — both are asserted:
+//   1. A DEFERRED run has produced no result, so the panel must claim none. The
+//      searched-query label and the phase are committed inside `execute` (i.e.
+//      only once a request is really in flight), and deferring a search DROPS
+//      the previous query's verdict — otherwise the live region and
+//      `.search-empty` re-announce the old outcome under the NEW query's name.
+//   2. The card must not quote a number it does not have. `index.plan` sizes an
+//      index BUILD from an 11-byte `"index.build"` sentinel (vision_ops.py:750),
+//      not from the corpus the build embeds, so the build card states the size
+//      is unestimated instead of quoting that figure (see the card below).
 import React, { useCallback, useEffect, useState } from 'react';
 import './panels.css';
 import { fmtSeconds, getApi } from './_api';
@@ -144,6 +155,10 @@ export function SemanticSearch({ videoId, playerRef }: SemanticSearchProps): Rea
         setBuild({ jobId: res.jobId, pct: 0, message: 'Building…' });
         return;
       }
+      // Committed HERE, not at submit: `searchedQuery` names the query whose
+      // verdict the panel is about to render, so it may only advance once a
+      // request is genuinely in flight (invariant 1 in the header).
+      setSearchedQuery(run.query);
       setPhase('searching');
       const res = await getApi().rpc<{ hits: IndexHit[] }>('index.search', {
         videoId,
@@ -164,6 +179,16 @@ export function SemanticSearch({ videoId, playerRef }: SemanticSearchProps): Rea
   const startOrDefer = useCallback(
     async (run: PendingRun): Promise<void> => {
       if (run.plan.willEgress && confirmCloudBudget) {
+        if (run.kind === 'search') {
+          // Nothing ran, so nothing may be shown: drop the PREVIOUS query's
+          // result surface. Left standing it is re-labelled with the new,
+          // un-run query — `.search-empty` and the polite live region both read
+          // `searchedQuery` — which is an affirmative false claim about a
+          // request the panel never sent. (A deferred BUILD does not touch the
+          // search surface, so it leaves the last real result alone.)
+          setHits([]);
+          setPhase('idle');
+        }
         setPending(run);
         return;
       }
@@ -193,12 +218,12 @@ export function SemanticSearch({ videoId, playerRef }: SemanticSearchProps): Rea
       const q = query.trim();
       if (!q) return;
       setError('');
-      setSearchedQuery(q);
       try {
-        // Same cloud-budget pre-flight as the build path. `phase` flips to
-        // 'searching' inside `execute`, i.e. only once a search is REALLY in
-        // flight — a deferred search announces nothing, because nothing is
-        // running until the user acknowledges.
+        // Same cloud-budget pre-flight as the build path. `phase` AND
+        // `searchedQuery` are committed inside `execute`, i.e. only once a
+        // search is REALLY in flight — a deferred search announces nothing and
+        // labels nothing, because nothing is running until the user
+        // acknowledges.
         const plan = await getApi().rpc<AiPlan>('index.plan', { videoId, query: q });
         await startOrDefer({ kind: 'search', plan, query: q });
       } catch (err) {
@@ -300,13 +325,35 @@ export function SemanticSearch({ videoId, playerRef }: SemanticSearchProps): Rea
           <h3 className="search-consent__title">
             Before this {pending.kind === 'build' ? 'index build' : 'search'} runs
           </h3>
-          <p className="search-consent__egress">
-            It sends {pending.plan.costEst.egressBytes} bytes of transcript text to{' '}
-            {pending.plan.costEst.providers.join(', ')} in {pending.plan.costEst.requests}{' '}
-            request(s) — {pending.plan.costEst.withinFreeLimits ? 'within' : 'outside'} the provider
-            free limits.
-          </p>
-          <p className="search-consent__preview">{pending.plan.preview}</p>
+          {pending.kind === 'build' ? (
+            // HONESTY (invariant 2): `index.plan` plans a build over an 11-byte
+            // `"index.build"` SENTINEL (vision_ops.py:750) — not over the corpus
+            // `index_build` actually embeds — so its `egressBytes`, `requests`,
+            // `withinFreeLimits` AND the `preview` string derived from them are
+            // orders of magnitude low for a build. A spend confirmation quoting
+            // "11 bytes … within the provider free limits" would be worse than
+            // no number at all, so the card names WHO receives the data (that
+            // part is real) and says plainly that the size is not estimated.
+            // The sentinel also UNDER-METERS the sidecar's monthly cap and the
+            // recorded egress cents for a build — a sidecar-lane defect
+            // (vision_ops.index_build:549-559), not fixable from this panel.
+            <p className="search-consent__egress">
+              It sends this video&apos;s entire transcript to{' '}
+              {pending.plan.costEst.providers.join(', ')} to be embedded. The pre-flight plan does
+              not size an index build, so the bytes, the request count and the free-tier fit are not
+              estimated here.
+            </p>
+          ) : (
+            <>
+              <p className="search-consent__egress">
+                It sends {pending.plan.costEst.egressBytes} bytes of search-query text to{' '}
+                {pending.plan.costEst.providers.join(', ')} in {pending.plan.costEst.requests}{' '}
+                request(s) — {pending.plan.costEst.withinFreeLimits ? 'within' : 'outside'} the
+                provider free limits.
+              </p>
+              <p className="search-consent__preview">{pending.plan.preview}</p>
+            </>
+          )}
           <div className="actions">
             <button
               type="button"

@@ -728,10 +728,14 @@ describe('<SemanticSearch />', () => {
     expect(card).toBeTruthy();
     expect(card.getAttribute('aria-label')).toBe('Cloud egress consent');
     // The card shows WHAT is being acknowledged (an ack with no preview is theatre).
-    expect(card.textContent).toContain('2048');
+    // RESCOPED (adversarial review): this test previously asserted the BUILD card
+    // echoed the plan's `2048`/`outside the provider free limits`/`preview`. That
+    // encoded the defect — `index.plan` sizes a build from an 11-byte sentinel, so
+    // those three are wrong for a build. The numeric disclosure is asserted on the
+    // SEARCH card (where the plan IS accurate) and the build card's honest copy is
+    // asserted in its own test below; nothing is merely dropped.
     expect(card.textContent).toContain('openrouter');
-    expect(card.textContent).toContain('embed: pricing');
-    expect(card.textContent).toContain('outside the provider free limits');
+    expect(card.textContent).toContain('entire transcript');
     expect(card.textContent).toContain('index build');
 
     await click(ackButton());
@@ -759,7 +763,14 @@ describe('<SemanticSearch />', () => {
     const card = consentCard() as HTMLElement;
     expect(card).toBeTruthy();
     expect(card.textContent).toContain('search');
+    // The SEARCH plan is accurate (it sizes the query text itself), so the card
+    // carries the full numeric disclosure: bytes, provider, request count,
+    // free-limit verdict and the sidecar's own preview line.
+    expect(card.textContent).toContain('2048');
+    expect(card.textContent).toContain('openrouter');
+    expect(card.textContent).toContain('1 request(s)');
     expect(card.textContent).toContain('within the provider free limits');
+    expect(card.querySelector('.search-consent__preview')?.textContent).toBe('embed: pricing');
     // Nothing is in flight, so the panel must not claim to be searching.
     expect(container.querySelector('.search-status')?.textContent).not.toContain('Searching…');
 
@@ -825,6 +836,133 @@ describe('<SemanticSearch />', () => {
     await click(ackButton());
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('no transcript yet');
     expect(consentCard()).toBeNull();
+  });
+
+  // --- the deferral must not fabricate a verdict (adversarial-review regression)
+  // A deferred run sent NOTHING. If the panel keeps the previous query's result
+  // surface up, `.search-empty` and the polite live region — both fed by
+  // `searchedQuery` — re-label it with the new query, so the app asserts (and
+  // ANNOUNCES to a screen reader) a factual outcome for a request it never made.
+
+  it('gate ON: a deferred SEARCH never announces "No matches" for the query it did not run', async () => {
+    const fake = makeFakeApi({
+      'index.status': BUILT,
+      'settings.get': { confirmCloudBudget: true },
+      'index.plan': plan(),
+      'index.search': { hits: [] },
+    });
+    await mount(fake);
+    // 'foo' runs for real and legitimately finds nothing.
+    await type('foo');
+    await submit();
+    await click(ackButton());
+    expect(container.querySelector('.search-empty')?.textContent).toContain("No matches for 'foo'");
+    expect(fake.calls.filter((c) => c.method === 'index.search').length).toBe(1);
+
+    // 'bar' is deferred behind the card: no request, therefore no verdict.
+    await type('bar');
+    await submit();
+    expect(consentCard()).toBeTruthy();
+    expect(fake.calls.filter((c) => c.method === 'index.search').length).toBe(1);
+    expect(container.querySelector('.search-empty')).toBeNull();
+    const live = container.querySelector('[aria-live="polite"].search-status');
+    expect(live?.textContent).toBe('');
+    // Acknowledging then runs it and the verdict finally names 'bar' truthfully.
+    await click(ackButton());
+    expect(fake.calls.filter((c) => c.method === 'index.search').length).toBe(2);
+    expect(container.querySelector('.search-empty')?.textContent).toContain("No matches for 'bar'");
+  });
+
+  it('gate ON: a deferred SEARCH drops the previous query hit list instead of leaving it under the card', async () => {
+    const fake = makeFakeApi({
+      'index.status': BUILT,
+      'settings.get': { confirmCloudBudget: true },
+      'index.plan': plan(),
+      'index.search': { hits: hits() },
+    });
+    await mount(fake);
+    await type('foo');
+    await submit();
+    await click(ackButton());
+    expect(container.querySelectorAll('ul.search-hits li button').length).toBe(2);
+
+    await type('bar');
+    await submit();
+    expect(consentCard()).toBeTruthy();
+    expect(container.querySelectorAll('ul.search-hits li button').length).toBe(0);
+    expect(container.querySelector('[aria-live="polite"].search-status')?.textContent).toBe('');
+    expect(fake.calls.filter((c) => c.method === 'index.search').length).toBe(1);
+  });
+
+  it('gate ON: a deferred BUILD leaves the last REAL search verdict standing (it says nothing about it)', async () => {
+    const fake = makeFakeApi({
+      'index.status': BUILT,
+      'settings.get': { confirmCloudBudget: true },
+      'index.plan': plan(),
+      'index.search': { hits: hits() },
+      'index.build': { jobId: 'job-idx' },
+    });
+    await mount(fake);
+    await type('foo');
+    await submit();
+    await click(ackButton());
+    expect(container.querySelectorAll('ul.search-hits li button').length).toBe(2);
+
+    // Rebuild is a BUILD: it does not touch the search surface, so the earned
+    // 'foo' results (a real, already-answered request) stay put.
+    await click(
+      [...container.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Rebuild index',
+      ) as HTMLButtonElement,
+    );
+    expect(consentCard()).toBeTruthy();
+    expect(container.querySelectorAll('ul.search-hits li button').length).toBe(2);
+    expect(container.querySelector('[aria-live="polite"].search-status')?.textContent).toContain(
+      '2 matches',
+    );
+  });
+
+  it('gate ON: the BUILD card refuses to quote the plan sentinel size or a free-limits verdict', async () => {
+    // `index.plan` builds its envelope from an 11-byte "index.build" sentinel
+    // (sidecar vision_ops.py:750), NOT from the transcript index_build embeds —
+    // executed against the repo's own estimator that returns
+    // egressBytes=11 / requests=1 / withinFreeLimits=True. Quoting any of it on
+    // a spend confirmation is a confident wrong number four-plus orders of
+    // magnitude low, so the card must not.
+    const fake = makeFakeApi({
+      'index.status': UNBUILT,
+      'settings.get': { confirmCloudBudget: true },
+      'index.plan': plan(
+        {
+          cacheKey: 'CK-build',
+          preview: '~1 request(s) across openrouter; sends ~0.0 KB (11 text / 0 frame bytes).',
+        },
+        { egressBytes: 11, egressKinds: { text: 11, frames: 0 }, withinFreeLimits: true },
+      ),
+      'index.build': { jobId: 'job-idx' },
+    });
+    await mount(fake);
+    await clickBuildCta();
+    const card = consentCard() as HTMLElement;
+    const text = card.textContent ?? '';
+    // What is TRUE is still stated: who receives it, and what really goes.
+    expect(text).toContain('openrouter');
+    expect(text).toContain('entire transcript');
+    expect(text).toContain('not estimated here');
+    // What is FALSE is absent — no sentinel byte count, no free-limits comfort,
+    // and no `preview` line (the sidecar derives that string from the same
+    // sentinel: "sends ~0.0 KB (11 text / 0 frame bytes)").
+    expect(text).not.toContain('11 bytes');
+    expect(text).not.toContain('within the provider free limits');
+    expect(text).not.toContain('outside the provider free limits');
+    expect(text).not.toContain('0.0 KB');
+    expect(card.querySelector('.search-consent__preview')).toBeNull();
+    // The ack still works and still carries the sidecar's token.
+    await click(ackButton());
+    expect(fake.calls.find((c) => c.method === 'index.build')?.params).toEqual({
+      videoId: 'v1',
+      confirmBudget: 'CK-build',
+    });
   });
 
   it('an index.search rejection AFTER acknowledgement surfaces via role="alert" and clears hits', async () => {
