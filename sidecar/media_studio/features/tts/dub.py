@@ -47,7 +47,7 @@ from ...util import get_logger
 from .. import offline as _offline
 from . import align as _align
 from .engine import Cue, TtsEngine, TtsError, wav_duration_sec
-from .voices import VoiceStore
+from .voices import VoiceConsentError, VoiceStore, require_consent
 
 log = get_logger("media_studio.tts.dub")
 
@@ -289,6 +289,14 @@ class DubService:
             sample = self._voice_store.get(sample_id)
             if sample is None:
                 raise RpcError(f"unknown sampleId: {sample_id}", ErrorCode.INVALID_PARAMS)
+            # WU-A2 clone-time gate: gating tts.sample.add alone leaves a back
+            # door — rows written BEFORE the gate existed backfill to
+            # consentAttested:False and would still reach the clone engine.
+            # Refuse here, synchronously, before any job is spawned.
+            try:
+                require_consent(sample, sample_id)
+            except VoiceConsentError as exc:
+                raise RpcError(str(exc), ErrorCode.INVALID_PARAMS) from exc
             return str(sample["path"])
         if not voice or not isinstance(voice, str):
             raise RpcError(

@@ -36,6 +36,34 @@ export interface VoiceSample {
   name: string;
   path: string;
   durationSec: number;
+  /** WU-A2 consent record — the sidecar refuses to store a clone without it. */
+  consentAttested?: boolean;
+  consentAt?: string | null;
+  consentNote?: string | null;
+}
+
+/**
+ * WU-A2 (docs/plans/v1.5/flagship-lip-sync-dub.md §4/§5.1) — the exact
+ * attestation the user makes. It MUST match
+ * `voices.CONSENT_ATTESTATION_TEXT` in the sidecar: the backend quotes this
+ * sentence in its refusal, so a drifting UI copy would promise the user
+ * something different from what is actually enforced and recorded.
+ */
+export const CONSENT_ATTESTATION_TEXT =
+  "I own this voice or have the speaker's documented permission to clone it.";
+
+/** Build the WU-A2 `tts.sample.add` params. `consentAttested` is never optional. */
+export function buildSampleAddParams(args: {
+  path: string;
+  consentNote?: string;
+}): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    path: args.path.trim(),
+    consentAttested: true,
+  };
+  const note = (args.consentNote ?? '').trim();
+  if (note) params.consentNote = note;
+  return params;
 }
 
 export interface AudioTrack {
@@ -124,9 +152,11 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
   const [voice, setVoice] = useState<string>('');
   const [trackId, setTrackId] = useState<string>('');
   const [targetLang, setTargetLang] = useState<string>('');
-  // sample upload (voice clone)
+  // sample upload (voice clone) + the WU-A2 blocking consent attestation
   const [samplePath, setSamplePath] = useState<string>('');
   const [sampleMessage, setSampleMessage] = useState<string>('');
+  const [consentAttested, setConsentAttested] = useState<boolean>(false);
+  const [consentNote, setConsentNote] = useState<string>('');
   // job state
   const [busy, setBusy] = useState<boolean>(false);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -185,20 +215,29 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
 
   const addSample = useCallback(async (): Promise<void> => {
     const path = samplePath.trim();
-    // The Add-sample button is disabled when the path is blank, so this guard is
-    // defensive.
+    // The Add-sample button is disabled when the path is blank OR the consent
+    // box is unticked, so this guard is defensive.
     /* v8 ignore next */
-    if (!path) return;
+    if (!path || !consentAttested) return;
     setSampleMessage('');
     try {
-      const res = await bridge.rpc<{ sample: VoiceSample }>('tts.sample.add', { path });
+      const res = await bridge.rpc<{ sample: VoiceSample }>(
+        'tts.sample.add',
+        buildSampleAddParams({ path, consentNote }),
+      );
       setSampleMessage(`Added sample "${res.sample.name}"`);
       setSamplePath('');
+      // A fresh attestation is required per clone: one tick must never carry
+      // over to the NEXT voice the user adds.
+      setConsentNote('');
+      setConsentAttested(false);
       await refresh(); // samples surface as chatterbox voices
     } catch (err) {
+      // On FAILURE the tick stays, so a retry after fixing the path does not
+      // force the user to re-attest for the same voice.
       setSampleMessage(err instanceof Error ? err.message : String(err));
     }
-  }, [bridge, samplePath, refresh]);
+  }, [bridge, samplePath, consentAttested, consentNote, refresh]);
 
   const startDub = useCallback(async (): Promise<void> => {
     // The Start-dub button is disabled while busy and without a video/track/voice,
@@ -345,12 +384,45 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
             disabled={busy}
           />
         </label>
+        {/* WU-A2 — BLOCKING consent attestation. Cloning a person's voice
+            without the right to do so is the flagship's headline legal
+            exposure (EU AI Act Art. 50), so this is a first-class gate, not a
+            notice: the button stays disabled until it is ticked, and the
+            sidecar refuses the add independently even if it were bypassed. */}
+        <fieldset className="dub-consent" data-testid="dub-consent">
+          <legend>Voice-clone consent (required)</legend>
+          <label className="dub-consent-attest" data-testid="consent-attest-label">
+            <input
+              data-input="consent-attest"
+              type="checkbox"
+              checked={consentAttested}
+              onChange={(e) => setConsentAttested(e.target.checked)}
+              disabled={busy}
+            />{' '}
+            {CONSENT_ATTESTATION_TEXT}
+          </label>
+          <label className="dub-consent-note">
+            Note (optional — e.g. where the written permission is filed){' '}
+            <input
+              data-input="consent-note"
+              type="text"
+              placeholder="signed release 2026-08-01"
+              value={consentNote}
+              onChange={(e) => setConsentNote(e.target.value)}
+              disabled={busy}
+            />
+          </label>
+          <p className="dub-consent-hint">
+            Recorded locally with the sample — the attestation and its timestamp never leave this
+            machine.
+          </p>
+        </fieldset>
         <button
           type="button"
           data-action="add-sample"
           className="secondary"
           onClick={() => void addSample()}
-          disabled={busy || !samplePath.trim()}
+          disabled={busy || !samplePath.trim() || !consentAttested}
         >
           Add sample
         </button>

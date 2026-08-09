@@ -592,8 +592,18 @@ describe('client.feedback / media / timeline / tts', () => {
     const r = installApi();
     await client.tts.voices();
     expect(r).toHaveBeenCalledWith('tts.voices', undefined);
-    await client.tts.sampleAdd('/sample.wav');
-    expect(r).toHaveBeenCalledWith('tts.sample.add', { path: '/sample.wav' });
+    // WU-A2: the attestation is a required argument and always reaches the wire.
+    await client.tts.sampleAdd('/sample.wav', true);
+    expect(r).toHaveBeenCalledWith('tts.sample.add', {
+      path: '/sample.wav',
+      consentAttested: true,
+    });
+    await client.tts.sampleAdd('/sample.wav', true, 'written release on file');
+    expect(r).toHaveBeenCalledWith('tts.sample.add', {
+      path: '/sample.wav',
+      consentAttested: true,
+      consentNote: 'written release on file',
+    });
     await client.tts.dubStart({ videoId: 'v1', trackId: 't1', engine: 'xtts', voice: 'a' });
     expect(r).toHaveBeenCalledWith('tts.dub.start', {
       videoId: 'v1',

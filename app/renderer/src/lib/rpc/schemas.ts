@@ -1251,12 +1251,21 @@ export interface BatchConsent {
   budget: Record<string, unknown>;
 }
 
-/** A3 VoiceSample — a stored voice-clone reference sample. */
+/**
+ * A3 VoiceSample — a stored voice-clone reference sample, plus the WU-A2
+ * consent record (`docs/plans/v1.5/flagship-lip-sync-dub.md` §4 WU-A2).
+ * `consentAttested` is always present on a row the sidecar wrote; it is
+ * `false` only on a LEGACY row backfilled by `voices.normalize_sample`, and
+ * such a row is refused at clone time.
+ */
 export interface VoiceSample {
   id: string;
   name: string;
   path: string;
   durationSec: number;
+  consentAttested: boolean;
+  consentAt: string | null;
+  consentNote: string | null;
 }
 
 /** A2 media.playable result (codec-driven: remux-safe vs proxy). */
