@@ -1,6 +1,16 @@
 # Reframe Trust-Wave Plan — Auto-Updater Authenticity + Electron 39→43
 
-> **Status:** DRAFT
+> **Status:** SUPERSEDED BY docs/plans/v1.5/GRILL-DECISION-QUEUE.md (2026-08-09)
+
+> **Partly shipped, partly reversed — read before reviving either half.**
+>
+> * The **Electron 39→43** half SHIPPED. The app runs Electron 43 today.
+> * The **signing / trust** half is CLOSED by `GRILL-DECISION-QUEUE.md` §F-1:
+>   *"**Signing** stays NONE (already by design). No SmartScreen concern to solve."*
+>
+> Because the two halves diverged, this document as a whole is neither done nor
+> pending, which is exactly the state that makes a reader re-open dead work. Treat
+> the updater-authenticity sections as requiring an F-1 reversal first.
 
 **Date:** 2026-07-11
 **Repo:** `Prekzursil/Reframe` (local `C:/Users/Prekzursil/Documents/GitHub/Reframe`)

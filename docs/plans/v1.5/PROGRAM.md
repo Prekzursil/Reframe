@@ -21,9 +21,13 @@ Synthesized from: 15-agent audit + competitor redo + live visual audit. Owner gr
 - Split the 3 worst god-modules (main.ts, Services, _export_one).
 
 ### Wave 1 — Trust / distribution
-- Authenticode-signed + attested CI release pipeline (tag-triggered release.yml, pin 4 build SHA-256s, SBOM/provenance, release depends on `quality`).
-- Electron 39 (EOL) → 43 + ASAR-integrity fuses + Electronegativity CI.
+- ~~Authenticode-signed + attested CI release pipeline (tag-triggered release.yml, pin 4 build SHA-256s, SBOM/provenance, release depends on `quality`).~~
+  **REVERSED 2026-08-09 by `docs/plans/v1.5/GRILL-DECISION-QUEUE.md` §F-1:** *"Signing stays NONE (already by design). No SmartScreen concern to solve."* The absent `release.yml` is therefore CORRECT, not an outstanding item. Design docs marked SUPERSEDED.
+- Electron 39 (EOL) → 43 + ASAR-integrity fuses + Electronegativity CI. **SHIPPED** — the app runs Electron 43.
 - **Licensing swaps (mandatory per decision 1):** ViNet-S (CC-BY-NC-SA) → UNISAL (Apache-2.0); NLLB/Seamless (NC) → MADLAD-400; verify Parakeet/EdgeTAM permissive. Behind existing backend seams.
+  - **Translator: DONE, by a different model than planned.** The NC translator was replaced with **Apache-2.0 Qwen3** (tier1 Qwen3-4B / tier2 Qwen3-8B), not MADLAD-400 — the licence objective was met, the named model was not used. Recorded here so the plan stops reading as outstanding. If MADLAD-400 was wanted *specifically*, that is a new decision.
+  - **ViNet-S → UNISAL: NOT DONE, and the current state inverts the decision's purpose.** UNISAL was never integrated; instead the tree gates ViNet-S OFF for a commercial build, so a commercial build silently ships **worse crop quality** — the exact outcome decision 1 exists to prevent. Still open; the tests currently assert the un-swapped state as correct, so the suite is green *because* the swap did not happen.
+  - **Forced aligner (not in the original list):** `MahmoudAshraf/mms-300m-1130-forced-aligner` is CC-BY-NC-4.0 and was shipping **undisclosed**. Owner ruling 2026-08-09: disclose it + implement the `allowNonCommercialAligner` opt-in; do NOT swap the default.
 - **Commercialization scaffolding, BUILD-BUT-DON'T-WIRE:** licence/edition model, feature-flag gates, edition config — all dormant, no live paywall.
 
 ### Wave 2 — Full pro-shell redesign (design track, runs parallel from now)
