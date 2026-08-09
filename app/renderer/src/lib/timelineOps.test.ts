@@ -176,6 +176,12 @@ describe('mergeCues', () => {
   it('emits NO speaker key when the earlier cue is not diarized', () => {
     // A `speaker: undefined` key would leak into the wire shape the sidecar
     // deliberately keeps clean (`make_cue`: "no speaker: None leakage").
+    //
+    // SCOPE (measured): this case is GREEN in BOTH states — reverting `mergeCues`
+    // to its pre-fix `{index,start,end,text}` literal reddens the other three
+    // speaker assertions and NOT this one. It is therefore not evidence FOR the
+    // spread fix; it pins the plausible alternative `speaker: first.speaker`,
+    // which `toEqual` would silently accept because it ignores undefined keys.
     const merged = mergeCues(cue(1, 0, 2, 'plain'), diarized(2, 3, 5, 'later', 'B'));
     expect('speaker' in merged).toBe(false);
   });
@@ -203,6 +209,62 @@ describe('mergeAt', () => {
     expect(mergeAt(input, 2)).toBe(input);
     expect(mergeAt(input, -1)).toBe(input);
     expect(mergeAt(input, 99)).toBe(input);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// speaker preservation across the REST of the op surface (regression guard)
+//
+// `mergeCues` was the one op that returned a fresh `{index,start,end,text}`
+// literal and so destroyed `speaker`; its siblings are correct today only
+// because each happens to spread. Nothing pinned that, so a future refactor
+// could re-introduce the exact same shape in `splitCue` or `dragEdge` and no
+// test would notice. These assertions are the pin.
+//
+// PROVEN RED per op: replacing that op's spread with an explicit
+// `{ index, start, end, text }` literal makes ITS case here fail and no other.
+// ---------------------------------------------------------------------------
+
+describe('speaker survives every cue op (regression guard)', () => {
+  /** Two diarized cues at [0,2] and [3,5], plus a plain third at [6,8]. */
+  function diarizedList(): Cue[] {
+    return [
+      diarized(1, 0, 2, 'hello world', 'A'),
+      diarized(2, 3, 5, 'second cue', 'B'),
+      cue(3, 6, 8, 'third one'),
+    ];
+  }
+
+  it('renumber', () => {
+    expect(renumber(diarizedList()).map((c) => c.speaker)).toEqual(['A', 'B', undefined]);
+  });
+
+  it('splitCue puts the speaker on BOTH halves', () => {
+    const halves = splitCue(diarized(1, 0, 2, 'hello world', 'A'), 1);
+    expect(halves).not.toBeNull();
+    expect(halves?.[0].speaker).toBe('A');
+    expect(halves?.[1].speaker).toBe('A');
+  });
+
+  it('splitAt keeps the speaker through the list-level split + renumber', () => {
+    expect(splitAt(diarizedList(), 0, 1).map((c) => c.speaker)).toEqual(['A', 'A', 'B', undefined]);
+  });
+
+  it('retimeCue', () => {
+    expect(retimeCue(diarized(1, 0, 2, 'a', 'A'), 1, 4).speaker).toBe('A');
+  });
+
+  it('retimeAt', () => {
+    expect(retimeAt(diarizedList(), 1, 2.5, 5.5)[1].speaker).toBe('B');
+  });
+
+  it('nudgeAt', () => {
+    expect(nudgeAt(diarizedList(), 1, 0.5)[1].speaker).toBe('B');
+  });
+
+  it('dragEdge on both edges', () => {
+    expect(dragEdge(diarizedList(), 1, 'start', 2.5)[1].speaker).toBe('B');
+    expect(dragEdge(diarizedList(), 1, 'end', 5.5)[1].speaker).toBe('B');
   });
 });
 

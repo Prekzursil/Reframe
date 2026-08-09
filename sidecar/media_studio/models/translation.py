@@ -438,9 +438,20 @@ def group_cues_for_translation(
     return groups
 
 
-def _make_cue(index: int, start: float, end: float, text: str) -> Cue:
-    """A §3 Cue dict (field names frozen; mirrors features.subtitles.make_cue)."""
-    return {"index": int(index), "start": float(start), "end": float(end), "text": text}
+def _make_cue(index: int, start: float, end: float, text: str, *, speaker: str | None = None) -> Cue:
+    """A §3 Cue dict (field names frozen; mirrors features.subtitles.make_cue).
+
+    The optional diarized ``speaker`` is ADDITIVE and only set when non-empty, so
+    an undiarized cue stays byte-identical to the frozen §3 shape (no
+    ``speaker: None`` leakage) — the same rule ``subtitles.make_cue`` follows.
+    Carrying it matters here because this module already READS ``speaker`` (see
+    ``_breaks_continuity``) to break sentence groups on a speaker change; a
+    bare literal on the way out used the label and then destroyed it.
+    """
+    cue: Cue = {"index": int(index), "start": float(start), "end": float(end), "text": text}
+    if speaker:
+        cue["speaker"] = str(speaker)
+    return cue
 
 
 # --------------------------------------------------------------------------- #
@@ -670,6 +681,7 @@ class TieredTranslator:
                         float(cue.get("start", 0.0)),
                         float(cue.get("end", 0.0)),
                         str(cue.get("text", "")),
+                        speaker=cue.get("speaker"),
                     )
                 )
             if progress is not None and total:

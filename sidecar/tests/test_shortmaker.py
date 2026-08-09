@@ -2999,6 +2999,24 @@ def test_rebase_cues_drops_cues_ending_before_in_point():
     assert out[0]["start"] == pytest.approx(5.0)  # 25 - 20
 
 
+def test_rebase_cues_preserves_the_diarized_speaker_label():
+    """Re-basing a clip's cues must not erase who was speaking.
+
+    ``_rebase_cues`` rebuilt a bare ``{index,start,end,text}`` literal, so the
+    shortmaker filler path dropped every diarized label before the captions were
+    rendered. Mutation that must turn this RED: rebuild the literal without the
+    ``**cue`` spread.
+    """
+    cues = [
+        {"start": 25.0, "end": 28.0, "text": "kept", "speaker": "A"},
+        {"start": 28.0, "end": 30.0, "text": "plain"},  # not diarized
+    ]
+    out = sm._rebase_cues(cues, source_start=20.0)
+    assert [c["text"] for c in out] == ["kept", "plain"]
+    assert out[0]["speaker"] == "A"
+    assert "speaker" not in out[1]
+
+
 def test_candidate_virality_non_numeric_returns_none():
     # A non-numeric calibratedPct/viralityPct -> None (never crashes export).
     assert sm._candidate_virality({"viralityPct": "junk"}) is None

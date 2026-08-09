@@ -102,6 +102,25 @@ def test_stack_bilingual_new_id_each_call() -> None:
     assert a["id"] != b["id"]
 
 
+def test_stack_bilingual_preserves_the_diarized_speaker_label() -> None:
+    """Stacking a diarized original must carry its speaker onto the stacked cue.
+
+    Regression guard for the fresh-literal drop class: ``stack_bilingual`` built
+    each output cue with ``make_cue(idx, start, end, stacked_text)`` and no
+    ``speaker=``. Mutation that must turn this RED: drop that ``speaker=``.
+    """
+    orig = subs.new_track(
+        [
+            subs.make_cue(1, 0.0, 2.0, "Hello", speaker="A"),
+            subs.make_cue(2, 2.0, 4.0, "World"),  # not diarized
+        ],
+        lang="en",
+    )
+    out = subs.stack_bilingual(orig, _trans())
+    assert out["cues"][0]["speaker"] == "A"
+    assert "speaker" not in out["cues"][1]
+
+
 def test_bilingual_orders_constant() -> None:
     assert "original-first" in subs.BILINGUAL_ORDERS
     assert "translation-first" in subs.BILINGUAL_ORDERS

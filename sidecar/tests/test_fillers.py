@@ -260,6 +260,26 @@ def test_remap_cues_drops_cues_inside_removed_spans():
     assert [c["index"] for c in out] == [1, 2]
 
 
+def test_remap_cues_preserves_the_diarized_speaker_label():
+    """Re-timing cues onto the cut clip must not erase who was speaking.
+
+    ``remap_cues`` rebuilt a bare ``{index,start,end,text}`` literal, so every
+    de-fill / silence-trim / transcript-edit pass dropped the diarized label.
+    It sits directly downstream of ``shortmaker._rebase_cues``, so fixing only
+    that one would have been a no-op on the filler path. Mutation that must turn
+    this RED: rebuild the literal without the ``**cue`` spread.
+    """
+    keeps = [(0.0, 1.0), (2.0, 3.0)]
+    cues = [
+        {"index": 1, "start": 0.2, "end": 0.8, "text": "kept", "speaker": "A"},
+        {"index": 2, "start": 2.2, "end": 2.8, "text": "shifted"},  # not diarized
+    ]
+    out = fl.remap_cues(cues, keeps)
+    assert [c["text"] for c in out] == ["kept", "shifted"]
+    assert out[0]["speaker"] == "A"
+    assert "speaker" not in out[1]
+
+
 def test_remap_cues_clips_straddling_cue():
     keeps = [(0.0, 1.0), (2.0, 3.0)]
     cues = [{"index": 1, "start": 0.5, "end": 2.5, "text": "straddle"}]
