@@ -14,6 +14,7 @@ import { createRoot, type Root } from 'react-dom/client';
 
 import SemanticSearch from './SemanticSearch';
 import type { DoneEvent, MediaStudioApi, ProgressEvent } from './_api';
+import type { AiBudget, AiPlan } from '../components/useAiJob';
 import type { PlayerHandle } from '../components/Player';
 import type { IndexHit, IndexStatus } from '../lib/rpc';
 
@@ -92,6 +93,28 @@ const UNBUILT: IndexStatus = {
   builtAt: null,
   dim: 0,
 };
+
+/** A full `index.plan` payload (the sidecar's `envelope.planned()` wire shape). */
+function plan(over: Partial<AiPlan> = {}, budgetOver: Partial<AiBudget> = {}): AiPlan {
+  const budget: AiBudget = {
+    requests: 1,
+    providers: ['openrouter'],
+    egressBytes: 2048,
+    egressKinds: { text: 2048, frames: 0 },
+    withinFreeLimits: false,
+    ...budgetOver,
+  };
+  return {
+    route: { providers: ['openrouter'], degradeChain: [], cacheHit: false, willEgress: true },
+    costEst: budget,
+    cacheHit: false,
+    willEgress: true,
+    budget,
+    preview: 'embed: pricing',
+    cacheKey: 'CK',
+    ...over,
+  };
+}
 
 function hits(): IndexHit[] {
   return [
@@ -481,9 +504,12 @@ describe('<SemanticSearch />', () => {
     expect(cta.disabled).toBe(true);
   });
 
-  it('build echoes the plan cacheKey as confirmBudget when the plan will egress (cloud embedder)', async () => {
+  it('gate OFF: build echoes the plan cacheKey as confirmBudget when the plan will egress (cloud embedder)', async () => {
+    // confirmCloudBudget OFF -> no acknowledgement is required and the build
+    // starts immediately, still carrying the ack token the sidecar accepts.
     const fake = makeFakeApi({
       'index.status': UNBUILT,
+      'settings.get': { confirmCloudBudget: false },
       'index.plan': { willEgress: true, cacheKey: 'CK-build' },
       'index.build': { jobId: 'job-idx' },
     });
@@ -521,9 +547,10 @@ describe('<SemanticSearch />', () => {
     expect(fake.calls.find((c) => c.method === 'index.build')?.params).toEqual({ videoId: 'v1' });
   });
 
-  it('search echoes the plan cacheKey as confirmBudget when the plan will egress (cloud embedder)', async () => {
+  it('gate OFF: search echoes the plan cacheKey as confirmBudget when the plan will egress (cloud embedder)', async () => {
     const fake = makeFakeApi({
       'index.status': BUILT,
+      'settings.get': { confirmCloudBudget: false },
       'index.plan': { willEgress: true, cacheKey: 'CK-search' },
       'index.search': { hits: hits() },
     });
@@ -653,5 +680,168 @@ describe('<SemanticSearch />', () => {
     });
     expect(off).toHaveBeenCalled();
     root = createRoot(container);
+  });
+
+  // --- §9.1 cloud-budget acknowledgement gate --------------------------------
+  // The user's own `confirmCloudBudget` setting must be honoured HERE, the same
+  // way BatchQueue honours it (BatchQueue.tsx: plan with acknowledged=false,
+  // render a consent card, defer the real call). The panel must never answer the
+  // challenge on the user's behalf.
+
+  function consentCard(): HTMLElement | null {
+    return container.querySelector('section.search-consent');
+  }
+  function ackButton(): HTMLButtonElement {
+    return container.querySelector('.search-consent__ack') as HTMLButtonElement;
+  }
+  async function clickBuildCta(): Promise<void> {
+    const cta = [...container.querySelectorAll('button')].find((b) =>
+      /Build the search index/.test(b.textContent ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      cta.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+  async function click(btn: HTMLButtonElement): Promise<void> {
+    await act(async () => {
+      btn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('gate ON: an egressing BUILD is deferred behind a consent card that shows the cost, and only runs after the user acknowledges', async () => {
+    const fake = makeFakeApi({
+      'index.status': UNBUILT,
+      'settings.get': { confirmCloudBudget: true },
+      'index.plan': plan({ cacheKey: 'CK-build' }),
+      'index.build': { jobId: 'job-idx' },
+    });
+    await mount(fake);
+    await clickBuildCta();
+
+    // The build has NOT been dispatched — the user has not agreed yet.
+    expect(fake.calls.find((c) => c.method === 'index.build')).toBeUndefined();
+    const card = consentCard() as HTMLElement;
+    expect(card).toBeTruthy();
+    expect(card.getAttribute('aria-label')).toBe('Cloud egress consent');
+    // The card shows WHAT is being acknowledged (an ack with no preview is theatre).
+    expect(card.textContent).toContain('2048');
+    expect(card.textContent).toContain('openrouter');
+    expect(card.textContent).toContain('embed: pricing');
+    expect(card.textContent).toContain('outside the provider free limits');
+    expect(card.textContent).toContain('index build');
+
+    await click(ackButton());
+    expect(fake.calls.find((c) => c.method === 'index.build')?.params).toEqual({
+      videoId: 'v1',
+      confirmBudget: 'CK-build',
+    });
+    // Acknowledged -> the card is gone and the build progress region is live.
+    expect(consentCard()).toBeNull();
+    expect(container.querySelector('.progress[aria-live="polite"]')).toBeTruthy();
+  });
+
+  it('gate ON: an egressing SEARCH is deferred behind the consent card and only runs after the user acknowledges', async () => {
+    const fake = makeFakeApi({
+      'index.status': BUILT,
+      'settings.get': { confirmCloudBudget: true },
+      'index.plan': plan({ cacheKey: 'CK-search' }, { withinFreeLimits: true }),
+      'index.search': { hits: hits() },
+    });
+    await mount(fake);
+    await type('pricing');
+    await submit();
+
+    expect(fake.calls.find((c) => c.method === 'index.search')).toBeUndefined();
+    const card = consentCard() as HTMLElement;
+    expect(card).toBeTruthy();
+    expect(card.textContent).toContain('search');
+    expect(card.textContent).toContain('within the provider free limits');
+    // Nothing is in flight, so the panel must not claim to be searching.
+    expect(container.querySelector('.search-status')?.textContent).not.toContain('Searching…');
+
+    await click(ackButton());
+    expect(fake.calls.find((c) => c.method === 'index.search')?.params).toEqual({
+      videoId: 'v1',
+      query: 'pricing',
+      topK: 8,
+      confirmBudget: 'CK-search',
+    });
+    expect(consentCard()).toBeNull();
+    expect(container.querySelectorAll('ul.search-hits li button').length).toBe(2);
+  });
+
+  it('gate ON: Cancel dismisses the consent card without running anything', async () => {
+    const fake = makeFakeApi({
+      'index.status': UNBUILT,
+      'settings.get': { confirmCloudBudget: true },
+      'index.plan': plan(),
+      'index.build': { jobId: 'job-idx' },
+    });
+    await mount(fake);
+    await clickBuildCta();
+    expect(consentCard()).toBeTruthy();
+    await click(container.querySelector('.search-consent__cancel') as HTMLButtonElement);
+    expect(consentCard()).toBeNull();
+    expect(fake.calls.find((c) => c.method === 'index.build')).toBeUndefined();
+  });
+
+  it('a settings.get rejection keeps the gate ON (fail-safe: never egress unacknowledged)', async () => {
+    const fake = makeFakeApi({
+      'index.status': UNBUILT,
+      'index.plan': plan(),
+      'index.build': { jobId: 'job-idx' },
+    });
+    fake.rpc.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      fake.calls.push({ method, params });
+      if (method === 'settings.get') throw new Error('settings unreadable');
+      if (method === 'index.status') return UNBUILT;
+      if (method === 'index.plan') return plan();
+      return { jobId: 'job-idx' };
+    });
+    await mount(fake);
+    await clickBuildCta();
+    expect(consentCard()).toBeTruthy();
+    expect(fake.calls.find((c) => c.method === 'index.build')).toBeUndefined();
+    // A failed settings probe is NOT an error banner — it silently keeps the gate.
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('an index.build rejection AFTER acknowledgement surfaces via role="alert"', async () => {
+    const fake = makeFakeApi({ 'index.status': UNBUILT });
+    fake.rpc.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      fake.calls.push({ method, params });
+      if (method === 'index.status') return UNBUILT;
+      if (method === 'settings.get') return { confirmCloudBudget: true };
+      if (method === 'index.plan') return plan();
+      if (method === 'index.build') throw new Error('no transcript yet');
+      return {};
+    });
+    await mount(fake);
+    await clickBuildCta();
+    await click(ackButton());
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('no transcript yet');
+    expect(consentCard()).toBeNull();
+  });
+
+  it('an index.search rejection AFTER acknowledgement surfaces via role="alert" and clears hits', async () => {
+    const fake = makeFakeApi({ 'index.status': BUILT });
+    fake.rpc.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      fake.calls.push({ method, params });
+      if (method === 'index.status') return BUILT;
+      if (method === 'settings.get') return { confirmCloudBudget: true };
+      if (method === 'index.plan') return plan();
+      if (method === 'index.search') throw 'search blew up';
+      return {};
+    });
+    await mount(fake);
+    await type('pricing');
+    await submit();
+    await click(ackButton());
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('search blew up');
+    expect(container.querySelector('ul.search-hits li')).toBeNull();
   });
 });
