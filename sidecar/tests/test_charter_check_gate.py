@@ -1,0 +1,116 @@
+"""W30 — the charter/workflow gate-parity check must count REAL step names only.
+
+``.quality/charter_check.py`` regexed the RAW ``quality.yml`` TEXT for ``gate-<slug>``,
+so a slug written in a YAML COMMENT counted as a live workflow step. That set is then
+used in BOTH directions (charter -> workflow at ``:72-75`` and workflow -> charter at
+``:79-81``), so a gate whose step was renamed, commented out, or deleted still satisfied
+the forward check for as long as its slug survived anywhere in the file — including in a
+comment written to explain why the step exists. At that point the charter/quality.yml
+SSOT silently stops meaning anything, which is the one thing this gate exists to prevent.
+
+The fix is scoped deliberately: the gate list in ``QUALITY-CHARTER.md`` is a CLOSED set of
+6 with a one-in/one-out rule (charter §15, §40), so this adds no 7th gate and does not
+relax the charter — it only makes the existing parser structural.
+
+Three states are asserted here:
+
+1. the REAL 6-gate configuration still PASSES (control — the fix must not over-tighten);
+2. a gate that exists ONLY in a comment FAILS end to end (the defect, now caught);
+3. a comment cannot inject a phantom slug from a trailing comment or a ``run:`` body.
+
+This module rides inside the existing ``gate-tests-coverage`` pytest step; it is not a new
+gate. ``.quality/`` is outside ``--cov=media_studio``, so importing it here changes no
+coverage number.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHARTER_CHECK_PY = REPO_ROOT / ".quality" / "charter_check.py"
+
+# The slugs that quality.yml really declares as step names today. `secrets` is absent on
+# purpose: it rides inside the gate-lint-format pre-commit step (charter_check.COVERED_BY).
+REAL_STEP_SLUGS = {"lint-format", "types", "tests-coverage", "sast", "deps"}
+
+
+@pytest.fixture()
+def charter_check() -> ModuleType:
+    """Import `.quality/charter_check.py` by path (it is not an installed package)."""
+    spec = importlib.util.spec_from_file_location("_charter_check_under_test", CHARTER_CHECK_PY)
+    assert spec is not None and spec.loader is not None, f"cannot load {CHARTER_CHECK_PY}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# --- state 1: the real configuration must still pass -------------------------------
+
+
+def test_real_configuration_still_passes(charter_check: ModuleType, capsys) -> None:
+    assert charter_check.main() == 0
+    assert "charter_check: OK" in capsys.readouterr().out
+
+
+def test_real_step_names_are_all_found(charter_check: ModuleType) -> None:
+    text = charter_check.WORKFLOW.read_text(encoding="utf-8")
+    assert charter_check.parse_workflow_gate_steps(text) == REAL_STEP_SLUGS
+
+
+# --- state 2: a mention must NOT satisfy the check ----------------------------------
+
+
+def test_slug_in_a_whole_line_comment_is_not_a_step(charter_check: ModuleType) -> None:
+    text = "\n".join(
+        [
+            "jobs:",
+            "  quality:",
+            "    steps:",
+            "      # gate-ghost is covered inside the pre-commit step below",
+            "      - name: gate-lint-format (pre-commit run --all-files)",
+            "        run: pre-commit run --all-files",
+        ]
+    )
+    assert charter_check.parse_workflow_gate_steps(text) == {"lint-format"}
+
+
+def test_trailing_comment_cannot_inject_a_slug(charter_check: ModuleType) -> None:
+    text = "      - name: gate-types tsc app  # gate-ghost is covered elsewhere\n"
+    assert charter_check.parse_workflow_gate_steps(text) == {"types"}
+
+
+def test_run_body_mention_is_not_a_step(charter_check: ModuleType) -> None:
+    text = "      - name: gate-sast opengrep\n        run: echo gate-ghost && opengrep scan\n"
+    assert charter_check.parse_workflow_gate_steps(text) == {"sast"}
+
+
+def test_comment_only_gate_fails_end_to_end(
+    charter_check: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    """Rename every real `gate-tests-coverage` STEP but leave the slug in a comment.
+
+    Before the fix this returned 0: the commented mention alone satisfied the forward
+    charter -> workflow direction, so deleting the coverage gate from CI would have been
+    invisible to the very check that exists to notice it.
+    """
+    real = charter_check.WORKFLOW.read_text(encoding="utf-8")
+    mutated = real.replace("- name: gate-tests-coverage", "- name: tests-coverage")
+    assert mutated != real, "anchor '- name: gate-tests-coverage' no longer exists in quality.yml"
+    assert "gate-tests-coverage" not in mutated, "a real step name survived the rename"
+    mutated += "      # gate-tests-coverage is temporarily disabled, see the tracking issue\n"
+
+    workflow = tmp_path / "quality.yml"
+    workflow.write_text(mutated, encoding="utf-8")
+    monkeypatch.setattr(charter_check, "WORKFLOW", workflow)
+
+    assert charter_check.main() == 1
+    out = capsys.readouterr().out
+    assert "charter gate 'tests-coverage' has no matching 'gate-tests-coverage' step" in out

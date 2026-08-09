@@ -9,6 +9,11 @@ Mapping: each charter gate has a stable slug (the "Gate" column). Every gate slu
 be covered by at least one step in quality.yml whose name contains the marker
 `gate-<slug>` (the lint-format and secrets gates are both covered by the single
 `gate-lint-format` pre-commit step, which also runs gitleaks).
+
+"whose name" is enforced structurally — only a `name:` key's value is scanned, with any
+trailing comment stripped. A slug MENTIONED in a YAML comment or echoed inside a `run:`
+body is not a step and does not satisfy the check. Both-states proof:
+`sidecar/tests/test_charter_check_gate.py`.
 """
 
 from __future__ import annotations
@@ -48,11 +53,41 @@ def parse_charter_gates(text: str) -> list[str]:
     return slugs
 
 
+# A YAML mapping key `name:` (optionally the first key of a sequence item). Anchored so a
+# `run:` body line, a `uses:` pin, or a whole-line `#` comment can never match.
+NAME_KEY = re.compile(r"^\s*(?:-\s+)?name:\s*(?P<value>\S.*)$")
+GATE_SLUG = re.compile(r"gate-([a-z0-9-]+?)(?=[\s(]|$)")
+
+
+def strip_trailing_comment(value: str) -> str:
+    """Drop a ` #...` trailing comment from a plain (unquoted) YAML scalar.
+
+    YAML only starts a comment at a `#` preceded by whitespace, so `gate-a#b` is left
+    intact. Quoted scalars are NOT parsed: a `#` inside quotes is treated as a comment
+    here too. That direction is deliberate — over-stripping can only DROP a slug, which
+    makes the forward charter -> workflow check fail loudly; under-stripping is what
+    lets a phantom slug silently satisfy it.
+    """
+    cut = re.search(r"(?:^|\s)#", value)
+    return value[: cut.start()] if cut else value
+
+
 def parse_workflow_gate_steps(text: str) -> set[str]:
-    """Collect gate slugs from step names of the form `gate-<slug>...`."""
+    """Collect gate slugs from real step NAMES of the form `gate-<slug>...`.
+
+    Structural on purpose. This used to regex the raw workflow text, so a slug written in
+    a YAML comment (or echoed in a `run:` body) counted as a live step — and because the
+    resulting set is used in both directions below, a gate whose step had been renamed or
+    commented out still satisfied the charter -> workflow check. The parity gate then
+    certified an SSOT it was no longer measuring.
+    """
     found: set[str] = set()
-    for match in re.finditer(r"gate-([a-z0-9-]+?)(?=[\s(]|$)", text, re.MULTILINE):
-        found.add(match.group(1))
+    for line in text.splitlines():
+        key = NAME_KEY.match(line)
+        if not key:
+            continue
+        for match in GATE_SLUG.finditer(strip_trailing_comment(key.group("value"))):
+            found.add(match.group(1))
     return found
 
 
