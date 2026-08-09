@@ -35,6 +35,13 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "batch.resume",
         "batch.start",
         "batch.status",
+        # v1.5 flagship #3 (auto-b-roll): local asset retrieval + compositing.
+        # None of these may ever gain a key-injection prefix — they are
+        # local-only and never call a provider (features/broll_ops.py).
+        "broll.apply",
+        "broll.index",
+        "broll.status",
+        "broll.suggest",
         "captions.cues",
         "convert.batch",
         "convert.start",

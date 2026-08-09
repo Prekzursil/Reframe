@@ -191,7 +191,7 @@ def mmr_select(
 # --------------------------------------------------------------------------- #
 def dedupe_candidates(
     candidates: list[Candidate],
-    embeddings: np.ndarray,
+    embeddings: Sequence[Sequence[float]] | np.ndarray,
     *,
     method: Method = "mmr",
     k: int | None = None,
@@ -203,6 +203,17 @@ def dedupe_candidates(
     per candidate, caller-supplied — the WU4 ``novelty`` embeddings or any
     fallback). The two candidates whose embeddings are near-identical are treated
     as duplicates and only one survives.
+
+    ANY 2-D array-like is accepted, not only ``np.ndarray``: the body's
+    ``np.asarray(embeddings, dtype=np.float64)`` below IS this parameter's real
+    contract, and it has always accepted a plain list of rows. The annotation
+    previously said ``np.ndarray`` alone, which under-declared that — a caller
+    holding ``list[list[float]]`` (``broll_plan.diversify``) was a basedpyright
+    error against a call that works, and always has, at runtime. Widening the
+    annotation to match the implementation is the fix; making the caller build an
+    ndarray just to satisfy a declaration the body immediately re-normalises would
+    have been ceremony. Rows of the wrong rank still fail loudly on the
+    ``mat.ndim != 2`` check.
 
     * ``method='mmr'`` (default) uses :func:`mmr_select` with each candidate's
       ``score`` (default 0.0 when absent) as relevance.
