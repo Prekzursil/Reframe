@@ -136,6 +136,7 @@ so the ids survive the move out of the repo root; this entry is how they stay fi
 | [`wiring/WIRING-T2.md`](wiring/WIRING-T2.md) · [`T3`](wiring/WIRING-T3.md) · [`T4A`](wiring/WIRING-T4A.md) · [`T4B`](wiring/WIRING-T4B.md) · [`T5`](wiring/WIRING-T5.md) | the remaining T-lane unit contracts |
 | [`wiring/WIRING-U1.md`](wiring/WIRING-U1.md) · [`U2`](wiring/WIRING-U2.md) · [`U3`](wiring/WIRING-U3.md) · [`U4`](wiring/WIRING-U4.md) · [`U5`](wiring/WIRING-U5.md) | the U-lane unit contracts |
 | [`wiring/WIRING-social-publish.md`](wiring/WIRING-social-publish.md) | C14 direct publish / scheduling: the per-platform feasibility table with sources (two of four platforms cannot publish to a personal account at all), the no-new-secret-store rule, the residuals, and the owner actions |
+| [`wiring/WIRING-gaze.md`](wiring/WIRING-gaze.md) | C15 eye-contact / gaze correction — the licence finding, the open owner decision, the honest quality ceiling, and the likeness-gate reconciliation |
 
 ## Evidence and measurement
 

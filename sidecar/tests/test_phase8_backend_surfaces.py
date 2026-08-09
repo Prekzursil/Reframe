@@ -37,6 +37,21 @@ def test_reframe_edgetam_backend_surface_imports_light() -> None:
     assert 0.0 < be.MIN_MASK_AREA_FRAC < 1.0
 
 
+def test_gaze_backend_surface_imports_light() -> None:
+    # C15: RealGazeBackend is ``# pragma: no cover`` (it needs cv2 + the real YuNet
+    # ONNX, imported lazily inside its methods); the module SURFACE imports light —
+    # cover it so the gate stays 100% without touching the native stack.
+    import media_studio.features.gaze_backend as be
+
+    assert be.RealGazeBackend.__name__ == "RealGazeBackend"
+    assert "RealGazeBackend" in be.__all__
+    # The detector floor MUST match the ASD front-end's: two different thresholds
+    # on one shared YuNet asset would be a silent inconsistency.
+    from media_studio.features import _lightasd_infer as li
+
+    assert be.YUNET_SCORE_THRESHOLD == li.YUNET_SCORE_THRESHOLD
+
+
 def test_lightasd_infer_surface_imports_light() -> None:
     # The LR-ASD inference helpers are ``# pragma: no cover`` (they need
     # torch / cv2 + real weights); the module SURFACE (imports, constants,
