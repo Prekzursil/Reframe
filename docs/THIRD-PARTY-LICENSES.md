@@ -217,5 +217,19 @@ cross-file test that reads both plus this table's in-app twin:
   `allowNonCommercialAligner`) in `sidecar/contract/spec.py` are **not added**;
   both keys stay stringly-accessed as before. Regenerating the contract
   artifacts was out of scope here.
+- The `ctc_aligner` readiness signal is **not selection-aware**. The
+  component→asset maps (`handlers/_wire.py`, `features/recommender.py`,
+  `components/advisorMeta.ts`) statically name `ctc-forced-aligner-wav2vec2`, so
+  a user who has opted in *and picked MMS* sees the word-timing card report
+  readiness off the wav2vec2 asset rather than the MMS one they will actually
+  use. Both assets remain installable by name via `assets.list` / `assets.ensure`,
+  so this is a wrong *signal*, not an unreachable model. Raised by a reviewer who
+  flagged it as their own weakest point (INFERRED from the two `_COMPONENT_ASSETS`
+  maps plus `_asset_for_model`, ~75-85%; the readiness path was not executed
+  end-to-end by them or by me). Left as-is deliberately: making three mirrored
+  static maps settings-aware is a change to the readiness architecture, not to
+  licence disclosure. Settling experiment: drive `assets.status` for
+  `ctc_aligner` with `{allowNonCommercialAligner: true, ctcModelId: 'mms-300m'}`
+  and MMS absent from disk, and check whether the card claims ready.
 - Nothing was checked with licence counsel. The claims above are licence *tags*
   and licence *text*, not legal advice.
