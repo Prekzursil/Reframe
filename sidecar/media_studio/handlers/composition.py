@@ -5,6 +5,7 @@ verbatim from the former handlers.py; the registration order is unchanged."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from .. import library as _library
@@ -459,6 +460,43 @@ def register_all(
         resolver=svc._resolve_video_path,
         out_dir=svc.exports_dir / "gaze",
         settings_provider=svc.settings.get,
+        register_fn=reg,
+    )
+
+    # broll.* (v1.5 flagship #3): LOCAL auto-b-roll over the user's OWN library.
+    # The asset list is a scan of the ``brollDir`` setting and the vector index is
+    # a sidecar next to the data dir (never the project manifest — the same
+    # decision index.build made for its embeddings). Both SigLIP-2 towers come
+    # from ONE factory so the image and text vectors share a joint space.
+    from ..features import broll_ops as _broll_ops  # local: import-light
+
+    def _broll_index_path() -> Path:
+        return svc.data_dir / _broll_ops.INDEX_FILENAME
+
+    def _list_broll_assets() -> list[dict[str, Any]]:
+        return _broll_ops.scan_assets(str(svc.settings.get().get(_broll_ops.BROLL_DIR_KEY) or ""))
+
+    def _load_broll_index() -> Any:
+        return _broll_ops.load_index_file(_broll_index_path())
+
+    def _save_broll_index(index: Any) -> None:
+        _broll_ops.save_index_file(_broll_index_path(), index)
+
+    def _load_broll_transcript(video_id: str) -> dict[str, Any]:
+        return svc._load_or_create_project(video_id).data.get("transcript") or {}
+
+    _broll_ops.register(
+        resolver=svc._resolve_video_path,
+        list_assets=_list_broll_assets,
+        load_index=_load_broll_index,
+        save_index=_save_broll_index,
+        load_transcript=_load_broll_transcript,
+        out_dir=svc.exports_dir / "broll",
+        embed_images=_broll_ops.make_image_embedder(settings_provider=svc.settings.get),
+        embed_texts=_broll_ops.make_text_embedder(settings_provider=svc.settings.get),
+        settings_provider=svc.settings.get,
+        run=svc._ffmpeg_run,  # None -> the real drained ffmpeg.run
+        duration=svc._ffprobe_duration,
         register_fn=reg,
     )
 
