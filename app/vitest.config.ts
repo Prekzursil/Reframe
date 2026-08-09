@@ -41,12 +41,21 @@ export default defineConfig({
       reporter: ['text', 'text-summary'],
       // The renderer is fully gated. WU-U2 also promotes the P0 auto-update
       // AUTHENTICITY verifier + its wiring into the 100% bar: `main/**` otherwise
-      // runs its tests but is NOT threshold-gated, and these two files are
+      // runs its tests but is NOT threshold-gated, and these files are
       // security-critical and fully unit-testable via injected fakes, so they must
       // never silently regress below full branch coverage. The rest of `main/**`
       // (BrowserWindow/IPC bootstrap that needs a real runtime) stays ungated.
+      //
+      // C14 adds `main/socialAuth.ts` on the SAME rationale, and it is the strongest
+      // case yet: it is pure string work over injected randomness/hashing (so it
+      // needs no Electron runtime at all), and every branch in it is a security
+      // decision — the loopback guard that keeps an OAuth authorization code from
+      // being delivered off-box, the constant-time CSRF state compare, and the rule
+      // that the client secret never reaches the browser-bound authorize URL. An
+      // uncovered branch here is an unreviewed way to leak an account.
       include: [
         'renderer/src/**/*.{ts,tsx}',
+        'main/socialAuth.ts',
         'main/updateVerify.ts',
         'main/updater.ts',
       ],

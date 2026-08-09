@@ -1039,6 +1039,80 @@ export interface SavedRecipe {
   steps: RecipeStep[];
 }
 
+// ---- C14 social publish / schedule ----------------------------------------
+//
+// Field names are FROZEN and identical to the Python side
+// (`features/social_publish.py`, `features/social_queue.py`) — the §17 house rule.
+// See `docs/wiring/WIRING-social-publish.md` for the per-platform feasibility and
+// the sources behind each capability flag.
+
+/**
+ * What ONE platform permits a LOCAL desktop app to do. Every flag is a documented
+ * platform rule, not a Reframe policy, so the UI reads this instead of guessing —
+ * two of the four platforms cannot publish to a personal account at all.
+ */
+export interface SocialCapability {
+  id: string;
+  label: string;
+  /** `false` iff `blockedReason` is set — publishing is impossible, not merely unwired. */
+  publishable: boolean;
+  personalAccount: boolean;
+  desktopLoopbackOauth: boolean;
+  /** Whether the PLATFORM can hold a future publish time (survives a powered-off box). */
+  nativeScheduling: boolean;
+  /** How far out the platform accepts a schedule, or `null` when it documents no cap. */
+  nativeScheduleMaxSec: number | null;
+  requiresClientSecret: boolean;
+  /** What an app that has not passed the platform's audit/review is limited to. */
+  unauditedVisibility: string;
+  docUrl: string;
+  blockedReason: string | null;
+}
+
+/** Where a publish time will be held, plus what the user must be told about it. */
+export interface SocialSchedulePlan {
+  platform: string;
+  /** `immediate` | `platform` | `local-queue`. */
+  kind: string;
+  publishAt: number | null;
+  /**
+   * True only for `local-queue`: Reframe itself must be running at `publishAt`,
+   * because the platform has no scheduling API to hand the time to. Always render
+   * `warning` when this is set — a desktop app cannot publish while the machine is
+   * off, and implying otherwise is the lie this flag exists to prevent.
+   */
+  requiresAppRunning: boolean;
+  warning: string;
+  unauditedVisibility: string;
+}
+
+/** A queued publish. Carries NO credential — tokens live only in the main process. */
+export interface SocialQueueEntry {
+  id: string;
+  platform: string;
+  videoId: string;
+  clipPath: string;
+  title: string;
+  description: string;
+  publishAt: number | null;
+  kind: string;
+  requiresAppRunning: boolean;
+  /** `pending` | `publishing` | `done` | `failed` | `cancelled`. */
+  status: string;
+  createdAt: number;
+  error: string;
+}
+
+/** The publish request `social.enqueue` accepts (the server assigns id/status). */
+export interface SocialPublishJob {
+  platform: string;
+  clipPath: string;
+  title: string;
+  description?: string;
+  videoId?: string;
+  publishAt?: number | null;
+}
+
 // ---- Repurpose bundle (WU11) — field names identical to the sidecar -------
 //
 // Wire schemas for the `exportPresets.*` / `templates.*` / `batch.*` groups

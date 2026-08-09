@@ -92,12 +92,42 @@ export interface SecureStatus {
   keystoreUnreadable?: KeystoreUnreadableReason | null;
 }
 
+/**
+ * One connected social platform's OAuth material (C14).
+ *
+ * `accessToken` / `refreshToken` are CREDENTIALS; the remaining fields are display
+ * metadata. The whole record is encrypted as a single blob rather than field-by-
+ * field, so no future field can be added on the non-secret side by mistake.
+ */
+export interface SocialToken {
+  accessToken: string;
+  /** `''` when the platform issued none (some flows return only an access token). */
+  refreshToken: string;
+  /** Epoch seconds; `0` when the platform did not say. */
+  expiresAt: number;
+  /** Display-only account name shown in the UI (e.g. the channel title). */
+  accountLabel: string;
+  /** The scopes actually granted, so the UI can show what was consented to. */
+  scopes: string[];
+}
+
 /** The decrypted key material main injects into the sidecar per-request (never to disk). */
 export interface DecryptedKeys {
   /** providerId -> its raw API keys (rotation pool order preserved). */
   providers: Record<string, string[]>;
   /** The legacy single cloud key, when one was stored. */
   cloudApiKey?: string;
+  /**
+   * C14: platformId -> its OAuth token record, when any platform is connected.
+   *
+   * This section is part of `DecryptedKeys` for a load-bearing reason:
+   * {@link saveDecryptedKeys} REBUILDS the whole keystore document from this value
+   * rather than patching the file, so a section missing from here is a section
+   * ERASED from disk on the next write. Keeping social tokens out of this type
+   * would mean any `providers.upsert` silently destroyed every connected social
+   * account (and vice versa) — see `socialTokens.test.ts`.
+   */
+  social?: Record<string, SocialToken>;
 }
 
 /** Outcome of the one-time legacy-plaintext migration. */
@@ -205,6 +235,13 @@ interface KeystoreFile {
   version: 1;
   providers: Record<string, string[]>;
   cloudApiKey?: string;
+  /**
+   * C14: platformId -> base64 safeStorage ciphertext of the JSON
+   * {@link SocialToken}. ABSENT in every keystore written before C14, which is why
+   * the reader treats a missing `social` key as "no connected accounts" and only an
+   * ill-SHAPED one as corruption.
+   */
+  social?: Record<string, string>;
 }
 
 /**
@@ -334,6 +371,44 @@ function hasPlaintextKeys(keys: DecryptedKeys): boolean {
 /** True for a plain (non-null, non-array) object — the only valid keystore shape. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Decode one decrypted {@link SocialToken} blob, or `null` when it is unusable.
+ *
+ * `null` means CORRUPTION, and the caller escalates it to a store-wide
+ * `'shape-invalid'` refusal rather than dropping the entry: a connected account
+ * whose record cannot be read must not be reported as "not connected", because the
+ * next write would then make that loss permanent (the same reasoning as
+ * {@link KeystoreRead}).
+ *
+ * A record with no non-empty `accessToken` is corruption by definition — there is no
+ * credential in it, so it cannot represent a connected account. The remaining fields
+ * are display metadata and are defaulted rather than rejected, so a token written by
+ * an older/newer build that omits one still loads.
+ */
+function parseSocialToken(plaintext: string): SocialToken | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plaintext);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) {
+    return null;
+  }
+  const accessToken = parsed.accessToken;
+  if (typeof accessToken !== 'string' || accessToken === '') {
+    return null;
+  }
+  const scopes = parsed.scopes;
+  return {
+    accessToken,
+    refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : '',
+    expiresAt: typeof parsed.expiresAt === 'number' ? parsed.expiresAt : 0,
+    accountLabel: typeof parsed.accountLabel === 'string' ? parsed.accountLabel : '',
+    scopes: Array.isArray(scopes) ? scopes.filter((s): s is string => typeof s === 'string') : [],
+  };
 }
 
 /**
@@ -702,6 +777,17 @@ function writeKeystore(
   if (keys.cloudApiKey !== undefined) {
     file.cloudApiKey = encryptToBase64(safeStorage, keys.cloudApiKey);
   }
+  if (keys.social !== undefined) {
+    // C14: one ciphertext blob per platform. The WHOLE record is encrypted (not
+    // just the two token fields) so a field added later cannot land on the
+    // plaintext side by omission.
+    const social: Record<string, string> = {};
+    for (const [platform, token] of Object.entries(keys.social)) {
+      if (!isSafeProviderId(platform)) continue; // never persist a proto-polluting id
+      social[platform] = encryptToBase64(safeStorage, JSON.stringify(token));
+    }
+    file.social = social;
+  }
   backupKeystore(keystorePath, new Date());
   writeJsonAtomic(keystorePath, file);
 }
@@ -782,6 +868,36 @@ export function readKeystore(safeStorage: SafeStorageLike, keystorePath: string)
     } catch {
       return unreadable('decrypt-failed');
     }
+  }
+  // C14 social tokens. An ABSENT section is the normal pre-C14 shape and means "no
+  // connected accounts"; a present-but-ill-shaped one is corruption and fails
+  // closed, so a save can never quietly replace real tokens with nothing.
+  if (file.social !== undefined) {
+    if (!isPlainObject(file.social)) {
+      return unreadable('shape-invalid');
+    }
+    const social: Record<string, SocialToken> = {};
+    for (const [platform, blob] of Object.entries(file.social)) {
+      if (typeof blob !== 'string') {
+        return unreadable('shape-invalid');
+      }
+      // As with a provider id, a `__proto__`/`constructor` key cannot have come from
+      // writeKeystore and is not a loadable account, so it is dropped rather than
+      // escalated — dropping it loses no usable credential.
+      if (!isSafeProviderId(platform)) continue;
+      let plaintext: string;
+      try {
+        plaintext = decryptFromBase64(safeStorage, blob);
+      } catch {
+        return unreadable('decrypt-failed');
+      }
+      const token = parseSocialToken(plaintext);
+      if (token === null) {
+        return unreadable('shape-invalid');
+      }
+      social[platform] = token;
+    }
+    out.social = social;
   }
   return { outcome: 'loaded', keys: out, reason: null };
 }
@@ -882,7 +998,21 @@ export function migrateLegacyPlaintextKeys(
   }
 
   // 1. Re-encrypt every plaintext key into the DPAPI keystore.
-  writeKeystore(safeStorage, keystorePath, keys);
+  //
+  //    CARRY THE EXISTING NON-PROVIDER SECTIONS FORWARD. `keys` came from
+  //    extractPlaintextKeys(settings.json), which by construction only knows about
+  //    PROVIDER material — so writing it verbatim would rebuild the keystore document
+  //    without the C14 `social` section and destroy every connected social account.
+  //    That is reachable whenever plaintext keys REAPPEAR in settings.json after an
+  //    account was connected (a restored settings backup, or a sidecar that
+  //    re-persists a key), which makes it a real wipe path rather than a theoretical
+  //    one. A store we could not READ contributes nothing (fail-closed: never
+  //    fabricate a section from an unreadable blob) — the migration still proceeds,
+  //    because migrating the plaintext keys off disk is the more urgent job.
+  const existing = readKeystore(safeStorage, keystorePath);
+  const carried: DecryptedKeys =
+    existing.keys?.social !== undefined ? { ...keys, social: existing.keys.social } : keys;
+  writeKeystore(safeStorage, keystorePath, carried);
 
   // 2. Strip the raw keys from settings.json (preserving all non-secret settings),
   //    then shred every stale prior copy that could still hold plaintext.
