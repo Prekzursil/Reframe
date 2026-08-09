@@ -302,28 +302,42 @@ WHISPER_SIZE_MB = 1600
 # fabricated pin is worse than a missing one). Registering an entry named
 # CPU_WHISPER_ASSET_NAME with tier="core" is the ONLY change needed to flip
 # ``transcribe.cpu_auto_model()`` over to it — see WHISPER_MODEL_ASSETS.
+# NOTE: a core-tier registration makes the Default profile DOWNLOAD it; it is
+# still the load path (``transcribe.resolve_model_source``) that decides whether
+# the bytes are actually on disk before pointing faster-whisper at them.
 CPU_WHISPER_MODEL_ID = "small"
 CPU_WHISPER_ASSET_NAME = "whisper-small"
 
 #: faster-whisper model id -> the manifest asset name that provisions it.
 #: An id absent from this map (or mapped to an unregistered/non-Default-profile
 #: asset) can only be reached by an on-demand network download, so automatic
-#: resolution must never pick one — see :func:`provisioned_whisper_model_ids`.
+#: resolution must never pick one — see :func:`default_profile_whisper_model_ids`.
 WHISPER_MODEL_ASSETS: dict[str, str] = {
     WHISPER_MODEL_ID: WHISPER_ASSET_NAME,
     CPU_WHISPER_MODEL_ID: CPU_WHISPER_ASSET_NAME,
 }
 
 
-def provisioned_whisper_model_ids() -> frozenset[str]:
-    """faster-whisper model ids an offline install is guaranteed to have.
+def default_profile_whisper_model_ids() -> frozenset[str]:
+    """faster-whisper model ids the **Default** install profile is CONFIGURED to pull.
 
-    A model counts as provisioned only when its :data:`WHISPER_MODEL_ASSETS`
-    asset is (a) actually registered and (b) in a tier the **Default** installer
-    profile pulls (``core``). An ``optional``/``gpu`` entry is not enough: a
-    Default install never downloads it, so the first transcribe would still hit
-    the network. Derived from the live registry, so registering the CPU asset
-    later needs no further code change.
+    REGISTRY-ONLY, and deliberately named for what it computes. An id is included
+    when its :data:`WHISPER_MODEL_ASSETS` asset is (a) registered and (b) in a tier
+    ``PROFILE_TIERS["default"]`` pulls (``core``). An ``optional``/``gpu`` entry is
+    excluded because a Default install never downloads it.
+
+    THIS IS NOT AN OFFLINE GUARANTEE, and must not be read as one — an earlier
+    revision of this function was named ``provisioned_whisper_model_ids`` and
+    documented as "ids an offline install is guaranteed to have", which was false
+    in two measured states: (1) the **Minimum** profile pulls nothing at all
+    (``PROFILE_TIERS["minimum"] == ()``) and a Custom profile need not include
+    transcription, and (2) nothing here touches the disk, while the whisper
+    snapshot is explicitly excluded from the renderer's first-run completion gate
+    (``app/tests/main/firstRunGate.test.ts``), so a first run can complete with the
+    weights absent. The only honest disk-level answer is
+    :func:`media_studio.features.transcribe.whisper_snapshot_dir`, which looks in
+    the HF cache; this function answers the narrower "did we configure Default to
+    install it".
     """
     default_tiers = PROFILE_TIERS["default"]
     return frozenset(
