@@ -217,6 +217,20 @@ def test_register_all_wires_audio_stabilize_group(tmp_path: Path) -> None:
         assert method in registered, f"{method} was not registered"
 
 
+def test_register_all_wires_speed_retime(tmp_path: Path) -> None:
+    """speed.retime is wired, and bound to the SpeedService the module builds.
+
+    The re-time engine was already in WIRED_KINDS but reachable only through an
+    LLM-planned Director op; this asserts the user-driven RPC door is open.
+    """
+    registered: dict[str, Any] = {}
+    handlers.register_all(
+        services=Services(data_dir=tmp_path / "d"),
+        register=lambda name, fn: registered.__setitem__(name, fn),
+    )
+    assert "speed.retime" in registered, "speed.retime was not registered"
+
+
 def test_captions_cues_bound_to_shortmaker_context(services: Services, ctx: RpcContext, video_file: Path) -> None:
     """The registered captions.cues is bound to Services._shortmaker_context, so a
     transcribed video yields WORD-level cues from its persisted transcript (C7)."""

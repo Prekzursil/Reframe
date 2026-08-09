@@ -40,6 +40,8 @@ const Convert = lazy(() => import('../features/Convert'));
 const ShortMaker = lazy(() => import('../features/ShortMaker'));
 const TimelinePanel = lazy(() => import('../features/Timeline'));
 const Dub = lazy(() => import('../features/Dub'));
+// v1.5: constant-factor speed / slow motion over the existing re-time engine.
+const SpeedPanel = lazy(() => import('../features/Speed'));
 const Assets = lazy(() => import('../features/Assets'));
 // captions-export: EDL/CSV NLE timeline export of approved clips.
 const NleExport = lazy(() => import('../features/NleExport'));
@@ -81,6 +83,10 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'shortmaker', label: 'Short-maker' },
   { id: 'timeline', label: 'Subtitle timeline' },
   { id: 'stabilize', label: 'Stabilize' },
+  // v1.5: constant-factor speed / slow motion. The re-time ENGINE was already
+  // wired for the Director, but nothing in the renderer could reach it, so a
+  // user had to prompt the planner and hope. This is the direct control.
+  { id: 'speed', label: 'Speed' },
   { id: 'dub', label: 'Dub' },
   { id: 'nle', label: 'NLE export' },
   { id: 'recipes', label: 'Recipes' },
@@ -100,7 +106,7 @@ export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
     label: 'Speech & Text',
     tabIds: ['transcribe', 'search', 'subtitles', 'diarize', 'refine'],
   },
-  { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline', 'stabilize'] },
+  { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline', 'stabilize', 'speed'] },
   { id: 'audio', label: 'Audio', tabIds: ['dub'] },
   {
     id: 'deliver',
@@ -306,6 +312,10 @@ export function Workspace({
         );
       case 'stabilize':
         return <Stabilize videoId={video.id} />;
+      case 'speed':
+        // durationSec drives the before/after prediction only; the sidecar
+        // probes the real length itself, so a stale/zero value cannot mis-render.
+        return <SpeedPanel videoId={video.id} sourceDurationSec={video.durationSec} />;
       case 'dub':
         return <Dub videoId={video.id} />;
       case 'nle':
