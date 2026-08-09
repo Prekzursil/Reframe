@@ -1,0 +1,115 @@
+/* controls.css — the GLOBAL form-control voice (H5).
+ *
+ * docs/plans/v1.5/uiux-qol-audit-2026-08.md §3.4 / §5 H5: "Deliver leaks
+ * unstyled native HTML — a raw <fieldset> and a 23x20 px Template select. Add a
+ * global `select` rule to the token layer; replace the fieldset with a raised
+ * card."
+ *
+ * Measured before writing this: the renderer had NO element-level rule for
+ * `select`, `fieldset` or `legend` anywhere — not in tokens.css, not in any
+ * component sheet. So every one of the ~50 `<select>` elements across ~30 files
+ * rendered as raw platform chrome inside a dark editorial app, and all 7
+ * `<fieldset>` elements drew the browser's default 2px groove border.
+ *
+ * The tell that this was an OVERSIGHT rather than a decision: tokens.css already
+ * defines `--control-pad-input: 7px 10px` and documents it as "text inputs /
+ * selects". The token was authored for exactly this rule and nothing ever
+ * consumed it.
+ *
+ * WHY A NEW SHEET, not tokens.css: tokens.css contains exactly one rule, `:root`,
+ * and is purely custom-property declarations. Element rules there would break
+ * that single purpose (and its conformance suite reads it as a token source).
+ * App.tsx imports this immediately after tokens.css and fonts.css, so the
+ * custom properties and the @font-face bindings both exist first.
+ *
+ * SCOPE: element selectors only, so it is a floor rather than a ceiling — any
+ * component sheet still overrides it by class with normal specificity. Nothing
+ * here uses a raw colour; every value is a token (enforced by
+ * styles/tokens.conformance.test.ts).
+ */
+
+/* ---------------------------------------------------------------------------
+ * select — the biggest single win: ~50 controls, previously native.
+ * ------------------------------------------------------------------------ */
+select {
+  /* `appearance: none` drops the platform arrow so the control can adopt the
+     app's surface ladder. The arrow is redrawn below as a background image;
+     without redrawing it the control would read as a plain text input and lose
+     its "this opens a list" affordance. */
+  appearance: none;
+  padding: var(--control-pad-input);
+  /* Leave room for the arrow so a long option label cannot run under it. */
+  padding-right: var(--space-6);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-raised);
+  /* Chevron drawn in the muted text colour, matching the label voice. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) calc(50% - 2px),
+    calc(100% - 10px) calc(50% - 2px);
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+  color: var(--text-primary);
+  /* Inherit the UI face rather than the platform's form font. */
+  font-family: inherit;
+  font-size: var(--type-control-size);
+  line-height: 1.4;
+  /* H5 measured a 23x20 px Template select — a native control collapsing to its
+     content. A floor keeps every select a real hit target. */
+  min-height: 30px;
+  cursor: pointer;
+}
+
+/* The popup list itself is drawn by the OS on most platforms; setting the option
+   colours is what keeps it legible where the engine DOES honour them (Chromium
+   on Windows/Linux). Harmless where it does not. */
+select option {
+  background-color: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+select:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* :focus-visible, not :focus — a mouse click on a select should not paint a ring,
+   but keyboard arrival must. Uses the same --focus-ring every other control uses
+   so the app has ONE focus voice. */
+select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------------------------------------------------------------------------
+ * fieldset / legend — the "raised card" half of H5.
+ * ------------------------------------------------------------------------ */
+
+/* The browser default is a 2px groove border with asymmetric padding, which is
+   the single most obviously-unstyled element in the app. A fieldset is the
+   CORRECT semantic grouping for a set of related controls, so this restyles it
+   rather than replacing it with a <div> — the grouping stays announced to
+   assistive tech and only the chrome changes. */
+fieldset {
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-raised);
+  min-width: 0; /* fieldset defaults to min-content, which breaks flex/grid children */
+}
+
+/* The label voice used everywhere else for section headings: tracked caps, muted. */
+legend {
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
