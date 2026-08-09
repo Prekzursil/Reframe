@@ -51,6 +51,11 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "exportPresets.save",
         "feedback.record",
         "feedback.stats",
+        # C15 eye-contact correction. gaze.run is LIKENESS-GATED (it refuses
+        # without an attestation); gaze.probe reports whether the shared YuNet
+        # asset is installed so the UI can disable the control up front.
+        "gaze.probe",
+        "gaze.run",
         "index.build",
         "index.plan",
         "index.search",
@@ -172,6 +177,11 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "tracks.video.splitClip",
         "tracks.video.trimClip",
         "transcribe.start",
+        # v1.5 flagship #2 — transcript-native editing (features/transcript_edit.py).
+        "transcript.applyEdit",
+        "transcript.get",
+        "transcript.previewEdit",
+        "transcript.undoEdit",
         "tts.dub.start",
         "tts.sample.add",
         "tts.voices",

@@ -447,6 +447,21 @@ def register_all(
         register_fn=reg,
     )
 
+    # gaze.* (C15): eye-contact correction — a LIKENESS-ALTERING op, so
+    # ``gaze.run`` is gated by the fail-closed attestation in
+    # ``models/likeness.py`` and REFUSES before resolving media or building a
+    # backend. ``gaze.probe`` reports whether the (already-vendored, MIT) YuNet
+    # asset the ASD path shares is installed, so the UI can disable the control
+    # instead of failing a job. No new model and no new download.
+    from ..features import gaze as _gaze  # local: import-light
+
+    _gaze.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "gaze",
+        settings_provider=svc.settings.get,
+        register_fn=reg,
+    )
+
     # ---------------------------------------------------------------------- #
     # system-advanced group (this build) — health / recipes / diarize.
     # Each module owns its own register() (mirrors shorts / cues / assets).
@@ -558,6 +573,28 @@ def register_all(
     _refine.register(
         resolver=svc._resolve_video_path,
         out_dir=svc.exports_dir / "refined",
+        load_project=_load_project_data,
+        save_project=_save_project_data,
+        settings_provider=svc.settings.get,
+        run=svc._ffmpeg_run,  # None -> the real drained ffmpeg.run
+        duration=svc._ffprobe_duration,
+        register_fn=reg,
+    )
+
+    # transcript.* (v1.5 flagship #2 — transcript-native editing): delete a word
+    # in the transcript and the video cuts. Registered immediately after refine
+    # because it COMPOSES refine.plan_refine (word deletes UNION the shipped
+    # filler/silence math) into ONE keep-list -> ONE build_segment_cut_argv
+    # encode, over the exact same project-store + ffmpeg seams. get/previewEdit/
+    # undoEdit are DIRECT handlers; applyEdit is a job (the module owns its
+    # register()). applyEdit writes a *.edited.mp4 sibling — the source video is
+    # never touched — and appends to the project's reversible `transcriptEdits`
+    # ledger that undoEdit walks back.
+    from ..features import transcript_edit as _transcript_edit  # local: import-light
+
+    _transcript_edit.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "edited",
         load_project=_load_project_data,
         save_project=_save_project_data,
         settings_provider=svc.settings.get,

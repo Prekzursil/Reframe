@@ -575,6 +575,14 @@ class Project:
         # transcript is optional (only present once transcribed).
         if raw.get("transcript") is not None:
             data["transcript"] = raw["transcript"]
+        # transcriptEdits is the OPTIONAL reversible transcript-edit ledger
+        # (features/transcript_edit.py). Backfilled exactly like `transcript`:
+        # absent on an old project, and NEVER synthesised — a manifest that has
+        # never been transcript-edited must round-trip byte-identical. Without
+        # this passthrough the ledger written by `applyEdit` would be silently
+        # dropped on the next `open()`, and undo would lose its history.
+        if raw.get("transcriptEdits") is not None:
+            data["transcriptEdits"] = raw["transcriptEdits"]
         return cls(data, manifest_path=path)
 
     # ---- persistence -------------------------------------------------------

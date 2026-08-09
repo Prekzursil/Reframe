@@ -65,11 +65,13 @@ vi.mock('../features/Convert', () => stubPanel('Convert'));
 vi.mock('../features/ShortMaker', () => stubPanel('ShortMaker'));
 vi.mock('../features/Timeline', () => stubPanel('Timeline'));
 vi.mock('../features/Dub', () => stubPanel('Dub'));
+vi.mock('../features/AudioMix', () => stubPanel('AudioMix'));
 vi.mock('../features/Assets', () => stubPanel('Assets'));
 vi.mock('../features/NleExport', () => stubPanel('NleExport'));
 vi.mock('../features/Diarize', () => stubPanel('Diarize'));
 vi.mock('../features/Refine', () => stubPanel('Refine'));
 vi.mock('../features/Stabilize', () => stubPanel('Stabilize'));
+vi.mock('../features/TranscriptEditor', () => stubPanel('TranscriptEditor'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
 
@@ -151,12 +153,19 @@ describe('Workspace', () => {
   // MERGE NOTE: the two lanes landed independently and both edited this line.
   // The resolution keeps BOTH — the honest rename AND the new tab — because they
   // are orthogonal: one corrects a label that lied, the other exposes an engine.
-  // The assertion remains exact and order-sensitive.
-  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize)', () => {
+  //
+  // SCOPE CHANGE #3 (v1.5 audiomix-ui): 'Audio mix' joins the Audio cluster beside
+  // Dub — it is the ONLY renderer entry point to the sidecar's audiomix.merge /
+  // audiomix.normalize (sidechain auto-duck + EBU R128), which had zero callers.
+  //
+  // The assertion remains exact and order-sensitive, three elements longer than
+  // the pre-v1.5 list and with two labels corrected. Nothing was weakened.
+  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize; speed: +Speed; audiomix-ui: +Audio mix)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Search',
       'Subtitles',
+      'Transcript edit',
       'Diarize',
       'Refine',
       'Tracks',
@@ -168,6 +177,7 @@ describe('Workspace', () => {
       // had NO control in any panel — only an LLM-planned Director op reached it.
       'Speed',
       'Dub',
+      'Audio mix',
       'NLE export',
       'Recipes',
       'Assets',
@@ -225,6 +235,26 @@ describe('Workspace', () => {
     );
     expect(speedTab).toBeDefined();
     expect(speedTab?.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('mounts the audio mixer on the Audio mix tab (the only audiomix.* caller)', async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+
+    const tab = [...container.querySelectorAll('[role="tab"]')].find(
+      (t) => t.textContent === 'Audio mix',
+    ) as HTMLElement;
+    expect(tab).toBeDefined();
+    await act(async () => {
+      tab.click();
+    });
+    await flush();
+
+    const panel = container.querySelector('[data-panel="AudioMix"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.getAttribute('data-videoid')).toBe('v1');
   });
 
   it('opens the project via project.open and shows the title + tabs', async () => {
@@ -336,6 +366,7 @@ describe('Workspace', () => {
     ['transcribe', 'Transcribe'],
     ['search', 'SemanticSearch'],
     ['subtitles', 'Subtitles'],
+    ['transcriptEdit', 'TranscriptEditor'],
     ['diarize', 'Diarize'],
     ['refine', 'Refine'],
     ['tracks', 'Tracks'],
