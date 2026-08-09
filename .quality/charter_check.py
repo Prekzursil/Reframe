@@ -18,10 +18,12 @@ upload-artifact/job name, or echoed inside a `run:` body does not satisfy the ch
 
 Scope of that claim, measured (`sidecar/tests/test_charter_check_gate.py` asserts all four,
 and each goes RED against the pre-fix parser): whole-line comment · trailing comment ·
-`with:`/job-level `name:` · `- name:` inside a `run: |` body. NOT covered: this is a line
-walker, not a YAML parser — a quoted scalar containing ` #`, an explicit block-scalar
-indentation indicator (`|2`), and flow-style (`{name: gate-x}`) are unhandled. Every one of
-those errs toward DROPPING a slug, which fails the charter -> workflow direction loudly.
+`with:`/job-level `name:` · `- name:` inside a `run: |` body. NOT covered, and MEASURED so
+rather than assumed (this is a line walker, not a YAML parser): a quoted scalar containing
+` #` loses the text after the `#`, and a flow-style `- {name: gate-x}` step is not seen at
+all. Both DROP a slug, which fails the charter -> workflow direction loudly; neither can add
+a phantom one. An explicit block-scalar indent indicator (`|2`) is not parsed but needs no
+special case — body lines are always deeper than the key column, so they are skipped anyway.
 """
 
 from __future__ import annotations

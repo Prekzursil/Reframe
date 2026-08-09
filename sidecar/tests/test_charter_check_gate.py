@@ -2,8 +2,8 @@
 
 ``.quality/charter_check.py`` regexed the RAW ``quality.yml`` TEXT for ``gate-<slug>``,
 so a slug written in a YAML COMMENT counted as a live workflow step. That set is then
-used in BOTH directions (charter -> workflow at ``:72-75`` and workflow -> charter at
-``:79-81``), so a gate whose step was renamed, commented out, or deleted still satisfied
+used in BOTH directions by ``main()`` (charter -> workflow, then the reverse-direction
+loop), so a gate whose step was renamed, commented out, or deleted still satisfied
 the forward check for as long as its slug survived anywhere in the file — including in a
 comment written to explain why the step exists. At that point the charter/quality.yml
 SSOT silently stops meaning anything, which is the one thing this gate exists to prevent.
@@ -26,7 +26,9 @@ Four states are asserted here:
 2. a gate that exists ONLY in a comment FAILS end to end (the original defect, now caught);
 3. no phantom shape in ``PHANTOM_VECTORS`` can satisfy a gate, end to end;
 4. the block-scalar skip TERMINATES — a real step after a ``run: |`` body is still counted
-   (the over-tightening direction, which would fail loudly rather than silently).
+   (the over-tightening direction, which would fail loudly rather than silently);
+5. every shape the module docstring DISCLOSES as unparsed only ever DROPS a slug
+   (``RESIDUAL_SHAPES``) — the disclosure's direction is asserted, not just asserted-in-prose.
 
 This module rides inside the existing ``gate-tests-coverage`` pytest step; it is not a new
 gate. ``.quality/`` is outside ``--cov=media_studio``, so importing it here changes no
@@ -173,6 +175,44 @@ def test_block_scalar_skip_ends_at_the_next_step(charter_check: ModuleType) -> N
         ]
     )
     assert charter_check.parse_workflow_gate_steps(text) == {"sast", "deps"}
+
+
+# --- the DISCLOSED residuals must only ever DROP, never ADD -------------------------
+#
+# The module docstring names three shapes this line walker does not parse. That
+# disclosure is only worth anything if its DIRECTION holds: a shape may cost us a real
+# slug (loud — the charter -> workflow check then fails) but must never manufacture one
+# (silent — the failure mode this whole lane exists to remove). `expected` is what the
+# walker really returns; `truth` is what a YAML parser would say.
+RESIDUAL_SHAPES: dict[str, tuple[str, set[str], set[str]]] = {
+    # yaml, walker result, real-YAML truth
+    "quoted scalar containing ' #'": (
+        '      - name: "gate-types # and gate-ghost"\n',
+        {"types"},
+        {"types", "ghost"},
+    ),
+    "flow-style step mapping": (
+        "      - {name: gate-ghost, run: 'true'}\n",
+        set(),
+        {"ghost"},
+    ),
+    "explicit block-scalar indent indicator": (
+        "      - name: gate-sast opengrep\n"
+        "        run: |2\n"
+        "            - name: gate-ghost\n"
+        "      - name: gate-deps osv\n",
+        {"sast", "deps"},
+        {"sast", "deps"},
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(RESIDUAL_SHAPES), ids=sorted(RESIDUAL_SHAPES))
+def test_disclosed_residual_never_adds_a_phantom_slug(shape: str, charter_check: ModuleType) -> None:
+    text, expected, truth = RESIDUAL_SHAPES[shape]
+    got = charter_check.parse_workflow_gate_steps(text)
+    assert got == expected
+    assert not (got - truth), f"{shape} ADDED a phantom slug: {sorted(got - truth)}"
 
 
 def test_comment_only_gate_fails_end_to_end(
