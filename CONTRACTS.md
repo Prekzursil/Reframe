@@ -74,6 +74,7 @@ response resolves when done — long jobs return `{"jobId"}` immediately and str
 - `transcribe.start({videoId, language?})` -> `{jobId}` ; streams progress ; `job.done.result` = `{transcript}`
 - `subtitles.generate({videoId})` -> `{track}` ; `subtitles.edit({trackId, cues})` -> `{track}`
 - `subtitles.translate({trackId, targetLang})` -> `{jobId}` -> `{track}` ; `subtitles.export({trackId, format})` -> `{path}` (format: srt|ass|vtt)
+- `subtitles.import({videoId, text, format, name?, lang?})` -> `{track}` (v1.5 AMENDMENT — an ADDITION, not a rename; format: srt|ass|vtt, `.SRT`/`ssa` folded). Direct-return. `text` is the subtitle file's CONTENT, not a path: the renderer reads the picked file with the File API, so the sidecar never opens a renderer-supplied filesystem path. Refuses a zero-cue parse rather than adding an empty track
 - `tracks.list({videoId})` -> `{tracks}` ; `tracks.rename({trackId,name})` ; `tracks.relabel({trackId,lang})`
 - `tracks.add({videoId, trackId})` ; `tracks.remove({videoId, trackId})` ; `tracks.burn({videoId, trackId})` -> `{jobId}` -> `{path}` ; `tracks.strip({videoId, trackId})` -> `{path}`
 - `convert.start({videoId|path, options})` -> `{jobId}` -> `{path}` ; options = `{container,vcodec,acodec,scale,fps,crf,audioOnly,audioFormat}`

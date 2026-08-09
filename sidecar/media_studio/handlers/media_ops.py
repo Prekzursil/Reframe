@@ -96,6 +96,51 @@ def subtitles_export(self: Services, params: dict[str, Any], ctx: RpcContext) ->
     return {"path": path}
 
 
+def subtitles_import(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``subtitles.import({videoId, text, format, name?, lang?})`` -> ``{track}``. Direct-return.
+
+    The hand-corrected-subtitle escape hatch. ``features/subtitles.py`` has had
+    tolerant ``read_srt`` / ``read_vtt`` / ``read_ass`` parsers since v1, but until
+    now NO production caller — the registered surface was generate/edit/translate/
+    export only, so a user who fixed proper nouns in an external editor had no way
+    back in (competitor-research.md:22, the #1 caption complaint).
+
+    CONTRACT-NOTE: the wire carries the subtitle TEXT, not a path. The renderer
+    reads the picked file with the standard File API, so this handler never opens
+    a renderer-supplied filesystem path — there is no traversal surface to guard
+    and no new Electron dialog/preload channel to maintain. (``track_from_file``
+    stays the on-disk seam for internal/test callers.)
+    """
+    video_id = _require_str(params, "videoId")
+    text = params.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise _invalid("text (str) is required")
+    fmt_raw = _require_str(params, "format")
+    try:
+        fmt = _subtitles.normalize_format(fmt_raw)
+        cues = _subtitles.parse(text, fmt)
+    except ValueError as exc:
+        raise _invalid(str(exc)) from exc
+    if not cues:
+        # Adding an empty track would LOOK like success while silently losing the
+        # user's file. Refuse loudly instead, and leave the project untouched.
+        raise _invalid(f"no {fmt} cues found in the imported subtitle text")
+    lang = params.get("lang")
+    name = params.get("name")
+    track = _subtitles.new_track(
+        cues,
+        lang=lang if isinstance(lang, str) and lang else "und",
+        name=name if isinstance(name, str) and name else "Imported subtitles",
+        fmt=fmt,
+        kind="soft",
+    )
+    project = self._load_or_create_project(video_id)
+    _tracks.add_track(project.data, track)
+    project.save()
+    log.info("subtitles.import video=%s fmt=%s cues=%d", video_id, fmt, len(cues))
+    return {"track": track}
+
+
 def subtitles_translate(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``subtitles.translate({trackId, targetLang, bilingual?, order?})`` -> ``{jobId}`` (§2).
 
