@@ -178,7 +178,7 @@ def test_missing_probe_key_defaults_to_absent() -> None:
 
 def test_commercial_flips_non_commercial_components_unavailable() -> None:
     report = sa.advise(probes=ALL_DEPS, vram_mb=6144, commercial=True)
-    for nc in ("saliency", "quality_gate", "aesthetic", "ctc_aligner"):
+    for nc in ("saliency", "quality_gate", "aesthetic"):
         st = _status(report, nc)
         assert st.verdict == "unavailable"
         assert st.license_commercial_ok is False
@@ -186,6 +186,22 @@ def test_commercial_flips_non_commercial_components_unavailable() -> None:
     # commercial-OK ones still run.
     assert _status(report, "vlm_backbone").verdict in ("ok", "degraded")
     assert _status(report, "audio_saliency").verdict == "ok"
+
+
+def test_ctc_aligner_is_commercial_ok_after_the_permissive_default_flip() -> None:
+    """WU-T0/B1: ``ctc_aligner`` used to be pinned here as non-commercial.
+
+    That was TRUE while ``ctc_align.DEFAULT_MODEL_ID`` was the CC-BY-NC-4.0 MMS
+    model. The packaged default is now Apache-2.0 wav2vec2 and MMS is reachable
+    only via ``allowNonCommercialAligner``, so blocking the whole component in a
+    commercial build became a FALSE block. Moving it out of the list above is a
+    deliberate, reviewed change of a fact-pinning assertion, not a loosened test:
+    the replacement below is strictly more specific about what is now true.
+    """
+    report = sa.advise(probes=ALL_DEPS, vram_mb=6144, commercial=True)
+    st = _status(report, "ctc_aligner")
+    assert st.license_commercial_ok is True
+    assert st.verdict != "unavailable"
 
 
 # --------------------------------------------------------------------------- #

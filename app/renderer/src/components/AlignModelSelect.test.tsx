@@ -7,6 +7,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import {
   AlignModelSelect,
   ALIGN_MODEL_CHOICES,
+  MMS_ALIGNER_ALIAS,
+  MMS_ALIGNER_MODEL_ID,
   type AlignModelSelectProps,
 } from './AlignModelSelect';
 
@@ -24,14 +26,38 @@ afterEach(() => {
   container.remove();
 });
 
-function mount(props: AlignModelSelectProps): void {
+// The non-commercial opt-in props are REQUIRED (a licence gate must not be
+// silently omittable), so the helper supplies inert defaults and each test
+// overrides only what it exercises.
+function mount(props: Partial<AlignModelSelectProps> & { value: string }): void {
+  const full: AlignModelSelectProps = {
+    onChange: () => {},
+    allowNonCommercial: false,
+    onAllowNonCommercialChange: () => {},
+    ...props,
+  };
   act(() => {
-    root.render(<AlignModelSelect {...props} />);
+    root.render(<AlignModelSelect {...full} />);
   });
 }
 
 function select(): HTMLSelectElement {
   return container.querySelector('select[data-action="align-model"]') as HTMLSelectElement;
+}
+
+function ncToggle(): HTMLInputElement {
+  return container.querySelector(
+    'input[data-action="allow-non-commercial-aligner"]',
+  ) as HTMLInputElement;
+}
+
+// A real `.click()` so React's own value-tracker sees the flip; assigning
+// `.checked` by hand and dispatching a synthetic event makes React treat it as
+// a no-change and the handler never fires.
+function toggleNc(el: HTMLInputElement): void {
+  act(() => {
+    el.click();
+  });
 }
 
 function setValue(el: HTMLSelectElement, value: string): void {
@@ -42,20 +68,21 @@ function setValue(el: HTMLSelectElement, value: string): void {
 }
 
 describe('AlignModelSelect', () => {
-  it('exposes the MMS default + the Romanian and MIT opt-ins', () => {
+  it('exposes the permissive default + the Romanian and MMS opt-ins', () => {
     const ids = ALIGN_MODEL_CHOICES.map((c) => c.id);
     expect(ids).toContain('');
     expect(ids).toContain('romanian-wav2vec2');
     expect(ids).toContain('wav2vec2-960h-lv60');
+    expect(ids).toContain(MMS_ALIGNER_ALIAS);
   });
 
-  it('shows the default (MMS) when value is blank', () => {
-    mount({ value: '', onChange: () => {} });
+  it('shows the packaged default when value is blank', () => {
+    mount({ value: '' });
     expect(select().value).toBe('');
   });
 
   it('reflects the Romanian opt-in selection', () => {
-    mount({ value: 'romanian-wav2vec2', onChange: () => {} });
+    mount({ value: 'romanian-wav2vec2' });
     expect(select().value).toBe('romanian-wav2vec2');
   });
 
@@ -74,25 +101,105 @@ describe('AlignModelSelect', () => {
   });
 
   it('keeps an unknown custom id without losing it (shows default row + a badge)', () => {
-    mount({ value: 'gigant/romanian-wav2vec2', onChange: () => {} });
+    mount({ value: 'facebook/some-other-ctc' });
     expect(select().value).toBe('');
     expect(container.querySelector('[data-testid="align-model-custom"]')?.textContent).toContain(
-      'gigant/romanian-wav2vec2',
+      'facebook/some-other-ctc',
     );
   });
 
   it('shows no custom badge for a blank value', () => {
-    mount({ value: '', onChange: () => {} });
+    mount({ value: '' });
     expect(container.querySelector('[data-testid="align-model-custom"]')).toBeNull();
   });
 
   it('disables the control while busy', () => {
-    mount({ value: '', onChange: () => {}, busy: true });
+    mount({ value: '', busy: true });
     expect(select().disabled).toBe(true);
+    expect(ncToggle().disabled).toBe(true);
   });
 
   it('is enabled by default', () => {
-    mount({ value: '', onChange: () => {} });
+    mount({ value: '' });
     expect(select().disabled).toBe(false);
+    expect(ncToggle().disabled).toBe(false);
+  });
+});
+
+// --- WU-T0/B1: the CC-BY-NC MMS aligner is an explicit opt-in ------------------
+// The sidecar `ctc_align._resolve_model_id` refuses the MMS model unless
+// `allowNonCommercialAligner` is on, so the picker must not offer it as if it
+// were free to choose — an option the backend silently downgrades is worse than
+// no option at all. This block is the UI half of that gate.
+describe('AlignModelSelect — non-commercial gate', () => {
+  function mmsOption(): HTMLOptionElement {
+    return container.querySelector(`option[value="${MMS_ALIGNER_ALIAS}"]`) as HTMLOptionElement;
+  }
+
+  it('names the packaged default as Apache-2.0, never MIT', () => {
+    const def = ALIGN_MODEL_CHOICES.find((c) => c.id === '');
+    expect(def?.label).toContain('Apache-2.0');
+    expect(ALIGN_MODEL_CHOICES.every((c) => !c.label.includes('MIT'))).toBe(true);
+  });
+
+  it('labels the MMS row with its CC-BY-NC licence', () => {
+    mount({ value: '' });
+    expect(mmsOption().textContent).toContain('CC-BY-NC');
+  });
+
+  it('disables the MMS row until the opt-in is on', () => {
+    mount({ value: '' });
+    expect(mmsOption().disabled).toBe(true);
+  });
+
+  it('enables the MMS row once the opt-in is on', () => {
+    mount({ value: '', allowNonCommercial: true });
+    expect(mmsOption().disabled).toBe(false);
+  });
+
+  it('reflects the opt-in state on the toggle', () => {
+    mount({ value: '', allowNonCommercial: true });
+    expect(ncToggle().checked).toBe(true);
+  });
+
+  it('persists turning the opt-in on', () => {
+    const onAllowNonCommercialChange = vi.fn();
+    mount({ value: '', onAllowNonCommercialChange });
+    toggleNc(ncToggle());
+    expect(onAllowNonCommercialChange).toHaveBeenCalledWith(true);
+  });
+
+  it('clears an MMS selection when the opt-in is turned back off', () => {
+    const onChange = vi.fn();
+    const onAllowNonCommercialChange = vi.fn();
+    mount({
+      value: MMS_ALIGNER_ALIAS,
+      allowNonCommercial: true,
+      onChange,
+      onAllowNonCommercialChange,
+    });
+    toggleNc(ncToggle());
+    expect(onAllowNonCommercialChange).toHaveBeenCalledWith(false);
+    // Leaving `ctcModelId` on a model the sidecar will refuse is a lie in the UI.
+    expect(onChange).toHaveBeenCalledWith('');
+  });
+
+  it('clears a full-HF-id MMS selection too, not just the alias', () => {
+    const onChange = vi.fn();
+    mount({ value: MMS_ALIGNER_MODEL_ID, allowNonCommercial: true, onChange });
+    toggleNc(ncToggle());
+    expect(onChange).toHaveBeenCalledWith('');
+  });
+
+  it('leaves a permissive selection alone when the opt-in is turned off', () => {
+    const onChange = vi.fn();
+    mount({ value: 'romanian-wav2vec2', allowNonCommercial: true, onChange });
+    toggleNc(ncToggle());
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('warns that turning it on makes the output non-commercial', () => {
+    mount({ value: '' });
+    expect(container.textContent).toContain('non-commercial');
   });
 });

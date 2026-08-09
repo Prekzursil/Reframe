@@ -126,6 +126,14 @@ describe('prettyName', () => {
       expect(prettyName(id)).not.toMatch(codename);
     }
   });
+  // WU-T0/B1: the word-timing component's proposed download must be the model
+  // the sidecar actually resolves to. It pointed at the CC-BY-NC MMS asset,
+  // which `ctc_align._resolve_model_id` now refuses unless the user opts in —
+  // so installing it would have burned 1.2 GB on a model that never runs.
+  it('proposes the Apache-2.0 aligner asset, not the opt-in CC-BY-NC one', () => {
+    expect(componentAsset('ctc_aligner')).toBe('ctc-forced-aligner-wav2vec2');
+  });
+
   it('title-cases + de-snakes unknowns', () => {
     expect(prettyName('foo_bar')).toBe('Foo bar');
     expect(prettyName('zeta')).toBe('Zeta');

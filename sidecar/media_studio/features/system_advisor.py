@@ -240,11 +240,17 @@ COMPONENTS: tuple[ComponentSpec, ...] = (
         model_backed=True,
         vram_mb=2000,
         size_mb=1200,
-        license_commercial_ok=False,
+        # WU-T0/B1: commercial-OK since the packaged default flipped from the
+        # CC-BY-NC MMS model to Apache-2.0 wav2vec2 (ctc_align.DEFAULT_MODEL_ID).
+        # The CC-BY-NC model is still reachable, but only when the user turns on
+        # `allowNonCommercialAligner` — an explicit choice this static component
+        # spec cannot see, and one the Settings copy warns about at the point of
+        # opt-in. Describing the DEFAULT here is what makes the verdict truthful.
+        license_commercial_ok=True,
         improves="karaoke word-timing 2nd pass (ctc-forced-aligner)",
         speed="GPU/CPU ~1-2GB; ONNX + PyTorch backends",
-        reason_ok="BSD code; commercial via MIT wav2vec2 model override",
-        reason_block="default mms-300m model CC-BY-NC-4.0; override with MIT wav2vec2 for commercial",
+        reason_ok="BSD code; Apache-2.0 wav2vec2 default (MMS CC-BY-NC is opt-in only)",
+        reason_block="",
     ),
     ComponentSpec(
         name="pyannote",

@@ -143,3 +143,65 @@ Two corrections to the v1.5 plan (`docs/plans/v1.5/flagship-lip-sync-dub.md`
 wall: its README states "any form of commercial use is strictly prohibited".
 It is named in `lipsync.DENIED_ENGINES` so a request for it is refused with that
 reason rather than falling through to a generic "unknown engine".
+
+## 5. Word-timing CTC forced aligners — one CC-BY-NC model, now opt-in
+
+Karaoke-grade word timings come from a CTC forced-alignment model
+(`sidecar/media_studio/features/ctc_align.py`), downloaded on demand. The
+attributions render in-app as `ALIGNER_MODEL_NOTICES` in
+`app/renderer/src/features/ThirdPartyNotices.tsx`; this section records the two
+things an attribution block does not: **what was previously wrong, and how it was
+measured.**
+
+| Model | Licence | Commercial | Role |
+|---|---|---|---|
+| `facebook/wav2vec2-large-960h-lv60-self` | Apache-2.0 | yes | **packaged default** (English) |
+| `facebook/wav2vec2-large-960h` | Apache-2.0 | yes | English alternative |
+| `facebook/hubert-large-ls960-ft` | Apache-2.0 | yes | English alternative |
+| `gigant/romanian-wav2vec2` | Apache-2.0 | yes | Romanian |
+| `MahmoudAshraf/mms-300m-1130-forced-aligner` | **CC-BY-NC-4.0** | **no** | 158 languages, opt-in only |
+
+Licences verified 2026-08-09 by a Hugging Face Hub metadata probe — a source
+mechanically independent of the repo's own comments, which is exactly why it was
+worth running.
+
+**Two defects this closed.**
+
+1. **The MMS model was disclosed nowhere.** It had been the packaged default
+   since Phase-8, and searching `ThirdPartyNotices.tsx` and this file for
+   `mms-300m`, `forced-aligner` or `MahmoudAshraf` returned nothing. CC-BY-NC-4.0
+   requires **attribution**, and that obligation is independent of the commercial
+   question — Reframe is already non-commercial while ViNet-S (CC-BY-NC-SA-4.0)
+   is bundled, so this was not a *new* commercial breach, but it was a live
+   attribution breach on its own.
+2. **The permissive alternatives were mislabelled MIT.** The code called them
+   `MIT_MODEL_IDS` and the asset label read "wav2vec2 (word timing, MIT
+   commercial)". The Hub reports `license:apache-2.0` for all three. Both are
+   permissive, so nothing shipped under a wrong grant, but Apache-2.0 carries a
+   NOTICE/attribution condition MIT does not, and a licence claim restated from a
+   neighbouring comment is how that kind of error survives. Renamed
+   `PERMISSIVE_MODEL_IDS`.
+
+**The gate.** `ctc_align._resolve_model_id` applies the licence check LAST, to
+the *resolved* id, so no request shape routes around it: the packaged default,
+the `ctcModelId` alias, a hand-typed full HF id and the per-job `model_id`
+argument all pass through one check, and a `NON_COMMERCIAL_MODEL_IDS` member is
+downgraded to the Apache-2.0 default unless `settings['allowNonCommercialAligner']`
+is truthy. This implements
+`docs/plans/v1.5/flagship-transcript-editing.md:94` ("must NOT be the packaged
+default") and `:150` ("gate MMS behind `allowNonCommercialAligner`").
+
+**What this does NOT do, stated so it is not assumed:**
+
+- The per-language permissive-CTC map the same plan line asks for (the XLSR-53
+  family) is **not built**. A non-English clip whose language has no permissive
+  aligner now falls back to the ASR's own word timings — measurably looser
+  (~100–500 ms Whisper DTW vs ~20–120 ms CTC) — unless the user picks the
+  Romanian model or accepts the non-commercial terms. That is a real quality
+  regression for non-English users and it is the deliberate price of the flip.
+- The typed `Settings` keys (`ctcModelId`, `asrEngine`,
+  `allowNonCommercialAligner`) in `sidecar/contract/spec.py` are **not added**;
+  both keys stay stringly-accessed as before. Regenerating the contract
+  artifacts was out of scope here.
+- Nothing was checked with licence counsel. The claims above are licence *tags*
+  and licence *text*, not legal advice.

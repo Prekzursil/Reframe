@@ -328,6 +328,122 @@ export const OPT_IN_MODEL_NOTICES: readonly OptInModelNotice[] = [
   },
 ];
 
+/**
+ * A word-timing CTC forced-alignment model (v1.5 WU-T0). Its own record type
+ * because the axis that matters here is neither "bundled vs downloaded" nor
+ * "OpenRAIL", but WHICH ONE THE BUILD DEFAULTS TO and whether reaching a given
+ * one needs an explicit opt-in.
+ */
+export interface AlignerModelNotice {
+  /** Display name. */
+  name: string;
+  /** The exact Hugging Face repo id the sidecar resolves to. */
+  modelId: string;
+  /** What selecting it gets you, in one line. */
+  role: string;
+  /** SPDX id of the WEIGHTS licence, as the Hub reports it. */
+  license: string;
+  /** Canonical URL of that licence text. */
+  licenseUrl: string;
+  /** True when the licence permits commercial use. */
+  commercial: boolean;
+  /** Copyright / authors attribution line. */
+  attribution: string;
+  /** Upstream weights coordinates. */
+  source: string;
+  /** True for the ONE model the shipped build uses when nothing is selected. */
+  packagedDefault?: boolean;
+  /** The setting that must be turned on before this model can be selected. */
+  gatedBy?: string;
+  /** Extra obligation / scope callout (only where there is one). */
+  note?: string;
+}
+
+/**
+ * The selectable word-timing aligners, and the licence position of each.
+ *
+ * WHY THIS BLOCK EXISTS: the CC-BY-NC-4.0 MMS aligner has been in the product
+ * since Phase-8 and was disclosed NOWHERE — not here, not in
+ * `docs/THIRD-PARTY-LICENSES.md`. CC-BY-NC's attribution condition is
+ * independent of the commercial question (Reframe is already non-commercial
+ * while ViNet-S is bundled), so shipping it uncredited was a breach on its own.
+ *
+ * LICENCE FACTS VERIFIED 2026-08-09 by a Hugging Face Hub metadata probe — a
+ * source mechanically independent of the sidecar's own comments, which is how
+ * the pre-existing mislabel was caught: `ctc_align.py` called the three
+ * permissive models `MIT_MODEL_IDS` and labelled the wav2vec2 asset "MIT
+ * commercial", and the Hub reports `license:apache-2.0` for all three. Kept in
+ * lockstep with `sidecar/media_studio/features/ctc_align.py`
+ * (`DEFAULT_MODEL_ID` / `PERMISSIVE_MODEL_IDS` / `NON_COMMERCIAL_MODEL_ID`).
+ *
+ * WHY ITS OWN CHIP CLASS: an aligner is neither a bundled weight nor an OpenRAIL
+ * download, and both existing lists carry asserted invariants this entry would
+ * violate — `THIRD_PARTY_NOTICES` asserts exactly one non-commercial model
+ * (ViNet-S), `OPT_IN_MODEL_NOTICES` asserts every member is commercial-OK.
+ */
+export const ALIGNER_MODEL_NOTICES: readonly AlignerModelNotice[] = [
+  {
+    name: 'wav2vec2 (960h lv60-self)',
+    modelId: 'facebook/wav2vec2-large-960h-lv60-self',
+    role: 'word-timing forced alignment — English, the packaged default',
+    license: 'Apache-2.0',
+    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
+    commercial: true,
+    attribution: '© Meta Platforms, Inc. (facebook/wav2vec2-large-960h-lv60-self)',
+    source: 'https://huggingface.co/facebook/wav2vec2-large-960h-lv60-self',
+    packagedDefault: true,
+  },
+  {
+    name: 'wav2vec2 (960h)',
+    modelId: 'facebook/wav2vec2-large-960h',
+    role: 'word-timing forced alignment — English, alternative',
+    license: 'Apache-2.0',
+    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
+    commercial: true,
+    attribution: '© Meta Platforms, Inc. (facebook/wav2vec2-large-960h)',
+    source: 'https://huggingface.co/facebook/wav2vec2-large-960h',
+  },
+  {
+    name: 'HuBERT-Large (ls960-ft)',
+    modelId: 'facebook/hubert-large-ls960-ft',
+    role: 'word-timing forced alignment — English, alternative',
+    license: 'Apache-2.0',
+    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
+    commercial: true,
+    attribution: '© Meta Platforms, Inc. (facebook/hubert-large-ls960-ft)',
+    source: 'https://huggingface.co/facebook/hubert-large-ls960-ft',
+  },
+  {
+    name: 'Romanian wav2vec2',
+    modelId: 'gigant/romanian-wav2vec2',
+    role: 'word-timing forced alignment — Romanian',
+    license: 'Apache-2.0',
+    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
+    commercial: true,
+    attribution:
+      '© gigant (gigant/romanian-wav2vec2), fine-tuned from facebook/wav2vec2-xls-r-300m',
+    source: 'https://huggingface.co/gigant/romanian-wav2vec2',
+  },
+  {
+    name: 'MMS-300M forced aligner',
+    modelId: 'MahmoudAshraf/mms-300m-1130-forced-aligner',
+    role: 'word-timing forced alignment — 158 languages',
+    license: 'CC-BY-NC-4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-nc/4.0/',
+    commercial: false,
+    attribution:
+      '© Mahmoud Ashraf (MahmoudAshraf/mms-300m-1130-forced-aligner), an MMS-300M derivative',
+    source: 'https://huggingface.co/MahmoudAshraf/mms-300m-1130-forced-aligner',
+    gatedBy: 'allowNonCommercialAligner',
+    note:
+      'NON-COMMERCIAL: this model may not be used for commercial purposes, and it requires ' +
+      'attribution — which is what this entry is. It is off by default: Reframe aligns with the ' +
+      'Apache-2.0 wav2vec2 model above unless you turn this one on in Settings, and turning it on ' +
+      'is what makes your alignment output non-commercial. It covers far more languages than the ' +
+      'permissive alternatives, which is the whole trade-off.',
+  },
+];
+
 /** The Settings → Licenses surface: bundled third-party model attributions. */
 export function ThirdPartyNotices(): React.ReactElement {
   return (
@@ -473,6 +589,54 @@ export function ThirdPartyNotices(): React.ReactElement {
               <p className="tpn__note" role="note">
                 {n.note}
               </p>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="tpn__aligners">
+        <h3 className="tpn__subtitle">Word-timing alignment models</h3>
+        <p className="tpn__intro">
+          Karaoke-accurate word timings come from a forced-alignment model, downloaded on demand.
+          Reframe defaults to a permissive Apache-2.0 model. One alternative covers far more
+          languages but is licensed for non-commercial use only — it is off unless you turn it on,
+          and this list says which is which.
+        </p>
+        <ul className="tpn__list">
+          {ALIGNER_MODEL_NOTICES.map((n) => (
+            <li key={n.modelId} className="tpn__item" data-aligner-license={n.license}>
+              <header className="tpn__head">
+                <span className="tpn__name">{n.name}</span>
+                <span
+                  className="tpn__chip tpn__chip--aligner"
+                  data-commercial={n.commercial ? 'yes' : 'no'}
+                  data-packaged-default={n.packagedDefault ? 'yes' : 'no'}
+                >
+                  {n.license} · {n.commercial ? 'commercial OK' : 'non-commercial only'}
+                  {n.packagedDefault ? ' · default' : ''}
+                </span>
+              </header>
+              <p className="tpn__role">{n.role}</p>
+              <p className="tpn__attr">{n.attribution}</p>
+              <p className="tpn__license">
+                License:{' '}
+                <a href={n.licenseUrl} target="_blank" rel="noreferrer">
+                  {n.license}
+                </a>{' '}
+                · Source:{' '}
+                <a href={n.source} target="_blank" rel="noreferrer">
+                  {n.modelId}
+                </a>
+              </p>
+              {n.gatedBy ? (
+                <p className="tpn__gate">
+                  Off unless <code>{n.gatedBy}</code> is enabled.
+                </p>
+              ) : null}
+              {n.note ? (
+                <p className="tpn__note" role="note">
+                  {n.note}
+                </p>
+              ) : null}
             </li>
           ))}
         </ul>

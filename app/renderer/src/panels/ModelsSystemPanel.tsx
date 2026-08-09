@@ -315,8 +315,12 @@ interface SettingsShape {
   // M3 POINT: non-default local-runner base URLs the detector probes.
   ollamaBaseUrl?: string;
   lmStudioBaseUrl?: string;
-  // M5 RO alignment opt-in: the word-timing CTC model id ('' = MMS default).
+  // M5 RO alignment opt-in: the word-timing CTC model id ('' = the packaged
+  // Apache-2.0 default; WU-T0/B1 flipped that away from the CC-BY-NC MMS model).
   ctcModelId?: string;
+  // WU-T0/B1: unlocks the CC-BY-NC-4.0 MMS aligner. The sidecar refuses that
+  // model unless this is truthy, so the picker must read the SAME key.
+  allowNonCommercialAligner?: boolean;
 }
 
 export function ModelsSystemPanel({
@@ -902,12 +906,18 @@ export function ModelsSystemPanel({
         />
       )}
 
-      {/* M5: RO alignment opt-in — exposes gigant/romanian-wav2vec2 (and the MIT
-          English wav2vec2) over the MMS-300m default via settings.ctcModelId. */}
+      {/* M5 + WU-T0/B1: the alignment-model picker over settings.ctcModelId,
+          plus the allowNonCommercialAligner opt-in that unlocks the CC-BY-NC
+          MMS model. Both keys are read by the sidecar's single
+          `ctc_align._resolve_model_id`, so the UI cannot drift from the gate. */}
       {analyzed && (
         <AlignModelSelect
           value={settings.ctcModelId ?? ''}
           onChange={(ctcModelId) => void patchSettings({ ctcModelId })}
+          allowNonCommercial={settings.allowNonCommercialAligner ?? false}
+          onAllowNonCommercialChange={(allowNonCommercialAligner) =>
+            void patchSettings({ allowNonCommercialAligner })
+          }
         />
       )}
 
