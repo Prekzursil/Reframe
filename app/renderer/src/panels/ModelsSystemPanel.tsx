@@ -778,6 +778,11 @@ export function ModelsSystemPanel({
     ? 'Your settings already match the recommendation'
     : 'Apply recommended settings';
 
+  // H3: the ONE predicate the empty-state prompt and the toolbar analyze button
+  // both read, so they can never render together again. Previously each site
+  // spelled `!analyzed && !busy` for itself, which is what let the duplicate exist.
+  const showPrompt = !analyzed && !busy;
+
   return (
     <section className="feature-panel models-system-panel" aria-label="Models and System">
       <h2>Models &amp; System</h2>
@@ -793,15 +798,30 @@ export function ModelsSystemPanel({
       />
 
       <div className="actions">
-        <button
-          type="button"
-          data-action="analyze"
-          onClick={() => void analyze()}
-          disabled={busy}
-          title={busy ? 'Analysis is already running…' : undefined}
-        >
-          {busy ? 'Analyzing…' : analyzed ? 'Re-analyze' : 'Analyze my system'}
-        </button>
+        {/* H3 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §5) — this button and the
+            empty-state CTA below both read "Analyze my system" and both call
+            `analyze()`, so an un-analyzed panel rendered the SAME control twice
+            (measured live at 552,161 and 576,326). The audit records C1 and H3 as
+            masking each other: C1's landing-scrolled bug kept this copy off-screen,
+            so fixing C1 is what made the pair visible together.
+
+            The CTA wins the un-analyzed state because it is the one carrying the
+            explanation; suppressing IT instead would leave the empty state a
+            paragraph with no way forward. This button owns the other two states,
+            where it is the only affordance — hence `Analyzing…` / `Re-analyze` and
+            no third label: `!showPrompt` means `analyzed || busy`, so a bare
+            "Analyze my system" here is unreachable, not merely unused. */}
+        {!showPrompt && (
+          <button
+            type="button"
+            data-action="analyze"
+            onClick={() => void analyze()}
+            disabled={busy}
+            title={busy ? 'Analysis is already running…' : undefined}
+          >
+            {busy ? 'Analyzing…' : 'Re-analyze'}
+          </button>
+        )}
         {analyzed && (
           <button
             type="button"
@@ -829,7 +849,7 @@ export function ModelsSystemPanel({
         </p>
       )}
 
-      {!analyzed && !busy && (
+      {showPrompt && (
         <div className="empty-state" data-section="prompt">
           <p className="empty-state__title">See what your machine can run</p>
           <p className="empty-state__body">
