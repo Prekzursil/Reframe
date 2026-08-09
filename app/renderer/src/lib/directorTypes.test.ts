@@ -6,13 +6,17 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  DEFERRED_OP_KINDS,
   GROUP_COLLAPSE_THRESHOLD,
+  UNAVAILABLE_SUFFIX,
   canMoveOp,
   costRowLabel,
   egressWarning,
   groupOpsByKind,
   isFrameFunction,
+  isOpKindAvailable,
   moveOpWithinKind,
+  opKindCountLabel,
   opKindLabel,
   opMoveTargetIndex,
   planKinds,
@@ -136,11 +140,30 @@ describe('opKindLabel', () => {
   it('maps every known kind to a friendly noun', () => {
     expect(opKindLabel('trim')).toBe('trim');
     expect(opKindLabel('join')).toBe('join');
-    expect(opKindLabel('ocrExtractList')).toBe('on-screen text read');
     expect(opKindLabel('overlayText')).toBe('text overlay');
   });
   it('falls back to the raw kind for an unknown value', () => {
     expect(opKindLabel('mystery' as DirectorOpKind)).toBe('mystery');
+  });
+  // v1.5 W14 — this used to assert plain 'on-screen text read'. The sidecar has
+  // no apply-time adapter for the three deferred kinds, so a plain noun told the
+  // user a step would run when it cannot. The kinds keep their labels (an old
+  // cached plan still has to render) but are now marked, and the planner is no
+  // longer told it may emit them: sidecar/tests/test_director_op_kind_parity.py.
+  it('marks a kind with no wired engine as unavailable', () => {
+    expect(opKindLabel('ocrExtractList')).toBe(`on-screen text read${UNAVAILABLE_SUFFIX}`);
+    expect(opKindLabel('stitchPanorama')).toBe(`panorama stitch${UNAVAILABLE_SUFFIX}`);
+    expect(opKindLabel('regenScroll')).toBe(`scroll regen${UNAVAILABLE_SUFFIX}`);
+  });
+});
+
+describe('isOpKindAvailable', () => {
+  it('is false for exactly the deferred kinds and true otherwise', () => {
+    for (const kind of DEFERRED_OP_KINDS) {
+      expect(isOpKindAvailable(kind)).toBe(false);
+    }
+    expect(isOpKindAvailable('trim')).toBe(true);
+    expect(isOpKindAvailable('export')).toBe(true);
   });
 });
 
@@ -149,6 +172,19 @@ describe('pluralize', () => {
     expect(pluralize(1, 'trim')).toBe('1 trim');
     expect(pluralize(3, 'trim')).toBe('3 trims');
     expect(pluralize(0, 'trim')).toBe('0 trims');
+  });
+});
+
+describe('opKindCountLabel', () => {
+  it('counts an available kind with no marker', () => {
+    expect(opKindCountLabel(1, 'trim')).toBe('1 trim');
+    expect(opKindCountLabel(3, 'trim')).toBe('3 trims');
+  });
+  it('pluralizes the NOUN and puts the marker last for a deferred kind', () => {
+    // Not "2 panorama stitch (unavailable)s" — the parenthetical must not be
+    // what gets the plural "s".
+    expect(opKindCountLabel(2, 'stitchPanorama')).toBe(`2 panorama stitchs${UNAVAILABLE_SUFFIX}`);
+    expect(opKindCountLabel(1, 'stitchPanorama')).toBe(`1 panorama stitch${UNAVAILABLE_SUFFIX}`);
   });
 });
 

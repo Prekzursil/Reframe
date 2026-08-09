@@ -60,14 +60,67 @@ const OP_KIND_LABELS: Record<DirectorOpKind, string> = {
   ocrExtractList: 'on-screen text read',
 };
 
-/** A friendly noun for an op kind (falls back to the raw kind if unknown). */
-export function opKindLabel(kind: DirectorOpKind): string {
+/**
+ * The op kinds the sidecar's apply engine has NO adapter for yet — a MIRROR of
+ * `media_studio.models.edit_plan.DEFERRED_OP_KINDS`, which is the single source
+ * of truth. TypeScript cannot read the Python union, so the two are stated twice
+ * on purpose and pinned by `sidecar/tests/test_director_op_kind_parity.py`
+ * (it parses THIS array) — change one, change both.
+ *
+ * The kinds stay in `DirectorOpKind` and keep their labels: a cached or
+ * previously-saved plan may still contain one and must render. What changed is
+ * that they are no longer presented as available — `opKindLabel` marks them, and
+ * the planner is no longer told it may emit them at all.
+ */
+export const DEFERRED_OP_KINDS: readonly DirectorOpKind[] = [
+  'stitchPanorama',
+  'regenScroll',
+  'ocrExtractList',
+];
+
+/** The suffix appended to a deferred kind's label so the UI never over-promises. */
+export const UNAVAILABLE_SUFFIX = ' (unavailable)';
+
+/** True when `kind` has a wired engine, i.e. an op of this kind can actually run. */
+export function isOpKindAvailable(kind: DirectorOpKind): boolean {
+  return !DEFERRED_OP_KINDS.includes(kind);
+}
+
+/** The bare noun for an op kind, with NO availability marker (pluralizable). */
+function opKindNoun(kind: DirectorOpKind): string {
   return OP_KIND_LABELS[kind] ?? kind;
+}
+
+/**
+ * A friendly noun for an op kind (falls back to the raw kind if unknown).
+ *
+ * A kind with no engine is labelled `… (unavailable)`. Doing it HERE rather than
+ * in the panel means every surface that names a kind — the storyboard rows, the
+ * op-type filter, the plan summary — tells the same truth without each having to
+ * remember to ask.
+ */
+export function opKindLabel(kind: DirectorOpKind): string {
+  const noun = opKindNoun(kind);
+  return isOpKindAvailable(kind) ? noun : `${noun}${UNAVAILABLE_SUFFIX}`;
 }
 
 /** Pluralize `label` for `count` (naive English: append "s" when not 1). */
 export function pluralize(count: number, label: string): string {
   return count === 1 ? `1 ${label}` : `${count} ${label}s`;
+}
+
+/**
+ * "3 trims" / "2 panorama stitchs (unavailable)" — a counted op-kind phrase.
+ *
+ * The availability marker is attached AFTER pluralizing the bare noun. Feeding
+ * `opKindLabel` straight into {@link pluralize} would produce
+ * "2 panorama stitch (unavailable)s", pluralizing the parenthetical instead of
+ * the noun. (The bare plural stays the naive append-"s" of {@link pluralize} —
+ * "stitchs", not "stitches"; this fixes marker placement, not English.)
+ */
+export function opKindCountLabel(count: number, kind: DirectorOpKind): string {
+  const counted = pluralize(count, opKindNoun(kind));
+  return isOpKindAvailable(kind) ? counted : `${counted}${UNAVAILABLE_SUFFIX}`;
 }
 
 /**
@@ -88,7 +141,7 @@ export function summarizePlan(plan: DirectorEditPlan): string {
   }
   const parts: string[] = [];
   for (const [kind, count] of counts) {
-    parts.push(pluralize(count, opKindLabel(kind)));
+    parts.push(opKindCountLabel(count, kind));
   }
   const head = parts.length > 0 ? parts.join(', ') : 'No changes';
   return dropped > 0 ? `${head} · ${pluralize(dropped, 'dropped op')}` : head;

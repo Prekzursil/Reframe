@@ -28,7 +28,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from media_studio.models.edit_plan import (
-    OP_KINDS,
+    EXECUTABLE_OP_KINDS,
     EditOp,
     EditPlan,
     EditPlanError,
@@ -52,9 +52,29 @@ def strip_think(content: str) -> str:
     return _THINK_RE.sub("", content).strip()
 
 
+def advertised_op_kinds() -> tuple[str, ...]:
+    """The op kinds this prompt offers the planner — the EXECUTABLE set only.
+
+    This used to be the whole of ``OP_KINDS`` (18), while ``director_op_engines``
+    wired 15, so the model was invited to emit three ops the apply engine cannot
+    run. That is not a harmless no-op: ``apply_plan`` is stop-on-first-failure
+    with auto-rollback, so one unwired op REVERTS every op that already applied
+    (measured on the pre-fix tree with a stub runner: a ``trim`` reported
+    ``applied``, the following ``ocrExtractList`` reported
+    ``failed: no engine for kind``, and the COPY manifest was restored to source).
+
+    Deriving the list from :data:`EXECUTABLE_OP_KINDS` means the vocabulary can
+    only widen when an engine actually exists; ``tests/test_director_op_kind_parity.py``
+    fails if the two ever diverge again. ``OP_KINDS`` is still the WIRE vocabulary
+    (a cached plan may carry a deferred op and must stay parseable) — this is
+    only what we ASK for.
+    """
+    return EXECUTABLE_OP_KINDS
+
+
 def _kinds_line() -> str:
     """The allowed-op-kind vocabulary, embedded into the system prompt."""
-    return ", ".join(OP_KINDS)
+    return ", ".join(advertised_op_kinds())
 
 
 def build_system_prompt() -> str:
