@@ -437,8 +437,20 @@ export function ThirdPartyNotices(): React.ReactElement {
                 <span className="tpn__name">{n.name}</span>
                 <span
                   className="tpn__chip tpn__chip--userestricted"
-                  data-commercial={n.commercial ? 'yes' : 'no'}
-                  data-use-restricted={n.useRestricted ? 'yes' : 'no'}
+                  // LITERAL 'yes', not a ternary. Every member of this list is
+                  // commercial-OK and use-restricted BY CONSTRUCTION — that is what
+                  // makes it a separate list from the bundled notices above (whose
+                  // `data-commercial` at :348 genuinely does vary). The chip text
+                  // below states both halves unconditionally, so a `false` entry
+                  // would render a chip contradicting its own attribute; branching
+                  // here would not fix that, it would only hide it behind a
+                  // permanently-unreachable arm and cost two uncoverable branches.
+                  // The invariant is enforced where it belongs, on the DATA:
+                  // ThirdPartyNotices.test.tsx:272-273 asserts
+                  // `every(n => n.commercial)` and `every(n => n.useRestricted)`,
+                  // so adding a non-conforming entry fails loudly instead.
+                  data-commercial="yes"
+                  data-use-restricted="yes"
                 >
                   {n.weightsLicense} · commercial OK, use-restricted
                 </span>
