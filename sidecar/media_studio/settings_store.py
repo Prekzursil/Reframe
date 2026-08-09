@@ -152,6 +152,18 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # export UI offers first. ``subtitleFormat`` in {srt,vtt,...}; ``nleFormat`` in
     # {edl,fcpxml,...}; ``nleFps`` the timeline frame rate. Pure data.
     "exportDefaults": {"subtitleFormat": "srt", "nleFormat": "edl", "nleFps": 30},
+    # Custom ASR dictionary (v1.5 asr-vocabulary): the user's proper-noun /
+    # brand-name / jargon term list, consumed by
+    # ``features/asr_vocabulary.parse_terms`` and applied by
+    # ``features/transcribe.transcribe_with_engine``. Each entry is either a bare
+    # string ("Reframe") or {term, soundsLike[]} where ``soundsLike`` lists the
+    # mis-transcriptions to rewrite onto ``term`` (e.g. "re frame" -> "Reframe").
+    # Pure DATA — it is only ever compiled into re.escape-d literal patterns, so
+    # it must NEVER join EXECUTABLE_SETTING_KEYS. Listed here so it is
+    # discoverable in ``settings.get`` on first launch (same treatment as the
+    # ``asrEngine`` / ``transcribeDevice`` knobs, which are likewise free-form).
+    # Empty = no biasing and no post-correction: byte-identical to pre-v1.5.
+    "asrVocabulary": [],
     # Saved export/pipeline presets (WU-10/WU-11): ``presets`` is a name->preset
     # map; ``active`` is the last-applied preset name. NOTE: ``settings.set`` is a
     # SHALLOW top-level merge — writing ``savePresets`` REPLACES the whole block,

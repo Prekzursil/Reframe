@@ -105,16 +105,61 @@ def _has_clips(params: Mapping[str, Any]) -> bool:
     return any(isinstance(p, str) and p.strip() for p in clips)
 
 
+def _is_panorama_mapping(value: Any) -> bool:
+    """True when ``value`` is the panorama MAPPING the regen engine can consume.
+
+    Mirrors ``scroll_regen._require_panorama`` exactly: a string ``imagePath``,
+    an int (never ``bool``) ``height``, and a list ``frameOffsets``. Keeping the
+    two in step is the whole point — see :func:`_has_panorama`.
+    """
+    if not isinstance(value, Mapping):
+        return False
+    image_path = value.get("imagePath")
+    height = value.get("height")
+    offsets = value.get("frameOffsets")
+    return (
+        isinstance(image_path, str)
+        and bool(image_path.strip())
+        and isinstance(height, int)
+        and not isinstance(height, bool)
+        and isinstance(offsets, list)
+    )
+
+
+def _has_panorama(params: Mapping[str, Any]) -> bool:
+    """True when ``params['panorama']`` is a usable artifact REFERENCE or MAPPING.
+
+    v1.5 (SCOPE.md O-3) fixes a CONFIRMED contradiction. This precondition used
+    to accept ONLY a string (``_params_str`` returns ``""`` for anything else),
+    while ``scroll_regen._require_panorama`` accepts ONLY a mapping. Measured on
+    the pre-fix tree:
+
+        panorama as STRING -> validator "planned"           / engine REJECTED
+        panorama as DICT   -> validator "precondition-unmet" / engine ACCEPTED
+
+    So NO ``regenScroll`` op could be both validator-valid and engine-renderable
+    — a declared-but-impossible op. Both shapes are now accepted: a bare string
+    is an artifact REFERENCE resolved later, and a mapping is the inline
+    artifact the engine consumes directly. A malformed mapping is still dropped,
+    so this TIGHTENS the gate on garbage while unblocking the real shape.
+    """
+    value = params.get("panorama")
+    if isinstance(value, str):
+        return bool(value.strip())
+    return _is_panorama_mapping(value)
+
+
 def _precondition_reason(op: EditOp, understanding: Understanding) -> StatusReason | None:
     """Per-kind precondition checks beyond span/track, or ``None`` if satisfied.
 
     Two preconditions today:
       * ``regenScroll`` must reference a stitched panorama (DESIGN §3 canonical
-        example) via ``params["panorama"]``;
+        example) via ``params["panorama"]`` — either a string artifact reference
+        or the inline mapping the engine consumes (:func:`_has_panorama`);
       * ``join`` must carry a non-empty ``params["clips"]`` list of paths to
         concatenate (V1 IA §h E2 — a join with nothing to join is impossible).
     """
-    if op.kind == "regenScroll" and understanding.require_regen_panorama and not _params_str(op.params, "panorama"):
+    if op.kind == "regenScroll" and understanding.require_regen_panorama and not _has_panorama(op.params):
         return "precondition-unmet"
     if op.kind == "join" and not _has_clips(op.params):
         return "precondition-unmet"

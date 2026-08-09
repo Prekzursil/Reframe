@@ -210,6 +210,17 @@ export const client = {
       rpc('subtitles.translate', { trackId, targetLang, ...(opts ?? {}) }),
     export: (trackId: string, format: SubtitleFormat): Promise<{ path: string }> =>
       rpc('subtitles.export', { trackId, format }),
+    // v1.5 escape hatch: bring a hand-corrected SRT/VTT/ASS back IN. `text` is the
+    // file's CONTENT, not a path — the caller reads it with the standard File API,
+    // so the sidecar never opens a renderer-supplied filesystem path. `format` is
+    // passed raw (the sidecar folds '.SRT'/'ssa' and rejects anything else).
+    import: (
+      videoId: string,
+      text: string,
+      format: string,
+      opts?: { name?: string; lang?: string },
+    ): Promise<{ track: SubtitleTrack }> =>
+      rpc('subtitles.import', { videoId, text, format, ...(opts ?? {}) }),
   },
 
   tracks: {
@@ -735,13 +746,6 @@ export const client = {
       opts?: { confirmCloudBudget?: boolean; acknowledged?: boolean },
     ): Promise<JobHandle> => rpc('batch.start', { id, ...(opts ?? {}) }),
     status: (id: string): Promise<{ batch: BatchState }> => rpc('batch.status', { id }),
-    /**
-     * `batch.consent {id}` -> {consent} — a READ-ONLY run/skip preview computed via
-     * `plan_consent` directly (never short-circuits to None when the budget gate is
-     * off), so BatchConsentCard can always render the split before an `acknowledged`
-     * `start`. Zero provider calls; `confirmCloudBudget` is read from settings.
-     */
-    consent: (id: string): Promise<{ consent: BatchConsent }> => rpc('batch.consent', { id }),
     list: (): Promise<{ batches: BatchSummary[] }> => rpc('batch.list'),
     cancel: (id: string): Promise<{ ok: boolean }> => rpc('batch.cancel', { id }),
     resume: (id: string): Promise<JobHandle & { status?: BatchStatus }> =>

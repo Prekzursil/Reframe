@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-import Subtitles from './Subtitles';
+import Subtitles, { formatFromFilename } from './Subtitles';
 import type { DoneEvent, MediaStudioApi, ProgressEvent, SubtitleTrack } from './_api';
 
 interface FakeApi {
@@ -36,7 +36,13 @@ function track(over: Partial<SubtitleTrack> = {}): SubtitleTrack {
 }
 
 function makeFakeApi(
-  opts: { generated?: SubtitleTrack; translateInline?: SubtitleTrack; exportPath?: string } = {},
+  opts: {
+    generated?: SubtitleTrack;
+    translateInline?: SubtitleTrack;
+    exportPath?: string;
+    imported?: SubtitleTrack;
+    importError?: string;
+  } = {},
 ): FakeApi {
   const calls: FakeApi['calls'] = [];
   let progressCbs: Array<(ev: ProgressEvent) => void> = [];
@@ -50,6 +56,10 @@ function makeFakeApi(
         return { jobId: 'job-tr', track: opts.translateInline } as T;
       }
       if (method === 'subtitles.export') return { path: opts.exportPath ?? '/out/sub.srt' } as T;
+      if (method === 'subtitles.import') {
+        if (opts.importError) throw new Error(opts.importError);
+        return { track: opts.imported ?? track({ id: 'tr-imported', name: 'fixes.srt' }) } as T;
+      }
       return {} as T;
     }) as MediaStudioApi['rpc'],
     onProgress: (cb) => {
@@ -359,6 +369,116 @@ describe('<Subtitles />', () => {
       await Promise.resolve();
     });
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('export boom');
+  });
+
+  // --- import: bring a hand-corrected SRT/VTT/ASS back IN (v1.5 audit 5.1) ----
+  //
+  // The control reads the picked file's TEXT with the standard File API and sends
+  // the text, so no Electron dialog/preload channel is involved and the sidecar
+  // never opens a renderer-supplied path.
+
+  function importInput(): HTMLInputElement {
+    return container.querySelector('.import-row input[type="file"]') as HTMLInputElement;
+  }
+
+  // FileReader settles on a macrotask, so a bare `await Promise.resolve()` is not
+  // enough to see the resulting render — drain the timer queue too.
+  async function pick(file: File): Promise<void> {
+    const input = importInput();
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+
+  it('offers the import control even with NO track (that is the whole point)', async () => {
+    // The user has no generated track yet and wants to load their own file, so
+    // the control must live OUTSIDE the `track && (...)` block.
+    const fake = makeFakeApi();
+    await mount(fake);
+    expect(container.querySelector('.track-meta')).toBeNull();
+    expect(importInput()).not.toBeNull();
+  });
+
+  it('sends the file text and the extension-derived format, then adopts the track', async () => {
+    const fake = makeFakeApi();
+    const onTrackChange = vi.fn();
+    await mount(fake, { onTrackChange });
+    const srt = '1\n00:00:00,000 --> 00:00:02,000\nHand corrected\n';
+    await pick(new File([srt], 'my fixes.SRT', { type: 'text/plain' }));
+    expect(fake.calls.find((c) => c.method === 'subtitles.import')?.params).toEqual({
+      videoId: 'v1',
+      text: srt,
+      format: 'SRT',
+      name: 'my fixes.SRT',
+    });
+    // Adopted into the panel AND pushed to the parent.
+    expect(container.querySelector('.track-meta')?.textContent).toContain('fixes.srt');
+    expect(onTrackChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('derives the format from the last dot (a dotted stem must not fool it)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake);
+    await pick(new File(['WEBVTT\n\n'], 'ep.01.final.vtt', { type: 'text/plain' }));
+    expect(fake.calls.find((c) => c.method === 'subtitles.import')?.params?.format).toBe('vtt');
+  });
+
+  it('surfaces the sidecar rejection for an unsupported file', async () => {
+    const fake = makeFakeApi({ importError: "unsupported subtitle format: 'docx'" });
+    await mount(fake);
+    await pick(new File(['nope'], 'notes.docx', { type: 'text/plain' }));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('docx');
+  });
+
+  it('does nothing when the picker is dismissed with no file', async () => {
+    const fake = makeFakeApi();
+    await mount(fake);
+    const input = importInput();
+    Object.defineProperty(input, 'files', { value: [], configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'subtitles.import')).toBeUndefined();
+  });
+
+  it('uses String(err) when the import rejects with a non-Error value', async () => {
+    const fake = makeFakeApi();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('plain import error');
+    await mount(fake);
+    await pick(new File(['x'], 'a.srt', { type: 'text/plain' }));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain import error');
+  });
+
+  it('surfaces a FileReader failure and never calls the rpc with empty text', async () => {
+    // Real path: the file is deleted or its permissions change between the pick
+    // and the read. Resolving empty text instead would reach the sidecar as a
+    // bogus "no cues found" and blame the user's file for a local read error.
+    const fake = makeFakeApi();
+    await mount(fake);
+    class FailingReader {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      result: string | null = null;
+      readAsText(): void {
+        setTimeout(() => this.onerror?.(), 0);
+      }
+    }
+    vi.stubGlobal('FileReader', FailingReader);
+    await pick(new File(['x'], 'gone.srt', { type: 'text/plain' }));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Could not read');
+    expect(fake.calls.find((c) => c.method === 'subtitles.import')).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it('exports formatFromFilename as a pure extension reader', () => {
+    expect(formatFromFilename('a.srt')).toBe('srt');
+    expect(formatFromFilename('ep.01.final.VTT')).toBe('VTT');
+    // No dot: forwarded whole so the SIDECAR names the bad format, not this panel.
+    expect(formatFromFilename('subtitles')).toBe('subtitles');
   });
 
   // --- both arms of each `instanceof Error ? message : String(err)` ternary ---

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..util import clamp, get_logger
+from . import asr_vocabulary as _vocabulary
 
 log = get_logger("media_studio.features.transcribe")
 
@@ -321,6 +322,8 @@ def transcribe_file(
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
     compute_type: str = DEFAULT_GPU_COMPUTE,
+    initial_prompt: str | None = None,
+    hotwords: str | None = None,
     on_progress: ProgressCb | None = None,
     should_cancel: CancelProbe | None = None,
 ) -> Transcript:
@@ -329,6 +332,16 @@ def transcribe_file(
     ``loader`` is the (injected/mocked) model loader seam — never imported here.
     When ``language`` is ``None`` the model auto-detects it; the detected code is
     returned in ``Transcript.language``.
+
+    ``initial_prompt`` / ``hotwords`` are faster-whisper's two vocabulary-biasing
+    knobs (verified present on ``WhisperModel.transcribe`` at the pinned 1.2.1 —
+    ``sidecar/requirements.lock.txt``). Each is forwarded ONLY when not ``None``,
+    so a caller with no custom dictionary produces the exact same call as before
+    this parameter existed. This wrapper never passes ``prefix``, so the upstream
+    "``hotwords`` has no effect if ``prefix`` is not None" caveat cannot apply.
+    Build them with :mod:`media_studio.features.asr_vocabulary`; the rule-based
+    post-correction is deliberately NOT applied here (this stays a pure ASR
+    seam) — :func:`transcribe_with_engine` owns it.
 
     Progress is reported against the media duration that faster-whisper exposes
     on its ``info`` object: as each segment's ``end`` advances we map it to a
@@ -345,10 +358,21 @@ def transcribe_file(
     )
     log.info("transcribing %s on %s (lang=%s)", audio_path, device_used, language or "auto")
 
+    # Only pass a biasing knob that was actually asked for: an explicit
+    # ``initial_prompt=None`` is a valid faster-whisper call, but omitting the
+    # kwarg keeps the zero-vocabulary call shape identical to the pre-vocabulary
+    # one (which is what the injected fakes and the E2E tiny model assert on).
+    biasing: dict[str, Any] = {}
+    if initial_prompt is not None:
+        biasing["initial_prompt"] = initial_prompt
+    if hotwords is not None:
+        biasing["hotwords"] = hotwords
+
     segments_iter, info = whisper_model.transcribe(
         audio_path,
         language=language,
         word_timestamps=True,
+        **biasing,
     )
 
     duration = float(_attr(info, "duration") or 0.0)
@@ -457,8 +481,25 @@ def transcribe_with_engine(
     non-GPU machine runs cpu/int8 with a CPU-appropriate model directly — instead
     of attempting cuda and relying on the exception fallback. ``detect_probe`` is
     the injectable CUDA-availability seam.
+
+    **Custom vocabulary** (``settings['asrVocabulary']``) is applied here, and the
+    two engines get DIFFERENT treatment because their backends differ:
+
+      * whisper -> real decode-time biasing via ``initial_prompt`` + ``hotwords``
+        **and** the post-correction pass;
+      * parakeet -> post-correction ONLY. This repo's NeMo adapter
+        (``parakeet_asr_backend._RealParakeetModel.transcribe``) calls
+        ``model.transcribe([audio], timestamps=True)`` and forwards no prompt or
+        hotword argument, so there is nothing to bias with on that path.
+
+    The correction runs on whichever transcript is returned — including the
+    whisper fallback after a Parakeet degrade — so the user's term list is
+    honoured regardless of which engine actually produced the words. The
+    cancelled-empty result is the one exception: correcting an empty transcript
+    is a no-op, so it is returned untouched (and identity-preserving).
     """
     model, device, compute_type = resolve_transcribe_target(settings, probe=detect_probe)
+    terms = _vocabulary.parse_terms(settings)
     engine = selected_asr_engine(settings)
     if engine == PARAKEET_ENGINE:
         runner = parakeet_runner if parakeet_runner is not None else _default_parakeet_runner
@@ -472,7 +513,7 @@ def transcribe_with_engine(
             should_cancel=should_cancel,
         )
         if result.get("segments"):
-            return result
+            return _vocabulary.apply_corrections(result, terms)
         if should_cancel is not None and should_cancel():
             # Cancelled before the first chunk completed -> the empty transcript
             # is the EXPECTED cancel result, NOT a weights-missing degrade. Do
@@ -481,15 +522,20 @@ def transcribe_with_engine(
             return result
         # Parakeet degraded (offline + weights missing) -> whisper fallback.
         log.info("parakeet produced no segments; falling back to whisper")
-    return transcribe_file(
-        audio_path,
-        loader=loader,
-        language=language,
-        model=model,
-        device=device,
-        compute_type=compute_type,
-        on_progress=on_progress,
-        should_cancel=should_cancel,
+    return _vocabulary.apply_corrections(
+        transcribe_file(
+            audio_path,
+            loader=loader,
+            language=language,
+            model=model,
+            device=device,
+            compute_type=compute_type,
+            initial_prompt=_vocabulary.build_initial_prompt(terms),
+            hotwords=_vocabulary.build_hotwords(terms),
+            on_progress=on_progress,
+            should_cancel=should_cancel,
+        ),
+        terms,
     )
 
 

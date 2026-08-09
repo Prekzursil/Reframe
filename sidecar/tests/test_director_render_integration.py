@@ -379,15 +379,70 @@ def test_export_renders_valid_delivery_mp4(sample: Path, tmp_path: Path) -> None
 
 
 @_SKIP
-@pytest.mark.parametrize("kind", ["stitchPanorama", "regenScroll", "ocrExtractList", "reorder"])
+def test_reorder_renders_a_real_resequenced_mp4_and_undo_round_trips(sample: Path, tmp_path: Path) -> None:
+    # v1.5 docs/plans/v1.5/SCOPE.md O-3: ``reorder`` used to hit "no engine for kind".
+    # It now renders for real. The falsifiable, non-no-op proof available to
+    # ffprobe is DURATION: the three kept segments total 1.1 s out of a 1.5 s
+    # source, so a no-op copy (1.5 s) is excluded.
+    #
+    # SCOPE (inline, honest): duration proves the segments were re-cut, NOT that
+    # they landed in the permuted ORDER — that is asserted structurally against
+    # the emitted filtergraph in ``test_director_reorder_engine`` (keep *i* is
+    # ``segments[order[i]]``). Settling the order empirically would need a
+    # per-frame pixel/timecode comparison of the testsrc counter, which this
+    # tiny integration clip deliberately does not do.
+    pc = _project_copy(tmp_path, sample)
+    source_before = pc.data["video"]["path"]
+    op = EditOp(
+        id="ro1",
+        kind="reorder",
+        span=(0, 1500),
+        params={"segments": [[0, 300], [400, 800], [1100, 1500]], "order": [2, 0, 1]},
+    )
+
+    result, engines = _apply_one(pc, op)
+
+    assert result.ops_status[0].status == "applied"
+    rendered = Path(pc.data["video"]["path"])
+    assert rendered != Path(source_before)
+    duration = _ffprobe_ok(rendered)
+    assert duration == pytest.approx(1.1, abs=0.25)  # 0.3 + 0.4 + 0.4, not the 1.5 s source
+
+    undo = apply_plan(result.inverse_plan, project_copy=pc, engines=engines)
+    assert undo.ops_status[0].status == "applied"
+    assert Path(pc.data["video"]["path"]) == Path(source_before)
+
+
+@_SKIP
+def test_reorder_with_a_non_permutation_order_degrades_gracefully(sample: Path, tmp_path: Path) -> None:
+    # A malformed reorder must NOT silently drop a segment: it fails the op and
+    # auto-rolls-back, exactly like the unwired kinds used to (but with a reason
+    # that names the offending param instead of "no engine for kind").
+    pc = _project_copy(tmp_path, sample)
+    source_before = pc.data["video"]["path"]
+    op = EditOp(
+        id="ro2",
+        kind="reorder",
+        span=(0, 1500),
+        params={"segments": [[0, 300], [400, 800]], "order": [1]},  # would DELETE segment 0
+    )
+
+    result, _engines = _apply_one(pc, op)
+
+    assert result.ops_status[0].status == "failed"
+    assert "order" in (result.ops_status[0].status_reason or "")
+    assert Path(pc.data["video"]["path"]) == Path(source_before)
+
+
+@_SKIP
+@pytest.mark.parametrize("kind", ["stitchPanorama", "regenScroll", "ocrExtractList"])
 def test_deferred_kinds_degrade_gracefully(kind: str, sample: Path, tmp_path: Path) -> None:
     # A deferred-kind op has NO engine -> the op is marked failed and the COPY is
     # auto-rolled-back: the source manifest is untouched (graceful degradation,
     # never a crash or a corrupt source).
     pc = _project_copy(tmp_path, sample)
     source_before = pc.data["video"]["path"]
-    span = None if kind == "reorder" else (0, 1500)
-    op = EditOp(id="d1", kind=kind, span=span, params={"panorama": "p"} if kind == "regenScroll" else {})
+    op = EditOp(id="d1", kind=kind, span=(0, 1500), params={"panorama": "p"} if kind == "regenScroll" else {})
 
     result, _engines = _apply_one(pc, op)
 
