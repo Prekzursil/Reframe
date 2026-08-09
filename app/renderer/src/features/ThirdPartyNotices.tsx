@@ -222,6 +222,112 @@ export const FFMPEG_NOTICE: BinaryNotice = {
     'exact revision it was built from.',
 };
 
+/**
+ * An OPT-IN model: not in the shipped asset set at all, downloaded only when the
+ * user enables the feature that needs it. Distinct from `ModelNotice` (bundled
+ * weights) because the obligation is different in kind: these carry a
+ * Responsible-AI (OpenRAIL) licence, which PERMITS commercial use but attaches
+ * enforceable behavioural use-restrictions that the licence requires be passed
+ * on to downstream users — so the notice has to state the restriction, not just
+ * credit the author.
+ */
+export interface OptInModelNotice {
+  /** Display name. */
+  name: string;
+  /** What it does in Reframe (one line). */
+  role: string;
+  /** The feature setting that gates the download + the code path. */
+  gatedBy: string;
+  /** SPDX-ish id of the WEIGHTS licence (the Hub tag). */
+  weightsLicense: string;
+  /** Canonical URL of the weights licence text. */
+  weightsLicenseUrl: string;
+  /** SPDX id of the source-CODE licence, which frequently differs. */
+  codeLicense: string;
+  /** True when the licence permits commercial use. OpenRAIL: true. */
+  commercial: boolean;
+  /** True when the licence attaches behavioural use-restrictions. OpenRAIL: true. */
+  useRestricted: boolean;
+  /** Copyright / authors attribution line. */
+  attribution: string;
+  /** Upstream weights coordinates. */
+  source: string;
+  /** Optional academic citation (paper + arXiv id). */
+  paper?: string;
+  /** The obligation/scope callout shown to the user. */
+  note: string;
+}
+
+/**
+ * The lip-sync engines (WU-B1) — OPT-IN, `lipSyncEnabled`-gated, never in the
+ * default asset set.
+ *
+ * LICENCE FACTS VERIFIED 2026-08-08 by two mechanically independent probes: the
+ * Hub API metadata for each repo, and a raw fetch of the repo's own README YAML
+ * frontmatter. Kept in lockstep with `sidecar/media_studio/features/tts/lipsync.py`
+ * `ENGINES`, and a sidecar test reads THIS FILE and fails if the two disagree —
+ * a licence claim is exactly the sort of duplicated fact that must not drift.
+ *
+ * SCOPE OF `weightsLicenseUrl` — measured, and narrower than it looks: NEITHER
+ * repo ships a licence file (`find hf://models/ByteDance/LatentSync-1.6 --name
+ * '*LICENSE*'` returns nothing; MuseTalk's root is two weight dirs + README +
+ * .gitattributes). The licence is declared ONLY by the Hub metadata tag, so these
+ * URLs are the CANONICAL TEXT FOR THAT TAG (SDXL's Open RAIL++-M, CompVis's
+ * CreativeML OpenRAIL-M) — not a document either repo published. That mapping is
+ * the Hub's tag convention, which is strong but is an inference; if an upstream
+ * ever ships its own modified licence text, that file governs and these links
+ * must be re-pointed at it.
+ *
+ * WHY THESE ARE NOT CHIPPED "Commercial OK": that chip reads, in this UI, as
+ * "permissive, no strings", and for an OpenRAIL model that is a materially
+ * incomplete statement — the use-restrictions bind the USER too. Chipping them
+ * "Non-commercial" would instead be simply false. They therefore get their own
+ * chip naming the licence and the restriction, which is also why the bundled
+ * models' chip counts above are untouched.
+ *
+ * Wav2Lip is deliberately ABSENT: it is genuinely research/non-commercial only,
+ * so it is not shipped, not downloadable, and rejected by name in the sidecar.
+ */
+export const OPT_IN_MODEL_NOTICES: readonly OptInModelNotice[] = [
+  {
+    name: 'LatentSync',
+    role: 'lip-sync — re-lips the on-screen mouth to a generated dub (default engine)',
+    gatedBy: 'lipSyncEnabled',
+    weightsLicense: 'openrail++',
+    weightsLicenseUrl:
+      'https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md',
+    codeLicense: 'Apache-2.0',
+    commercial: true,
+    useRestricted: true,
+    attribution: '© ByteDance Ltd. (bytedance/LatentSync)',
+    source: 'https://huggingface.co/ByteDance/LatentSync-1.6',
+    paper: 'LatentSync: audio-conditioned latent diffusion lip-sync, arXiv:2412.09262',
+    note:
+      'Commercial use IS permitted — this is a Responsible-AI (OpenRAIL++) licence, not a ' +
+      'non-commercial one. What it adds is a list of prohibited USES (Attachment A) that binds ' +
+      'you as well, and an obligation to pass those same restrictions on to anyone you give the ' +
+      'model or its output to. Reframe additionally requires you to attest that you have the ' +
+      'right to modify the on-screen person’s likeness before it will run.',
+  },
+  {
+    name: 'MuseTalk',
+    role: 'lip-sync — real-time-capable alternative engine',
+    gatedBy: 'lipSyncEnabled',
+    weightsLicense: 'creativeml-openrail-m',
+    weightsLicenseUrl: 'https://huggingface.co/spaces/CompVis/stable-diffusion-license',
+    codeLicense: 'MIT',
+    commercial: true,
+    useRestricted: true,
+    attribution: '© Tencent Music Entertainment Lyra Lab (TMElyralab/MuseTalk)',
+    source: 'https://huggingface.co/TMElyralab/MuseTalk',
+    note:
+      'Commercial use IS permitted under CreativeML OpenRAIL-M, subject to the same ' +
+      'Attachment A prohibited-use list and the same pass-through obligation. Reframe drives ' +
+      'this engine with its own MIT YuNet face boxes so the unlicensed S3FD detector bundled ' +
+      'with the upstream pipeline is never fetched or used.',
+  },
+];
+
 /** The Settings → Licenses surface: bundled third-party model attributions. */
 export function ThirdPartyNotices(): React.ReactElement {
   return (
@@ -314,6 +420,61 @@ export function ThirdPartyNotices(): React.ReactElement {
               {FFMPEG_NOTICE.note}
             </p>
           </li>
+        </ul>
+      </div>
+      <div className="tpn__optin">
+        <h3 className="tpn__subtitle">Optional downloads</h3>
+        <p className="tpn__intro">
+          These models are not shipped with Reframe. They are downloaded only if you turn on the
+          feature that needs them, and they are licensed under a Responsible-AI licence: commercial
+          use is permitted, but the licence forbids certain USES and requires you to pass those same
+          restrictions on to anyone you share the model or its output with.
+        </p>
+        <ul className="tpn__list">
+          {OPT_IN_MODEL_NOTICES.map((n) => (
+            <li key={n.name} className="tpn__item" data-optin-license={n.weightsLicense}>
+              <header className="tpn__head">
+                <span className="tpn__name">{n.name}</span>
+                <span
+                  className="tpn__chip tpn__chip--userestricted"
+                  // LITERAL 'yes', not a ternary. Every member of this list is
+                  // commercial-OK and use-restricted BY CONSTRUCTION — that is what
+                  // makes it a separate list from the bundled notices above (whose
+                  // `data-commercial` at :348 genuinely does vary). The chip text
+                  // below states both halves unconditionally, so a `false` entry
+                  // would render a chip contradicting its own attribute; branching
+                  // here would not fix that, it would only hide it behind a
+                  // permanently-unreachable arm and cost two uncoverable branches.
+                  // The invariant is enforced where it belongs, on the DATA:
+                  // ThirdPartyNotices.test.tsx:272-273 asserts
+                  // `every(n => n.commercial)` and `every(n => n.useRestricted)`,
+                  // so adding a non-conforming entry fails loudly instead.
+                  data-commercial="yes"
+                  data-use-restricted="yes"
+                >
+                  {n.weightsLicense} · commercial OK, use-restricted
+                </span>
+              </header>
+              <p className="tpn__role">{n.role}</p>
+              <p className="tpn__attr">
+                {n.attribution} · off unless <code>{n.gatedBy}</code> is enabled
+              </p>
+              <p className="tpn__license">
+                Weights:{' '}
+                <a href={n.weightsLicenseUrl} target="_blank" rel="noreferrer">
+                  {n.weightsLicense}
+                </a>{' '}
+                · Code: {n.codeLicense} · Source:{' '}
+                <a href={n.source} target="_blank" rel="noreferrer">
+                  {n.source}
+                </a>
+              </p>
+              {n.paper ? <p className="tpn__paper">{n.paper}</p> : null}
+              <p className="tpn__note" role="note">
+                {n.note}
+              </p>
+            </li>
+          ))}
         </ul>
       </div>
       <div className="tpn__fonts">

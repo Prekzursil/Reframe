@@ -176,7 +176,14 @@ class TestRegister:
             voice_store=v.VoiceStore(tmp_path / "voices", duration_probe=lambda p: 0.0),
             register_fn=fake_reg,
         )
-        assert set(registered) == {"tts.voices", "tts.sample.add", "tts.dub.start"}
+        assert set(registered) == {
+            "tts.voices",
+            "tts.sample.add",
+            "tts.dub.start",
+            # WU-B1 rides the same register() (feature-owns-register); it is
+            # gated at CALL time by lipSyncEnabled, not at registration.
+            "tts.lipsync.start",
+        }
         assert service is not None
 
     def test_registered_voices_handler_serves_all_three_engines(self, tmp_path):

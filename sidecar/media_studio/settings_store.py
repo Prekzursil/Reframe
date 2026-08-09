@@ -169,6 +169,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # SHALLOW top-level merge — writing ``savePresets`` REPLACES the whole block,
     # so WU-10/WU-11 must read-modify-write the full block to preserve ``presets``.
     "savePresets": {"presets": {}, "active": ""},
+    # Lip-sync (WU-B1): re-lip the on-screen mouth to a generated dub. OFF by
+    # default and read via ``features.tts.lipsync.lipsync_enabled``, which
+    # requires the LITERAL ``True`` — this flag guards a path that edits a real
+    # person's face, and its models are a separate opt-in download carrying an
+    # OpenRAIL licence whose behavioural use-restrictions flow through to the
+    # user. Default-off is the safe state, not a capability judgement.
+    "lipSyncEnabled": False,
 }
 
 # The config file name inside the resolved app config directory.

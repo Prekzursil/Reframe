@@ -77,3 +77,69 @@ Owned by the in-app Settings → Licenses surface, not by this file:
 `app/renderer/src/features/ThirdPartyNotices.tsx`. It reproduces each model's
 attribution and carries the **non-commercial** callout for ViNet-S
 (CC-BY-NC-SA-4.0), plus the OFL-1.1 notices for the bundled type trio.
+
+## 4. Opt-in Responsible-AI (OpenRAIL) models — the pass-through obligation
+
+The lip-sync engines are **not redistributed**: nothing ships, and nothing is
+fetched unless the user enables `lipSyncEnabled`. Their attributions therefore
+also live in `ThirdPartyNotices.tsx` (as `OPT_IN_MODEL_NOTICES`). They are
+recorded here only because one of their obligations is *not* discharged by an
+attribution block, and so belongs in a durable quotable text:
+
+| Model | Weights licence | Code licence | Commercial | Use-restricted |
+|---|---|---|---|---|
+| LatentSync (`ByteDance/LatentSync-1.6`) | `openrail++` | Apache-2.0 | **yes** | **yes** |
+| MuseTalk (`TMElyralab/MuseTalk`) | `creativeml-openrail-m` | MIT | **yes** | **yes** |
+
+Verified 2026-08-08 by two mechanically independent probes: the Hub API metadata
+for each repo, and a raw fetch of each repo's own `README.md` YAML frontmatter.
+
+**Scope of that verification, stated narrowly:** neither repo ships a licence
+file — a recursive `*LICENSE*` search of `ByteDance/LatentSync-1.6` returns
+nothing, and `TMElyralab/MuseTalk`'s root is two weight directories plus a README
+and `.gitattributes`. The licence is therefore declared **only by the Hub metadata
+tag**. What was read verbatim is the canonical text *for that tag* (Stability's
+CreativeML Open RAIL++-M and CompVis's CreativeML OpenRAIL-M). Treating the tag as
+pointing at that text is the Hub's own convention and is strong, but it is an
+inference, not a document either upstream published. If an upstream later ships a
+modified licence file, that file governs and the URLs in
+`app/renderer/src/features/ThirdPartyNotices.tsx` must be re-pointed at it. The
+settling check is a re-run of the `*LICENSE*` search against each repo.
+
+LatentSync's *code* licence is not an inference: `bytedance/LatentSync`'s GitHub
+`LICENSE` is the verbatim Apache License 2.0 text.
+
+**These are NOT non-commercial licences.** Both grants are royalty-free and
+expressly permit hosting the model "for Third Party remote access purposes (e.g.
+software-as-a-service)". What they add is Attachment A — a list of prohibited
+USES — together with this clause, which is the obligation this section exists to
+record:
+
+> Use-based restrictions as referenced in paragraph 5 MUST be included as an
+> enforceable provision by You in any type of legal agreement … governing the use
+> and/or distribution
+
+So if Reframe ever redistributes these weights, or offers lip-sync as a hosted
+service, the Attachment A restrictions must be carried into the terms shown to
+that downstream user. Rendering the notice in-app satisfies the attribution half;
+it does **not** by itself satisfy the flow-down half for a hosted offering.
+
+Two corrections to the v1.5 plan (`docs/plans/v1.5/flagship-lip-sync-dub.md`
+§3.2) are recorded deliberately, because both would otherwise be re-derived wrong:
+
+1. The plan lists both models as commercial **blockers**. They are not; the
+   licence class was misread as non-commercial.
+2. Attachment A, in **both** variants, has eleven items and **none names
+   impersonation, likeness, identity, or a real person's image or voice**. A
+   non-consensual relip is most plausibly caught by item 3 (verifiably false
+   information to harm others) or item 5 (defame, disparage or harass), but that
+   is an inference about application, not a verbatim prohibition — UNVERIFIED
+   until licence counsel reads those items against a named fact pattern.
+   Reframe's likeness-attestation gate is therefore justified on EU AI Act
+   Art. 50 transparency duties and the plan's own §5 ethics gate, **not** on an
+   OpenRAIL likeness clause.
+
+**Wav2Lip is excluded outright**, and this one *is* a genuine non-commercial
+wall: its README states "any form of commercial use is strictly prohibited".
+It is named in `lipsync.DENIED_ENGINES` so a request for it is refused with that
+reason rather than falling through to a generic "unknown engine".
