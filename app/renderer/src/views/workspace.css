@@ -108,11 +108,34 @@
   align-self: center;
 }
 
-/* Advanced disclosure: shares the tab voice but reads as a control, not a tab */
+/* Advanced disclosure: shares the tab voice but reads as a control, not a tab.
+ *
+ * PINNED to the right edge of the scrolling strip. `.workspace .tabbar` above is
+ * `overflow-x: auto`, so this control scrolls away with the tabs — and it is the
+ * ONLY control that can collapse the Deliver cluster. When it leaves the window
+ * the cluster becomes uncollapsible, which is the F17 defect.
+ *
+ * That is not hypothetical. F17 was fixed when the strip held 13 tabs (8 painted
+ * collapsed) and left ~94px of overflow. The v1.5 wave took it to 17 tabs / 12
+ * painted, and the nightly e2e caught the regression precisely:
+ * `expect(toggle).toBeInViewport()` -> "Received: viewport ratio 0" on windows,
+ * macos AND ubuntu. Off-screen entirely, not merely clipped.
+ *
+ * Collapsing the cluster cannot fix this — the overflow is now in the PRIMARY
+ * tabs, which paint whether or not the cluster is open. Sticky makes the control
+ * reachable at ANY tab count instead of buying headroom that the next lane spends.
+ *
+ * The background must be OPAQUE (it was `transparent`): a sticky element sits over
+ * the tabs scrolling beneath it, and a transparent one would render them through
+ * the label. `--surface-bg` is the strip's own canvas, so it reads unchanged when
+ * there is no overflow to scroll. */
 .tabbar--grouped .tabbar__advanced-toggle {
   appearance: none;
   align-self: center;
-  background: transparent;
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--surface-bg);
   border: none;
   color: var(--text-muted);
   cursor: pointer;

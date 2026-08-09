@@ -72,6 +72,10 @@ import './styles/tokens.css';
 // Self-hosted @font-face bindings for the type trio the tokens lead with (Inter /
 // Newsreader / IBM Plex Mono); without them those leads decay to system fallbacks.
 import './styles/fonts.css';
+// H5: the GLOBAL form-control floor (select / fieldset / legend). Element
+// selectors only, so every component sheet below still overrides it by class.
+// Must load BEFORE the component sheets for that ordering to hold.
+import './styles/controls.css';
 import './components/shell.css';
 import './components/toast/toast.css';
 import './components/SidecarBanner.css';

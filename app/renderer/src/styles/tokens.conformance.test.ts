@@ -811,3 +811,65 @@ describe('editorial serif stays inside its allowlist (H7)', () => {
     expect(viewTitles).toEqual([]);
   });
 });
+
+// --- H5: the global form-control floor actually exists and is wired ---------------
+//
+// sec.3.4 / H5: "Deliver leaks unstyled native HTML — a raw <fieldset> and a
+// 23x20 px Template select. Add a global `select` rule to the token layer".
+//
+// Measured before the fix: NO element-level rule for select / fieldset / legend
+// existed anywhere in the renderer, so ~50 selects and 7 fieldsets rendered as
+// raw platform chrome. The tell that this was an oversight and not a decision:
+// tokens.css already defined `--control-pad-input` and documented it as "text
+// inputs / selects" — authored for a rule that was never written.
+//
+// These pin the floor so it cannot silently disappear again. A stylesheet that
+// exists but is never IMPORTED styles nothing, so the import is pinned too — that
+// is the failure mode a file-existence check alone would miss.
+
+const CONTROLS_CSS = resolve(HERE, 'controls.css');
+const APP_TSX = resolve(HERE, '..', 'App.tsx');
+
+describe('global form-control floor (H5)', () => {
+  it('defines element-level select, fieldset and legend rules', () => {
+    const css = stripComments(readFileSync(CONTROLS_CSS, 'utf8'));
+    // Element selectors at the start of a rule — NOT `.some-class select`, which
+    // would be a component override rather than the global floor.
+    for (const el of ['select', 'fieldset', 'legend']) {
+      expect(new RegExp(`(^|\\})\\s*${el}\\s*\\{`).test(css), `${el} floor rule`).toBe(true);
+    }
+  });
+
+  it('is imported by App.tsx AFTER tokens.css (so the properties resolve)', () => {
+    const app = readFileSync(APP_TSX, 'utf8');
+    const tokensAt = app.indexOf('styles/tokens.css');
+    const controlsAt = app.indexOf('styles/controls.css');
+    expect(controlsAt, 'controls.css is imported').toBeGreaterThan(-1);
+    expect(tokensAt, 'tokens.css is imported').toBeGreaterThan(-1);
+    // A sheet that loads before its custom properties resolves them to nothing.
+    expect(controlsAt).toBeGreaterThan(tokensAt);
+  });
+
+  it('consumes the select padding token the design system already declared', () => {
+    // The specific dangling token H5 exposed. If a future edit hardcodes padding
+    // here, the token goes orphaned again and the audit finding silently returns.
+    const css = stripComments(readFileSync(CONTROLS_CSS, 'utf8'));
+    expect(css).toContain('var(--control-pad-input)');
+  });
+
+  it('uses NO raw colour literals — every value routes through a token', () => {
+    // Same discipline the one-accent guard applies to usageBar.css. A hex or
+    // rgb() here would be a colour off the ladder, in a sheet that touches every
+    // control in the app.
+    const css = stripComments(readFileSync(CONTROLS_CSS, 'utf8'));
+    expect(css.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []).toEqual([]);
+    expect(css.match(/\b(?:rgba?|hsla?)\(/g) ?? []).toEqual([]);
+  });
+
+  it('gives the select a real hit target (the 23x20 px control H5 measured)', () => {
+    const css = stripComments(readFileSync(CONTROLS_CSS, 'utf8'));
+    const m = /min-height:\s*(\d+)px/.exec(css);
+    expect(m, 'select min-height floor').not.toBeNull();
+    expect(Number(m?.[1])).toBeGreaterThanOrEqual(28);
+  });
+});
