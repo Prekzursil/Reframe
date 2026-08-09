@@ -735,13 +735,6 @@ export const client = {
       opts?: { confirmCloudBudget?: boolean; acknowledged?: boolean },
     ): Promise<JobHandle> => rpc('batch.start', { id, ...(opts ?? {}) }),
     status: (id: string): Promise<{ batch: BatchState }> => rpc('batch.status', { id }),
-    /**
-     * `batch.consent {id}` -> {consent} — a READ-ONLY run/skip preview computed via
-     * `plan_consent` directly (never short-circuits to None when the budget gate is
-     * off), so BatchConsentCard can always render the split before an `acknowledged`
-     * `start`. Zero provider calls; `confirmCloudBudget` is read from settings.
-     */
-    consent: (id: string): Promise<{ consent: BatchConsent }> => rpc('batch.consent', { id }),
     list: (): Promise<{ batches: BatchSummary[] }> => rpc('batch.list'),
     cancel: (id: string): Promise<{ ok: boolean }> => rpc('batch.cancel', { id }),
     resume: (id: string): Promise<JobHandle & { status?: BatchStatus }> =>
