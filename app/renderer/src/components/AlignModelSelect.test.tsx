@@ -202,4 +202,38 @@ describe('AlignModelSelect — non-commercial gate', () => {
     mount({ value: '' });
     expect(container.textContent).toContain('non-commercial');
   });
+
+  // --- the shape three reviewers proved was uncovered: opted IN, nothing chosen.
+  // The sidecar used to fall back to MMS in exactly this state while this select
+  // kept rendering the commercial-safe row as chosen. The backend fallback is
+  // gone (ctc_align._resolve_model_id); these pin the UI half of that contract.
+  it('keeps the commercial-safe default selected when opted in with no choice', () => {
+    mount({ value: '', allowNonCommercial: true });
+    expect(select().value).toBe('');
+    const chosen = select().selectedOptions[0];
+    expect(chosen.textContent).toContain('Apache-2.0');
+    expect(chosen.textContent).toContain('commercial-safe');
+  });
+
+  it('offers MMS but does not preselect it once the opt-in is on', () => {
+    mount({ value: '', allowNonCommercial: true });
+    expect(mmsOption().disabled).toBe(false);
+    expect(mmsOption().selected).toBe(false);
+  });
+
+  it('re-picking the default row after trying MMS persists the empty id', () => {
+    // The exact user story: opt in, try MMS, go back to the row labelled
+    // commercial-safe. `''` is what gets persisted, and `''` must mean Apache.
+    const onChange = vi.fn();
+    mount({ value: MMS_ALIGNER_ALIAS, allowNonCommercial: true, onChange });
+    setValue(select(), '');
+    expect(onChange).toHaveBeenCalledWith('');
+  });
+
+  it('says the opt-in only unlocks MMS rather than switching to it', () => {
+    mount({ value: '' });
+    const copy = container.textContent ?? '';
+    expect(copy).toContain('UNLOCKS');
+    expect(copy).toContain('does not switch to it');
+  });
 });

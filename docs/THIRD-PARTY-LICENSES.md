@@ -191,6 +191,20 @@ is truthy. This implements
 `docs/plans/v1.5/flagship-transcript-editing.md:94` ("must NOT be the packaged
 default") and `:150` ("gate MMS behind `allowNonCommercialAligner`").
 
+**The opt-in UNLOCKS the MMS model; it never selects it.** Reaching CC-BY-NC
+weights takes the flag *and* an explicit choice in Settings. The first cut of
+this section did not say that because the code did not do it: with the flag on
+and nothing chosen, `_resolve_model_id` fell back to MMS while the Settings
+dropdown still rendered "English wav2vec2 — default (Apache-2.0,
+commercial-safe)" as the selected row — a screen asserting the wrong licence for
+the model actually running, which is worse than the undisclosed dependency this
+section was written to close. Three independent reviewers reproduced it with the
+same probe. The fallback is removed. It shipped green because the sidecar suite
+and the renderer suite each only checked their own half, so the guard is now a
+cross-file test that reads both plus this table's in-app twin:
+`test_the_settings_dropdown_label_matches_the_model_that_will_actually_run` in
+`sidecar/tests/test_ctc_align.py`.
+
 **What this does NOT do, stated so it is not assumed:**
 
 - The per-language permissive-CTC map the same plan line asks for (the XLSR-53

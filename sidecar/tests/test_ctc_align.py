@@ -10,6 +10,8 @@ audio_loader returning synthetic numpy samples, plus the offline / empty / cance
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -317,6 +319,22 @@ class TestResolveModelId:
 _MMS = "MahmoudAshraf/mms-300m-1130-forced-aligner"
 _W2V2 = "facebook/wav2vec2-large-960h-lv60-self"
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+#: the Settings dropdown whose row labels state a licence per model.
+_ALIGN_SELECT_TSX = _REPO_ROOT / "app" / "renderer" / "src" / "components" / "AlignModelSelect.tsx"
+#: the Licenses surface whose ``ALIGNER_MODEL_NOTICES`` states the licence per model id.
+_NOTICES_TSX = _REPO_ROOT / "app" / "renderer" / "src" / "features" / "ThirdPartyNotices.tsx"
+
+#: Every settings shape that means "the user has NOT chosen a model". ``''`` is
+#: not hypothetical: it is what ``AlignModelSelect`` persists for its first row
+#: AND what its opt-in-withdrawal handler writes (AlignModelSelect.tsx:74).
+_DEFAULT_ROW_SETTINGS: tuple[dict[str, Any], ...] = (
+    {},
+    {"ctcModelId": ""},
+    {"allowNonCommercialAligner": True},
+    {"allowNonCommercialAligner": True, "ctcModelId": ""},
+)
+
 
 class TestNonCommercialAlignerGate:
     def test_constants_name_the_two_sides_of_the_gate(self):
@@ -327,8 +345,34 @@ class TestNonCommercialAlignerGate:
     def test_packaged_default_is_not_the_cc_by_nc_model(self):
         assert ca._resolve_model_id({}, None) == _W2V2
 
-    def test_opt_in_restores_the_mms_default(self):
-        assert ca._resolve_model_id({"allowNonCommercialAligner": True}, None) == _MMS
+    def test_the_opt_in_unlocks_mms_it_does_not_make_it_the_default(self):
+        """The opt-in is an UNLOCK, not a default-switch. REFUTED-AND-CORRECTED.
+
+        This test used to be named ``test_opt_in_restores_the_mms_default`` and
+        asserted the OPPOSITE — that ``{'allowNonCommercialAligner': True}`` with
+        no selection resolves to the CC-BY-NC id. Three independent reviewers
+        refuted that with the same executed probe, and they were right: the
+        Settings dropdown renders the selected row as "English wav2vec2 —
+        default (Apache-2.0, commercial-safe)" in exactly that state, so the
+        screen asserted the wrong licence for the model that would actually run.
+
+        Nothing here is weakened: MMS is still reachable, and every test that
+        pins it as reachable-with-an-explicit-selection is untouched below. What
+        changed is that reaching it now requires the SELECTION as well as the
+        opt-in — which is what the checkbox copy ("unlocks MMS-300M"), the
+        Licenses copy, and plan line 94 ("must NOT be the packaged default") all
+        already promised.
+        """
+        assert ca._resolve_model_id({"allowNonCommercialAligner": True}, None) == _W2V2
+
+    def test_the_opt_in_plus_the_empty_selection_is_still_the_permissive_default(self):
+        """``ctcModelId: ''`` is what the default row and the withdrawal handler write.
+
+        The uncovered shape: opt in, try MMS, then re-pick the row labelled
+        commercial-safe. Before the fix that still resolved to CC-BY-NC weights.
+        """
+        settings = {"allowNonCommercialAligner": True, "ctcModelId": ""}
+        assert ca._resolve_model_id(settings, None) == _W2V2
 
     def test_falsy_opt_in_keeps_the_permissive_default(self):
         assert ca._resolve_model_id({"allowNonCommercialAligner": False}, None) == _W2V2
@@ -367,6 +411,50 @@ class TestNonCommercialAlignerGate:
 
         assert _wire._COMPONENT_ASSETS["ctc_aligner"] == ca.WAV2VEC2_ASSET_NAME
         assert recommender._COMPONENT_ASSETS["ctc_aligner"] == ca.WAV2VEC2_ASSET_NAME
+
+    def test_the_settings_dropdown_label_matches_the_model_that_will_actually_run(self):
+        """CROSS-CUTTING: the label the UI shows vs the id the sidecar resolves.
+
+        This is the test whose ABSENCE let the defect ship green. The renderer
+        suite asserted the row label; this suite asserted the resolved id; each
+        was internally consistent, so 239 sidecar + 188 renderer tests passed
+        while the two halves contradicted each other. Nothing that reads only one
+        side can see that — so this reads BOTH, plus the Licenses surface that
+        states the licence per model id, and joins them on the resolved id.
+
+        It spans three files on purpose (same pattern as
+        ``test_transition_ts_parity`` / the ``ThirdPartyNotices`` read in
+        ``test_tts_lipsync``): a comment claiming "the UI cannot drift from the
+        gate" (ModelsSystemPanel.tsx:912) is not a gate, it is a wish.
+        """
+        select_src = _ALIGN_SELECT_TSX.read_text(encoding="utf-8")
+        notices_src = _NOTICES_TSX.read_text(encoding="utf-8")
+
+        # 1. the label of the row whose persisted value is '' (the default row).
+        row = re.search(r"\{\s*id:\s*''\s*,\s*label:\s*'([^']*)'", select_src)
+        assert row is not None, f"no `id: ''` row in ALIGN_MODEL_CHOICES ({_ALIGN_SELECT_TSX})"
+        label = row.group(1)
+
+        for settings in _DEFAULT_ROW_SETTINGS:
+            # 2. what the sidecar will ACTUALLY align with in that state.
+            resolved = ca._resolve_model_id(settings, None)
+            # 3. the licence that surface #3 declares for that exact model id.
+            notice = re.search(
+                rf"modelId: '{re.escape(resolved)}',.*?license: '([^']*)'",
+                notices_src,
+                re.S,
+            )
+            assert notice is not None, f"{resolved} has no ALIGNER_MODEL_NOTICES entry"
+            declared = notice.group(1)
+            assert declared in label, (
+                f"settings={settings!r} resolves to {resolved} ({declared}), but the "
+                f"default row still reads {label!r} — the screen states the wrong "
+                f"licence for the model the job will use"
+            )
+            assert resolved not in ca.NON_COMMERCIAL_MODEL_IDS, (
+                f"settings={settings!r} resolves to the CC-BY-NC {resolved} while the "
+                f"row the user sees selected reads {label!r}"
+            )
 
     def test_every_permissive_id_is_a_real_hf_repo_path(self):
         # HF Hub metadata probe, 2026-08-09: all three are license:apache-2.0.

@@ -437,10 +437,11 @@ export const ALIGNER_MODEL_NOTICES: readonly AlignerModelNotice[] = [
     gatedBy: 'allowNonCommercialAligner',
     note:
       'NON-COMMERCIAL: this model may not be used for commercial purposes, and it requires ' +
-      'attribution — which is what this entry is. It is off by default: Reframe aligns with the ' +
-      'Apache-2.0 wav2vec2 model above unless you turn this one on in Settings, and turning it on ' +
-      'is what makes your alignment output non-commercial. It covers far more languages than the ' +
-      'permissive alternatives, which is the whole trade-off.',
+      'attribution — which is what this entry is. It is off by default, and the opt-in only ' +
+      'UNLOCKS it: Reframe keeps aligning with the Apache-2.0 wav2vec2 model above until you ' +
+      'also pick this one in Settings, so the licence the dropdown shows is always the licence ' +
+      'your jobs run under. Choosing it is what makes your alignment output non-commercial. It ' +
+      'covers far more languages than the permissive alternatives, which is the whole trade-off.',
   },
 ];
 

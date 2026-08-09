@@ -4,12 +4,20 @@
 // understands via `settings['ctcModelId']`. Since WU-T0/B1 the PACKAGED default
 // is the Apache-2.0 English wav2vec2 (`facebook/wav2vec2-large-960h-lv60-self`),
 // NOT the CC-BY-NC-4.0 MMS model it used to be, and MMS is reachable only when
-// `settings['allowNonCommercialAligner']` is on. Selecting the default persists
-// an EMPTY `ctcModelId` so the package default applies (no silent override).
+// `settings['allowNonCommercialAligner']` is on AND MMS is explicitly selected.
+// Selecting the default persists an EMPTY `ctcModelId` so the package default
+// applies (no silent override).
 //
 // The MMS row is rendered but DISABLED until the opt-in is on: the sidecar
 // silently downgrades an MMS request when the flag is off, and an option whose
 // effect the backend discards is worse than one that visibly cannot be chosen.
+//
+// The opt-in is an UNLOCK, never a selection. It briefly was both — the sidecar
+// fell back to MMS whenever the flag was on and nothing was chosen — so this
+// dropdown showed "Apache-2.0, commercial-safe" as the selected row over a
+// CC-BY-NC job. The sidecar fallback is gone; the label is now true in every
+// state, and `ctc_align`'s cross-file test joins these two halves so neither can
+// drift again (a comment saying they cannot drift is not a gate).
 // Licence facts: HF Hub metadata probe, 2026-08-09 (the previous "MIT" label on
 // the wav2vec2 row was wrong — the Hub reports apache-2.0).
 import React from 'react';
@@ -109,9 +117,9 @@ export function AlignModelSelect({
           onChange={(e) => handleAllowChange(e.target.checked)}
         />
         <span>
-          Allow non-commercial alignment models (CC-BY-NC-4.0). Off by default. Turning this on
-          unlocks MMS-300M and its 158 languages, and makes anything you align with it
-          non-commercial.
+          Allow non-commercial alignment models (CC-BY-NC-4.0). Off by default. Turning this on only
+          UNLOCKS MMS-300M and its 158 languages in the list above — it does not switch to it. Pick
+          it there to use it; anything you then align with it is non-commercial.
         </span>
       </label>
     </div>

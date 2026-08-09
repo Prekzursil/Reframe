@@ -907,9 +907,15 @@ export function ModelsSystemPanel({
       )}
 
       {/* M5 + WU-T0/B1: the alignment-model picker over settings.ctcModelId,
-          plus the allowNonCommercialAligner opt-in that unlocks the CC-BY-NC
-          MMS model. Both keys are read by the sidecar's single
-          `ctc_align._resolve_model_id`, so the UI cannot drift from the gate. */}
+          plus the allowNonCommercialAligner opt-in that unlocks (never selects)
+          the CC-BY-NC MMS model. Both keys are read by the sidecar's single
+          `ctc_align._resolve_model_id`.
+          This comment used to claim "so the UI cannot drift from the gate" — it
+          could, and it did: sharing an input says nothing about agreeing on the
+          output, and the drift shipped green because each suite only checked its
+          own side. The actual guard is the cross-file
+          test_the_settings_dropdown_label_matches_the_model_that_will_actually_run
+          in sidecar/tests/test_ctc_align.py. */}
       {analyzed && (
         <AlignModelSelect
           value={settings.ctcModelId ?? ''}

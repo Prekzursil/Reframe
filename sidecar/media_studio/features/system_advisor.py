@@ -243,9 +243,12 @@ COMPONENTS: tuple[ComponentSpec, ...] = (
         # WU-T0/B1: commercial-OK since the packaged default flipped from the
         # CC-BY-NC MMS model to Apache-2.0 wav2vec2 (ctc_align.DEFAULT_MODEL_ID).
         # The CC-BY-NC model is still reachable, but only when the user turns on
-        # `allowNonCommercialAligner` — an explicit choice this static component
-        # spec cannot see, and one the Settings copy warns about at the point of
-        # opt-in. Describing the DEFAULT here is what makes the verdict truthful.
+        # `allowNonCommercialAligner` AND picks it — the flag alone unlocks it and
+        # leaves the Apache-2.0 default running. That is an explicit choice this
+        # static component spec cannot see, and one the Settings copy warns about
+        # at the point of opt-in. Describing the DEFAULT here is what makes the
+        # verdict truthful — and since the flag no longer changes the default,
+        # the default really is Apache-2.0 in EVERY settings state.
         license_commercial_ok=True,
         improves="karaoke word-timing 2nd pass (ctc-forced-aligner)",
         speed="GPU/CPU ~1-2GB; ONNX + PyTorch backends",

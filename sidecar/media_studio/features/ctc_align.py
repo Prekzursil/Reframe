@@ -28,10 +28,13 @@ LONGER Reframe's packaged default — ``docs/plans/v1.5/flagship-transcript-edit
 ("must NOT be the packaged default") and ``:150`` ("gate MMS behind
 ``allowNonCommercialAligner``"). Reframe now defaults to
 ``facebook/wav2vec2-large-960h-lv60-self`` (**Apache-2.0**, English) and reaches the
-MMS model ONLY when ``settings['allowNonCommercialAligner']`` is truthy — an explicit
-opt-in that also has to be set before an explicit ``ctcModelId``/``model_id`` naming
-MMS is honoured. Everything flows through one :func:`_resolve_model_id`, so a single
-switch picks the model everywhere and the gate cannot be routed around.
+MMS model ONLY when BOTH hold: ``settings['allowNonCommercialAligner']`` is truthy
+AND a ``ctcModelId``/``model_id`` explicitly names MMS. The opt-in on its own is an
+UNLOCK, never a selection — with nothing chosen the packaged Apache-2.0 default
+still runs, because otherwise the Settings dropdown would keep showing
+"commercial-safe" over a CC-BY-NC job. Everything flows through one
+:func:`_resolve_model_id`, so a single switch picks the model everywhere and the
+gate cannot be routed around.
 
 LICENCE FACTS VERIFIED 2026-08-09 by an HF Hub metadata probe (a probe mechanically
 independent of this file's own comments, which is how the pre-existing "MIT"
@@ -118,7 +121,8 @@ def _decode_pcm_or_raise(
 #: The 158-language MMS forced aligner — **CC-BY-NC-4.0**, so NON-COMMERCIAL only
 #: (HF Hub tag ``license:cc-by-nc-4.0``, probed 2026-08-09). It is the upstream
 #: ``ctc-forced-aligner`` package default but NOT Reframe's: it is reachable only
-#: via ``settings['allowNonCommercialAligner']``. Attribution: © Mahmoud Ashraf
+#: by explicitly SELECTING it with ``settings['allowNonCommercialAligner']`` on —
+#: the flag alone unlocks it, it never selects it. Attribution: © Mahmoud Ashraf
 #: (MahmoudAshraf/mms-300m-1130-forced-aligner), built on Meta AI's MMS-300M.
 NON_COMMERCIAL_MODEL_ID = "MahmoudAshraf/mms-300m-1130-forced-aligner"
 #: The settings key that gates :data:`NON_COMMERCIAL_MODEL_IDS`. Absent/falsy =
@@ -245,18 +249,24 @@ def _resolve_model_id(settings: dict[str, Any], model_id: str | None) -> str:
     what makes the alias, the full-id and the per-job-arg paths all covered by one
     check — the flaw in gating only the default would be an explicit
     ``ctcModelId`` silently re-enabling a CC-BY-NC model in a commercial build.
+
+    **The opt-in UNLOCKS the MMS model; it does not select it.** The first cut of
+    this function had an ``elif allow_non_commercial: resolved =
+    NON_COMMERCIAL_MODEL_ID`` fallback, so turning the checkbox on silently made
+    CC-BY-NC weights the effective default while the Settings dropdown kept
+    rendering "English wav2vec2 — default (Apache-2.0, commercial-safe)" as the
+    chosen row — a screen stating the wrong licence for the model that would
+    actually run, in the very lane meant to make aligner licensing honest. It
+    also contradicted plan line 94 ("must NOT be the packaged default"), the
+    checkbox copy ("unlocks MMS-300M"), and the Licences copy. Reaching MMS now
+    takes the opt-in AND an explicit selection, which is what all three promised.
+    Cross-checked against the UI text by
+    ``test_the_settings_dropdown_label_matches_the_model_that_will_actually_run``.
     """
     allow_non_commercial = bool(settings.get(ALLOW_NON_COMMERCIAL_SETTING))
     configured = settings.get("ctcModelId")
     requested = model_id or (configured if isinstance(configured, str) and configured else None)
-    if requested:
-        resolved = _MODEL_ALIASES.get(requested, requested)
-    elif allow_non_commercial:
-        # Explicitly opted in and nothing selected: the 158-language MMS model is
-        # the best default available, and it is what pre-T0 builds used.
-        resolved = NON_COMMERCIAL_MODEL_ID
-    else:
-        resolved = DEFAULT_MODEL_ID
+    resolved = _MODEL_ALIASES.get(requested, requested) if requested else DEFAULT_MODEL_ID
     if resolved in NON_COMMERCIAL_MODEL_IDS and not allow_non_commercial:
         log.warning(
             "ctc_align: %s is non-commercial (CC-BY-NC-4.0) and %s is off — using %s instead",
