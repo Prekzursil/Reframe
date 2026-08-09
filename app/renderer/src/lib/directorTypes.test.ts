@@ -157,13 +157,53 @@ describe('opKindLabel', () => {
   });
 });
 
-describe('isOpKindAvailable', () => {
-  it('is false for exactly the deferred kinds and true otherwise', () => {
-    for (const kind of DEFERRED_OP_KINDS) {
-      expect(isOpKindAvailable(kind)).toBe(false);
+// v1.5 W14 REMEDIATION. The first version of this block looped over
+// DEFERRED_OP_KINDS and asserted each member is unavailable — VACUOUS under
+// exactly the mutation it exists to catch: empty the array (the natural shape of
+// "someone undoes the UI half") and the loop body never runs, so it stayed GREEN
+// while the UI silently stopped marking anything unavailable. Measured: with
+// `DEFERRED_OP_KINDS = []` opKindLabel and opKindCountLabel went red and that
+// test did not. The renderer therefore had no self-contained guard on the
+// mirror's CONTENTS and leaned entirely on the Python regex parser in
+// sidecar/tests/test_director_op_kind_parity.py. The contents are now pinned
+// LITERALLY, so an empty (or over-full) mirror goes red here too.
+describe('DEFERRED_OP_KINDS / isOpKindAvailable', () => {
+  it('mirrors exactly the three kinds the sidecar has no apply adapter for', () => {
+    expect([...DEFERRED_OP_KINDS]).toEqual(['stitchPanorama', 'regenScroll', 'ocrExtractList']);
+  });
+
+  it('is false for each deferred kind, named literally (not read off the array)', () => {
+    expect(isOpKindAvailable('stitchPanorama')).toBe(false);
+    expect(isOpKindAvailable('regenScroll')).toBe(false);
+    expect(isOpKindAvailable('ocrExtractList')).toBe(false);
+  });
+
+  it('is true for every wired kind, named literally', () => {
+    // The other direction: wiring an engine on the sidecar while leaving the kind
+    // in this mirror (or adding a wired kind to it by mistake) must also go red.
+    const wired: DirectorOpKind[] = [
+      'trim',
+      'cut',
+      'join',
+      'transition',
+      'removeSilence',
+      'removeFillers',
+      'reorder',
+      'retime',
+      'reframe',
+      'zoomPan',
+      'caption',
+      'translateCaption',
+      'overlayText',
+      'lowerThird',
+      'export',
+    ];
+    for (const kind of wired) {
+      expect(isOpKindAvailable(kind)).toBe(true);
     }
-    expect(isOpKindAvailable('trim')).toBe(true);
-    expect(isOpKindAvailable('export')).toBe(true);
+    // ...and the two halves must add up to the whole toolbox, so a 19th kind
+    // cannot slip in as neither-wired-nor-deferred without this count moving.
+    expect(wired.length + DEFERRED_OP_KINDS.length).toBe(18);
   });
 });
 

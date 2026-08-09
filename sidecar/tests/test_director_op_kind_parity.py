@@ -35,6 +35,7 @@ from typing import Any
 
 import pytest
 from media_studio.features import director_op_engines as engines_mod
+from media_studio.features import edit_validate as validate_mod
 from media_studio.features.edit_plan_prompt import advertised_op_kinds, build_system_prompt
 from media_studio.models.edit_plan import DEFERRED_OP_KINDS, EXECUTABLE_OP_KINDS, OP_KINDS
 
@@ -77,9 +78,16 @@ def _extract(
 
 
 class _StubRunner:
-    """A runner that is never called — ``build_engines`` only closes over it."""
+    """A runner that is never called — ``build_engines`` only closes over it.
 
-    def __call__(self, argv: Any, total_sec: float = 0.0, **_k: Any) -> int:  # pragma: no cover - never invoked
+    NO ``# pragma: no cover`` here, deliberately. This body is genuinely never
+    executed, but CI measures ``--cov=media_studio`` (quality.yml) so test modules
+    are not instrumented at all and the pragma bought nothing — while in this
+    repo's review culture "no pragma" is read as proof the 100% gate was met
+    honestly. An inert pragma spends that credibility for zero coverage.
+    """
+
+    def __call__(self, argv: Any, total_sec: float = 0.0, **_k: Any) -> int:
         raise AssertionError("the parity gate must not render anything")
 
 
@@ -104,6 +112,30 @@ def test_the_engine_table_covers_exactly_the_executable_kinds() -> None:
     # THE 19th-op guard on the Python side. Add a kind to `OpKind` and neither
     # wire an engine nor list it as deferred, and this goes red immediately.
     assert set(engines_mod.build_engines(runner=_StubRunner())) == set(EXECUTABLE_OP_KINDS)
+
+
+def test_the_validator_classifies_every_op_kind() -> None:
+    # THE 19th-op guard ONE LAYER DOWN (v1.5 W14 remediation). `edit_validate`
+    # holds three per-kind precondition sets; before this test a 19th kind that
+    # landed in none of them was silently accepted as span-free, track-free and
+    # clips-free — nobody having decided that. `_UNCONSTRAINED_KINDS` makes
+    # "no precondition" an explicit declaration, and this asserts the four sets
+    # PARTITION the toolbox: every kind classified exactly once, none twice.
+    buckets = {
+        "_SPAN_REQUIRED_KINDS": validate_mod._SPAN_REQUIRED_KINDS,
+        "_TRACK_KINDS": validate_mod._TRACK_KINDS,
+        "_CLIPS_REQUIRED_KINDS": validate_mod._CLIPS_REQUIRED_KINDS,
+        "_UNCONSTRAINED_KINDS": validate_mod._UNCONSTRAINED_KINDS,
+    }
+    seen: set[str] = set()
+    for name, kinds in buckets.items():
+        overlap = seen & kinds
+        assert not overlap, f"{name} re-classifies {sorted(overlap)} — a kind must land in exactly one bucket"
+        seen |= kinds
+    assert seen == set(OP_KINDS), (
+        f"unclassified: {sorted(set(OP_KINDS) - seen)}; unknown: {sorted(seen - set(OP_KINDS))} — "
+        "a new op kind must declare its span/track/clips preconditions, or be listed unconstrained"
+    )
 
 
 def test_the_prompt_advertises_exactly_the_executable_kinds() -> None:
