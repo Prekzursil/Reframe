@@ -8,6 +8,30 @@
 > **If a section reads "UNKNOWN - not yet measured", the unit died before measuring it and no
 > verdict there may be cited.** No section currently reads that.
 
+## RECONCILED 2026-08-08 — claims below that the implementation lanes SUPERSEDED
+
+Three lanes derived from this file and each correctly declined to edit it (an N-way edit would
+have conflicted). Reconciled here once, on main. **The original wording is left in place below,
+not deleted** — the point is that the correction stays visible. Where this block and the body
+disagree, **this block wins.**
+
+| § / line | What the audit said | Settled by | Now |
+|---|---|---|---|
+| §1.2 `:102` | *NOT-CHECKED: the exact count* (whisper) | #346 | **100** — `_LANGUAGE_CODES` in faster-whisper `v1.2.1` (the `requirements.lock.txt` pin), cross-checked against openai-whisper's `LANGUAGES` dict, a different file in a different repo. **Zero difference either way.** |
+| §1.2 `:98` | *NOT-CHECKED: the exact membership of the 25* (parakeet) | #346 | **25**, enumerated from the `language:` YAML of `nvidia/parakeet-tdt-0.6b-v3` at the revision `parakeet_asr.py:420` pins. Measured and asserted: **`PARAKEET_LANGS ⊂ WHISPER_LANGS` exactly** — which is what makes "switch to Whisper" always sound advice. |
+| `:64`, `:70` | **33** languages unreachable from the UI | #346 | **83.** The audit compared the UI against the *local MT table only* and never against the ASR engines. `SUPPORTED_LANGS` = ASR ∪ local-MT = **102**; the UI offered 19. |
+| — | (not stated) | #346 | **Exactly two** languages are translation-target-only with no ASR engine at all: `nb`, `zu`. Measured. |
+| §4.2 `:350-351`, `:375` | *"karaoke is style-locked"*, 5 `NO` cells | #347 | **False now.** `caption.py:640-648` dropped six params; `resolve_karaoke_style` merges them. Of 11 `CaptionOverride` fields, **9 are WIRED** (output demonstrably moves), 2 expected-inert. `emphasis`→bold stays declined for a *mechanical* reason: the karaoke Style sets `Bold=-1`, so `{\b1}` cannot render contrast. |
+
+**Still open from this audit, NOT superseded:** translation remains per-cue and context-free on
+cues already split mid-sentence (the mechanical cause of the owner's "bad translations" report),
+and the EN-only punctuation/casing model is still applied to all languages. Those are a separate
+in-flight lane; when it lands, this block gets another row rather than a rewrite.
+
+`docs/validation/tools/probe_language_inventory.py` (#346) now regenerates and diffs the language
+inventory against the pinned upstreams, so a model/library bump is audited by a tool instead of
+retyped into prose here.
+
 ## COVERAGE
 
 | § | Section | State |

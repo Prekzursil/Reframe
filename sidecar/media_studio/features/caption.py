@@ -301,6 +301,77 @@ def _default_style_line(
     )
 
 
+def hook_overlay_parts(
+    hook_title: str | None,
+    cues: Sequence[CueLike],
+    play_x: int,
+    play_y: int,
+    source_start: float = 0.0,
+    total_sec: float = 0.0,
+    hook_card: bool = False,
+    hook_card_sec: float = 0.0,
+) -> tuple[list[str], list[str]]:
+    """``(style lines, event lines)`` for the P3-A hook headline / WU-SP2 card.
+
+    Shared by :func:`build_ass` and
+    :func:`media_studio.features.caption_karaoke.build_karaoke_ass` so the hook
+    overlay is byte-identical whichever libass body style is selected (the
+    headline is an independent Style + event drawn ABOVE the captions, so it is
+    orthogonal to the body caption's look).
+
+    A blank / absent ``hook_title`` yields ``([], [])``. Otherwise:
+
+    - ``hook_card`` renders the OpusClip CARD (white opaque box, bold black,
+      upper third) time-boxed to the first ``hook_card_sec`` seconds, capped to
+      ``total_sec`` when known — it REPLACES the plain headline, never both.
+    - the plain headline is a bold top-anchored line spanning ``total_sec`` if
+      known, else the last cue's clip-local end or a 60 s floor (the §5 hard max
+      clip length) so it persists across the whole clip.
+
+    Pure. The hook text is user-ish data and is escaped + soft-wrapped by
+    :func:`wrap_hook_title` before it reaches any ASS field.
+    """
+    title_text = wrap_hook_title(hook_title or "")
+    if not title_text:
+        return [], []
+
+    if hook_card:
+        card_end = _hook_card.hook_card_end_sec(hook_card_sec, total_sec)
+        return (
+            [_hook_card.hook_card_style_line(play_x, play_y)],
+            [
+                f"Dialogue: 0,{format_ass_timestamp(0.0)},{format_ass_timestamp(card_end)},"
+                f"{_hook_card.HOOK_CARD_STYLE_NAME},,0,0,0,,{title_text}"
+            ],
+        )
+
+    # P3-A: a bold, larger, TOP-anchored headline style (Alignment 8 = top-
+    # centre). Slightly larger than the body caption with a thicker outline so
+    # it reads as a headline; safe top margin keeps it off the very edge.
+    title_size = max(14, int(round(play_y * 0.055)))
+    title_margin_v = max(12, int(round(play_y * 0.07)))
+    style = (
+        f"Style: {_HOOK_TITLE_STYLE},Arial,"
+        f"{title_size},"
+        "&H00FFFFFF,&H000000FF,&H00000000,&H96000000,"
+        "-1,0,0,0,"
+        "100,100,0,0,1,4,2,"
+        f"8,60,60,{title_margin_v},1"
+    )
+
+    title_end = float(total_sec)
+    if title_end <= 0.0:
+        # No probed duration: span to the last cue (clip-local) or a 60s floor
+        # (the §5 hard max clip length) so the headline persists.
+        cue_ends = [rebase_cue_time(c.get("end", 0.0), source_start) for c in cues]
+        title_end = max([*cue_ends, _HOOK_TITLE_FALLBACK_SEC], default=_HOOK_TITLE_FALLBACK_SEC)
+    event = (
+        f"Dialogue: 0,{format_ass_timestamp(0.0)},{format_ass_timestamp(title_end)},"
+        f"{_HOOK_TITLE_STYLE},,0,0,0,,{title_text}"
+    )
+    return [style], [event]
+
+
 def build_ass(
     cues: Sequence[CueLike],
     width: int = 1080,
@@ -360,31 +431,24 @@ def build_ass(
     if resolved.position_band is not None:
         alignment, margin_v = _band_position(resolved.position_band, default_margin_v)
 
-    styles = [
-        _default_style_line(resolved, font_size, alignment, margin_l, margin_r, margin_v),
-    ]
-
-    # P3-A: a bold, larger, TOP-anchored headline style (Alignment 8 = top-
-    # centre). Slightly larger than the body caption with a thicker outline so
-    # it reads as a headline; safe top margin keeps it off the very edge.
     # V1.1 WU SP2: a carded clip (top-N by virality) swaps the plain headline for
     # the OpusClip HOOK CARD style — a white opaque box with bold black text in
-    # the upper third, time-boxed to the first ~5 s (the event below).
-    title_text = wrap_hook_title(hook_title or "")
-    if title_text:
-        if hook_card:
-            styles.append(_hook_card.hook_card_style_line(play_x, play_y))
-        else:
-            title_size = max(14, int(round(play_y * 0.055)))
-            title_margin_v = max(12, int(round(play_y * 0.07)))
-            styles.append(
-                "Style: HookTitle,Arial,"
-                f"{title_size},"
-                "&H00FFFFFF,&H000000FF,&H00000000,&H96000000,"
-                "-1,0,0,0,"
-                "100,100,0,0,1,4,2,"
-                f"8,60,60,{title_margin_v},1"
-            )
+    # the upper third, time-boxed to the first ~5 s.
+    hook_styles, hook_events = hook_overlay_parts(
+        hook_title,
+        cues,
+        play_x,
+        play_y,
+        source_start=source_start,
+        total_sec=total_sec,
+        hook_card=hook_card,
+        hook_card_sec=hook_card_sec,
+    )
+
+    styles = [
+        _default_style_line(resolved, font_size, alignment, margin_l, margin_r, margin_v),
+        *hook_styles,
+    ]
 
     header = [
         "[Script Info]",
@@ -408,31 +472,8 @@ def build_ass(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
 
-    events: list[str] = []
-
-    # P3-A: emit the hook-title event FIRST so it draws above the body captions.
-    # WU SP2: a carded clip emits a HookCard event time-boxed to the first ~5 s
-    # (NOT the whole clip), capped to the clip length when known.
-    if title_text:
-        if hook_card:
-            card_end = _hook_card.hook_card_end_sec(hook_card_sec, total_sec)
-            events.append(
-                f"Dialogue: 0,{format_ass_timestamp(0.0)},{format_ass_timestamp(card_end)},"
-                f"{_hook_card.HOOK_CARD_STYLE_NAME},,0,0,0,,{title_text}"
-            )
-        else:
-            title_end = float(total_sec)
-            if title_end <= 0.0:
-                # No probed duration: span to the last cue (clip-local) or a 60s
-                # floor (the §5 hard max clip length) so the headline persists.
-                cue_ends = [rebase_cue_time(c.get("end", 0.0), source_start) for c in cues]
-                title_end = max(
-                    [*cue_ends, _HOOK_TITLE_FALLBACK_SEC],
-                    default=_HOOK_TITLE_FALLBACK_SEC,
-                )
-            events.append(
-                f"Dialogue: 0,{format_ass_timestamp(0.0)},{format_ass_timestamp(title_end)},HookTitle,,0,0,0,,{title_text}"
-            )
+    # P3-A: the hook-title event is emitted FIRST so it draws above the body captions.
+    events: list[str] = [*hook_events]
 
     for cue in cues:
         raw_start = cue.get("start", 0.0)
@@ -634,8 +675,19 @@ class CaptionEngine:
 
         When ``karaoke`` is set (the V1.1 WU SP1 ``opusclip-karaoke`` preset), the
         OpusClip word-by-word karaoke ASS is built instead of the standard
-        document — same temp-file burn/soft-mux path. ``hook_title``/``override``
-        do not apply to the karaoke preset (its look is fixed by the teardown).
+        document — same temp-file burn/soft-mux path.
+
+        v1.5 lane-karaoke: the karaoke branch receives the SAME styling arguments as
+        the standard document. It used to take only cues + canvas + ``source_start``
+        on the premise that "its look is fixed by the teardown", which silently
+        discarded ``override``, ``position``, ``hook_title``, ``total_sec``,
+        ``hook_card`` and ``hook_card_sec`` — so a style tuned in the gallery had no
+        effect on a karaoke burn even though the renderer's live preview painted it.
+        The teardown flourishes that are genuinely karaoke-only (the alternating
+        per-word accent and the ``\\t \\fscx`` scale-pop) survive any override; the
+        one control that cannot apply, per-word ``emphasis`` bolding, is declined
+        explicitly with its reason in
+        :mod:`media_studio.features.caption_karaoke`.
         """
         if karaoke:
             from . import caption_karaoke as _karaoke  # lazy: avoid an import cycle
@@ -645,6 +697,12 @@ class CaptionEngine:
                 width=width,
                 height=height,
                 source_start=source_start,
+                override=override,
+                position=position,
+                hook_title=hook_title,
+                total_sec=total_sec,
+                hook_card=hook_card,
+                hook_card_sec=hook_card_sec,
             )
         else:
             ass_doc = build_ass(

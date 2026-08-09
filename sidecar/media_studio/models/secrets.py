@@ -93,10 +93,27 @@ def scrub_error_body(text: str, keys: Sequence[str]) -> str:
 #: ``apiKey`` (providers.testKey), ``apiKeys`` (providers.upsert pool), and the
 #: legacy single ``cloudApiKey`` are the key-bearing param names in §2;
 #: ``_injectedKeys`` (WU-D2b-2) is the DPAPI-decrypted key bundle main injects on
-#: provider-calling methods — the composition root pops it BEFORE dispatch logs
-#: or records params, and listing it here is the belt-and-suspenders guarantee
-#: that ANY diagnostic that ever sees it strips it wholesale.
-_SECRET_PARAM_FIELDS: tuple[str, ...] = ("apiKey", "apiKeys", "cloudApiKey", "_injectedKeys")
+#: provider-calling methods, and ``_injectedSocialTokens`` (C14) is its exact
+#: analogue for social-platform OAuth tokens — the composition root pops each
+#: BEFORE dispatch logs or records params, and listing them here is the
+#: belt-and-suspenders guarantee that ANY diagnostic that ever sees one strips it
+#: wholesale.
+#:
+#: Both injected names are spelled as LITERALS rather than imported from their
+#: defining modules (``settings_store.INJECTED_KEYS_FIELD`` /
+#: ``features.social_queue.INJECTED_TOKENS_FIELD``): ``settings_store`` imports
+#: :func:`redact` from THIS module, so importing back would be a cycle, and a
+#: ``models`` module must not depend on ``features`` either. The duplication is
+#: therefore structural, not sloppiness — and because a silent drift here would
+#: un-redact a live credential, ``test_secrets.py`` pins both spellings against
+#: their defining constants so a rename cannot land on one side only.
+_SECRET_PARAM_FIELDS: tuple[str, ...] = (
+    "apiKey",
+    "apiKeys",
+    "cloudApiKey",
+    "_injectedKeys",
+    "_injectedSocialTokens",
+)
 
 
 def _redact_secret_fields(entry: dict[str, Any]) -> dict[str, Any]:

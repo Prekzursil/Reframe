@@ -120,6 +120,27 @@ describe('CaptionStage', () => {
     expect(q('.caption-stage__sample')?.getAttribute('data-karaoke-pop')).toBe('true');
   });
 
+  it('paints the karaoke active word with an explicit activeColor override (burn parity)', () => {
+    // The sidecar's resolve_karaoke_style collapses the yellow/green alternation to
+    // an explicit override.activeColor, so the Stage — which claims in its own header
+    // to render "exactly as it will export" — must too. Without the override the
+    // word at absolute cue index 1 would be GREEN (#00FF00).
+    setReducedMotion(false);
+    render({
+      video: { videoId: 'v1', window: { start: 0, end: 10 } },
+      cues: PHRASE,
+      design: {
+        ...DEFAULT_CAPTION_DESIGN,
+        style: 'opusclip-karaoke',
+        override: { activeColor: '#FF00FF' },
+      },
+    });
+    seekTo(3.5); // cue index 1 "there" is active
+    const active = q<HTMLElement>('.caption-stage__word.is-active');
+    expect(active?.style.color.replace(/\s/g, '')).toContain('255,0,255');
+    expect(active?.style.color.replace(/\s/g, '')).not.toContain('0,255,0');
+  });
+
   it('leaves the karaoke pop OFF under prefers-reduced-motion', () => {
     setReducedMotion(true);
     render({

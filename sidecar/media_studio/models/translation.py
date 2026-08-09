@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from ..assets.manifest import AssetEntry, register_asset
+from ..features import languages as _languages
 from ..pathsafe import ensure_within
 from ..util import get_logger
 from . import provider as provider_mod
@@ -101,51 +102,14 @@ TIER2_ASSET_NAME: str = "translategemma-12b-gguf"
 # --------------------------------------------------------------------------- #
 # Routing table (survey §3) — normalized ISO 639-1 code -> tier
 # --------------------------------------------------------------------------- #
-TIER1_LANGS: frozenset = frozenset(
-    {
-        "ar",
-        "bg",
-        "ca",
-        "cs",
-        "da",
-        "de",
-        "el",
-        "en",
-        "es",
-        "et",
-        "fa",
-        "fi",
-        "fr",
-        "he",
-        "hi",
-        "hr",
-        "hu",
-        "id",
-        "it",
-        "ja",
-        "ko",
-        "lt",
-        "lv",
-        "ms",
-        "nb",
-        "nl",
-        "no",
-        "pl",
-        "pt",
-        "ro",
-        "ru",
-        "sk",
-        "sl",
-        "sr",
-        "sv",
-        "th",
-        "tr",
-        "uk",
-        "vi",
-        "zh",
-    }
-)
-TIER2_LANGS: frozenset = frozenset({"bn", "gu", "is", "kn", "ml", "mr", "pa", "sw", "ta", "te", "ur", "zu"})
+# The two coverage sets are DEFINED in ``features.languages`` (the language-
+# inventory SSOT the renderer mirrors and a conformance test pins) and re-exported
+# here under their historical names, so the routing table and the UI cannot drift.
+# The dependency runs this way round because ``features.languages`` is pure stdlib
+# with no import-time side effects, while THIS module registers HF assets on
+# import — a vocabulary module must not pull that in.
+TIER1_LANGS: frozenset = _languages.TIER1_LANGS
+TIER2_LANGS: frozenset = _languages.TIER2_LANGS
 
 ROUTING_TABLE: dict[str, str] = {
     **dict.fromkeys(TIER1_LANGS, TIER_LOCAL),
@@ -177,14 +141,43 @@ def route(lang: str, table: dict[str, str] | None = None) -> str:
     return routing.get(normalize_lang(lang), DEFAULT_TIER)
 
 
-def fallback_chain(lang: str, table: dict[str, str] | None = None) -> list[str]:
+#: Relative capability of each tier — a higher number is the heavier model.
+_TIER_WEIGHT: dict[str, int] = {TIER_LOCAL: 1, TIER_LOCAL_HEAVY: 2, TIER_HOSTED: 3}
+
+
+def route_pair(source_lang: str | None, target_lang: str, table: dict[str, str] | None = None) -> str:
+    """Route on the language PAIR, not the target alone.
+
+    ``route`` is target-only, so ``ro -> en`` routed to the LIGHT tier1 model purely
+    because ``en`` is tier1 — the heavier model was unreachable for exactly the
+    direction that needs it
+    (`docs/plans/v1.5/captions-translation-audit-2026-08.md` §3.3, T4). Here a source
+    language whose own tier is heavier than the target's escalates the choice.
+
+    **The escalation is capped at the heavy LOCAL tier.** A low-resource SOURCE never
+    turns a locally-servable translation into a hosted (network) one, so the pair rule
+    cannot change a job's privacy posture; tier3 stays an explicit TARGET decision
+    (the class docstring's CONTRACT-NOTE). A missing/blank source is target-only
+    routing, so ``route_pair(None, lang) == route(lang)``.
+    """
+    target_tier = route(target_lang, table)
+    if target_tier == TIER_HOSTED or not str(source_lang or "").strip():
+        return target_tier
+    source_tier = route(str(source_lang), table)
+    if _TIER_WEIGHT.get(source_tier, 0) > _TIER_WEIGHT.get(target_tier, 0):
+        return TIER_LOCAL_HEAVY
+    return target_tier
+
+
+def fallback_chain(lang: str, table: dict[str, str] | None = None, *, source_lang: str | None = None) -> list[str]:
     """The tier order to attempt for ``lang``: routed tier first, then the rest.
 
     The remaining tiers follow in ascending order (tier1 -> tier2 -> tier3), so
     e.g. a tier2-routed language falls back to tier1 then tier3, and a hosted
-    failure still gets a best-effort local attempt.
+    failure still gets a best-effort local attempt. ``source_lang`` opts into
+    :func:`route_pair` for the first hop.
     """
-    routed = route(lang, table)
+    routed = route_pair(source_lang, lang, table)
     return [routed] + [t for t in TIERS if t != routed]
 
 
@@ -219,11 +212,73 @@ _MT_SYSTEM = (
 # document for llama-cli/server use.
 
 
-def build_messages(text: str, target_lang: str, source_lang: str | None = None) -> list[dict[str, str]]:
-    """Build the 2-message chat for one cue translation."""
+#: Preamble for the neighbouring-sentence context (T2, folded into T1). The context
+#: rides the SYSTEM message so the user message stays the bare text to translate and
+#: the "reply with ONLY the translation" instruction is never diluted.
+_MT_CONTEXT = (
+    " The surrounding transcript below is given for CONTEXT ONLY — use it to get "
+    "gender, number, tense and referents right, but translate ONLY the user's text "
+    "and never repeat any of the context."
+)
+
+#: Max characters of source text joined into ONE sentence-level translation call.
+#: A bound is required: a transcript is unbounded, and an unbounded prompt would
+#: blow the local server's context window.
+SENTENCE_GROUP_MAX_CHARS: int = 400
+
+# A silence longer than this between two cues ends the sentence group, even when the
+# first cue carries no terminal punctuation. ASR output is frequently unpunctuated, so
+# `ends_sentence` alone cannot see a boundary that a listener hears plainly.
+#
+# The value must clear TWO thresholds from opposite directions:
+#   * ABOVE `caption_polish.enforce_min_gap`, which deliberately leaves a ~2-frame hole
+#     (~0.067 s at 30 fps) between consecutive cues of ONE sentence. Anything at or below
+#     that would split every sentence in the file.
+#   * BELOW a real conversational pause. 1.5 s is comfortably longer than the breath
+#     between clauses and shorter than a topic change.
+SENTENCE_GROUP_MAX_GAP_SEC: float = 1.5
+#: Max characters of neighbouring source text passed as context, per side.
+CONTEXT_MAX_CHARS: int = 300
+
+
+def _clip_context(raw: str | None, *, keep_tail: bool) -> str:
+    """Whitespace-normalize ``raw`` and clip it to :data:`CONTEXT_MAX_CHARS`.
+
+    ``keep_tail`` keeps the END of the text (for the PRECEDING context, whose last
+    words are the ones adjacent to the translated sentence); otherwise the START is
+    kept (for the FOLLOWING context). Pure.
+    """
+    body = " ".join(str(raw or "").split())
+    if len(body) <= CONTEXT_MAX_CHARS:
+        return body
+    return body[-CONTEXT_MAX_CHARS:] if keep_tail else body[:CONTEXT_MAX_CHARS]
+
+
+def build_messages(
+    text: str,
+    target_lang: str,
+    source_lang: str | None = None,
+    *,
+    context_before: str | None = None,
+    context_after: str | None = None,
+) -> list[dict[str, str]]:
+    """Build the 2-message chat for one SENTENCE-level translation.
+
+    ``context_before`` / ``context_after`` are the neighbouring sentences' SOURCE
+    text. Passing source (never previously-translated) text keeps the call
+    order-independent and stops one bad translation propagating into the next.
+    """
     system = _MT_SYSTEM.format(target=target_lang)
     if source_lang:
         system += f" The source language is {source_lang}."
+    before = _clip_context(context_before, keep_tail=True)
+    after = _clip_context(context_after, keep_tail=False)
+    if before or after:
+        system += _MT_CONTEXT
+        if before:
+            system += f'\nPreceding text: "{before}"'
+        if after:
+            system += f'\nFollowing text: "{after}"'
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": text},
@@ -232,6 +287,114 @@ def build_messages(text: str, target_lang: str, source_lang: str | None = None) 
 
 def _is_blank(text: str) -> bool:
     return not text or not text.strip()
+
+
+def _polish() -> Any:
+    """The caption-polish module (LAZY import — it registers an asset at import).
+
+    ``caption_polish`` owns the pure segmentation primitives this module reuses
+    (``ends_sentence`` / ``redistribute_cue_text``); importing it lazily keeps
+    ``models.translation`` import-light and free of that asset-registration
+    side-effect until a translation actually runs.
+    """
+    from ..features import caption_polish  # noqa: PLC0415 - lazy: see the docstring
+
+    return caption_polish
+
+
+def cue_text(cue: Cue) -> str:
+    """One cue's text, whitespace-normalized.
+
+    The flattening is load-bearing: ``captionPolish`` runs at GENERATE time
+    (``handlers/media_ops.py`` ``subtitles_generate``) and translation runs later over
+    the persisted track, so ``caption_polish.wrap_two_lines`` has already inserted
+    HARD line breaks into the cue text. Feeding those to the model is the audit's
+    suspected fourth root cause; this is where they are removed.
+    """
+    return " ".join(str(cue.get("text", "") or "").split())
+
+
+def group_text(group: Sequence[Cue]) -> str:
+    """The joined, whitespace-normalized source text of one translation group."""
+    return " ".join(cue_text(cue) for cue in group).strip()
+
+
+def group_cues_for_translation(
+    cues: Sequence[Cue],
+    *,
+    max_chars: int = SENTENCE_GROUP_MAX_CHARS,
+    max_gap_sec: float = SENTENCE_GROUP_MAX_GAP_SEC,
+) -> list[list[Cue]]:
+    """Group consecutive cues into SENTENCE-level translation units (pure).
+
+    Caption cues are segmented for READING SPEED (``subtitles.cues_from_transcript``
+    splits on ``max_chars`` / ``max_duration``), so one sentence routinely spans two
+    or three cues. Translating each fragment alone is the mechanical cause of the
+    owner's "bad translations"
+    (`docs/plans/v1.5/captions-translation-audit-2026-08.md` §3.1/§3.2) — for
+    verb-final or different-word-order targets (de, ja, ko, tr, hi) a fragment simply
+    cannot be translated correctly in isolation.
+
+    A group closes when: the cue ends a sentence (:func:`caption_polish.ends_sentence`),
+    OR adding the next cue would pass ``max_chars``, OR the SPEAKER changes, OR the
+    silence before the next cue exceeds ``max_gap_sec``, OR the cues run out. A BLANK cue
+    is never merged — it becomes its own group and passes through untranslated, so a
+    gap in the transcript can never glue two unrelated sentences together.
+
+    The speaker and pause boundaries exist because ASR output is frequently UNPUNCTUATED,
+    so ``ends_sentence`` alone cannot see a boundary a listener hears plainly. Two
+    speakers' fragments are never one sentence regardless of punctuation, and merging
+    them would hand the model a self-contradicting source — the same "bad translations"
+    class this grouping was built to fix, reintroduced from a different direction.
+
+    A speaker change is only recognised when BOTH cues carry a speaker and the labels
+    differ. A missing label is UNKNOWN, not "a different speaker": diarization is
+    optional here, and letting an absent field manufacture a boundary would silently
+    disable sentence grouping for every undiarized transcript.
+    """
+    ends = _polish().ends_sentence
+    groups: list[list[Cue]] = []
+    current: list[Cue] = []
+    current_len = 0
+
+    def close() -> None:
+        nonlocal current, current_len
+        if current:
+            groups.append(current)
+            current = []
+            current_len = 0
+
+    def _speaker(cue: Cue) -> str | None:
+        raw = cue.get("speaker")
+        return str(raw) if raw else None
+
+    def _breaks_continuity(prev: Cue, cue: Cue) -> bool:
+        """Does the boundary between two adjacent cues end the sentence group?"""
+        prev_speaker, speaker = _speaker(prev), _speaker(cue)
+        if prev_speaker is not None and speaker is not None and prev_speaker != speaker:
+            return True
+        try:
+            gap = float(cue.get("start", 0.0)) - float(prev.get("end", 0.0))
+        except (TypeError, ValueError):
+            return False  # unparseable timings are not evidence of a pause
+        return gap > max_gap_sec
+
+    for cue in cues:
+        text = cue_text(cue)
+        if _is_blank(text):
+            close()
+            groups.append([cue])
+            continue
+        if current and _breaks_continuity(current[-1], cue):
+            close()
+        if current and current_len + 1 + len(text) > max_chars:
+            close()
+        current_len += len(text) + (1 if current else 0)
+        current.append(cue)
+        if ends(text):
+            close()
+    close()
+    return groups
 
 
 def _make_cue(index: int, start: float, end: float, text: str) -> Cue:
@@ -294,9 +457,13 @@ class TieredTranslator:
         """The tier this translator routes ``target_lang`` to."""
         return route(target_lang, self._routing)
 
-    def chain_for(self, target_lang: str) -> list[str]:
-        """The full fallback chain for ``target_lang`` (routed tier first)."""
-        return fallback_chain(target_lang, self._routing)
+    def chain_for(self, target_lang: str, source_lang: str | None = None) -> list[str]:
+        """The full fallback chain for ``target_lang`` (routed tier first).
+
+        ``source_lang`` opts the first hop into pair routing (:func:`route_pair`), so a
+        low-resource SOURCE escalates to the heavier local model.
+        """
+        return fallback_chain(target_lang, self._routing, source_lang=source_lang)
 
     # -- the batched seam (T2 dub + subtitles.translate job body) -----------
     def translate(
@@ -311,19 +478,26 @@ class TieredTranslator:
         """Translate ``cues`` into ``target_lang`` — the ``translate(cues,
         targetLang)`` callable the T2 dub pipeline consumes.
 
+        Translation is **sentence-scoped**: consecutive cues that belong to one
+        sentence are joined into a single call carrying the neighbouring sentences as
+        context, and the reply is laid back over the SAME cue timings (T1 — see
+        :func:`group_cues_for_translation` and
+        :func:`caption_polish.redistribute_cue_text`). Cue count, indices and timings
+        are preserved exactly; only the text changes.
+
         Tries the routed tier first; on any tier failure the WHOLE batch is
         retried on the next tier (a mid-batch failure discards that tier's
         partial output, so the result is never a mixed-tier patchwork).
         Cooperative cancellation mirrors ``features.subtitles.translate``:
-        when ``cancelled()`` turns true the loop stops and the cues translated
-        so far are returned. Raises :class:`TranslationError` when every tier
-        fails — the job body lets that surface via job.done (A6 lesson 3).
+        when ``cancelled()`` turns true the loop stops (at a sentence boundary) and
+        the cues translated so far are returned. Raises :class:`TranslationError` when
+        every tier fails — the job body lets that surface via job.done (A6 lesson 3).
         """
         cue_list = list(cues or [])
         if not cue_list:
             return []
         failures: list[str] = []
-        for tier in self.chain_for(target_lang):
+        for tier in self.chain_for(target_lang, source_lang):
             try:
                 return self._translate_with_tier(tier, cue_list, target_lang, source_lang, progress, cancelled)
             except Exception as exc:  # noqa: BLE001 - each tier failure feeds the chain
@@ -364,8 +538,15 @@ class TieredTranslator:
         Lazily binds the routed tier's provider on first use; a failing line
         escalates to the next tier in the chain and STAYS there (no per-line
         tier thrash). Raises :class:`TranslationError` once the chain is spent.
+
+        CONTRACT-NOTE: this seam is ``str -> str`` by construction, so it is the ONE
+        path that cannot see a sentence's neighbours — a caller that wants the T1
+        sentence-level quality must use :meth:`translate` / :meth:`translate_track`,
+        which take whole cue lists. It has no production caller today (only
+        ``features.subtitles.translate(translator=...)``, which the handler does not
+        use); it is kept for that seam's signature.
         """
-        chain = list(self.chain_for(target_lang))
+        chain = list(self.chain_for(target_lang, source_lang))
         state: dict[str, Any] = {"provider": None, "label": ""}
 
         def _translate(text: str) -> str:
@@ -411,29 +592,48 @@ class TieredTranslator:
         progress: Callable[[int, str], None] | None,
         cancelled: Callable[[], bool] | None,
     ) -> list[Cue]:
-        """Translate the whole batch on ONE tier (raises on any failure)."""
+        """Translate the whole batch on ONE tier, sentence by sentence (raises on failure).
+
+        One provider call per SENTENCE group, not per cue; the reply is redistributed
+        onto the group's own cues so timings never move. Progress is still reported per
+        CUE so the job bar keeps its granularity.
+        """
         provider = self._tier_provider(tier)
         label = self._tier_label(tier)
+        groups = group_cues_for_translation(cues)
+        texts = [group_text(group) for group in groups]
+        redistribute = _polish().redistribute_cue_text
         total = len(cues)
         out: list[Cue] = []
-        for i, cue in enumerate(cues):
+        for position, group in enumerate(groups):
             if cancelled is not None and cancelled():
                 break
-            text = str(cue.get("text", ""))
-            new_text = text if _is_blank(text) else self._chat_one(provider, text, target_lang, source_lang)
-            out.append(
-                _make_cue(
-                    int(cue.get("index", i + 1)),
-                    float(cue.get("start", 0.0)),
-                    float(cue.get("end", 0.0)),
-                    new_text,
+            source_text = texts[position]
+            if _is_blank(source_text):
+                translated_cues: list[Cue] = list(group)
+            else:
+                reply = self._chat_one(
+                    provider,
+                    source_text,
+                    target_lang,
+                    source_lang,
+                    context_before=texts[position - 1] if position else None,
+                    context_after=texts[position + 1] if position + 1 < len(groups) else None,
                 )
-            )
+                translated_cues = redistribute(group, reply)
+            done = len(out)
+            for offset, cue in enumerate(translated_cues):
+                out.append(
+                    _make_cue(
+                        int(cue.get("index", done + offset + 1)),
+                        float(cue.get("start", 0.0)),
+                        float(cue.get("end", 0.0)),
+                        str(cue.get("text", "")),
+                    )
+                )
             if progress is not None and total:
-                progress(
-                    int(round((i + 1) / total * 100)),
-                    f"{label}: translated {i + 1}/{total}",
-                )
+                for count in range(done + 1, len(out) + 1):
+                    progress(int(round(count / total * 100)), f"{label}: translated {count}/{total}")
         return out
 
     def _tier_provider(self, tier: str) -> Any:
@@ -487,9 +687,26 @@ class TieredTranslator:
             model=str(self._settings.get("cloudModel") or provider_mod.DEFAULT_CLOUD_MODEL),
         )
 
-    def _chat_one(self, provider: Any, text: str, target_lang: str, source_lang: str | None) -> str:
-        """One cue through ``provider.chat`` -> stripped translation string."""
-        reply = provider.chat(build_messages(text, target_lang, source_lang))
+    def _chat_one(
+        self,
+        provider: Any,
+        text: str,
+        target_lang: str,
+        source_lang: str | None,
+        *,
+        context_before: str | None = None,
+        context_after: str | None = None,
+    ) -> str:
+        """One sentence through ``provider.chat`` -> stripped translation string."""
+        reply = provider.chat(
+            build_messages(
+                text,
+                target_lang,
+                source_lang,
+                context_before=context_before,
+                context_after=context_after,
+            )
+        )
         return str(reply).strip()
 
     # -- gguf resolution ------------------------------------------------------

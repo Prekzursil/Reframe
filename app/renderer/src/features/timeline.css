@@ -147,3 +147,23 @@
 .timeline .timeline__status {
   font-family: var(--font-mono);
 }
+
+/* v1.5 timeline-naming: the scope note sits directly under the heading and says
+   what this lane edits (cues) and where video trimming actually lives. It is
+   standing orientation, not an alert — so it takes the secondary supporting-copy
+   voice at BODY size, not the tracked-caps caption voice (which is the label
+   rung, wrong for a sentence). Quiet enough to ignore once learned, present
+   enough to end the hunt. The <strong> spans carry the load-bearing words and
+   step up to primary text, so the part that must be read clears contrast. */
+.timeline .timeline__scope-note {
+  margin: 0 0 var(--space-4);
+  max-width: 68ch; /* readable measure, not full-panel */
+  color: var(--text-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+}
+
+.timeline .timeline__scope-note strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}

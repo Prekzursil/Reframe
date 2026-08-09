@@ -536,9 +536,10 @@ def test_full_pipeline_generate_translate_export(transcript, tmp_path: Path):
 def test_generate_polished_threads_cues_through_injected_polisher(transcript):
     seen: dict[str, Any] = {}
 
-    def fake_polisher(cues, *, settings):
+    def fake_polisher(cues, *, settings, language):
         seen["cues"] = cues
         seen["settings"] = settings
+        seen["language"] = language
         # Return cues with rewritten (polished) text.
         return [{**c, "text": c["text"].upper()} for c in cues]
 
@@ -546,6 +547,8 @@ def test_generate_polished_threads_cues_through_injected_polisher(transcript):
     # the polisher saw the generated cues + the settings
     assert seen["settings"] == {"captionChildren": True}
     assert seen["cues"], "polisher received no cues"
+    # the TRACK's language reached the polisher — it gates the EN-only punct stage
+    assert seen["language"] == "en"
     # polished text landed on the track (reindexed onto a fresh §3 track)
     assert track["cues"][0]["text"] == "HELLO WORLD."
     assert set(track.keys()) == {"id", "lang", "name", "format", "kind", "cues"}

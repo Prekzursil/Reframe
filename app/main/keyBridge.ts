@@ -178,6 +178,36 @@ export function planUpsert(
   return { providerId, resolvedKeys, forwardParams };
 }
 
+/**
+ * Carry every NON-provider keystore section onto a freshly-built {@link DecryptedKeys}.
+ *
+ * THE BUG THIS EXISTS TO PREVENT: `saveDecryptedKeys` rebuilds the whole keystore
+ * document from the value it is given, so any section the provider paths forget to
+ * copy forward is ERASED from disk on the next `providers.upsert` / `providers.remove`.
+ * That was previously spelled as an inline `cloudApiKey !== undefined ? … : …`
+ * ternary repeated at three sites — a shape where adding a second section (C14's
+ * `social`) silently destroys it at whichever site was missed. Funnelling all of
+ * them through here makes "a new section must be listed in ONE place" true by
+ * construction.
+ *
+ * `session` wins over `disk` per section, mirroring the provider overlay.
+ */
+function withNonProviderSections(
+  target: DecryptedKeys,
+  disk: DecryptedKeys,
+  session: DecryptedKeys,
+): DecryptedKeys {
+  const out: DecryptedKeys = { providers: target.providers };
+  const cloudApiKey = session.cloudApiKey ?? disk.cloudApiKey;
+  if (cloudApiKey !== undefined) {
+    out.cloudApiKey = cloudApiKey;
+  }
+  if (disk.social !== undefined || session.social !== undefined) {
+    out.social = { ...disk.social, ...session.social };
+  }
+  return out;
+}
+
 /** Constructor deps for {@link KeyBridge} (safeStorage + keystore path are injected). */
 export interface KeyBridgeOptions {
   safeStorage: SafeStorageLike;
@@ -253,8 +283,7 @@ export class KeyBridge {
       if (this.removed.has(id)) continue; // removed this session — never resurrect it
       providers[id] = keys;
     }
-    const cloudApiKey = this.session.cloudApiKey ?? base.cloudApiKey;
-    return cloudApiKey !== undefined ? { providers, cloudApiKey } : { providers };
+    return withNonProviderSections({ providers }, base, this.session);
   }
 
   /** On-disk keystore overlaid with this session's in-memory keys (session wins). */
@@ -311,10 +340,14 @@ export class KeyBridge {
       delete nextProviders[plan.providerId];
       this.removed.add(plan.providerId); // dropping the last key IS a removal
     }
-    const next: DecryptedKeys =
-      current.cloudApiKey !== undefined
-        ? { providers: nextProviders, cloudApiKey: current.cloudApiKey }
-        : { providers: nextProviders };
+    // `current` already merges disk+session, so passing it as BOTH arguments carries
+    // every non-provider section (cloudApiKey, C14 social tokens) forward untouched.
+    // Omitting one here would erase it from disk — see withNonProviderSections.
+    const next: DecryptedKeys = withNonProviderSections(
+      { providers: nextProviders },
+      current,
+      current,
+    );
     // Always keep the session overlay current so injection sees the new keys even
     // when the disk write is refused (session-only) or fails.
     this.session = next;
@@ -353,10 +386,12 @@ export class KeyBridge {
     }
     const nextProviders = { ...current.providers };
     delete nextProviders[providerId];
-    const next: DecryptedKeys =
-      current.cloudApiKey !== undefined
-        ? { providers: nextProviders, cloudApiKey: current.cloudApiKey }
-        : { providers: nextProviders };
+    // Same reasoning as interceptUpsert: every non-provider section rides forward.
+    const next: DecryptedKeys = withNonProviderSections(
+      { providers: nextProviders },
+      current,
+      current,
+    );
     this.session = next;
     this.removed.add(providerId); // holds even if the disk write below is declined
     this.persistKeys(next, read);

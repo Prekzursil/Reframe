@@ -120,6 +120,14 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "shorts.reexport",
         "shorts.thumbnail",
         "silence.trim",
+        # C14 social publish/schedule: the capability matrix + the honest
+        # platform-vs-local schedule preview + publish-queue CRUD. Storage and pure
+        # decisions only — no token ever reaches this side at rest.
+        "social.cancel",
+        "social.capabilities",
+        "social.enqueue",
+        "social.plan",
+        "social.queue",
         "stabilize.run",
         "subtitles.edit",
         "subtitles.export",

@@ -280,10 +280,20 @@ def generate_polished(
     :func:`new_track`. ``polisher`` is the injectable seam (default lazily delegates
     to the real, degrade-safe module). ``settings`` selects the adult/children CPS
     limit + the model backends.
+
+    The TRACK's own language (from the transcript) is passed to the polisher as
+    ``language=``. That is required, not decorative: the punctuation+casing backend is
+    English-only, and without the language it would run on every language and make
+    non-English captions worse
+    (`docs/plans/v1.5/captions-translation-audit-2026-08.md` §3.5).
     """
     polish = polisher if polisher is not None else _default_caption_polisher
     base = generate(transcript, name=name, fmt=fmt, track_id=track_id)
-    polished = polish(list(base.get("cues") or []), settings=settings or {})
+    polished = polish(
+        list(base.get("cues") or []),
+        settings=settings or {},
+        language=str(base.get("lang") or ""),
+    )
     return new_track(
         polished,
         lang=str(base.get("lang") or "und"),

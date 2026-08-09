@@ -36,6 +36,17 @@ Three measured facts carry that claim:
    `sidecar/media_studio/features/timeline.py:324` registers exactly one method,
    `timeline.peaks`, which returns `{sampleRate, peaks}` — a waveform, nothing more.
 
+   > **NAMING RESOLVED (2026-08, `fix/v15-timeline-naming`) — the finding above stands; only the
+   > LABEL moved.** The tab now reads **"Subtitle timeline"**, the panel heading matches, and the
+   > panel carries a scope note pointing at the two surfaces that actually cut video today
+   > (Director, and Make Shorts → Manual interval). The sibling `"Timeline export"` tab was
+   > relabelled **"NLE export"** in the same pass, because once the first rename landed it became
+   > the only tab still carrying the word and would have caught the same misdirected click; it is
+   > the CMX3600/CSV handoff, whose events are approved short-maker clips laid back-to-back
+   > (row 27). **Nothing in §1's verdicts changes** — no engine, RPC, tab id, order or grouping was
+   > touched, the multi-clip gap is untouched, and the real video-timeline work stays in
+   > `feat/v15-video-timeline`. This is the honesty half of S1.1, not S1.1.
+
 2. **There is no direct-manipulation edit surface at all.** `app/renderer/src/views/Edit.tsx`
    is a 192-line *router*: it renders either `TaskHub` or `Workspace` (`Edit.tsx:153-163`).
    Its own empty state promises *"trim, cut, join, reframe, caption, and more — every edit tool

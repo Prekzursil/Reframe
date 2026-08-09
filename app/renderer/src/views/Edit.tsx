@@ -179,10 +179,30 @@ export function Edit({
           <span className="edit__empty-timecode">--:--</span>
         </div>
         <p className="edit__empty-title">No video open</p>
+        {/* C3 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §5) — this used to read
+            "trim, cut, join, reframe, caption, and more — every edit tool lives
+            here". Three of those verbs are not reachable from this section, and
+            the "every tool lives here" clause was the widest part of the claim:
+            Make Shorts and the Director are top-level rail destinations, and
+            WU-3a4 deliberately moved ShortMaker OUT of the Workspace.
+            docs/plans/v1.5/editing-surface-audit-2026-08.md:44 measures the tab
+            list as "no trim, no cut, no join tab"; :45-48 finds those engines
+            reachable "only through" the AI Director and concludes "a user cannot
+            drag a cut"; rows 1-3 (:82-84) mark trim/cut/split "engine BUILT ...
+            UI MISSING". So the copy now names only verbs this section actually
+            reaches, and says where the missing one lives instead of implying it
+            is here. Pinned by Edit.test.tsx. If a manual cut surface lands
+            later, widen this sentence in the SAME commit that ships it. */}
         <p className="edit__empty-hint">
-          Open a video from the Library to trim, cut, join, reframe, caption, and more — every edit
-          tool lives here.
+          Open a video from the Library to transcribe it, add subtitles, reframe it to vertical, dub
+          it, or hand it to the AI Director. Shortening a clip goes through the Director for now.
         </p>
+        {/* M2 — Edit was the only one of eight empty states with no way forward.
+            Same affordance and voice as the sibling views (Caption.tsx:102-104,
+            Export.tsx:251-253), which already shipped it. */}
+        <button type="button" className="edit__empty-back" onClick={onBack}>
+          ← Library
+        </button>
       </div>
     );
   }

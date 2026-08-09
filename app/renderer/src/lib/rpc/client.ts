@@ -79,6 +79,10 @@ import type {
   SetConsentResponse,
   ShortInfo,
   ShortReexportHint,
+  SocialCapability,
+  SocialPublishJob,
+  SocialQueueEntry,
+  SocialSchedulePlan,
   SpendInfo,
   SubtitleFormat,
   SubtitleTrack,
@@ -628,6 +632,29 @@ export const client = {
       rpc('recipes.save', { recipe }),
     delete: (id: string): Promise<{ ok: boolean }> => rpc('recipes.delete', { id }),
     run: (id: string): Promise<JobHandle> => rpc('recipes.run', { id }),
+  },
+
+  /**
+   * `social.*` — C14 direct publish / scheduling.
+   *
+   * Storage + honest decisions only. No token ever crosses this bridge: OAuth
+   * tokens live in the main-process keystore and are injected there, so the
+   * renderer never holds credential material for a platform.
+   */
+  social: {
+    /** The per-platform capability matrix (what each platform actually permits). */
+    capabilities: (): Promise<{ platforms: SocialCapability[] }> => rpc('social.capabilities'),
+    /**
+     * PREVIEW where a publish time would be held, WITHOUT committing anything —
+     * so the "Reframe must be running then" disclosure can be shown while the user
+     * is still choosing a time rather than after they have queued it.
+     */
+    plan: (platform: string, publishAt?: number | null): Promise<{ plan: SocialSchedulePlan }> =>
+      rpc('social.plan', { platform, publishAt: publishAt ?? null }),
+    enqueue: (job: SocialPublishJob): Promise<{ entry: SocialQueueEntry }> =>
+      rpc('social.enqueue', { job }),
+    queue: (): Promise<{ entries: SocialQueueEntry[] }> => rpc('social.queue'),
+    cancel: (id: string): Promise<{ ok: boolean }> => rpc('social.cancel', { id }),
   },
 
   /** `exportPresets.*` — server-persisted platform export presets (WU11). */

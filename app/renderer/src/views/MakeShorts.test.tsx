@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { Candidate, ShortReexportHint, Video } from '../lib/rpc';
+import { DEFAULT_LANGUAGE } from '../lib/captionPreferences';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -481,6 +482,30 @@ describe('<MakeShorts />', () => {
     await flush();
     const [, , opts] = exportMock.mock.calls[0];
     expect(opts).toMatchObject({ captionStyle: 'neon', subtitleMode: 'sidecar' });
+  });
+
+  it('seeds a real persisted language through to the short-maker controls', async () => {
+    settingsGetMock.mockResolvedValue({ defaultLanguage: 'ro' });
+    await mount();
+    await selectVideo('v1');
+    // Positive control for the next test: a real code DOES flow through.
+    expect(
+      container.querySelector('[data-testid="shortmaker"]')?.getAttribute('data-init-language'),
+    ).toBe('ro');
+  });
+
+  it('never seeds the translate TARGET with the auto-detect sentinel', async () => {
+    // `defaultLanguage` is a transcription SOURCE hint and CAN be 'auto' since
+    // v1.5. The SAME tray field is the Output Tray's translation TARGET, which
+    // cannot be auto-detected (OutputTray passes includeAuto={false}) — so seeding
+    // it unchanged would put 'auto' on the wire as a target language and have the
+    // MT model asked to translate into a language called "auto".
+    settingsGetMock.mockResolvedValue({ defaultLanguage: 'auto' });
+    await mount();
+    await selectVideo('v1');
+    expect(
+      container.querySelector('[data-testid="shortmaker"]')?.getAttribute('data-init-language'),
+    ).toBe(DEFAULT_LANGUAGE);
   });
 
   it('swallows a settings.get rejection (keeps built-in defaults)', async () => {

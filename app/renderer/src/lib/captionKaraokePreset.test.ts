@@ -23,6 +23,7 @@ import {
   SAFE_AREA_BOTTOM_FRACTION,
   isKaraokeStyle,
   karaokeActiveColor,
+  karaokeActiveColorFor,
   safeAreaMarginV,
 } from './captionKaraokePreset';
 
@@ -76,6 +77,23 @@ describe('karaokeActiveColor', () => {
     expect(karaokeActiveColor(Number.NaN)).toBe('#FFFF00');
     expect(karaokeActiveColor(-1)).toBe('#00FF00');
     expect(karaokeActiveColor(2.9)).toBe('#FFFF00');
+  });
+});
+
+describe('karaokeActiveColorFor (mirrors sidecar resolve_karaoke_style)', () => {
+  it('alternates when no activeColor override is set', () => {
+    expect(karaokeActiveColorFor(0)).toBe('#FFFF00');
+    expect(karaokeActiveColorFor(1)).toBe('#00FF00');
+    expect(karaokeActiveColorFor(0, undefined)).toBe('#FFFF00');
+  });
+
+  it('collapses the alternation to an explicit activeColor', () => {
+    // Mirrors resolve_karaoke_style: `(active, active) if active else ALTERNATION`.
+    // Both parities must return the override, or the preview would still alternate
+    // for half the words while the burn used one colour throughout.
+    expect(karaokeActiveColorFor(0, '#FF00FF')).toBe('#FF00FF');
+    expect(karaokeActiveColorFor(1, '#FF00FF')).toBe('#FF00FF');
+    expect(karaokeActiveColorFor(7, '#FF00FF')).toBe('#FF00FF');
   });
 });
 
