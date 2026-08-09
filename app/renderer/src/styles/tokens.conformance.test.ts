@@ -697,3 +697,117 @@ describe('red status text clears AA — the DoD contrast floor (v1.5 shell-polis
     expect(consumed).toBe(true);
   });
 });
+
+// --- H7: the editorial serif is CAPPED to an enumerated allowlist -----------------
+//
+// docs/plans/v1.5/uiux-qol-audit-2026-08.md sec.3.1 measured `--font-editorial`
+// in 15 places against a documented limit of ONE, and named the real defect in
+// the same breath: "undetected by the conformance suite that already guards the
+// accent". The accent had a whole-tree guard; the second scarce typographic
+// channel had none, so it spread one reasonable-looking commit at a time.
+//
+// This is that guard. It is an ALLOWLIST, not a count: a 15th site fails until
+// someone adds the selector here, which turns silent drift into a reviewed
+// decision. A count alone would let a swap slip through unnoticed.
+//
+// The list is NOT a rubber-stamp of whatever was there. Every entry is a hook
+// pull-quote, an empty-state title, or a panel/modal display title — the
+// editorial voice. `.director-view__title` was REMOVED rather than admitted: it
+// was the only one of four `*-view__title` rules to take the serif, and the only
+// one at display size instead of title size (caption.css:39, deliver.css:39 and
+// export.css:39 are the three that agree). View chrome is the one place this
+// voice does not belong.
+//
+// Body text, labels, controls, data and timecode are never eligible.
+
+/** Every selector permitted to set `font-family: var(--font-editorial)`. */
+const EDITORIAL_SERIF_ALLOWLIST: readonly string[] = [
+  // hook pull-quotes — the original documented home
+  '.sm-hook',
+  '.shorts__hook',
+  '.caption-stage__hint',
+  // empty-state titles
+  '.caption-inspector__empty-title',
+  '.caption-view__empty-title',
+  '.export-view__empty-title',
+  // panel / modal / result display titles
+  '.shorts-modal__title',
+  '.director-handoff__title',
+  '.lineage-panel__title',
+  '.export-inspector__confirm-title',
+  '.export-result__title',
+  // identity / display moments
+  '.first-run-setup__brand',
+  '.profile-picker__legend',
+  '.caption-gallery__current',
+];
+
+/**
+ * Selectors that set `font-family: var(--font-editorial)` in one stylesheet.
+ *
+ * Reads the selector list immediately preceding each declaration's `{`. Comments
+ * are stripped FIRST so a selector quoted inside a comment cannot register as a
+ * real use (the use-vs-mention trap).
+ */
+function editorialSerifSelectors(css: string): readonly string[] {
+  const body = stripComments(css);
+  const out: string[] = [];
+  const rule = /([^{}]+)\{([^{}]*)\}/g;
+  for (let m = rule.exec(body); m !== null; m = rule.exec(body)) {
+    if (!/font-family\s*:\s*var\(--font-editorial\)/.test(m[2])) continue;
+    for (const sel of m[1].split(',')) {
+      const trimmed = sel.trim().replace(/\s+/g, ' ');
+      if (trimmed) out.push(trimmed);
+    }
+  }
+  return out;
+}
+
+describe('editorial serif stays inside its allowlist (H7)', () => {
+  const cssFiles = collectCssFiles(RENDERER_SRC);
+
+  it('finds the renderer stylesheets (guard is actually scanning something)', () => {
+    // A dead scan matching zero files would vacuously pass. Pin a floor, and pin
+    // that the detector CAN see a known-present use, before trusting its silence.
+    expect(cssFiles.length).toBeGreaterThan(20);
+    const anyUse = cssFiles.flatMap((f) => editorialSerifSelectors(readFileSync(f, 'utf8')));
+    expect(anyUse.length).toBeGreaterThan(0);
+  });
+
+  it('every --font-editorial site is on the allowlist', () => {
+    const offenders: string[] = [];
+    for (const file of cssFiles) {
+      for (const sel of editorialSerifSelectors(readFileSync(file, 'utf8'))) {
+        if (!EDITORIAL_SERIF_ALLOWLIST.includes(sel)) {
+          offenders.push(`${sel}  (${file.replace(RENDERER_SRC, '')})`);
+        }
+      }
+    }
+    // The message names the offender AND what to do, so the failure is actionable
+    // without opening this file.
+    expect(
+      offenders,
+      'New --font-editorial site(s). The editorial serif is a SCARCE channel ' +
+        '(docs/design-system.md): hook pull-quotes, empty-state titles and panel ' +
+        'display titles only — never body text, labels, controls or data. If this ' +
+        'use really is one of those, add the selector to EDITORIAL_SERIF_ALLOWLIST.',
+    ).toEqual([]);
+  });
+
+  it('the allowlist has no dead entries (it tracks the tree, not history)', () => {
+    // The other direction: an allowlisted selector that no longer sets the serif
+    // is stale permission, and stale permission is how an allowlist rots into a
+    // rubber stamp.
+    const live = new Set(cssFiles.flatMap((f) => editorialSerifSelectors(readFileSync(f, 'utf8'))));
+    expect(EDITORIAL_SERIF_ALLOWLIST.filter((s) => !live.has(s))).toEqual([]);
+  });
+
+  it('no VIEW header uses the serif — the four view titles agree', () => {
+    // The specific regression H7 named. Pinned separately from the allowlist so
+    // re-adding `.director-view__title` to the list cannot quietly re-open it.
+    const viewTitles = cssFiles.flatMap((f) =>
+      editorialSerifSelectors(readFileSync(f, 'utf8')).filter((s) => /view__title$/.test(s)),
+    );
+    expect(viewTitles).toEqual([]);
+  });
+});

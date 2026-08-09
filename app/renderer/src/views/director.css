@@ -44,14 +44,27 @@
   box-shadow: var(--focus-ring);
 }
 
-/* The serif display voice with a real scale jump — the editorial moment. */
+/* H7 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §3.1) — this was the serif at
+   display size, and the audit's "clearest case" of the editorial voice spreading
+   past its documented home.
+
+   It is an OUTLIER on both axes, not a style choice. Four views define a
+   `*-view__title`; the other three — caption.css:39, deliver.css:39,
+   export.css:39 — are all `--type-title-size` with NO `font-family`. Director
+   alone took `--font-editorial` AND `--type-display-size`, so the app's four view
+   headers rendered in two different typefaces at two different scales for no
+   reason a user could infer.
+
+   Aligned with its three siblings. The editorial serif is NOT deleted from the
+   product — it keeps the hook pull-quotes and the empty-state/panel display
+   titles it is actually for (see the allowlist in
+   `styles/tokens.conformance.test.ts`, which now caps it). A VIEW header is
+   chrome, and chrome is the one place it does not belong. */
 .director-view__title {
   margin: 0;
-  font-family: var(--font-editorial);
-  font-size: var(--type-display-size);
-  font-weight: var(--type-display-weight);
-  letter-spacing: var(--type-display-tracking);
-  line-height: var(--type-display-leading);
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
   color: var(--text-primary);
 }
 

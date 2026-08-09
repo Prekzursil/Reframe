@@ -45,8 +45,22 @@ Sanctioned off-ladder exception: abundance `--abundance #9b6cff` (never color-al
 | card-title 14 · hook 15 · rank 24 · chip 10 | — | — | role tokens |
 
 **Weight ramp:** `--weight-regular 400 / -medium 600 / -semibold 650 / -bold 700 / -heavy 800`.
-**Fonts:** `--font-ui` (system sans) · `--font-mono` (ui-monospace — timecode, tabular-nums) ·
-Georgia editorial serif (ShortMaker hook pull-quotes ONLY).
+**Fonts:** `--font-ui` (**Inter**, self-hosted) · `--font-mono` (**IBM Plex Mono** — timecode,
+tabular-nums) · `--font-editorial` (**Newsreader** — the editorial voice). All three are bundled
+OFL faces bound by `@font-face`, not system fallbacks; the binding is pinned by
+`styles/fonts.conformance.test.ts`.
+
+**The editorial serif is a SCARCE channel.** Permitted: hook pull-quotes, empty-state titles, and
+panel/modal display titles. Never: body text, labels, controls, data/timecode, or **VIEW headers**
+(all four `*-view__title` rules use `--type-title-size` in `--font-ui`; Director was the lone
+outlier until H7).
+
+This line previously read *"Georgia editorial serif (ShortMaker hook pull-quotes ONLY)"* — stale on
+both counts. The face is Newsreader, not Georgia, and the one-site limit had already been overtaken
+by 15 real uses that the conformance suite could not see, because it guarded the accent and not the
+serif (`docs/plans/v1.5/uiux-qol-audit-2026-08.md` §3.1). The rule above is the honest current one
+and is now **enforced by an allowlist** in `styles/tokens.conformance.test.ts`: a new site fails CI
+until its selector is added, so spreading the voice is a reviewed decision rather than drift.
 
 ## Spacing (4px base) & Radius
 Space: `2 / 4 / 8 / 12 / 16 / 24 / 32 / 48` (`--space-1…8`).
