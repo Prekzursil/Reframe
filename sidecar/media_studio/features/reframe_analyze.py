@@ -202,10 +202,15 @@ class LruAnalysisCache:
         a flag-insensitive lookup is "both sufficient and correct" because render
         "only needs the TRACE, whose per-frame speakers and crops do not depend on
         ``allow_split`` / ``allow_composite``". The narrow half is CONFIRMED
-        (measured: ``speaker_per_frame`` and ``crops`` are byte-identical across
-        both flags — they are set by :func:`~media_studio.features.reframe_multispeaker._render_shot`
-        before :func:`~media_studio.features.reframe_multispeaker.decide_layout` sees
-        the flags), so the PIXELS this fallback produces are flag-independent. The
+        (measured on a two-talker analysis: ``speaker_per_frame`` and ``crops`` are
+        identical across ``allowSplit=True``/``False`` while ``segments`` differ.
+        Mechanism: in :func:`~media_studio.features.reframe_multispeaker._render_shot`
+        the flags reach ONLY ``layout_raw`` via
+        :func:`~media_studio.features.reframe_multispeaker.decide_layout`, and the
+        committed speaker + the smoothed crop centres are computed without ever
+        reading that layout decision), so the PIXELS this fallback produces are
+        flag-independent — ``other_speaker_centers`` reads exactly those two
+        flag-independent fields. The
         conclusion was not: ``render`` also uses ``bundle.plan`` as the diff BASELINE
         for the ``affected`` set it reports, and a plan's per-shot ``layout`` IS
         flag-dependent. So when two analyses of the same ``(video_id, aspect)``

@@ -78,8 +78,20 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
         boundaries (the natural cooperative checkpoints — a stage itself is one
         native call). UNVERIFIED by unit test: this class is
         ``# pragma: no cover`` because it needs torch/cv2 + real weights, so the
-        experiment that would settle it is the opt-in ``@e2e`` golden run on real
-        footage, not the branch gate.
+        branch gate cannot see it.
+
+        CORRECTION 2026-08-10 — this used to name "the opt-in ``@e2e`` golden run on
+        real footage" as the settling experiment, which read as though such a run
+        existed. It does NOT. Measured: the suite has exactly three
+        ``@pytest.mark.e2e`` tests (two bundled-ffmpeg encoder probes in
+        ``test_ffmpeg_encoders.py`` and the collection-guarded
+        ``test_reframe_eval_golden_e2e.py``), and NONE constructs this class or
+        exercises cancellation — ``RealMultiSpeakerBackend`` appears in tests only as
+        an import-surface assertion (``test_phase8_backend_surfaces.py:23-24``). The
+        settling experiment therefore has to be BUILT: an opt-in test that runs this
+        backend over a short real clip with weights present, requests a cancel during
+        stage 1, and asserts the JOB reaches ``cancelled`` (not ``error``) and that
+        each stage reported progress before it started.
 
         TERMINAL-STATE NOTE (2026-08-10). The two cancel checkpoints below raise
         :class:`~media_studio.features.reframe_multispeaker.MultiSpeakerReframeError`,
