@@ -556,13 +556,23 @@ export function Library({
           filtered count would remove the search box the moment a query matched
           nothing and trap the user in the "No matches" arm with no way to clear it
           (pinned by Library.test.tsx "keeps search reachable when a query matches
-          nothing"). */}
+          nothing").
+
+          `loading` rides along because the count alone is ambiguous: it is also 0
+          while the first `library.list` is in flight, and hiding the strip there
+          made it mount when the data landed, pushing the whole list down by the
+          strip's box — the opposite of what the skeleton below exists to do. This
+          view remounts on every tab switch (App.tsx renderRoute()), so that was a
+          shift on every return, not just a first-run one. Pinned by
+          Library.test.tsx "keeps the toolbar mounted across the first listing so
+          the list cannot shift". */}
       <LibraryToolbar
         query={query}
         onQueryChange={setQuery}
         sort={sortMode}
         onSortChange={setSortMode}
         videoCount={videos.length}
+        loading={loading}
         selectedCount={selected.size}
         onRemoveSelected={() => void removeSelected()}
         onClearSelection={clearSelection}
@@ -643,13 +653,39 @@ export function Library({
             </div>
             <p className="library__empty-title">No videos yet</p>
             {/* W53 — this used to read "drop video files anywhere here". "anywhere"
-                is wider than the app: the ONLY drag-and-drop handlers in the whole
-                renderer are the three on this view's root div (:519-523 above), so
-                a user who reads "anywhere" and then drops onto Edit, Caption or
-                Export gets nothing — the browser navigates away or ignores it. The
-                copy now names the surface that actually accepts the drop. Pinned by
-                Library.test.tsx. If an app-level drop target ever lands, widen this
-                sentence in the SAME commit that ships it. */}
+                is wider than the app: this view's root div carries the only React
+                drag-and-drop HANDLERS in the renderer (:521-523 above), so it is
+                the only surface that HANDLES a dropped video, and the copy now
+                names it.
+
+                Two earlier versions of this comment were refuted and are corrected
+                here rather than deleted, so the next reader inherits the scope and
+                not the overclaim:
+                  * "the ONLY drop target in the whole renderer" was wider than the
+                    grep behind it. `onDrop=`/`onDragOver=` cannot see a NATIVE drop
+                    target, and there is one: features/Subtitles.tsx:348 renders
+                    <input type="file" accept=".srt,.vtt,.ass,.ssa"> (:48), which
+                    Chromium treats as a drop target. It cannot take a video (that
+                    `accept` filters it out), so the operative conclusion holds — but
+                    "only React DnD handlers" is the claim the evidence supports.
+                  * "the browser navigates away or ignores it" asserted a runtime
+                    behaviour nobody ran. What IS grounded: no view outside the
+                    Library registers a drop handler, so nothing in the app reacts;
+                    and main.ts:1111-1117 preventDefault()s any navigation failing
+                    isAllowedNavigation, which for a packaged `file:` app pins the
+                    target to the app's own bundle pathname and so denies any
+                    sibling `file:` document (security.ts:32-35) — a dropped
+                    clip.mp4 included. UNVERIFIED: whether a drop onto a
+                    handler-less view even reaches `will-navigate` in Electron, and
+                    what the user actually sees; no drop was executed outside the
+                    Library. Settling experiment: an e2e that drags a file onto
+                    Edit/Caption/Export and asserts no `library.add` RPC, no route
+                    change, and no window navigation.
+                Independent corroboration of the drop scope, from the audit that
+                raised W53: docs/plans/v1.5/uiux-qol-audit-2026-08.md:299 ("M6.
+                Drag-and-drop works only on Library"). Pinned by Library.test.tsx.
+                If an app-level drop target ever lands, widen this sentence in the
+                SAME commit that ships it. */}
             <p className="library__empty-hint">
               Click “Add videos”, or drop video files onto the Library.
             </p>

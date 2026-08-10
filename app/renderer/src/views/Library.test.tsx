@@ -1156,23 +1156,36 @@ describe('Library search + sort (v1.5 §4)', () => {
 
 // W53 + W54 — two claims the Library made that its own code does not back.
 describe('Library first-run honesty + control gating (W53/W54)', () => {
-  // W53. The ONLY drag-and-drop handlers in the entire renderer are the three on
-  // this view's ROOT div (views/Library.tsx:519-523); a repo-wide scan for
-  // `onDrop=`/`onDragOver=` under app/renderer/src returns exactly those two
-  // attribute lines and nothing else. So "drop video files anywhere here" stops
-  // being true the instant the user leaves the Library — the drop scope has to be
-  // named, not implied. Same shape as Edit.test.tsx's "does not promise editing
-  // verbs the app cannot deliver".
+  // The EXACT first-run hint. Pinned byte-for-byte on purpose — see below.
+  const EMPTY_HINT = 'Click “Add videos”, or drop video files onto the Library.';
+
+  // W53. The only React drag-and-drop HANDLERS in the renderer are the three on
+  // this view's ROOT div (views/Library.tsx:521-523), so the Library is the only
+  // surface that handles a dropped VIDEO; "drop video files anywhere here" stops
+  // being true the instant the user leaves it. Independently corroborated by the
+  // audit that raised W53: docs/plans/v1.5/uiux-qol-audit-2026-08.md:299 ("M6.
+  // Drag-and-drop works only on Library"). Same shape as Edit.test.tsx's "does not
+  // promise editing verbs the app cannot deliver".
   it('names the Library as the drop target instead of claiming files drop anywhere', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
-    const hint = container.querySelector('.library__empty-hint')?.textContent ?? '';
-    // Guard the guard: a missing element or empty copy would satisfy the absence
-    // check below for the wrong reason.
-    expect(hint.length).toBeGreaterThan(20);
+    const hint = container.querySelector('.library__empty-hint')?.textContent?.trim() ?? '';
+    // EXACT pin. The first version of this test asserted only `length > 20` +
+    // `not.toContain('anywhere')` + `toContain('library')`, and adversarial review
+    // REFUTED that as a keyword filter rather than a property check: it stayed
+    // green for at least six defect-preserving rewrites, including
+    // "...onto the Library, Edit or Export view." (names two surfaces with no drop
+    // handler), "...somewhere in the library", and deleting the drop clause
+    // outright. Exact equality kills every one of them.
+    expect(hint).toBe(EMPTY_HINT);
+    // The properties the exact string exists to satisfy, asserted separately so a
+    // future reword must keep them AND so the failure names which one broke.
     expect(hint.toLowerCase()).not.toContain('anywhere');
-    // ...and it must still say WHERE a dropped file lands.
     expect(hint.toLowerCase()).toContain('library');
+    // ...and it must not point at a view that cannot take a drop.
+    expect(hint.toLowerCase()).not.toMatch(
+      /\bedit\b|\bcaption\b|\bexport\b|\bshorts\b|\bworkspace\b|\bdeliver\b|\banywhere\b|\bany screen\b/,
+    );
   });
 
   // W54. Search and Sort were mounted unconditionally as a SIBLING of the
@@ -1214,17 +1227,58 @@ describe('Library first-run honesty + control gating (W53/W54)', () => {
     expect(container.querySelector('.library-toolbar__sort-select')).not.toBeNull();
   });
 
-  // A SECOND consequence of keying the gate on `videos.length`, pinned here so it
-  // is an intended behaviour rather than an incidental one: while the first
-  // `library.list` is still in flight the list is empty, so the toolbar is absent
-  // over the skeleton rows too. That is the point — there is nothing to search or
-  // sort yet either. The controls appear with the content.
-  it('shows no toolbar while the first listing is still in flight', async () => {
-    rpcMock.mockReturnValueOnce(new Promise(() => {})); // library.list never settles
+  // The W54 gate must NOT swallow the in-flight arm. `videos` is `[]` while the
+  // first `library.list` is outstanding, so gating on the raw count alone unmounted
+  // the whole strip over the skeleton rows and then mounted it when the data landed
+  // — pushing the entire list down by the toolbar's box at first paint. That
+  // contradicts the skeleton's own reason for existing ("the ghost rows
+  // (aria-hidden) hold the layout so it doesn't jump", Library.tsx below), and it is
+  // not a one-off: App.tsx's renderRoute() switch returns <Library> only on the
+  // library route, so the view unmounts on every tab switch and remounts with
+  // `videos` reset to [] — the shift would recur on every return to the Library.
+  //
+  // An earlier revision of this suite PINNED that unmount as intended ("shows no
+  // toolbar while the first listing is still in flight"); adversarial review refuted
+  // it as a first-paint layout-shift regression and this test deliberately replaces
+  // it. `loading` now holds the strip mounted.
+  it('keeps the toolbar mounted across the first listing so the list cannot shift', async () => {
+    let settle: (r: { videos: Video[] }) => void = () => {};
+    rpcMock.mockReturnValueOnce(
+      new Promise<{ videos: Video[] }>((resolve) => {
+        settle = resolve;
+      }),
+    );
     await act(async () => {
       root.render(<Library onOpen={() => {}} />);
     });
+    // In flight: skeleton rows AND an already-mounted strip holding its own box.
     expect(container.querySelector('.library__loading')).not.toBeNull();
+    const during = container.querySelector('.library-toolbar');
+    expect(during).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__search')).not.toBeNull();
+
+    await act(async () => {
+      settle({ videos: [makeVideo()] });
+    });
+    await flush();
+
+    // The listing landed...
+    expect(container.querySelector('.library__loading')).toBeNull();
+    expect(container.querySelector('.library__item-title')).not.toBeNull();
+    // ...and it is the SAME host node. Node identity is the property that matters:
+    // a strip that unmounted and remounted is what displaces the list, and a
+    // presence-only assertion cannot tell the two apart.
+    expect(container.querySelector('.library-toolbar')).toBe(during);
+  });
+
+  // ...but once the listing resolves EMPTY there is genuinely nothing to filter, so
+  // the strip goes (W54). This is the arm where hiding is correct, and it is the
+  // only one: `loading` is false and the count is really 0.
+  it('drops the toolbar once the listing resolves to an empty library', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+    expect(container.querySelector('.library__loading')).toBeNull();
+    expect(container.querySelector('.library__empty')).not.toBeNull();
     expect(container.querySelector('.library-toolbar')).toBeNull();
   });
 });
