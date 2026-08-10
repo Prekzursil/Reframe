@@ -327,50 +327,128 @@ GENERATED_APP_DIRS = frozenset({"node_modules", "dist", "out"})
 #: shape `.quality/charter_check.py` matches on, and for the same reason: a
 #: job-level or `with:`-block `name:` is a plain mapping key, not a step.
 STEP_NAME_KEY = re.compile(r"^\s*-\s+name:\s*(?P<value>\S.*)$")
-#: `--lockfile=<path>`; the trailing `\` of a shell line continuation is excluded
-#: from the path by the character class.
-LOCKFILE_ARG = re.compile(r"--lockfile[=\s]+(?P<path>[^\s\\]+)")
+#: any other key of the step mapping (`run:`, `if:`, `env:`, `working-directory:`).
+STEP_MAPPING_KEY = re.compile(r"^\s*(?P<key>[A-Za-z][\w-]*):(?P<rest>.*)$")
+#: a shell comment marker: `#` at line start or after whitespace.
+SHELL_COMMENT = re.compile(r"(?:^|\s)#")
+#: the block-scalar indicators that mean "the body is on the FOLLOWING lines".
+BLOCK_SCALARS = frozenset({"|", ">", "|-", ">-", "|+", ">+", "|2", ">2"})
+#: `--lockfile=<path>`. Quote characters and the trailing `\` of a shell line
+#: continuation are excluded from the path by the character class.
+LOCKFILE_ARG = re.compile(r"--lockfile[=\s]+(?P<path>[^\s\\'\"]+)")
 
 
-def _repo_rel(path: Path) -> str:
-    return path.relative_to(REPO_ROOT).as_posix()
+def _repo_rel(path: Path, root: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def _strip_shell_comment(line: str) -> str:
+    """Everything from the first shell comment marker onward is not an argument."""
+    marker = SHELL_COMMENT.search(line)
+    return line[: marker.start()] if marker else line
+
+
+def gate_deps_run_script(workflow_text: str) -> str:
+    """The ``run:`` script of the ``gate-deps`` step, and nothing else.
+
+    Scoping to ``run:`` — rather than to "every line of the step" — is what keeps
+    a ``--lockfile`` named in a step-level ``if:``/``env:``/``with:`` value out of
+    the count. Both the inline (``run: osv-scanner …``) and block-scalar
+    (``run: |``) forms are handled.
+    """
+    in_step = in_run = False
+    script: list[str] = []
+    for raw in workflow_text.splitlines():
+        step = STEP_NAME_KEY.match(raw)
+        if step:
+            in_step = step.group("value").startswith("gate-deps")
+            in_run = False
+            continue
+        if not in_step:
+            continue
+        key = STEP_MAPPING_KEY.match(raw)
+        if key:
+            inline = key.group("rest").strip()
+            in_run = key.group("key") == "run" and inline in BLOCK_SCALARS
+            if key.group("key") == "run" and not in_run:
+                script.append(inline)
+            continue
+        if in_run:
+            script.append(raw)
+    return "\n".join(script)
+
+
+def shell_commands(script: str) -> list[str]:
+    """``script`` split into logical shell commands, comments removed.
+
+    Trailing ``\\`` continuations are joined so a multi-line invocation is ONE
+    command; that is what lets the caller ask "which command is this argument
+    actually on?" instead of trusting a bare line match.
+    """
+    commands: list[str] = []
+    pending = ""
+    for raw in script.splitlines():
+        line = _strip_shell_comment(raw).strip()
+        if not line:
+            continue
+        if line.endswith("\\"):
+            pending += line[:-1].rstrip() + " "
+            continue
+        commands.append((pending + line).strip())
+        pending = ""
+    if pending:
+        commands.append(pending.strip())
+    return commands
 
 
 def gate_deps_lockfile_args(workflow_text: str) -> set[str]:
-    """The ``--lockfile`` paths the ``gate-deps`` STEP actually passes.
+    """The ``--lockfile`` paths the ``gate-deps`` osv-scanner COMMAND passes.
 
-    Measure the FIELD, not the document. Two shapes in this workflow would
-    otherwise let a deleted lockfile keep satisfying the invariant below: the
-    explanatory comment block directly above the step names all three original
-    lockfiles in prose, and a ``#``-disabled argument inside the ``run:`` body is
-    not an argument at all. So the scan is scoped to the lines that follow the
-    ``gate-deps`` step name (up to the next step) and skips comment lines.
+    Measure the FIELD, not the document — and specifically, measure the COMMAND.
+    Four shapes in a workflow can name a lockfile without passing it, and all
+    four were counted by the first version of this function (each is now pinned
+    by :class:`TestArgParserMeasuresTheCommandNotTheDocument`): the explanatory
+    comment block above the step names lockfiles in prose; a ``#``-disabled
+    argument line; a *trailing* ``#`` mention on a live argument line; and an
+    ``echo`` of an argument inside the ``run:`` body. So the scan reads only the
+    step's ``run:`` script, strips shell comments, joins ``\\`` continuations
+    into logical commands, and accepts arguments ONLY from a command whose
+    executable is ``osv-scanner``.
+
+    Scope of that claim, measured rather than assumed (this is a line walker, not
+    a YAML+shell parser). NOT handled: a ``--lockfile`` inside a heredoc body, a
+    path built by variable expansion, an ``osv-scanner`` invoked through a
+    wrapper (``xargs``/``bash -c``/a script), and a flow-style ``- {name: …}``
+    step. Every one of those DROPS an argument, which makes the invariant report
+    the environment as unscanned and fails CI loudly; none can add a phantom
+    argument. That is the same fail-closed error direction
+    ``.quality/charter_check.py`` documents for its own parser, and it is the
+    direction that matters here — a false GREEN on a security gate is the
+    dangerous one.
     """
-    inside = False
     found: set[str] = set()
-    for line in workflow_text.splitlines():
-        step = STEP_NAME_KEY.match(line)
-        if step:
-            inside = step.group("value").startswith("gate-deps")
+    for command in shell_commands(gate_deps_run_script(workflow_text)):
+        if not command.startswith("osv-scanner"):
             continue
-        if not inside or line.lstrip().startswith("#"):
-            continue
-        found.update(match.group("path") for match in LOCKFILE_ARG.finditer(line))
+        found.update(match.group("path") for match in LOCKFILE_ARG.finditer(command))
     return found
 
 
-def shipped_dependency_manifests() -> dict[str, frozenset[str]]:
+def shipped_dependency_manifests(repo_root: Path | None = None) -> dict[str, frozenset[str]]:
     """``{environment -> the manifests that would cover it}``, read off disk.
 
-    Deliberately NOT a hardcoded list: the whole point of the invariant is that a
-    FOURTH environment cannot be introduced unscanned, and a literal list would
-    be edited by the very commit that introduces one.
+    Deliberately NOT a hardcoded list: a literal list would be edited by the very
+    commit that introduces a new environment, so discovery is the point.
 
-    * one environment per npm tree — ``app/`` plus every immediate subdirectory
-      that owns a committed ``package-lock.json``;
-    * one per ``sidecar/requirements*.txt`` (the resolved closure the gate has
-      read since it was written);
-    * one per ``sidecar/runtime_setup/requirements-<env>.txt`` — the first-run
+    Discovered shapes, and ONLY these (``repo_root`` defaults to this repo; it is
+    a parameter so :class:`TestDiscoveryScopeIsTheThreeGlobs` can plant manifests
+    in a throwaway tree and pin the boundary):
+
+    * ``app/package-lock.json`` and ``app/<immediate-subdir>/package-lock.json``
+      — one environment per npm tree;
+    * ``sidecar/requirements*.txt`` — the resolved closure the gate has read
+      since it was written;
+    * ``sidecar/runtime_setup/requirements*.txt`` — the first-run
       ``pip --target`` environments. A sibling ``requirements-<env>.lock.txt`` is
       an F1 build-prep artifact that is generated rather than committed, so
       scanning EITHER file covers that environment; hence a SET per environment
@@ -378,22 +456,30 @@ def shipped_dependency_manifests() -> dict[str, frozenset[str]]:
 
     Both globs are single-level on purpose: a recursive walk would descend into
     ``sidecar/.venv`` and ``app/node_modules`` and pick up third-party
-    requirements files that this repo does not ship.
+    requirements files that this repo does not ship. The cost of that choice is
+    stated, not hidden: a manifest anywhere ELSE — a repo-root lockfile, two
+    levels under ``app/``, a sibling top-level tree, a ``sidecar/envs/…`` tree, a
+    pin list not named ``requirements*``, or a dependency set declared as a
+    ``pyproject.toml`` extra (which is how the live ``reframe-gpu`` extra escapes
+    this gate) — is NOT discovered and therefore NOT demanded by the invariant.
     """
+    root = REPO_ROOT if repo_root is None else repo_root
+    app_dir = root / "app"
+    sidecar_dir = root / "sidecar"
     environments: dict[str, set[str]] = {}
     npm_roots = [
-        APP_DIR,
-        *(d for d in sorted(APP_DIR.iterdir()) if d.is_dir() and d.name not in GENERATED_APP_DIRS),
+        app_dir,
+        *(d for d in sorted(app_dir.iterdir()) if d.is_dir() and d.name not in GENERATED_APP_DIRS),
     ]
-    for root in npm_roots:
-        lock = root / "package-lock.json"
+    for npm_root in npm_roots:
+        lock = npm_root / "package-lock.json"
         if lock.is_file():
-            environments[_repo_rel(lock)] = {_repo_rel(lock)}
-    for req in sorted(SIDECAR_DIR.glob("requirements*.txt")):
-        environments[_repo_rel(req)] = {_repo_rel(req)}
-    for req in sorted(RUNTIME_SETUP_DIR.glob("requirements*.txt")):
+            environments[_repo_rel(lock, root)] = {_repo_rel(lock, root)}
+    for req in sorted(sidecar_dir.glob("requirements*.txt")):
+        environments[_repo_rel(req, root)] = {_repo_rel(req, root)}
+    for req in sorted((sidecar_dir / "runtime_setup").glob("requirements*.txt")):
         env = req.name.removesuffix(".txt").removesuffix(".lock")
-        environments.setdefault(env, set()).add(_repo_rel(req))
+        environments.setdefault(env, set()).add(_repo_rel(req, root))
     return {name: frozenset(paths) for name, paths in environments.items()}
 
 
@@ -498,6 +584,164 @@ class TestDepsGateCoversEveryShippedEnv:
         assert mutated != body, f"no --lockfile argument for {target} was found to comment out"
         assert target not in gate_deps_lockfile_args(mutated)
 
+
+class TestArgParserMeasuresTheCommandNotTheDocument:
+    """Only the osv-scanner COMMAND counts — a *mention* is not an argument.
+
+    Every case below was executed against the FIRST version of
+    :func:`gate_deps_lockfile_args`, which skipped a line only when its first
+    non-space character was ``#``. Three shapes leaked through it and were
+    counted as scanned lockfiles: a trailing ``#`` mention on a live argument
+    line, an ``echo`` inside the ``run:`` body, and an ``if:`` expression. The
+    last test is the dangerous one — with the chatterbox argument DELETED and
+    re-mentioned as a trailing comment, the invariant above reported
+    ``missing = {}`` (GREEN) while the gate no longer scanned the file at all.
+    False-GREEN on a security gate is the wrong error direction, so all four are
+    asserted permanently rather than measured once.
+    """
+
+    @staticmethod
+    def _run_block(*body: str) -> str:
+        return "\n".join(["      - name: gate-deps osv-scanner", "        run: |", *body])
+
+    @classmethod
+    def _osv_command(cls, *arg_lines: str) -> str:
+        """A ``gate-deps`` step whose run body is ONE continued osv-scanner call."""
+        return cls._run_block("          osv-scanner scan source \\", *arg_lines)
+
+    # --- detector control: the parser must SEE a known-present argument ------ #
+    def test_a_real_argument_is_seen(self):
+        assert gate_deps_lockfile_args(self._osv_command("            --lockfile=real/a.json")) == {"real/a.json"}
+
+    def test_an_inline_run_argument_is_seen(self):
+        text = "\n".join(
+            [
+                "      - name: gate-deps osv-scanner",
+                "        run: osv-scanner scan source --lockfile=real/a.json",
+            ]
+        )
+        assert gate_deps_lockfile_args(text) == {"real/a.json"}
+
+    # --- the four shapes that must NOT count -------------------------------- #
+    def test_a_whole_line_comment_argument_is_not_seen(self):
+        assert gate_deps_lockfile_args(self._osv_command("            # --lockfile=dead/b.json")) == set()
+
+    def test_a_trailing_comment_mention_is_not_seen(self):
+        text = self._osv_command("            --lockfile=real/a.json  # --lockfile=ghost/c.json")
+        assert gate_deps_lockfile_args(text) == {"real/a.json"}
+
+    def test_an_echoed_mention_inside_the_run_body_is_not_seen(self):
+        # A SEPARATE command in the same run body. (An `echo` glued on by a `\`
+        # continuation genuinely IS part of the osv-scanner argv, so that shape is
+        # not the hole — this one is.)
+        text = self._run_block(
+            "          echo '--lockfile=ghost/d.json'",
+            "          osv-scanner scan source --lockfile=real/a.json",
+        )
+        assert gate_deps_lockfile_args(text) == {"real/a.json"}
+
+    def test_a_mention_in_a_step_level_if_expression_is_not_seen(self):
+        text = "\n".join(
+            [
+                "      - name: gate-deps osv-scanner",
+                "        if: contains(github.event.head_commit.message, '--lockfile=ghost/e.json')",
+                "        run: osv-scanner scan source --lockfile=real/a.json",
+            ]
+        )
+        assert gate_deps_lockfile_args(text) == {"real/a.json"}
+
+    # --- end to end on the REAL committed workflow --------------------------- #
+    def test_a_deleted_argument_cannot_be_faked_by_a_trailing_comment(self):
+        target = "sidecar/runtime_setup/requirements-chatterbox.txt"
+        survivor = "--lockfile=sidecar/runtime_setup/requirements-sidecar.txt"
+        body = QUALITY_WORKFLOW.read_text(encoding="utf-8")
+        stripped = re.sub(rf"^.*--lockfile={re.escape(target)}.*$\n?", "", body, flags=re.MULTILINE)
+        assert f"--lockfile={target}" not in stripped, "the argument survived removal — this probe is broken"
+        assert survivor in stripped, "the surviving argument this case hangs the comment on is gone"
+        faked = stripped.replace(survivor, f"{survivor}  # dropped --lockfile={target}")
+        scanned = gate_deps_lockfile_args(faked)
+        assert target not in scanned, f"a commented-out mention was counted as an argument: {sorted(scanned)}"
+        still_missing = sorted(name for name, paths in shipped_dependency_manifests().items() if not (paths & scanned))
+        assert still_missing == ["requirements-chatterbox"]
+
+
+class TestDiscoveryScopeIsTheThreeGlobs:
+    """Pin exactly which manifest shapes discovery CAN and cannot see.
+
+    The W23 summary sentences originally said a fourth environment "cannot be
+    added unscanned" without qualification. Three independent reviewers REFUTED
+    that by executing :func:`shipped_dependency_manifests` against synthetic trees
+    with a manifest planted outside the three globs — a ``pyproject.toml`` extra,
+    a repo-root lockfile, one two levels under ``app/``, a sibling top-level tree,
+    a ``sidecar/envs/…`` tree, and a pin list not named ``requirements*``. The
+    code was right and the sentences were wider than the evidence, so the real
+    boundary is asserted here instead of merely described. Widening a glob is a
+    deliberate change that must update this test AND the prose in the same commit.
+    """
+
+    @staticmethod
+    def _tree(root: Path, *relative: str) -> Path:
+        (root / "app").mkdir(parents=True, exist_ok=True)
+        (root / "sidecar" / "runtime_setup").mkdir(parents=True, exist_ok=True)
+        for rel in relative:
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("# planted\n", encoding="utf-8")
+        return root
+
+    @pytest.mark.parametrize(
+        "planted",
+        [
+            "app/package-lock.json",
+            "app/render-cli/package-lock.json",
+            "sidecar/requirements.lock.txt",
+            "sidecar/runtime_setup/requirements-newenv.txt",
+        ],
+    )
+    def test_a_manifest_in_a_discovered_shape_is_found(self, tmp_path, planted: str):
+        """Detector control. Without this, every zero below would be meaningless."""
+        environments = shipped_dependency_manifests(self._tree(tmp_path, planted))
+        assert any(planted in paths for paths in environments.values()), (
+            f"discovery missed {planted}, which it is supposed to find: {environments}"
+        )
+
+    @pytest.mark.parametrize(
+        "planted",
+        [
+            "package-lock.json",  # repo root
+            "app/renderer/plugins/package-lock.json",  # two levels under app/
+            "tools/cli/package-lock.json",  # a sibling top-level tree
+            "sidecar/envs/whisperx/requirements.txt",  # nested under sidecar/
+            "sidecar/runtime_setup/gpu-pins.txt",  # not named requirements*
+            "sidecar/pyproject.toml",  # a dependency set declared as an extra
+        ],
+    )
+    def test_a_manifest_outside_the_three_globs_is_not_found(self, tmp_path, planted: str):
+        environments = shipped_dependency_manifests(self._tree(tmp_path, planted))
+        assert not any(planted in paths for paths in environments.values()), (
+            f"discovery now sees {planted}. That is an improvement, not a failure — but the "
+            f"claim in QUALITY-CHARTER.md, osv-scanner.toml and this module's docstring must be "
+            f"widened in the same commit, and this case moved to the discovered-shapes list."
+        )
+
+    def test_the_live_reframe_gpu_extra_is_a_real_instance_of_that_gap(self):
+        """The gap is not hypothetical: it is why ``reframe-gpu`` is unscanned.
+
+        ``sidecar/pyproject.toml`` declares a ``reframe-gpu`` extra with its own
+        pinned torch, and the SHIPPED sidecar tells the user to install it at
+        runtime — yet no scanned manifest contains those pins, and a pyproject
+        extra is not a shape discovery looks at. Asserted here so the honest scope
+        of gate 6 cannot silently drift back to "every shipped environment".
+        """
+        pyproject = (SIDECAR_DIR / "pyproject.toml").read_text(encoding="utf-8")
+        assert "reframe-gpu" in pyproject, "the reframe-gpu extra is gone; retire this test and the caveats"
+        assert re.search(r"^\s*\"torch==", pyproject, flags=re.MULTILINE), "reframe-gpu no longer pins torch"
+        assert "sidecar/pyproject.toml" not in gate_deps_lockfile_args(QUALITY_WORKFLOW.read_text(encoding="utf-8"))
+        assert "torch" not in _distribution_names(SIDECAR_DIR / "requirements.lock.txt")
+        assert "torch" not in _distribution_names(RUNTIME_SETUP_DIR / "requirements-sidecar.txt")
+
+
+class TestDepsGateChatterboxRationale:
     # --- WHY the chatterbox env needs its own argument ----------------------- #
     def test_the_chatterbox_env_pins_distributions_no_other_manifest_covers(self):
         """``sidecar/requirements.lock.txt`` structurally cannot cover this env.
