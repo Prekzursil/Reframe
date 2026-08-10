@@ -246,11 +246,16 @@ picture, each item measured:
      the same version (2.10.0+cu128), and that lockstep is enforced upstream, not
      merely by convention: torchaudio==2.10.0's own metadata hard-pins
      `torch==2.10.0` (measured: pypi.org/pypi/torchaudio/2.10.0/json requires_dist
-     == ['torch==2.10.0']). And torchaudio has NO release above 2.11.0 ANYWHERE —
-     PyPI info.version == 2.11.0, and the cp314 listings on cu126, cu128, cu129
-     AND cu130 every one top out at torchaudio 2.11.0. There is therefore no
-     version of the pinned pair in which torch is >= 2.13.0 and torchaudio is a
-     released, index-published build.
+     == ['torch==2.10.0']). And torchaudio has no release above 2.11.0 on any
+     index probed — PyPI info.version == 2.11.0, and the cp314 listings on ALL
+     SEVEN download.pytorch.org indexes checked (cu126, cu128, cu129, cu130, cpu,
+     rocm7.0, xpu) top out at torchaudio 2.11.0. Scope of that stated exactly,
+     because over-generalising a wheel-index probe is the mistake this entry is
+     correcting: seven indexes plus PyPI were measured, not every index that
+     exists (the nightly channel was not probed and is not shippable anyway).
+     There is therefore no version of the pinned pair, on any index this env could
+     use, in which torch is >= 2.13.0 and torchaudio is a released,
+     index-published build.
      Adopting a fixed torch means either pairing torch 2.13.0 with torchaudio
      2.11.0 — a combination upstream has never shipped; pip would not refuse it on
      metadata grounds, because torchaudio 2.11.0 declares no requires_dist at all

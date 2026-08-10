@@ -748,8 +748,17 @@ class TestDiscoveryScopeIsTheThreeGlobs:
         assert "reframe-gpu" in pyproject, "the reframe-gpu extra is gone; retire this test and the caveats"
         assert re.search(r"^\s*\"torch==", pyproject, flags=re.MULTILINE), "reframe-gpu no longer pins torch"
         assert "sidecar/pyproject.toml" not in gate_deps_lockfile_args(QUALITY_WORKFLOW.read_text(encoding="utf-8"))
-        assert "torch" not in _distribution_names(SIDECAR_DIR / "requirements.lock.txt")
-        assert "torch" not in _distribution_names(RUNTIME_SETUP_DIR / "requirements-sidecar.txt")
+        # The ID-keyed torch ignore in osv-scanner.toml claims a blast radius of
+        # "no OTHER scanned manifest pins torch*". Assert the whole family, not
+        # just the bare name, so the claim and the assertion have the same scope.
+        for manifest_path in (SIDECAR_DIR / "requirements.lock.txt", RUNTIME_SETUP_DIR / "requirements-sidecar.txt"):
+            pinned = _distribution_names(manifest_path)
+            assert pinned, f"{manifest_path.name} parsed to zero distributions — the parser is broken"
+            assert not {name for name in pinned if name.startswith("torch")}, (
+                f"{manifest_path.name} now pins a torch* distribution, so the ID-keyed "
+                f"GHSA-rrmf-rvhw-rf47 ignore in osv-scanner.toml silences it there too. "
+                f"Re-measure that entry's blast radius before this lands."
+            )
 
 
 class TestDepsGateChatterboxRationale:
