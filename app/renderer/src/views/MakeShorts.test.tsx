@@ -723,6 +723,123 @@ describe('<MakeShorts />', () => {
     expect(container.querySelector('.make-shorts__error')).toBeNull();
   });
 
+  // ---- the IN-FLIGHT half of the same defect -------------------------------
+  // The reset effect above only closes the AFTER case (export settles, THEN the
+  // user switches). `shortmaker.export` is a DEFERRED job awaited for up to
+  // EXPORT_JOB_TIMEOUT_MS (35 min, _api.ts:62) and the picker is not disabled
+  // while it runs, so the user can switch DURING the export: the reset runs on
+  // the switch and the in-flight job's own writes then land AFTER it, restoring
+  // the original lie verbatim. Reproduced against the reset-only tree at
+  // e93efefb: outputs ['/out/A1.mp4','/out/A2.mp4'] + video 1's degrade warning
+  // rendered while the picker read v2.
+  it('drops an IN-FLIGHT export receipt when the video changes before the job settles', async () => {
+    const message = 'reframe: speaker tracking unavailable (no subject) — used center crop';
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    installBridge(true);
+    exportMock.mockResolvedValue({ jobId: 'inflight-1' });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    // PRECONDITION: the export really is still in flight (nothing reported yet),
+    // so what follows is the mid-export switch and not the settled case above.
+    expect(container.querySelector('.make-shorts__note')).toBeNull();
+    expect(container.querySelector('[data-testid="manual"]')?.getAttribute('data-busy')).toBe(
+      'true',
+    );
+
+    await selectVideo('v2');
+    // …the job for video 1 now finishes, with real paths and a real warning.
+    await act(async () => {
+      jobDoneCb!({
+        jobId: 'inflight-1',
+        result: {
+          clips: [
+            { path: '/out/A1.mp4' },
+            {
+              path: '/out/A2.mp4',
+              reframeDegraded: { type: 'reframe.degraded', message, reason: 'no subject' },
+            },
+          ],
+        },
+      });
+    });
+    await flush();
+
+    // The picker (and the child) are on video 2, so NONE of video 1's outcome
+    // may be presented here — it is a factual claim about a different video.
+    expect(
+      container.querySelector('[data-testid="shortmaker"]')!.getAttribute('data-video-id'),
+    ).toBe('v2');
+    expect(container.querySelector('.make-shorts__outputs')).toBeNull();
+    expect(container.querySelector('.make-shorts__degraded')).toBeNull();
+    expect(container.querySelector('.make-shorts__warn')).toBeNull();
+    expect(container.querySelector('.make-shorts__note')).toBeNull();
+    expect(container.querySelector('[data-testid="output-tray"]')).toBeNull();
+    // The export lane must still be released — a dropped receipt is not a stuck
+    // job, and leaving `busy` set would disable the submit control for good.
+    expect(container.querySelector('[data-testid="manual"]')?.getAttribute('data-busy')).toBe(
+      'false',
+    );
+  });
+
+  // The failure half of the in-flight case: video 1's job.done ERROR must not be
+  // shown as video 2's error either.
+  it('drops an IN-FLIGHT export ERROR when the video changes before the job settles', async () => {
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    installBridge(true);
+    exportMock.mockResolvedValue({ jobId: 'inflight-2' });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    expect(container.querySelector('.make-shorts__error')).toBeNull();
+
+    await selectVideo('v2');
+    await act(async () => {
+      jobDoneCb!({
+        jobId: 'inflight-2',
+        result: { error: { message: 'ffmpeg exploded', type: 'ExportError' } },
+      });
+    });
+    await flush();
+
+    expect(container.querySelector('.make-shorts__error')).toBeNull();
+    expect(container.querySelector('[data-testid="manual"]')?.getAttribute('data-busy')).toBe(
+      'false',
+    );
+  });
+
+  // The other side of the guard: it drops a receipt that no longer describes the
+  // selection, NOT every receipt that outlived a switch. Browsing away and back
+  // during a 35-minute render must still deliver the real outcome — otherwise
+  // the "keep the user free to browse" justification for guarding the WRITE
+  // (rather than disabling the picker) would be false.
+  it('still delivers the receipt when the user switches away and back mid-export', async () => {
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    installBridge(true);
+    exportMock.mockResolvedValue({ jobId: 'inflight-3' });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+
+    await selectVideo('v2');
+    await selectVideo('v1');
+    await act(async () => {
+      jobDoneCb!({ jobId: 'inflight-3', result: { clips: [{ path: '/out/A1.mp4' }] } });
+    });
+    await flush();
+
+    expect(
+      [...container.querySelectorAll('.make-shorts__output-path')].map((el) => el.textContent),
+    ).toEqual(['/out/A1.mp4']);
+    expect(container.querySelector('.make-shorts__note')?.textContent).toContain('Exported 1 clip');
+  });
+
   it('shows no degraded warning when every clip reframed normally', async () => {
     exportMock.mockResolvedValue({ clips: [{ path: '/out/a.mp4' }] });
     await mount();

@@ -12,7 +12,7 @@
 // Re-export from the gallery jumps to Make primed with the source video. The
 // heavy children own their own tests; this view owns the section routing +
 // video selection + the manual-export wiring.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TabBar, tabId, tabPanelId, type TabDef } from '../components/TabBar';
 import { Shorts } from './Shorts';
 import { Repurpose } from './Repurpose';
@@ -169,7 +169,21 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
   // This mirrors ShortMaker.tsx:255-264, which resets its own per-video review
   // state for exactly this reason. Every reset is idempotent against the initial
   // state, so it is a harmless no-op on first mount.
+  //
+  // The reset alone is NOT sufficient. It closes the AFTER case (export settles,
+  // THEN the user switches) but not the IN-FLIGHT one: `shortmaker.export` is a
+  // deferred job awaited for up to EXPORT_JOB_TIMEOUT_MS (35 min,
+  // _api.ts:62), the picker below is not disabled while it runs, and
+  // `runManualExport` closes over the OLD `selectedId`. So a switch during those
+  // 35 minutes runs this reset FIRST and the in-flight job's own writes land
+  // AFTER it — re-creating the exact defect (measured: video 1's real paths and
+  // video 1's degrade warning shown as video 2's status). `selectedIdRef` is the
+  // other half: it mirrors the COMMITTED selection so a settled export can ask
+  // "am I still the selected video?" before writing. Kept as a ref rather than
+  // read from the closure because the closure is frozen at start-of-export.
+  const selectedIdRef = useRef(selectedId);
   useEffect(() => {
+    selectedIdRef.current = selectedId;
     setExportedClips([]);
     setManualNote(null);
     setManualError(null);
@@ -232,6 +246,12 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
   // opts payload (duplicate keys carry identical values).
   const runManualExport = useCallback(
     async (candidates: Candidate[]) => {
+      // The video this export is a receipt FOR. Every write below is a factual
+      // claim about THIS id, so each one is gated on the selection still being
+      // it when the job settles (see `selectedIdRef` above). Switching away and
+      // back re-admits the receipt — by then it describes the selected video
+      // again, which is the truthful outcome, not a stale one.
+      const startedFor = selectedId;
       setManualNote(null);
       setManualError(null);
       setExportedClips([]);
@@ -258,13 +278,22 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
             EXPORT_JOB_TIMEOUT_MS,
           );
         }
+        // The user may have switched the picker during the wait: this receipt
+        // then describes a video that is no longer on screen, so drop it rather
+        // than present it as the current video's status.
+        if (selectedIdRef.current !== startedFor) return;
         const produced = clips ?? [];
         setExportedClips(produced);
         setManualNote(`Exported ${produced.length} clip(s) from your ranges.`);
         setTrayOpen(true);
       } catch (err) {
+        // Same rule for the failure half — video 1's error is not video 2's.
+        if (selectedIdRef.current !== startedFor) return;
         setManualError(errText(err));
       } finally {
+        // Always cleared, guard or not: `manualBusy` is the single export lane's
+        // "a job is running" flag, not a per-video claim, and leaving it set
+        // would disable the submit control permanently after a mid-flight switch.
         setManualBusy(false);
       }
     },
