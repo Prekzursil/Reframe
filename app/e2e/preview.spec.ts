@@ -225,10 +225,10 @@ test('Advanced disclosure actually COLLAPSES the Deliver cluster (F17)', async (
   // v1.5 wave added `transcriptEdit`, `timeline`, `speed` and `audiomix`; e2e is
   // opt-in and nightly, so it never gated those PRs and the stale pair merged
   // four times over. It went 17/12 -> 19/14 when W17/W18 mounted `reframeFix`
-  // and `videoTimeline` into the visible "Frame & Cut" cluster, and 19/14 -> 20/15
-  // when W19 mounted `gaze` into that same visible cluster — each time updated here
-  // in the SAME commit as `Workspace.test.tsx`'s "pins the strip counts" test —
+  // and `videoTimeline` into the visible "Frame & Cut" cluster, updated here in
+  // the SAME commit as `Workspace.test.tsx`'s "pins the strip counts" test —
   // that PR-gating test is the only reason this nightly pair is not stale again.
+  // W19 took it 19/14 -> 20/15 by mounting `gaze` into that same visible cluster.
   // Re-derive from the source when the tab list changes — do NOT read a number
   // off a failing run and paste it back.
   await expect(win.locator('.tab')).toHaveCount(20);
