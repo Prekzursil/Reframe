@@ -164,12 +164,21 @@ vi.mock('../components/OutputTray', () => {
         >
           tray-recaption-sidecar
         </button>
-        <button type="button" onClick={() => onSaveShort?.()}>
-          tray-save-short
-        </button>
-        <button type="button" onClick={() => onSaveSrt?.()}>
-          tray-save-srt
-        </button>
+        {/* Mirrors the REAL tray's gate (OutputTray.tsx:139-148): a save button
+            exists ONLY when its handler was supplied. W06 relies on that gate —
+            MakeShorts supplies neither handler, so neither button may render.
+            Rendering them unconditionally here would hide a re-introduced
+            fabricated handler from the assertion below. */}
+        {onSaveShort ? (
+          <button type="button" onClick={() => onSaveShort()}>
+            tray-save-short
+          </button>
+        ) : null}
+        {onSaveSrt ? (
+          <button type="button" onClick={() => onSaveSrt()}>
+            tray-save-srt
+          </button>
+        ) : null}
       </div>
     ),
   };
@@ -568,7 +577,7 @@ describe('<MakeShorts />', () => {
     );
   });
 
-  it('drives the Output Tray change + save seams after a manual export', async () => {
+  it('drives the Output Tray change seam after a manual export', async () => {
     await mount();
     await selectVideo('v1');
     await act(async () => {
@@ -580,21 +589,273 @@ describe('<MakeShorts />', () => {
       await Promise.resolve();
     });
     await flush();
-    const click = (label: string) =>
-      act(() => {
-        (
-          [...container.querySelectorAll('button')].find(
-            (b) => b.textContent === label,
-          ) as HTMLButtonElement
-        ).click();
-      });
-    click('tray-change'); // exercises onChange={setTray}
-    click('tray-save-short');
-    expect(container.querySelector('.make-shorts__note')?.textContent).toContain('Saved the short');
-    click('tray-save-srt');
-    expect(container.querySelector('.make-shorts__note')?.textContent).toContain(
-      'Saved the SRT sidecar',
+    act(() => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'tray-change',
+        ) as HTMLButtonElement
+      ).click(); // exercises onChange={setTray}
+    });
+    expect(container.querySelector('[data-testid="output-tray"]')).not.toBeNull();
+  });
+
+  // W06 — REVIEWED REPLACEMENT of the two assertions that used to live in the
+  // test above:
+  //     expect(...note...).toContain('Saved the short');
+  //     expect(...note...).toContain('Saved the SRT sidecar');
+  // Those PINNED A DEFECT. `handleSaveShort`/`handleSaveSrt` only called
+  // `setManualNote(...)`; they issued ZERO IPC, so the note claimed a save that
+  // never happened. The old assertions therefore encoded "announce a save you did
+  // not perform" as correct behaviour, and any real fix turned CI red.
+  //
+  // The controls are REMOVED rather than re-wired because neither is a real
+  // action on this surface: `shortmaker.export` has already written the mp4 to
+  // the exports root (there is no unsaved short held in memory), and a standalone
+  // subtitle file is exactly the tray's own "Subtitles -> Separate file"
+  // delivery, which the same tray already offers. The tray hides a save button
+  // whose handler is omitted (OutputTray.tsx:139-148), so removing the handlers
+  // removes the buttons — no lie, and no dead control.
+  it('offers no fabricated save controls (a save button must do real work)', async () => {
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    const labels = [...container.querySelectorAll('button')].map((b) => b.textContent);
+    expect(container.querySelector('[data-testid="output-tray"]')).not.toBeNull();
+    expect(labels).not.toContain('tray-save-short');
+    expect(labels).not.toContain('tray-save-srt');
+    expect(container.querySelector('.make-shorts__note')?.textContent).not.toContain('Saved');
+  });
+
+  // W06 — what replaces the fabricated acknowledgement: the REAL paths the job
+  // reported. Until now the resolved clips were discarded except for `.length`.
+  it('lists the real exported clip paths the job reported', async () => {
+    exportMock.mockResolvedValue({ clips: [{ path: '/out/a.mp4' }, { path: '/out/b.mp4' }] });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    const paths = [...container.querySelectorAll('.make-shorts__output-path')].map(
+      (el) => el.textContent,
     );
+    expect(paths).toEqual(['/out/a.mp4', '/out/b.mp4']);
+  });
+
+  // W12 — the sidecar's WU-3 no-silent-fallback signal must reach the user. The
+  // per-clip line renders the sidecar's OWN message verbatim.
+  it('flags a clip whose reframe degraded, with the sidecar message verbatim', async () => {
+    const message = 'reframe: speaker tracking unavailable (no subject) — used center crop';
+    exportMock.mockResolvedValue({
+      clips: [
+        { path: '/out/a.mp4' },
+        {
+          path: '/out/b.mp4',
+          reframeDegraded: { type: 'reframe.degraded', message, reason: 'no subject' },
+        },
+      ],
+    });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    const badges = [...container.querySelectorAll('.make-shorts__degraded')].map(
+      (el) => el.textContent,
+    );
+    expect(badges).toEqual([message]);
+    expect(container.querySelector('.make-shorts__warn')?.textContent).toBe(
+      'Reframe degraded on 1 of 2 clip(s) — see the note on each file below.',
+    );
+  });
+
+  // The receipt is a factual claim about ONE video. Switching the "Source video"
+  // picker does NOT unmount the manual section (the outer conditional is just
+  // `selectedId ?`), so before the reset effect the whole receipt survived the
+  // switch: video 1's real paths and video 1's degrade warning were presented as
+  // video 2's status while the child ShortMaker had already re-keyed to v2.
+  it('clears the export receipt when the source video changes (no stale paths/warning)', async () => {
+    const message = 'reframe: speaker tracking unavailable (no subject) — used center crop';
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    exportMock.mockResolvedValue({
+      clips: [
+        { path: '/out/A1.mp4' },
+        {
+          path: '/out/A2.mp4',
+          reframeDegraded: { type: 'reframe.degraded', message, reason: 'no subject' },
+        },
+      ],
+    });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    // PRECONDITION: the receipt for video 1 is on screen.
+    expect(
+      [...container.querySelectorAll('.make-shorts__output-path')].map((el) => el.textContent),
+    ).toEqual(['/out/A1.mp4', '/out/A2.mp4']);
+    expect(container.querySelector('.make-shorts__warn')?.textContent).toContain(
+      'Reframe degraded on 1 of 2 clip(s)',
+    );
+
+    await selectVideo('v2');
+
+    // The child re-keys to the new video…
+    expect(
+      container.querySelector('[data-testid="shortmaker"]')!.getAttribute('data-video-id'),
+    ).toBe('v2');
+    // …and NOTHING from video 1's export may still be presented as video 2's status.
+    expect(container.querySelector('.make-shorts__outputs')).toBeNull();
+    expect(container.querySelector('.make-shorts__degraded')).toBeNull();
+    expect(container.querySelector('.make-shorts__warn')).toBeNull();
+    expect(container.querySelector('.make-shorts__note')).toBeNull();
+    expect(container.querySelector('[data-testid="output-tray"]')).toBeNull();
+  });
+
+  // The error half of the same receipt: a failed export for video 1 must not be
+  // shown as video 2's error either.
+  it('clears a manual-export error when the source video changes', async () => {
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    exportMock.mockRejectedValue(new Error('export blew up'));
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    expect(container.querySelector('.make-shorts__error')?.textContent).toContain('export blew up');
+    await selectVideo('v2');
+    expect(container.querySelector('.make-shorts__error')).toBeNull();
+  });
+
+  // ---- the IN-FLIGHT half of the same defect -------------------------------
+  // The reset effect above only closes the AFTER case (export settles, THEN the
+  // user switches). `shortmaker.export` is a DEFERRED job awaited for up to
+  // EXPORT_JOB_TIMEOUT_MS (35 min, _api.ts:62) and the picker is not disabled
+  // while it runs, so the user can switch DURING the export: the reset runs on
+  // the switch and the in-flight job's own writes then land AFTER it, restoring
+  // the original lie verbatim. Reproduced against the reset-only tree at
+  // e93efefb: outputs ['/out/A1.mp4','/out/A2.mp4'] + video 1's degrade warning
+  // rendered while the picker read v2.
+  it('drops an IN-FLIGHT export receipt when the video changes before the job settles', async () => {
+    const message = 'reframe: speaker tracking unavailable (no subject) — used center crop';
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    installBridge(true);
+    exportMock.mockResolvedValue({ jobId: 'inflight-1' });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    // PRECONDITION: the export really is still in flight (nothing reported yet),
+    // so what follows is the mid-export switch and not the settled case above.
+    expect(container.querySelector('.make-shorts__note')).toBeNull();
+    expect(container.querySelector('[data-testid="manual"]')?.getAttribute('data-busy')).toBe(
+      'true',
+    );
+
+    await selectVideo('v2');
+    // …the job for video 1 now finishes, with real paths and a real warning.
+    await act(async () => {
+      jobDoneCb!({
+        jobId: 'inflight-1',
+        result: {
+          clips: [
+            { path: '/out/A1.mp4' },
+            {
+              path: '/out/A2.mp4',
+              reframeDegraded: { type: 'reframe.degraded', message, reason: 'no subject' },
+            },
+          ],
+        },
+      });
+    });
+    await flush();
+
+    // The picker (and the child) are on video 2, so NONE of video 1's outcome
+    // may be presented here — it is a factual claim about a different video.
+    expect(
+      container.querySelector('[data-testid="shortmaker"]')!.getAttribute('data-video-id'),
+    ).toBe('v2');
+    expect(container.querySelector('.make-shorts__outputs')).toBeNull();
+    expect(container.querySelector('.make-shorts__degraded')).toBeNull();
+    expect(container.querySelector('.make-shorts__warn')).toBeNull();
+    expect(container.querySelector('.make-shorts__note')).toBeNull();
+    expect(container.querySelector('[data-testid="output-tray"]')).toBeNull();
+    // The export lane must still be released — a dropped receipt is not a stuck
+    // job, and leaving `busy` set would disable the submit control for good.
+    expect(container.querySelector('[data-testid="manual"]')?.getAttribute('data-busy')).toBe(
+      'false',
+    );
+  });
+
+  // The failure half of the in-flight case: video 1's job.done ERROR must not be
+  // shown as video 2's error either.
+  it('drops an IN-FLIGHT export ERROR when the video changes before the job settles', async () => {
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    installBridge(true);
+    exportMock.mockResolvedValue({ jobId: 'inflight-2' });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    expect(container.querySelector('.make-shorts__error')).toBeNull();
+
+    await selectVideo('v2');
+    await act(async () => {
+      jobDoneCb!({
+        jobId: 'inflight-2',
+        result: { error: { message: 'ffmpeg exploded', type: 'ExportError' } },
+      });
+    });
+    await flush();
+
+    expect(container.querySelector('.make-shorts__error')).toBeNull();
+    expect(container.querySelector('[data-testid="manual"]')?.getAttribute('data-busy')).toBe(
+      'false',
+    );
+  });
+
+  // The other side of the guard: it drops a receipt that no longer describes the
+  // selection, NOT every receipt that outlived a switch. Browsing away and back
+  // during a 35-minute render must still deliver the real outcome — otherwise
+  // the "keep the user free to browse" justification for guarding the WRITE
+  // (rather than disabling the picker) would be false.
+  it('still delivers the receipt when the user switches away and back mid-export', async () => {
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    installBridge(true);
+    exportMock.mockResolvedValue({ jobId: 'inflight-3' });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+
+    await selectVideo('v2');
+    await selectVideo('v1');
+    await act(async () => {
+      jobDoneCb!({ jobId: 'inflight-3', result: { clips: [{ path: '/out/A1.mp4' }] } });
+    });
+    await flush();
+
+    expect(
+      [...container.querySelectorAll('.make-shorts__output-path')].map((el) => el.textContent),
+    ).toEqual(['/out/A1.mp4']);
+    expect(container.querySelector('.make-shorts__note')?.textContent).toContain('Exported 1 clip');
+  });
+
+  it('shows no degraded warning when every clip reframed normally', async () => {
+    exportMock.mockResolvedValue({ clips: [{ path: '/out/a.mp4' }] });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    expect(container.querySelector('.make-shorts__warn')).toBeNull();
+    expect(container.querySelector('.make-shorts__degraded')).toBeNull();
+  });
+
+  it('renders no output list when the export produced no clips', async () => {
+    exportMock.mockResolvedValue({ clips: [] });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    expect(container.querySelector('.make-shorts__outputs')).toBeNull();
+    expect(container.querySelector('.make-shorts__note')?.textContent).toContain('0 clip(s)');
   });
 
   // F08: the tray's "Caption" checkbox is the COARSE switch. Unchecking it must

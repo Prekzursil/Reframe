@@ -54,6 +54,7 @@ import '../views/shorts.css';
 import { type PlayerHandle } from '../components/Player';
 import { JobAbortedError } from './_api';
 import { defaultEmphasisForStyle } from '../lib/captionTemplates';
+import { reframeDegradedNotice } from '../lib/reframeDegraded';
 import type { Cue, ShortReexportHint } from '../lib/rpc';
 import { CandidateReview } from './CandidateReview';
 import { ShortMakerControls as ShortMakerControlsPanel } from './ShortMakerControls';
@@ -999,17 +1000,30 @@ export function ShortMaker({
         <div className="sm-exported" role="status">
           <h3>Exported {exportedClips.length} clip(s)</h3>
           <ul>
-            {exportedClips.map((c, i) => (
-              <li key={`${c.path}-${i}`}>
-                {c.path}
-                {typeof c.fillersRemoved === 'number' && (
-                  <span className="sm-fillers" aria-label="Fillers removed">
-                    {' '}
-                    removed {c.fillersRemoved} fillers ({(c.fillerSeconds ?? 0).toFixed(1)}s)
-                  </span>
-                )}
-              </li>
-            ))}
+            {exportedClips.map((c, i) => {
+              // W12 — the sidecar's WU-3 NO-SILENT-FALLBACK notice. Without this
+              // the reframe could collapse to a center crop and the clip still
+              // read as a successful tracked reframe. The sidecar's own message
+              // is rendered verbatim: two producers share this notice type and
+              // mean different things, so a paraphrase would be false for one.
+              const degraded = reframeDegradedNotice(c);
+              return (
+                <li key={`${c.path}-${i}`}>
+                  {c.path}
+                  {typeof c.fillersRemoved === 'number' && (
+                    <span className="sm-fillers" aria-label="Fillers removed">
+                      {' '}
+                      removed {c.fillersRemoved} fillers ({(c.fillerSeconds ?? 0).toFixed(1)}s)
+                    </span>
+                  )}
+                  {degraded && (
+                    <span className="sm-degraded" aria-label="Reframe degraded">
+                      {degraded.message}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
