@@ -236,6 +236,63 @@ describe('Workspace ↔ Dub/LipSync seam (W20)', () => {
   });
 });
 
+// W16-UI. Same reason the Gaze block above exists, and the reachability claim here
+// is the whole point of the lane: `Workspace.test.tsx` mocks
+// `../features/BrollPanel` to a marker div, so it proves the TabBar + the
+// `renderPanel()` switch and nothing about whether
+// `lazy(() => import('../features/BrollPanel'))` resolves. Only a REAL mount can
+// show that a user clicking "Auto B-roll" actually reaches the seven `broll.*`
+// RPCs — the claim this lane is making — so it is asserted here, executably,
+// rather than narrowed away or rested on `tsc --noEmit`.
+describe('Workspace ↔ BrollPanel seam (W16-UI)', () => {
+  it('mounts the REAL b-roll panel on its tab, with its honesty surfaces present', async () => {
+    await import('../features/BrollPanel'); // warm the lazy chunk (same idiom as above)
+    rpcMock.mockResolvedValue({ project });
+
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="broll" />);
+    });
+    await flush();
+
+    // The real panel, not the Suspense fallback and not a marker div: its own
+    // section class plus the two disclosures only the real component renders.
+    expect(container.querySelector('.broll-panel')).not.toBeNull();
+    expect(container.querySelector('[data-section="threshold-disclosure"]')?.textContent).toContain(
+      'UNCALIBRATED',
+    );
+    expect(container.querySelector('[data-section="limits"]')).not.toBeNull();
+    // The threshold really is a control the user can move, not a fixed constant.
+    expect(container.querySelector('[data-input="threshold"]')).not.toBeNull();
+    // Fail-closed on this scaffold: the fake bridge answers `broll.assets` with
+    // `{}`, so the library reads EMPTY and the register control stays shut until a
+    // path is typed. That IS the shipped first-run behaviour.
+    expect(container.querySelector('[data-section="grid"]')).toBeNull();
+    expect((container.querySelector('[data-action="add"]') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    // …and the same `{}` must NOT paint a freshness snapshot. A reviewer caught
+    // this scaffold doing exactly that: `readBrollStatus` only rejected NON-objects,
+    // so `{}` returned a full row of zeros and THIS test — the one offered as proof
+    // of reachability — rendered "In library 0" as though it were a measurement.
+    // Fixed in the panel; pinned here so the scaffold can never fabricate again.
+    expect(container.querySelector('[data-section="status"]')).toBeNull();
+    // The prerequisites are the first thing a user on a fresh video needs, so they
+    // must survive the real lazy mount, not just the unit harness.
+    //
+    // THIS ASSERTION WAS CHANGED, and the reason matters: it used to pin the phrase
+    // 'transcribe THIS video first'. That wording was itself the defect. The sidecar
+    // enforces `require_model` (broll_ops.py:403) BEFORE the transcript raise (:408),
+    // so transcribing is the THIRD prerequisite, not the first — and the omitted one
+    // is a 4.5 GB SigLIP-2 download that no copy mentioned. Pinning "first" therefore
+    // locked in a false ordering. The replacement is STRICTER, not looser: it keeps
+    // the transcript pin and adds the matcher pin, so the seam now proves both halves
+    // survive the real lazy mount.
+    const prereq = container.querySelector('[data-section="prerequisites"]')?.textContent;
+    expect(prereq).toContain('transcribe THIS video');
+    expect(prereq).toContain('Assets tab');
+  });
+});
+
 describe('Workspace ↔ Speed seam', () => {
   it('mounts the REAL Speed panel on the speed tab, threaded with the video duration', async () => {
     // The point of this test: before v1.5 the re-time engine had no control in

@@ -137,6 +137,128 @@ export function onProxyState(cb: (event: ProxyStateEvent) => void): () => void {
   return api.onProxyState(cb);
 }
 
+// ---- v1.5 flagship #3 (auto-b-roll) wire types ---------------------------
+//
+// Declared HERE rather than in ./schemas because `broll.*` is NOT a CONTRACTS.md
+// §3 schema: `grep -i broll CONTRACTS.md` -> 0 hits, so there is no frozen §3 row
+// for these shapes and adding one is the contract owner's call, not this lane's.
+// ./index re-exports this module, so `import type { BrollAsset } from '../lib/rpc'`
+// resolves for callers either way.
+//
+// Every field name below was read off the LANDED sidecar, not off
+// `docs/plans/v1.5/flagship-auto-broll.md` §5 — that section's first draft said
+// `id`/`thumbPath`/`{removed}` and was corrected in-place by BR1. Two runtime
+// facts the doc still does not make obvious, and both bite a renderer:
+//   * `durationSec` is `number | null`. `broll_ops.scan_assets` writes `None` for
+//     every SCANNED row and `Library.add_broll` writes `0.0` for a still or a
+//     failed probe, so neither a `number` type nor a "0 means zero seconds"
+//     reading is safe.
+//   * `thumbnailPath` exists but is UNCONDITIONALLY `""`. `add_broll` writes the
+//     empty string and the only poster writer, `Library.set_thumbnail`, is
+//     `role='source'`-scoped — measured, `set_thumbnail(<brollAssetId>, …)`
+//     returns `None` and changes nothing. There is no b-roll poster extractor.
+
+/** How a b-roll window is composited (`broll_plan.LAYOUTS`). */
+export type BrollLayout = 'cutaway' | 'pip';
+
+/**
+ * One row of the b-roll library. The SAME shape whether it came from the
+ * `brollDir` recursive scan or from the BR1 registry — `broll_asset_rows` merges
+ * both into ONE list so the panel and the engine can never see two libraries.
+ * The registry-only fields are optional because a scanned row does not carry them.
+ */
+export interface BrollAsset {
+  assetId: string;
+  path: string;
+  /** The planner/compositor vocabulary: `'image'` or `'video'` — NOT `entityKind`. */
+  kind: string;
+  /** `null` on a scanned row; `0` for a still or a failed probe. Never assume seconds. */
+  durationSec: number | null;
+  sizeBytes: number;
+  mtime: number;
+  /** False for a `brollDir` scan hit, true for a BR1 registry row. */
+  registered: boolean;
+  /** PROV entity kind (`brollImage` / `brollClip`) — registry rows only. */
+  entityKind?: string;
+  title?: string;
+  addedAt?: string;
+  /** BR2 is NOT implemented: the column is surfaced but left NULL. */
+  contentHash?: string | null;
+  /** Always `''` today — see the note above. */
+  thumbnailPath?: string;
+  exists?: boolean;
+}
+
+/**
+ * `broll.assets` -> the library PLUS the registered rows whose file has vanished.
+ * `missing` is a FEATURE: a vanished path must not reach `broll.index` (it would
+ * hand a dead path to the image tower and fail the whole batch), so it is reported
+ * loudly instead of silently dropped.
+ */
+export interface BrollAssetsResult {
+  assets: BrollAsset[];
+  missing: BrollAsset[];
+}
+
+/** `broll.status` -> the index freshness snapshot (a pure read; no model load). */
+export interface BrollStatus {
+  indexed: boolean;
+  /** Rows in the persisted index sidecar. */
+  assetCount: number;
+  /** Rows in the LIVE library (scan + registry). */
+  libraryCount: number;
+  model: string;
+  dim: number;
+  stale: boolean;
+  /** How many assets an index run would have to embed to become current. */
+  staleCount: number;
+  /** False by construction — auto-b-roll is local retrieval, nothing egresses. */
+  willEgress: boolean;
+}
+
+/** One timed, constraint-satisfying b-roll window (`broll_plan.BrollInsertion`). */
+export interface BrollInsertion {
+  segmentIndex: number;
+  start: number;
+  end: number;
+  duration: number;
+  sourceStart: number;
+  assetId: string;
+  path: string;
+  kind: string;
+  score: number;
+  reason: string;
+  layout: string;
+}
+
+/**
+ * The seven `broll.*` method strings, in ONE place — the auto-b-roll wire
+ * vocabulary shared by the typed wrappers in {@link client} and by the SHIPPED
+ * caller, `features/BrollPanel.tsx`.
+ *
+ * WHY A MAP AND NOT LITERALS AT THE CALL SITES. The first draft of the W16-UI
+ * lane wrote the strings twice: once in the wrappers below, once by hand in the
+ * panel. A reviewer proved the gap executably — renaming the PANEL's
+ * `'broll.removeAsset'` to `'broll.remove'` (a method the sidecar does not
+ * register) left `features/brollClient.conformance.test.ts` fully GREEN at 16/16
+ * and `tsc --noEmit` at exit 0, because the sidecar-anchored check only ever saw
+ * the wrappers, which no user path executes. Only `BrollPanel.test.tsx` reddened.
+ *
+ * With one map, a call site cannot invent a string — `BROLL_METHODS.remove` is a
+ * type error — and `brollClient.conformance.test.ts` pins these seven VALUES
+ * against three independent readings of the sidecar source, so a rename there
+ * reddens the build for the strings that actually go on the wire.
+ */
+export const BROLL_METHODS = {
+  status: 'broll.status',
+  assets: 'broll.assets',
+  addAsset: 'broll.addAsset',
+  removeAsset: 'broll.removeAsset',
+  index: 'broll.index',
+  suggest: 'broll.suggest',
+  apply: 'broll.apply',
+} as const;
+
 // ---- Method-typed convenience surface (the canonical client) -------------
 //
 // Thin, named wrappers around `rpc(...)` for the §2 method registry. New code
@@ -977,6 +1099,74 @@ export const client = {
         notice?: { type: string; message: string };
       }
     > => rpc('stabilize.run', typeof target === 'string' ? { videoId: target } : { ...target }),
+  },
+
+  /**
+   * `broll.*` (v1.5 flagship #3) — auto-b-roll: LOCAL asset retrieval over the
+   * user's own library, then a composite render. Seven registered methods
+   * (`sidecar/tests/test_handlers_rpc_surface.py`), and before this lane the
+   * string `broll` appeared in ZERO files under `app/` while matching 15 under
+   * `sidecar/` — the detector was controlled both ways, so the whole flagship was
+   * genuinely user-unreachable.
+   *
+   * NO PRODUCTION CALLER YET, and that is disclosed rather than implied away.
+   * `features/BrollPanel.tsx` is the shipped door and it reaches the sidecar
+   * through the injectable `api` bridge (`features/_api.ts`), the same as
+   * Stabilize / Gaze / AudioMix / Speed — measured on this branch,
+   * `client.stabilize`, `client.gaze`, `client.audiomix` and `client.speed` also
+   * appear only in `lib/rpc/*.test.ts`. What these wrappers DO carry is the typed
+   * param shapes, and — since the panel and the wrappers now share
+   * {@link BROLL_METHODS} — the sidecar pin on the strings the panel puts on the
+   * wire. An earlier draft of the conformance test called this "the renderer's
+   * only typed door"; that was REFUTED by a surviving mutant and is corrected
+   * there.
+   *
+   * `status` / `assets` / `addAsset` / `removeAsset` are DIRECT-return.
+   * `index` / `suggest` / `apply` are deferred JOBS: they resolve `{jobId}` only
+   * and the typed payload arrives on the later `job.done`.
+   *
+   * PRIVACY: none of the seven may ever join the key-injection allowlist — they
+   * take no provider, load no cloud model and open no socket, which is exactly why
+   * `willEgress` is `false` by construction rather than by promise.
+   *
+   * THRESHOLD: `suggest`'s `threshold` is OPTIONAL on the wire, but the sidecar
+   * default (`broll_plan.DEFAULT_MIN_SIMILARITY = 0.22`) is documented in-module
+   * as an UNCALIBRATED placeholder — see `docs/plans/v1.5/flagship-auto-broll.md`
+   * §11.2 for the experiment that would settle it. A caller that omits it inherits
+   * a guess; `features/BrollPanel.tsx` therefore always sends an explicit value.
+   */
+  broll: {
+    /** `broll.status()` -> the index freshness snapshot. */
+    status: (): Promise<BrollStatus> => rpc(BROLL_METHODS.status),
+    /** `broll.assets()` -> the ONE merged library + the vanished registry rows. */
+    assets: (): Promise<BrollAssetsResult> => rpc(BROLL_METHODS.assets),
+    /**
+     * `broll.addAsset({path, title?})` -> `{asset}`. Registers a file BY PATH (no
+     * copy, no move). `title` applies on FIRST registration only — re-posting the
+     * same path returns the existing row and drops the new title without a signal,
+     * so a rename is `removeAsset` + `addAsset`.
+     */
+    addAsset: (path: string, title?: string): Promise<{ asset: BrollAsset }> =>
+      rpc(BROLL_METHODS.addAsset, title === undefined ? { path } : { path, title }),
+    /** `broll.removeAsset({id})` -> `{ok}`. UNREGISTERS; the user's file is never deleted. */
+    removeAsset: (id: string): Promise<{ ok: boolean }> => rpc(BROLL_METHODS.removeAsset, { id }),
+    /** `broll.index({force})` -> `{jobId}`. Embeds only the stale subset unless forced. */
+    index: (force = false): Promise<JobHandle> => rpc(BROLL_METHODS.index, { force }),
+    /** `broll.suggest({videoId, ...})` -> `{jobId}` -> `{insertions, reason}`. */
+    suggest: (
+      videoId: string,
+      opts?: { threshold?: number; maxCoveragePct?: number; layout?: BrollLayout },
+    ): Promise<JobHandle> => rpc(BROLL_METHODS.suggest, { videoId, ...(opts ?? {}) }),
+    /**
+     * `broll.apply({videoId, insertions})` -> `{jobId}` -> `{path, inserted}`.
+     *
+     * REVIEW-FIRST: it composites exactly the list handed to it and never re-plans.
+     * ONE-WAY: the output is a flat `{stem}.broll.mp4`. BR6's reversible overlay
+     * track + inverse op are DESIGN-ONLY on this branch, so there is no undo —
+     * a caller must say so before the user clicks.
+     */
+    apply: (videoId: string, insertions: readonly BrollInsertion[]): Promise<JobHandle> =>
+      rpc(BROLL_METHODS.apply, { videoId, insertions }),
   },
 } as const;
 
