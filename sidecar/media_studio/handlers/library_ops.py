@@ -344,13 +344,20 @@ def _real_key(path: str) -> str:
     return os.path.normcase(os.path.realpath(path))
 
 
-def broll_asset_rows(self: Services) -> list[dict[str, Any]]:
+def broll_asset_rows(self: Services, registered: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The b-roll library the index/planner see: the folder scan UNION the registry.
 
     ``brollDir`` stays the bulk source (a recursive scan) and the BR1 registry adds
     individual assets from anywhere on disk, so ONE list feeds ``broll.status`` /
     ``broll.index`` / ``broll.suggest`` and there is no second scanner. This is the
     ``list_assets`` seam the composition root hands to ``broll_ops.register``.
+
+    ``registered`` lets a caller pass a registry snapshot it has ALREADY read, so
+    :func:`broll_assets` can partition one snapshot into present/missing instead of
+    reading twice (two reads let an asset deleted between them land in both halves,
+    and one restored between them land in NEITHER — a silently dropped asset). It
+    defaults to reading the registry here, which is what the composition-root seam
+    does.
 
     Two rules, both load-bearing:
 
@@ -363,9 +370,10 @@ def broll_asset_rows(self: Services) -> list[dict[str, Any]]:
       the whole job. It is surfaced as ``broll.assets``' ``missing`` instead — loud,
       the same way ``library.reveal`` reports a missing source.
     """
+    known = self.library.list_broll() if registered is None else registered
     scanned = _broll_ops.scan_assets(str(self.settings.get().get(_broll_ops.BROLL_DIR_KEY) or ""))
     rows: dict[str, dict[str, Any]] = {_real_key(str(row["path"])): {**row, "registered": False} for row in scanned}
-    for asset in self.library.list_broll():
+    for asset in known:
         if asset["exists"]:
             rows[_real_key(str(asset["path"]))] = asset
     return list(rows.values())
@@ -379,11 +387,18 @@ def broll_assets(self: Services, params: dict[str, Any], ctx: RpcContext) -> dic
     ``missing`` lists REGISTERED assets whose file has moved or been deleted — they
     are reported rather than silently dropped, so the UI can offer a re-register or
     an unregister instead of leaving a phantom in the grid. No model, no provider,
-    no network: a scan plus one SQLite read.
+    no network: a scan plus ONE SQLite read.
+
+    The registry is read ONCE and the two halves are a partition of that single
+    snapshot, so every registered asset lands in exactly one of them. Reading twice
+    would let an asset deleted between the reads appear in BOTH, and one restored
+    between them appear in NEITHER — i.e. silently disappear from the payload, which
+    is precisely the failure the ``missing`` list exists to prevent.
     """
+    registered = self.library.list_broll()
     return {
-        "assets": broll_asset_rows(self),
-        "missing": [asset for asset in self.library.list_broll() if not asset["exists"]],
+        "assets": broll_asset_rows(self, registered),
+        "missing": [asset for asset in registered if not asset["exists"]],
     }
 
 

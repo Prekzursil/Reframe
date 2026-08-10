@@ -160,6 +160,12 @@ def broll_asset_id(path: str) -> str:
     of one file differ (an 8.3 short component, a ``..`` segment, letter case) the
     ids differ too — which is why the union lister dedups on the REAL path rather
     than on this id, and a divergent spelling can never double-count an asset.
+
+    ``entity.id`` is a GLOBAL primary key shared with the source videos, so the two
+    id spaces must not overlap: this returns 16 hex chars where :func:`_new_id`
+    returns 12, which makes a b-roll id length-disjoint from every
+    ``_new_id``-derived source id and therefore incapable of replacing one through
+    the ``INSERT OR REPLACE`` in :meth:`Library.add_broll`.
     """
     return hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
 

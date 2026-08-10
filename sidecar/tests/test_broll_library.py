@@ -347,6 +347,40 @@ def test_broll_assets_returns_the_union_plus_a_loud_missing_list(wired, tmp_path
     assert out["missing"][0]["exists"] is False
 
 
+def test_broll_assets_partitions_ONE_registry_snapshot(wired, tmp_path: Path):
+    """Every registered asset is in exactly one of ``assets`` / ``missing``.
+
+    The two halves must come from a SINGLE ``list_broll()`` read. With two reads an
+    asset deleted in between lands in BOTH, and one restored in between lands in
+    NEITHER — silently gone from the payload, which is the exact failure ``missing``
+    exists to prevent. Pinned by counting the reads: exactly one per call.
+    """
+    _handlers, services = wired
+    reads: list[int] = []
+    real_list = services.library.list_broll
+
+    def counted() -> list[dict[str, Any]]:
+        reads.append(1)
+        return real_list()
+
+    for name in ("a.png", "b.png", "c.png"):
+        f = tmp_path / name
+        f.write_bytes(b"x")
+        services.library.add_broll(str(f))
+    (tmp_path / "b.png").unlink()
+
+    services.library.list_broll = counted  # type: ignore[method-assign]
+    out = _library_ops.broll_assets(services, {}, _ctx())
+    assert sum(reads) == 1, "the registry must be read exactly once per broll.assets"
+
+    registered_ids = {a["assetId"] for a in real_list()}
+    present = {a["assetId"] for a in out["assets"] if a["registered"]}
+    missing = {a["assetId"] for a in out["missing"]}
+    assert present | missing == registered_ids  # nothing lost
+    assert present & missing == set()  # nothing double-reported
+    assert len(missing) == 1
+
+
 def test_broll_add_asset_registers_and_returns_the_asset(wired, tmp_path: Path):
     handlers, services = wired
     png = tmp_path / "dog.png"
