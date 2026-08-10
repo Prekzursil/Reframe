@@ -173,6 +173,19 @@ function errText(err: unknown): string {
  * (`lipsync.lipsync_enabled`, `lipsync.py:197-205`). A truthy string or `1` is NOT
  * an opt-in: this flag guards a face-manipulation path, so a sloppy value reads as
  * OFF on both sides of the wire rather than only one.
+ *
+ * A TYPED accessor exists and is deliberately NOT used:
+ * `lib/rpc/generated/client.generated.ts` declares
+ * `settings.get(): Promise<Settings>` with `Settings.lipSyncEnabled: boolean`
+ * (`generated/schemas.generated.ts:54`). Two reasons to read `unknown` instead:
+ *   * that type is a COMPILE-TIME claim about a value that comes off DISK, and the
+ *     sidecar itself does not trust it — `lipsync_enabled` treats a truthy
+ *     non-`true` as OFF precisely because a settings store can hold a malformed
+ *     value. Consuming it as a declared `boolean` would make the renderer LESS
+ *     defensive than the backend guarding the same path, which is the wrong
+ *     direction for a safety gate;
+ *   * `clientGenerated` calls the non-injectable module-level `rpc()`, so it cannot
+ *     take the `api?` test bridge every panel in `features/` is built around.
  */
 export function lipSyncEnabledFrom(settings: unknown): boolean {
   return pickField<unknown>(settings, 'lipSyncEnabled') === true;
