@@ -598,6 +598,34 @@ describe('<Gaze />', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
+  // ─── AI disclosure parity with the lip-sync sibling (refuted in review) ────
+  // The lane reasoned this interaction through for W20 and skipped it here; a
+  // gaze-corrected clip is the same category of artifact (real irises warped, and
+  // `gaze_backend.py:200-219` writes no `-metadata` either), so it is owed the same
+  // disclosure. Asserted on the SHARED constant, not a restated string, so the two
+  // panels cannot drift apart.
+  it('discloses that the output is edited media carrying no embedded provenance', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    const note = container.querySelector('[data-section="ai-disclosure"]');
+    expect(note?.textContent).toMatch(/re-drawn|edited media/i);
+    expect(note?.textContent).toContain('C2PA');
+    expect(note?.textContent).toContain('not available');
+  });
+
+  it('reports C2PA as available if a signing identity ever lands (the other state)', async () => {
+    // The shipped constant is a hardcoded `available: false`, so without this seam
+    // the "available" wording could never be exercised.
+    const fake = makeFakeApi();
+    await act(async () => {
+      root.render(<Gaze videoId="v1" api={fake.api} c2pa={{ available: true, reason: '' }} />);
+    });
+    await flush();
+    expect(container.querySelector('[data-section="ai-disclosure"]')?.textContent).toContain(
+      'Available',
+    );
+  });
+
   it('falls back to the global window.api bridge when no api prop is given', async () => {
     const fake = makeFakeApi();
     (globalThis as { api?: unknown }).api = fake.api;

@@ -53,8 +53,27 @@
 // Nothing about the alteration is written into the output container: the mux argv
 // (`gaze_backend.py:200-219`) carries no `-metadata`, so the attestation lives in
 // the job's audit trail only, which is why the panel renders it.
+//
+// ─── AI DISCLOSURE: WHY THIS PANEL CARRIES IT, AND `AiDisclosure.tsx` DOES NOT ─
+// REFUTED IN REVIEW, correctly: the lip-sync sibling reasoned this interaction
+// through and this panel silently skipped it (measured then: 12 hits for
+// `C2PA|ai-disclosure|synthetic` in `LipSync.tsx`, ZERO in this file). A
+// gaze-corrected clip is the same category of artifact — a real person's irises are
+// WARPED, and per the note above the output container carries no marking either —
+// so the same disclosure is owed here.
+//
+// `AiDisclosure.tsx` is still not changed, for the reason its own model gives:
+// `isAiGeneratedAudioTrack(track)` keys off the A3 `AudioTrack.kind`, and
+// `AiDisclosurePanel`'s copy is about dub AUDIO. A gaze output is a VIDEO FILE that
+// is never registered as an `AudioTrack`, so there is no row to badge and no `kind`
+// for that predicate to read; widening it would also change
+// `ShortMakerControls.tsx`, its other consumer, which another live lane owns. So the
+// synthetic-VIDEO disclosure lives in the panel that produces the video, and the one
+// fact that IS shared — no C2PA provenance manifest on export — is IMPORTED from
+// `C2PA_EXPORT_STATUS` rather than restated, so both panels have one source.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import './panels.css';
+import { C2PA_EXPORT_STATUS } from './AiDisclosure';
 import { extractJobId, getApi, pickField, waitForJobDone, type MediaStudioApi } from './_api';
 
 /** The sidecar's correction-strength default (`gaze.py:113` DEFAULT_STRENGTH). */
@@ -187,13 +206,30 @@ export function gazeOutcome(result: unknown): GazeOutcome | null {
   };
 }
 
+/**
+ * The synthetic-media disclosure for a gaze-corrected clip. The C2PA half is
+ * imported from `C2PA_EXPORT_STATUS`, never restated.
+ */
+export const GAZE_AI_DISCLOSURE =
+  'A gaze-corrected clip is edited media: the eyes you see were re-drawn, not ' +
+  'recorded. Reframe writes no marking into the output file — nothing about the ' +
+  'edit reaches the exported container, so only the job audit trail below records it.';
+
 export interface GazeProps {
   videoId: string;
   /** Injectable bridge for tests; defaults to the preload-exposed api. */
   api?: MediaStudioApi;
+  /**
+   * The C2PA export status. Injectable for the same reason `AiDisclosurePanel` and
+   * `LipSync` make it injectable: the shipped constant is a hardcoded
+   * `available: false`, so without a seam the "available" wording could never be
+   * exercised, and an untested branch is where a future signing-identity change
+   * would silently break the disclosure. Defaults to the SHARED constant.
+   */
+  c2pa?: typeof C2PA_EXPORT_STATUS;
 }
 
-export function Gaze({ videoId, api }: GazeProps): React.ReactElement {
+export function Gaze({ videoId, api, c2pa = C2PA_EXPORT_STATUS }: GazeProps): React.ReactElement {
   const bridge = useMemo<MediaStudioApi>(() => api ?? getApi(), [api]);
 
   // null while the probe is in flight — the control is disabled until it answers.
@@ -370,6 +406,11 @@ export function Gaze({ videoId, api }: GazeProps): React.ReactElement {
           below); nothing about the edit is written into the output file itself.
         </p>
       </fieldset>
+
+      <p className="gaze-ai-disclosure" data-section="ai-disclosure">
+        {GAZE_AI_DISCLOSURE} Content Credentials (C2PA) on export:{' '}
+        {c2pa.available ? 'Available' : `not available — ${c2pa.reason}`}
+      </p>
 
       <div className="field gaze-strength">
         <label>
