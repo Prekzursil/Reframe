@@ -20,6 +20,7 @@ the subprocess seam without importing ffmpeg/ffprobe.
 from __future__ import annotations
 
 import builtins
+import hashlib
 import json
 import os
 import shutil
@@ -120,6 +121,82 @@ class LibraryMigrationError(RuntimeError):
     ``user_version`` stamp and BEFORE the ``.bak`` rename, so the corrupt source
     stays authoritative (never a silently-stamped empty DB = total data loss).
     """
+
+
+# --------------------------------------------------------------------------- #
+# BR1 — the B-roll asset REGISTRY (``role='broll'`` rows in the SAME entity table)
+# --------------------------------------------------------------------------- #
+#: ``entity.role`` of a registered b-roll asset. Distinct from ``'source'`` so the
+#: two libraries cannot leak into each other: every b-roll query below is
+#: role-scoped exactly like the source-video ones, so a b-roll still can never
+#: surface in ``library.list`` and a source video can never be unregistered here.
+BROLL_ROLE = "broll"
+
+#: The two ``entity.kind`` values a b-roll asset may take (design BR1).
+BROLL_IMAGE_KIND = "brollImage"
+BROLL_CLIP_KIND = "brollClip"
+
+#: PROV entity kind -> the asset ``kind`` the planner/compositor speak. This
+#: translation is load-bearing, not cosmetic: ``features/broll_compose.py`` treats
+#: anything that is not the literal ``"video"`` as a still (``-loop 1``), so handing
+#: it a ``brollClip`` would composite a clip as one frozen frame. The lookup is
+#: strict on purpose — :meth:`Library.add_broll` is the ONLY writer of a
+#: ``role='broll'`` row and only ever writes these two constants, so a third value
+#: is a programming error that must be loud rather than silently read as a still.
+_BROLL_ASSET_KIND: dict[str, str] = {BROLL_IMAGE_KIND: "image", BROLL_CLIP_KIND: "video"}
+
+
+class BrollAssetError(RuntimeError):
+    """A b-roll asset cannot be registered: the file is missing, or is not b-roll."""
+
+
+def broll_asset_id(path: str) -> str:
+    """The stable asset id for ``path`` — ``sha256(path)[:16]``.
+
+    Deliberately the SAME derivation ``broll_ops.scan_assets`` uses for its
+    ``assetId``, so when the configured ``brollDir`` is already an absolute,
+    resolved path a file that is BOTH scanned and registered carries ONE id and
+    registering it does not churn its vector in the index. Where the two spellings
+    of one file differ (an 8.3 short component, a ``..`` segment, letter case) the
+    ids differ too — which is why the union lister dedups on the REAL path rather
+    than on this id, and a divergent spelling can never double-count an asset.
+    """
+    return hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
+
+
+def _broll_entity_kind(path: Path) -> str | None:
+    """``path``'s b-roll ``entity.kind``, or ``None`` when it is not b-roll at all.
+
+    The accepted extension sets are READ from ``features.broll_ops`` (lazily, so
+    importing this module stays stdlib-only and feature-free) rather than restated
+    here: a second copy would drift, and then a file the folder scan happily
+    indexes could be refused by ``add_broll`` — or, worse, the reverse.
+    """
+    from .features import broll_ops  # local import keeps this module import-light
+
+    suffix = path.suffix.lower()
+    if suffix in broll_ops.IMAGE_EXTS:
+        return BROLL_IMAGE_KIND
+    if suffix in broll_ops.VIDEO_EXTS:
+        return BROLL_CLIP_KIND
+    return None
+
+
+def _stat_or_zero(path: str) -> tuple[int, float, bool]:
+    """``(sizeBytes, mtime, exists)`` for ``path`` — zeros when the file is gone.
+
+    Those two stat fields are exactly what ``broll_index.fingerprint`` hashes, so a
+    registered row must carry them the way a scanned row does or every registered
+    asset would read as permanently stale and be re-embedded on every index run. A
+    vanished file reports ``exists=False`` rather than a fabricated size, and the
+    caller surfaces it LOUDLY instead of silently dropping it — the same discipline
+    as :meth:`Project.find_missing_sources`.
+    """
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return 0, 0.0, False
+    return stat.st_size, stat.st_mtime, True
 
 
 class Library:
@@ -400,6 +477,122 @@ class Library:
                 return None
             row = conn.execute("SELECT * FROM entity WHERE role = ? AND id = ?", ("source", video_id)).fetchone()
         return self._row_to_video(row)
+
+    # ---- BR1 b-roll asset registry ----------------------------------------- #
+    def list_broll(self) -> builtins.list[dict[str, Any]]:
+        """Every registered b-roll asset, in registration order (BR1).
+
+        Rows are shaped like ``broll_ops.scan_assets``' rows — ``assetId``, ``path``,
+        ``kind``, ``durationSec``, ``sizeBytes``, ``mtime`` — so the index and the
+        planner consume a scanned and a registered asset without branching, PLUS the
+        registry-only fields: the PROV ``entityKind``, the ``title`` /
+        ``thumbnailPath`` the UI shows, ``contentHash``, ``registered=True``, and
+        ``exists``. A row whose file has since moved or been deleted is RETURNED
+        (marked absent), never hidden — the caller decides what to do about it.
+        """
+        with self._open() as conn:
+            rows = conn.execute("SELECT * FROM entity WHERE role = ? ORDER BY rowid", (BROLL_ROLE,)).fetchall()
+        return [self._row_to_broll_asset(r) for r in rows]
+
+    def add_broll(self, path: str, title: str | None = None) -> dict[str, Any]:
+        """Register ``path`` as a b-roll asset and return its asset row (BR1).
+
+        Reuses the SAME ``entity`` table as the source videos with ``role='broll'``
+        and ``kind`` in {``brollImage``, ``brollClip``} — a b-roll asset is a
+        first-class PROV entity, not a second store, so lineage/relink keep ONE
+        graph. Idempotent by RESOLVED path: re-registering an already-registered
+        file returns the existing row rather than creating a duplicate (mirroring
+        :meth:`add`). The bytes are never copied and the file is never moved; the
+        registry holds a path.
+
+        Raises :class:`BrollAssetError` for a file that does not exist, or whose
+        extension the b-roll folder scan would not pick up either.
+        """
+        src = Path(path)
+        if not src.exists():
+            raise BrollAssetError(f"b-roll asset not found: {path}")
+        kind = _broll_entity_kind(src)
+        if kind is None:
+            raise BrollAssetError(f"not a b-roll image or clip: {path}")
+        abspath = str(src.resolve())
+        with self._open() as conn:
+            existing = conn.execute(
+                "SELECT * FROM entity WHERE role = ? AND path = ?", (BROLL_ROLE, abspath)
+            ).fetchone()
+            if existing is not None:
+                return self._row_to_broll_asset(existing)  # idempotent re-register
+            asset_id = broll_asset_id(abspath)
+            conn.execute(
+                f"INSERT OR REPLACE INTO entity ({_ENTITY_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    asset_id,
+                    kind,
+                    abspath,
+                    BROLL_ROLE,
+                    title or src.stem,
+                    _now_iso(),
+                    self._broll_duration(abspath, kind),
+                    # content_hash: the column is SURFACED by the asset row but left
+                    # NULL here. Populating it means a whole-file BLAKE3 of a
+                    # possibly multi-GB asset inside a synchronous RPC; the stronger
+                    # staleness key is BR2's job (broll_index's docstring already
+                    # names it as the upgrade path from the size+mtime fingerprint).
+                    None,
+                    0,  # has_transcript: meaningless for a b-roll asset
+                    "",  # thumbnail_path: "" until a poster is extracted for it
+                ),
+            )
+            row = conn.execute("SELECT * FROM entity WHERE role = ? AND id = ?", (BROLL_ROLE, asset_id)).fetchone()
+        # Read the row BACK rather than assembling the return value by hand: what a
+        # caller gets from add_broll is then the SAME shape list_broll yields BY
+        # CONSTRUCTION, instead of via two literals someone has to keep in step.
+        return self._row_to_broll_asset(row)
+
+    def remove_broll(self, asset_id: str) -> bool:
+        """Unregister the b-roll asset with ``id == asset_id``. True if removed.
+
+        The USER's file on disk is NEVER deleted — the registry holds a path, not
+        bytes (the same rule :meth:`remove` follows for a source video). Role-scoped,
+        so a source-video id can never be removed through this door.
+        """
+        with self._open() as conn:
+            cur = conn.execute("DELETE FROM entity WHERE role = ? AND id = ?", (BROLL_ROLE, asset_id))
+            return cur.rowcount > 0
+
+    def _broll_duration(self, path: str, kind: str) -> float:
+        """The probed duration of a b-roll CLIP; ``0.0`` for a still.
+
+        A still has no duration, so probing one would be a pointless ffprobe spawn.
+        CONTRACT-NOTE: a probe failure degrades to ``0.0`` rather than blocking the
+        registration — the same rule :meth:`add` applies to a source video.
+        """
+        if kind != BROLL_CLIP_KIND:
+            return 0.0
+        try:
+            return float(self._probe(path))
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _row_to_broll_asset(row: sqlite3.Row) -> dict[str, Any]:
+        """An ``entity`` row -> the planner/index-shaped b-roll asset dict (BR1)."""
+        size, mtime, exists = _stat_or_zero(row["path"])
+        return {
+            "assetId": row["id"],
+            "path": row["path"],
+            # The compose/planner vocabulary ("image"/"video"), NOT the entity kind.
+            "kind": _BROLL_ASSET_KIND[row["kind"]],
+            "entityKind": row["kind"],
+            "title": row["title"],
+            "addedAt": row["added_at"],
+            "durationSec": float(row["duration_sec"]),
+            "contentHash": row["content_hash"],
+            "thumbnailPath": row["thumbnail_path"],
+            "sizeBytes": size,
+            "mtime": mtime,
+            "exists": exists,
+            "registered": True,
+        }
 
     # ---- L2 lineage (PROV append on Job success) ---------------------------
     def record_lineage(

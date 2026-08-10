@@ -15,6 +15,7 @@ from ..features import timeline as _timeline
 from ..features import tracks as _tracks
 from ..protocol import Handler, RpcContext
 from ..settings_store import INJECTED_KEYS_FIELD
+from . import library_ops as _library_ops
 from ._services import Services
 from ._shared import _invalid, log
 from ._wire import _self_ffprobe
@@ -464,8 +465,8 @@ def register_all(
     )
 
     # broll.* (v1.5 flagship #3): LOCAL auto-b-roll over the user's OWN library.
-    # The asset list is a scan of the ``brollDir`` setting and the vector index is
-    # a sidecar next to the data dir (never the project manifest — the same
+    # The asset list is the ``brollDir`` scan UNION the BR1 registry, and the vector
+    # index is a sidecar next to the data dir (never the project manifest — the same
     # decision index.build made for its embeddings). Both SigLIP-2 towers come
     # from ONE factory so the image and text vectors share a joint space.
     from ..features import broll_ops as _broll_ops  # local: import-light
@@ -474,7 +475,11 @@ def register_all(
         return svc.data_dir / _broll_ops.INDEX_FILENAME
 
     def _list_broll_assets() -> list[dict[str, Any]]:
-        return _broll_ops.scan_assets(str(svc.settings.get().get(_broll_ops.BROLL_DIR_KEY) or ""))
+        # BR1: the SAME seam as before, now delegating to the union lister so a
+        # REGISTERED asset (one that lives outside brollDir) is indexed and
+        # suggestible too. Kept as this one closure rather than a second lister:
+        # the panel and the engine must never see two different libraries.
+        return _library_ops.broll_asset_rows(svc)
 
     def _load_broll_index() -> Any:
         return _broll_ops.load_index_file(_broll_index_path())
@@ -499,6 +504,16 @@ def register_all(
         duration=svc._ffprobe_duration,
         register_fn=reg,
     )
+
+    # BR1: the b-roll ASSET REGISTRY door. broll_ops owns the four engine methods
+    # (status/index/suggest/apply) via its own register(); these three are Library
+    # CRUD over the ``role='broll'`` entity rows, so they live with the other
+    # library.* handlers in library_ops and are wired here. Registered through a
+    # closure rather than a bound ``svc.`` method because the Services binding table
+    # (_services.py) is outside this lane's declared file scope.
+    reg("broll.assets", lambda params, ctx: _library_ops.broll_assets(svc, params, ctx))
+    reg("broll.addAsset", lambda params, ctx: _library_ops.broll_add_asset(svc, params, ctx))
+    reg("broll.removeAsset", lambda params, ctx: _library_ops.broll_remove_asset(svc, params, ctx))
 
     # ---------------------------------------------------------------------- #
     # system-advanced group (this build) — health / recipes / diarize.

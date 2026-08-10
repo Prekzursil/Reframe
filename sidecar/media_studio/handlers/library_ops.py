@@ -10,12 +10,14 @@ in services.py). Behaviour + the RPC surface are byte-identical to pre-split.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .. import keepcopy as _keepcopy
 from .. import library as _library
 from .. import relink as _relink
+from ..features import broll_ops as _broll_ops
 from ..features import offline as _offline
 from ..features import shorts as _shorts_meta
 from ..protocol import ErrorCode, RpcContext, RpcError
@@ -323,6 +325,94 @@ def library_managed_clear(self: Services, params: dict[str, Any], ctx: RpcContex
         return self.library.managed_clear(force=force)
     except _keepcopy.KeepCopyError as exc:
         raise _invalid(str(exc)) from exc
+
+
+# --------------------------------------------------------------------------- #
+# BR1 — the b-roll asset registry surface (broll.assets / addAsset / removeAsset)
+# --------------------------------------------------------------------------- #
+def _real_key(path: str) -> str:
+    """A spelling-insensitive identity for a file path (the union's dedup key).
+
+    ``broll_ops.scan_assets`` reports each file as the CONFIGURED folder with the
+    relative parts joined on, verbatim, while ``Library.add_broll`` stores
+    ``Path.resolve()``'d text — so the same file can arrive at the two halves of the
+    union under two different strings: a ``..`` segment or a trailing separator in
+    ``brollDir``, a relative folder, a symlinked folder, letter case, or an 8.3 short
+    component on Windows. ``normcase(realpath(...))`` collapses all of those. Keying
+    the union on the raw string would count that file twice and embed it twice.
+    """
+    return os.path.normcase(os.path.realpath(path))
+
+
+def broll_asset_rows(self: Services) -> list[dict[str, Any]]:
+    """The b-roll library the index/planner see: the folder scan UNION the registry.
+
+    ``brollDir`` stays the bulk source (a recursive scan) and the BR1 registry adds
+    individual assets from anywhere on disk, so ONE list feeds ``broll.status`` /
+    ``broll.index`` / ``broll.suggest`` and there is no second scanner. This is the
+    ``list_assets`` seam the composition root hands to ``broll_ops.register``.
+
+    Two rules, both load-bearing:
+
+    * **Dedup on the REAL path** (:func:`_real_key`), not on the path string or the
+      ``assetId`` derived from it — see that helper for the measured reason. A
+      REGISTERED row WINS the collision because it carries the title/thumbnail the
+      UI shows; it keeps the scanned row's position so the list stays deterministic.
+    * **A registered asset whose file is gone is EXCLUDED.** It must not reach
+      ``broll.index``, which would hand a vanished path to the image tower and fail
+      the whole job. It is surfaced as ``broll.assets``' ``missing`` instead — loud,
+      the same way ``library.reveal`` reports a missing source.
+    """
+    scanned = _broll_ops.scan_assets(str(self.settings.get().get(_broll_ops.BROLL_DIR_KEY) or ""))
+    rows: dict[str, dict[str, Any]] = {_real_key(str(row["path"])): {**row, "registered": False} for row in scanned}
+    for asset in self.library.list_broll():
+        if asset["exists"]:
+            rows[_real_key(str(asset["path"]))] = asset
+    return list(rows.values())
+
+
+def broll_assets(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``broll.assets()`` -> ``{assets, missing}`` (BR1). Direct-return, read-only.
+
+    ``assets`` is exactly what ``broll.index`` would embed (:func:`broll_asset_rows`),
+    so the panel cannot show one library while the engine indexes another.
+    ``missing`` lists REGISTERED assets whose file has moved or been deleted — they
+    are reported rather than silently dropped, so the UI can offer a re-register or
+    an unregister instead of leaving a phantom in the grid. No model, no provider,
+    no network: a scan plus one SQLite read.
+    """
+    return {
+        "assets": broll_asset_rows(self),
+        "missing": [asset for asset in self.library.list_broll() if not asset["exists"]],
+    }
+
+
+def broll_add_asset(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``broll.addAsset({path, title?})`` -> ``{asset}`` (BR1). Direct-return.
+
+    THE missing door: before this method the b-roll library could only ever be a
+    folder scan, so nothing in the app could put a specific asset into it. Registers
+    the file by path (no copy, no move) as a ``role='broll'`` entity. A missing file
+    or a non-b-roll extension is INVALID_PARAMS (loud).
+    """
+    path = _require_str(params, "path")
+    title = params.get("title")
+    try:
+        asset = self.library.add_broll(path, title if isinstance(title, str) else None)
+    except _library.BrollAssetError as exc:
+        raise _invalid(str(exc)) from exc
+    return {"asset": asset}
+
+
+def broll_remove_asset(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``broll.removeAsset({id})`` -> ``{ok}`` (BR1). Direct-return.
+
+    UNREGISTERS the asset. The USER's file on disk is never deleted (the registry
+    holds a path, not bytes) — the same rule ``library.remove`` follows for a source
+    video. Idempotent: an id that is not registered returns ``{ok: false}`` rather
+    than an error, so a double-click cannot fail.
+    """
+    return {"ok": self.library.remove_broll(_require_str(params, "id"))}
 
 
 def project_open(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
