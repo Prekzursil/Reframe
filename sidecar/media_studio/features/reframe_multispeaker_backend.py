@@ -80,6 +80,21 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
         ``# pragma: no cover`` because it needs torch/cv2 + real weights, so the
         experiment that would settle it is the opt-in ``@e2e`` golden run on real
         footage, not the branch gate.
+
+        TERMINAL-STATE NOTE (2026-08-10). The two cancel checkpoints below raise
+        :class:`~media_studio.features.reframe_multispeaker.MultiSpeakerReframeError`,
+        a DOMAIN error — and ``jobs.py`` maps only ``JobCancelled`` to
+        ``_finish_cancelled`` (``jobs.py:720-724``), everything else to
+        ``_finish_error``. Raising a domain error from here therefore does NOT, on
+        its own, produce ``status='cancelled'``; it produced ``status='error'`` with
+        the text below, which was worse than the pre-WU-E1 behaviour where the
+        handler's own ``raise_if_cancelled`` gave a correct (if late) cancel. The
+        fix lives at the JOB BOUNDARY, not here:
+        :meth:`~media_studio.features.reframe_analyze.ReframeAnalyzeService.analyze`
+        wraps this call and converts ANY exception raised while the job is cancelled
+        into ``JobCancelled``, so the terminal state is right whatever a backend
+        chooses to raise. That guard IS unit-tested (a fake backend that raises this
+        exact error on a cancelled probe), which is why the fix was put there.
         """
         import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
 

@@ -929,10 +929,25 @@ def build_trace(
 
     ``allow_split`` / ``allow_composite`` are forwarded to :func:`decide_layout`,
     which collapses the richer layouts back to ``"single"`` when the caller
-    forbids them. WU-E1 wiring: :data:`decide_layout`'s two flags existed since R1
-    but NOTHING threaded them — every trace was built with both enabled, so the
-    ``allowSplit`` / ``allowComposite`` request fields had no effect on the plan.
-    Both still DEFAULT to ``True``, so every existing caller is unchanged.
+    forbids them. Both DEFAULT to ``True``, so every existing caller is unchanged.
+
+    CORRECTION 2026-08-10 — the WU-E1 note here called this a "latent defect" on
+    the grounds that "``allowSplit`` / ``allowComposite`` request fields had no
+    effect on the plan". That is REFUTED and withdrawn: there were no such request
+    fields to be ignored. ``git grep -i allowSplit origin/main`` hits ONLY
+    ``docs/plans/v1.5/flagship-active-speaker.md`` (:187, :213, :226, :245) —
+    nothing in ``sidecar/``, nothing in ``app/``. So :func:`decide_layout`'s flags
+    were UNEXPOSED OPTIONAL CAPABILITY on a pure function, not a live defect, and
+    threading them here is a feature, not a fix.
+
+    RESIDUAL, disclosed rather than hidden: the flags are honoured only on the
+    ``reframe.analyze`` path. :meth:`MultiSpeakerReframeEngine._render` — the
+    shipped multispeaker render that ``shortmaker`` drives — still calls
+    ``build_trace(analysis, aspect=aspect)`` with no flags, and the spec's
+    ``reframeAllowSplit`` / ``reframeAllowComposite`` settings keys
+    (``docs/plans/v1.5/flagship-active-speaker.md:187``) do not exist. So a user
+    cannot forbid a split on an export today. That is a settings-surface work unit,
+    not part of E1/E2/E3.
     """
     width, height, fps = analysis.width, analysis.height, analysis.fps
     total = analysis.total_frames
@@ -1005,10 +1020,17 @@ def _render_shot(
     speaker_per_frame: list[str],
     layout_raw: list[str],
     crops: list[tuple[float, float, float, float]],
-    allow_split: bool = True,
-    allow_composite: bool = True,
+    allow_split: bool,
+    allow_composite: bool,
 ) -> None:
-    """Decide the speaker/layout/crop for one shot's frames (appends in place)."""
+    """Decide the speaker/layout/crop for one shot's frames (appends in place).
+
+    ``allow_split`` / ``allow_composite`` are REQUIRED keyword arguments on purpose.
+    They defaulted to ``True`` here, which is exactly the shape that let
+    :func:`build_trace` forget to thread them for four work units: a defaulted
+    behaviour flag on an internal helper is a silently-ignored field waiting to
+    happen. The only caller passes both explicitly.
+    """
     # Pass 1a: tracked ids + per-frame visual scores (track-id namespace) + active count.
     ids_per_frame: list[list[int]] = []
     scores_per_frame: list[dict[str, float]] = []

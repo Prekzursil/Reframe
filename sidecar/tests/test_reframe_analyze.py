@@ -407,11 +407,21 @@ class TestPlanShotSegments:
 # Engine extensions — analyze() (no render) and render_shot_plan()
 # --------------------------------------------------------------------------- #
 class _FakeBackend:
-    def __init__(self, analysis, *, raise_on_analyze: BaseException | None = None):
+    def __init__(
+        self,
+        analysis,
+        *,
+        raise_on_analyze: BaseException | None = None,
+        raise_when_cancelled: bool = False,
+    ):
         self._analysis = analysis
         self._raise = raise_on_analyze
+        self._raise_when_cancelled = raise_when_cancelled
         self.released = 0
         self.progress: list[tuple[float, str]] = []
+        #: Every answer ``should_cancel()`` gave, so a test can assert the seam is a
+        #: LIVE forward rather than a constant (or absent) callable.
+        self.cancel_probes: list[bool] = []
         self.calls = 0
 
     def analyze(self, media_path, *, on_progress=None, should_cancel=None):
@@ -423,7 +433,14 @@ class _FakeBackend:
             # plan stage. Over-report so a dropped clamp is observable.
             on_progress(150.0, "over-reporting on purpose")
         if should_cancel is not None:
-            should_cancel()
+            self.cancel_probes.append(bool(should_cancel()))
+            if self._raise_when_cancelled and self.cancel_probes[-1]:
+                # EXACTLY what RealMultiSpeakerBackend does at a stage boundary: it
+                # surfaces a cancel as its OWN domain error, never as JobCancelled
+                # (reframe_multispeaker_backend.py:106,:111). The old fake RETURNED
+                # here, so the unit tier could not see that jobs.py maps a domain
+                # error to ERROR and only JobCancelled to CANCELLED.
+                raise ms.MultiSpeakerReframeError("multi-speaker analysis cancelled after shot detection")
         if self._raise is not None:
             raise self._raise
         return self._analysis
@@ -471,6 +488,22 @@ class TestEngineAnalyze:
         # ceiling is the RPC handler's job, not the engine's.
         assert seen[0] == (50.0, "detecting faces")
         assert seen[-1] == (150.0, "over-reporting on purpose")
+        # ...and the cancel seam is a REAL forward, asserted by VALUE. Nothing used
+        # to assert this, so `should_cancel=None` survived the whole suite.
+        assert backend.cancel_probes == [False]
+
+    @pytest.mark.parametrize("flag", [True, False])
+    def test_the_cancel_seam_forwards_the_callers_answer(self, flag):
+        # The value the caller's callable returns must be what the backend observes —
+        # this is what a pinned `lambda: False` mutant cannot satisfy.
+        backend = _FakeBackend(_analysis())
+        _engine(backend_factory=lambda _s: backend).analyze("in.mp4", should_cancel=lambda: flag)
+        assert backend.cancel_probes == [flag]
+
+    def test_without_a_cancel_seam_the_backend_is_not_probed(self):
+        backend = _FakeBackend(_analysis())
+        _engine(backend_factory=lambda _s: backend).analyze("in.mp4")
+        assert backend.cancel_probes == []
 
 
 class TestRenderShotPlan:
@@ -759,6 +792,45 @@ class _RecordingEngine:
         return out_path, ()
 
 
+class _FailingRenderEngine:
+    """A whole-engine fake whose ``render_shot_plan`` always raises.
+
+    Models the REAL terminal shape of a cancelled render: ``ffmpeg.run`` terminates
+    the child on cancel, so it exits non-zero and the engine raises
+    :class:`~media_studio.features.reframe_multispeaker.MultiSpeakerRenderError` —
+    NOT ``JobCancelled``, which is the only class jobs.py maps to CANCELLED.
+    """
+
+    def __init__(self, analysis, exc: BaseException):
+        self._analysis = analysis
+        self._exc = exc
+
+    def analyze(self, _in_path, *, on_progress=None, should_cancel=None):
+        del on_progress, should_cancel
+        return self._analysis
+
+    def render_shot_plan(self, _in_path, _out_path, _plan, _trace, **_kw):
+        raise self._exc
+
+
+def _cancelling_registry(at_pct: float) -> tuple[JobRegistry, list[float]]:
+    """A registry that cancels a job the moment it reports ``at_pct``.
+
+    The sibling suites' deterministic cancel idiom — no threads, no sleeps.
+    """
+    pcts: list[float] = []
+    holder: dict[str, Any] = {}
+
+    def emit_progress(job_id, pct, _msg):
+        pcts.append(pct)
+        if pct == at_pct:
+            holder["reg"].cancel(job_id)
+
+    reg = JobRegistry(emit_progress=emit_progress, emit_done=lambda *_a: None)
+    holder["reg"] = reg
+    return reg, pcts
+
+
 def _service(
     tmp_path,
     *,
@@ -769,9 +841,11 @@ def _service(
     engine_kw=None,
     seen=None,
     engine=None,
+    backend=None,
 ):
     """A service with a fake engine (fake backend + fake runner) and a real cache."""
-    backend = _FakeBackend(analysis if analysis is not None else _analysis())
+    if backend is None:
+        backend = _FakeBackend(analysis if analysis is not None else _analysis())
 
     def engine_factory(engine_settings: dict[str, Any]):
         if seen is not None:
@@ -971,20 +1045,46 @@ class TestAnalyzeHandler:
         # Cooperative cancel: the progress sink cancels at the "detecting shots"
         # checkpoint, so the post-analysis raise_if_cancelled aborts the job and no
         # bundle is ever cached (deterministic — mirrors test_diarize's sink trick).
-        holder: dict[str, Any] = {}
-
-        def emit_progress(job_id, pct, _msg):
-            if pct == 2:
-                holder["reg"].cancel(job_id)
-
-        reg = JobRegistry(emit_progress=emit_progress, emit_done=lambda *_a: None)
-        holder["reg"] = reg
+        reg, _pcts = _cancelling_registry(2)
         cache = ra.LruAnalysisCache()
-        svc, _backend = _service(tmp_path, cache=cache)
+        svc, backend = _service(tmp_path, cache=cache)
         out = svc.analyze({"videoId": "v"}, _ctx(reg))
         reg.get(out["jobId"]).wait(10)
         assert reg.get(out["jobId"]).status.value == "cancelled"
         assert cache.find("v", ASPECT) is None
+        # The handler's should_cancel must be a LIVE view of job_ctx.cancelled. The
+        # old test asserted nothing about it, so a mutant pinning it to
+        # `lambda: False` survived the entire suite even though the test is NAMED for
+        # the cancel seam.
+        assert backend.cancel_probes == [True]
+
+    def test_a_backend_that_reports_a_cancel_as_its_own_error_still_ends_cancelled(self, tmp_path):
+        # RealMultiSpeakerBackend honours should_cancel by raising
+        # MultiSpeakerReframeError at a stage boundary, and jobs.py maps ONLY
+        # JobCancelled to _finish_cancelled — so before this guard the job reported
+        # status='error' with the text "multi-speaker analysis cancelled after shot
+        # detection". That is strictly WORSE than the pre-WU-E1 behaviour, where the
+        # backend ignored should_cancel and the handler's own raise_if_cancelled
+        # produced a correct (if late) 'cancelled'.
+        reg, _pcts = _cancelling_registry(2)
+        cache = ra.LruAnalysisCache()
+        backend = _FakeBackend(_analysis(), raise_when_cancelled=True)
+        svc, _b = _service(tmp_path, cache=cache, backend=backend)
+        out = svc.analyze({"videoId": "v"}, _ctx(reg))
+        reg.get(out["jobId"]).wait(10)
+        job = reg.get(out["jobId"])
+        assert job.status.value == "cancelled", job.error
+        assert cache.find("v", ASPECT) is None
+
+    def test_a_backend_failure_without_a_cancel_is_still_an_error(self, tmp_path):
+        # Detector control for the test above: the cancel guard must NOT swallow a
+        # genuine failure into a false 'cancelled'.
+        reg, _ = _registry()
+        backend = _FakeBackend(_analysis(), raise_on_analyze=RuntimeError("CUDA OOM"))
+        svc, _b = _service(tmp_path, backend=backend)
+        job = _run(reg, svc.analyze({"videoId": "v"}, _ctx(reg)))
+        assert job.status.value == "error"
+        assert "CUDA OOM" in str(job.error)
 
 
 class TestRenderHandler:
@@ -1193,6 +1293,57 @@ class TestRenderHandler:
         svc, _ = _service(tmp_path)
         with pytest.raises(RpcError, match="diarizeBackend"):
             svc.render({"videoId": "v", "plan": _plan().to_dict(), "diarizeBackend": ""}, _ctx(reg))
+
+    # ----------------------------------------------------------------- #
+    # Terminal state on cancel — the render half
+    # ----------------------------------------------------------------- #
+    def _seeded_cache(self) -> tuple[ra.LruAnalysisCache, dict[str, Any]]:
+        """A cache pre-loaded with one bundle for ``v`` at ASPECT, plus its wire plan.
+
+        Seeded DIRECTLY rather than by running analyze, so a cancelling registry
+        cannot cancel the seeding job too.
+        """
+        cache = ra.LruAnalysisCache()
+        bundle = _bundle()
+        cache.put(_key(), bundle)
+        return cache, bundle.plan.to_dict()
+
+    def test_a_render_failure_after_a_cancel_ends_the_job_cancelled(self, tmp_path):
+        # ffmpeg.py terminates the child on cancel, so it exits non-zero and the
+        # engine raises MultiSpeakerRenderError. Before the guard the job reported
+        # status='error', error='multi-speaker reframe failed (exit 255)' for a
+        # user-requested cancel.
+        reg, _pcts = _cancelling_registry(2)
+        cache, plan = self._seeded_cache()
+        engine = _FailingRenderEngine(
+            _analysis(), ms.MultiSpeakerRenderError("multi-speaker reframe failed (exit 255)")
+        )
+        svc, _b = _service(tmp_path, cache=cache, engine=engine)
+        out = svc.render({"videoId": "v", "plan": plan}, _ctx(reg))
+        reg.get(out["jobId"]).wait(10)
+        job = reg.get(out["jobId"])
+        assert job.status.value == "cancelled", job.error
+
+    def test_a_render_failure_without_a_cancel_is_still_an_error(self, tmp_path):
+        reg, _ = _registry()
+        cache, plan = self._seeded_cache()
+        engine = _FailingRenderEngine(_analysis(), ms.MultiSpeakerRenderError("multi-speaker reframe failed (exit 1)"))
+        svc, _b = _service(tmp_path, cache=cache, engine=engine)
+        job = _run(reg, svc.render({"videoId": "v", "plan": plan}, _ctx(reg)))
+        assert job.status.value == "error"
+        assert "exit 1" in str(job.error)
+
+    def test_a_cancel_during_the_render_never_reports_a_terminal_done(self, tmp_path):
+        # The engine RETURNS normally here (a cooperative cancel that unwinds nothing),
+        # so without a post-call raise_if_cancelled the handler ran straight on to
+        # progress(100, "done") and announced a finished render for a cancelled job.
+        reg, pcts = _cancelling_registry(99)
+        cache, plan = self._seeded_cache()
+        svc, _b = _service(tmp_path, cache=cache, engine=_RecordingEngine(_analysis()))
+        out = svc.render({"videoId": "v", "plan": plan}, _ctx(reg))
+        reg.get(out["jobId"]).wait(10)
+        assert reg.get(out["jobId"]).status.value == "cancelled"
+        assert 100 not in pcts, "a cancelled render must not emit a terminal 100%/done"
 
     def test_the_diarize_backend_selects_the_exact_cached_bundle(self, tmp_path):
         reg, _ = _registry()

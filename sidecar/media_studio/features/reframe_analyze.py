@@ -27,6 +27,36 @@ users. And per the plan's own warning, the 100%-branch unit coverage of this
 module is measured entirely against a FAKE backend and a FAKE ffmpeg runner:
 **coverage is not integration**, and none of it is evidence that the pipeline
 works on real media.
+
+**WHAT THE FAKE-BACKED SUITE CANNOT ESTABLISH** (so no reader mistakes 100% branch
+coverage for a working pipeline). It does not show that any ffmpeg argv this module
+builds produces a playable file, that a real ASD/diarize backend returns a
+:class:`~media_studio.features.reframe_multispeaker.ShotAnalysis` these decisions
+suit, that the concat of reused + freshly-encoded segments is seamless, or that the
+6 GB VRAM ceiling holds. It shows only that the ORCHESTRATION — cache identity,
+boundary refusal, reuse arithmetic, cleanup, progress clamping and terminal state —
+behaves as documented. The settling experiment for the rest is the opt-in ``@e2e``
+golden run on real footage.
+
+**NAMED RESIDUALS carried forward (2026-08-10 remediation).**
+
+* ``reframe.render``'s flag-insensitive cache FALLBACK can report an ``affected``
+  set that names a shot the caller did not edit when several analyses of the same
+  ``(videoId, aspect)`` differ only in the layout flags and the caller omits them.
+  Wrong metadata, never wrong pixels — full detail and the workaround on
+  :meth:`LruAnalysisCache.find`.
+* An on-disk :class:`AnalysisStore` is still the DECLARED-OPTIONAL half of WU-E2, so
+  a sidecar restart loses the cache and the next ``reframe.render`` refuses loudly.
+* ``app/renderer/src/features/ReframeCorrect.tsx:19-21`` states that "the registered
+  reframe surface really is exactly four methods
+  (``sidecar/tests/test_handlers_rpc_surface.py:118-121``)". After this WU the
+  surface is SIX and that citation's line range moved. This lane is sidecar-only and
+  correctly must not edit ``app/``, so this is a HAND-OFF for the lane that owns the
+  renderer, not a defect here. It is a ``//`` comment, so no false statement reaches
+  the UI.
+* The layout flags reach a trace only through ``reframe.analyze``; the shipped
+  ``shortmaker`` export path still cannot honour them (see
+  :func:`~media_studio.features.reframe_multispeaker.build_trace`).
 """
 
 from __future__ import annotations
