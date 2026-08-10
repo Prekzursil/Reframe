@@ -56,9 +56,17 @@ def _js_number(value: Any) -> str:
 # --------------------------------------------------------------------------- #
 # Phase-8 wiring helpers (pure; the heavy runner stays pragma-excluded)
 # --------------------------------------------------------------------------- #
-#: advisor component name -> its registered manifest asset name (the installed
-#: -state probe key). Components with no own asset (motion/diversity/ranker are
-#: zero-download floors) are absent; ``aesthetic`` shares the SigLIP-2 backbone.
+#: component name -> its registered manifest asset name (the installed-state
+#: probe key ``_models_present_map`` iterates). Components with no own asset
+#: (motion/diversity/ranker are zero-download floors) are absent; ``aesthetic``
+#: shares the SigLIP-2 backbone.
+#:
+#: Every key EXCEPT ``whisper`` is also a ``system_advisor.COMPONENTS`` spec name.
+#: ``whisper`` is a probe-only key (W25): it is not an advisor component and never
+#: reaches a tier/verdict roll-up (``advise`` iterates ``COMPONENTS``, and
+#: ``_READINESS_TIERS`` / ``recommender._COMPONENT_ASSETS`` do not name it), but
+#: ``asr.engines`` needs its installed-state from the SAME probe parakeet uses
+#: rather than a second, independent guess.
 _COMPONENT_ASSETS: dict[str, str] = {
     "saliency": "vinet-s-saliency",
     "audio_saliency": "panns-cnn14",
@@ -69,6 +77,10 @@ _COMPONENT_ASSETS: dict[str, str] = {
     "emotion": "hsemotion-onnx",
     "ocr": "rapidocr-onnx",
     "parakeet": "parakeet-tdt-0.6b-v3",
+    # W25: the day-1 transcription asset (``manifest.WHISPER_ASSET_NAME``) — the
+    # snapshot ``transcribe.resolve_model_source`` hands faster-whisper for the
+    # default ``large-v3-turbo`` id. Probe-only key; see the note above.
+    "whisper": "whisper-large-v3-turbo",
     # WU-T0/B1: the packaged default is the Apache-2.0 wav2vec2 aligner, so THAT
     # is the download to propose. Pointing this at the CC-BY-NC MMS asset would
     # install a model `ctc_align._resolve_model_id` refuses unless the user has

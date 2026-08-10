@@ -249,7 +249,34 @@ def test_system_advisor_commercial_flag_drops_noncommercial(tmp_path: Path) -> N
     assert by_name["saliency"]["licenseCommercialOk"] is False
 
 
-def test_asr_engines_lists_whisper_and_parakeet(tmp_path: Path) -> None:
+def _isolate_hf_cache(tmp_path: Path, monkeypatch: Any) -> Path:
+    """Point the HF cache at an EMPTY tmp dir and return it.
+
+    ``whisper-large-v3-turbo`` is an ``installer="hf"`` asset, so its
+    installed-probe reads the REAL HF cache. Without this a dev box that already
+    has the snapshot cached reports it installed and the absent-weights arm below
+    becomes host-dependent (the same flake ``test_models_present_map_omits_missing
+    _and_fails_open`` isolates for smolvlm2).
+    """
+    cache = tmp_path / "hf-cache"
+    cache.mkdir()
+    monkeypatch.setenv("HF_HUB_CACHE", str(cache))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+    monkeypatch.delenv("HUGGINGFACE_HUB_CACHE", raising=False)
+    return cache
+
+
+def test_asr_engines_lists_whisper_and_parakeet(tmp_path: Path, monkeypatch: Any) -> None:
+    """W25 (REVIEWED CHANGE): whisper's flag was pinned ``is True`` here.
+
+    The old assertion asserted the DEFECT: ``asr_engines`` hardcoded
+    ``installed: True`` for whisper while its weights were demonstrably absent
+    from this tmp dir, so the ASR picker could never warn that the model the user
+    is about to need is missing. The flag now derives from the same
+    ``_models_present_map`` probe parakeet already used, so with no weights on
+    disk BOTH engines report ``False``.
+    """
+    _isolate_hf_cache(tmp_path, monkeypatch)
     svc = _phase8_services(tmp_path)
     direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
     out = svc.asr_engines({}, direct)
@@ -257,8 +284,64 @@ def test_asr_engines_lists_whisper_and_parakeet(tmp_path: Path) -> None:
     assert ids == {"whisper", "parakeet"}
     whisper = next(e for e in out["engines"] if e["id"] == "whisper")
     parakeet = next(e for e in out["engines"] if e["id"] == "parakeet")
-    assert whisper["installed"] is True
+    assert whisper["installed"] is False  # weights not installed in the tmp dir
     assert parakeet["installed"] is False  # weights not installed in the tmp dir
+
+
+def test_asr_engines_whisper_installed_true_when_the_pinned_snapshot_is_cached(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The TRUE arm: a cached whisper snapshot flips the reported flag to True.
+
+    Paired with the False arm above so a mutation that hardcodes EITHER constant
+    goes red (a one-sided test would stay green against ``installed: False``).
+    """
+    from media_studio.assets import manifest as _manifest
+
+    cache = _isolate_hf_cache(tmp_path, monkeypatch)
+    snapshot = (
+        cache
+        / ("models--" + _manifest.WHISPER_HF_REPO.replace("/", "--"))
+        / "snapshots"
+        / _manifest.WHISPER_HF_REVISION
+    )
+    snapshot.mkdir(parents=True)
+    (snapshot / "model.bin").write_bytes(b"weights")
+    svc = _phase8_services(tmp_path)
+    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
+    out = svc.asr_engines({}, direct)
+    whisper = next(e for e in out["engines"] if e["id"] == "whisper")
+    assert whisper["installed"] is True
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_asr_engines_both_flags_track_the_presence_map(tmp_path: Path, flag: bool) -> None:
+    """Both engine rows are DERIVED from ``_models_present_map``, not hardcoded.
+
+    Overriding the seam (rather than the disk) pins the wiring itself: the handler
+    must read the map key it computed one line earlier. Parametrised over both
+    values so neither a hardcoded ``True`` nor a hardcoded ``False`` survives.
+    """
+    svc = _phase8_services(tmp_path)
+    svc._models_present_map = lambda _s: {"whisper": flag, "parakeet": flag}  # type: ignore[method-assign]
+    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
+    out = svc.asr_engines({}, direct)
+    assert {e["id"]: e["installed"] for e in out["engines"]} == {"whisper": flag, "parakeet": flag}
+
+
+def test_component_assets_maps_whisper_to_the_registered_day1_asset(tmp_path: Path) -> None:
+    """The probe key ``asr.engines`` reads must name the asset the loader uses.
+
+    ``_models_present_map`` is keyed by ``_COMPONENT_ASSETS``; if whisper's entry
+    named a different (or de-registered) asset the flag would silently be absent
+    -> reported False forever. Reads BOTH ends rather than trusting the mapping.
+    """
+    from media_studio.assets import manifest as _manifest
+    from media_studio.handlers import _wire
+
+    assert _wire._COMPONENT_ASSETS["whisper"] == _manifest.WHISPER_ASSET_NAME
+    assert _manifest.get_asset(_manifest.WHISPER_ASSET_NAME) is not None
+    assert _manifest.WHISPER_MODEL_ASSETS[_manifest.WHISPER_MODEL_ID] == _manifest.WHISPER_ASSET_NAME
 
 
 # --------------------------------------------------------------------------- #

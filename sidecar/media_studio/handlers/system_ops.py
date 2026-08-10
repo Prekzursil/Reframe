@@ -84,15 +84,38 @@ def asr_engines(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict
     """``asr.engines()`` -> ``{engines:[{id, label, installed}]}``. Direct-return.
 
     Lists the selectable ASR engines (whisper default / parakeet opt-in) with
-    an installed flag per engine (drives the ASR picker UI). Whisper is treated
-    as always available (the always-installed default); parakeet's installed
-    flag reflects whether its weights are cached.
+    an installed flag per engine (drives the ASR picker UI). BOTH flags come
+    from the SAME :meth:`_models_present_map` probe — the asset manager's
+    installed-state for each engine's registered manifest asset.
+
+    W25: whisper's flag used to be a hardcoded ``True`` ("the always-installed
+    default"), which was false on every install that did not download the
+    weights — the Minimum profile pulls nothing, a Custom profile need not
+    include transcription, and the whisper snapshot is excluded from the
+    renderer's first-run completion gate. The picker therefore could not warn
+    that the model the user is about to need is absent, and
+    ``recommender._pick_asr_engine`` always found "an installed engine".
+
+    SCOPE, stated precisely: the probe answers "are whisper weights cached"
+    (``AssetManager.installed_path`` -> ``hf_snapshot_present``: ANY non-empty
+    snapshot of the pinned repo), which is one step weaker than the loader's
+    ``transcribe.whisper_snapshot_dir`` (the pinned REVISION specifically).
+    They diverge only when the cache holds a different revision of the same
+    repo — in that state faster-whisper can still resolve it via its own
+    ``refs/`` entry, so reporting installed is the accurate answer there too.
+    UNVERIFIED: that divergent state has not been exercised end-to-end here;
+    the settling experiment is an e2e that seeds a non-pinned snapshot and runs
+    ``transcribe.start`` with egress blocked.
     """
     settings = self.settings.get()
     installed = self._models_present_map(settings)
     return {
         "engines": [
-            {"id": "whisper", "label": "Whisper large-v3-turbo", "installed": True},
+            {
+                "id": "whisper",
+                "label": "Whisper large-v3-turbo",
+                "installed": bool(installed.get("whisper", False)),
+            },
             {
                 "id": "parakeet",
                 "label": "Parakeet-TDT-0.6b-v3 (multilingual)",
@@ -455,11 +478,13 @@ def phase8_select(self: Services, params: dict[str, Any], ctx: RpcContext) -> di
 
 
 def _models_present_map(self: Services, settings: dict[str, Any]) -> dict[str, bool]:
-    """Map each model-backed advisor component -> is its weight installed.
+    """Map each model-backed component -> is its weight installed.
 
-    Probes the asset manager for each Phase-8 component's pinned asset so the
-    advisor (and the ASR picker) can report installed-state + degrade an
-    offline-missing model. Components with no registered asset are omitted
+    Probes the asset manager for each :data:`_COMPONENT_ASSETS` entry's pinned
+    asset so the advisor (and the ASR picker) can report installed-state +
+    degrade an offline-missing model. Most keys are advisor components; the
+    probe-only ``whisper`` key exists purely so ``asr.engines`` reads its flag
+    from THIS map instead of guessing (W25). Components with no registered asset are omitted
     (the advisor then treats them as not-installed). Fail-open: a probe error
     for one component marks it absent, never crashes the report.
     """
