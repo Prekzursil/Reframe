@@ -150,7 +150,7 @@
 }
 
 .spend-cap__status[data-zone="blocked"] {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .spend-cap__status-glyph {

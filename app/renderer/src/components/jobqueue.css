@@ -147,7 +147,7 @@
   padding: var(--space-3) var(--space-4);
   border-left: 3px solid var(--status-error);
   border-radius: var(--radius-sm);
-  color: var(--status-error);
+  color: var(--status-error-text);
   background: var(--status-error-soft);
   font-size: var(--type-caption-size);
 }
@@ -208,7 +208,7 @@
 }
 
 .jobqueue__status--error {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .jobqueue__status--done {
@@ -302,5 +302,5 @@
 
 .jobqueue__cancel:hover {
   background: var(--status-error-soft);
-  color: var(--status-error);
+  color: var(--status-error-text);
 }

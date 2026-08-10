@@ -505,7 +505,7 @@
 }
 
 .health-verdict.bad {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .health-list,
