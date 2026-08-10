@@ -918,27 +918,96 @@ describe('global form-control floor (H5)', () => {
 // .spend-cap__status[data-zone="near"] takes --status-warn, both pinned at AA at :679.
 // Hence the allowlist below ships EMPTY *by measurement*, not by omission.
 //
-// SCOPE (deliberate, and narrower than "red text is AA everywhere"): this guard pins
-// WHICH TOKEN carries red text. It does not claim --status-error-text clears AA on the
-// two interaction tints — measured, it is 4.47 on --surface-hover and 3.79 on
-// --surface-active, so a red string inside a hovered row is improved (3.17 -> 4.47) but
-// still ~0.03 under the floor. That residual belongs to the token's value, not to this
-// routing guard, and the AA assertions here stay on ELEVATION_PLANES like :671 does.
+// SCOPE — read this before citing the guard. It pins WHICH TOKEN carries red text; it is
+// NOT an AA floor, and it does NOT leave every migrated site at AA. Two sentences that
+// shipped in the first pass of this block were REFUTED as overclaims and are corrected
+// here rather than deleted:
+//
+//   REFUTED #1 — "a red string inside a hovered/pressed row improves (3.17 -> 4.47) but
+//   stays ~0.03 under the floor", with 3.79 named as the worst case. Wrong state AND an
+//   incomplete set. (a) --surface-hover is the RESTING background of `.jobqueue__item`
+//   (components/jobqueue.css:177; :182 swaps to --surface-active on hover), so the failed-
+//   job status string is 4.47:1 with NO interaction at all — not a state a user has to
+//   provoke. (b) It omitted the COMPOSITE case: --status-error-text over its own
+//   --status-error-soft 10%-alpha wash measures 4.12:1 on --surface-hover and **3.55:1** on
+//   --surface-active. 3.55 — not 3.79 — is the worst post-fix value in this tree, and it is
+//   reached by a rule W15 itself migrated: `.library__remove-btn:hover` /
+//   `.sm-row-decide button[aria-label="Discard"]:hover` (components/shell.css:501-504) sets
+//   the wash on ITSELF while its host card lifts to --surface-hover / --surface-active on
+//   the SAME pointer event (components/library-cards.css:55-56, :69-72).
+//   (c) The repo's own audit ledger had already computed and warned about that exact site:
+//   docs/validation/v15-audit-ledger.md:477 — "Fixing the one-token color at shell.css:446
+//   lifts hover to 4.13:1 (still under AA because the card tint compounds), so a complete
+//   fix also needs the card-level tint suppressed". The first pass did not cite it.
+//
+// CORRECTLY SCOPED: every one of the 34 migrated sites IMPROVES, and AT LEAST TWO remain
+// sub-AA after the migration — 4.47:1 (`.jobqueue__status--error`, at rest) and 3.55:1
+// (the Remove/Discard label at press) — because --status-error-text (#ff6b6b) is itself
+// under AA on the two interaction tints: 4.47 on --surface-hover, 3.79 on --surface-active
+// (independently re-derived from raw hex, not via this file's helpers).
+//
+// "AT LEAST two" is a measured FLOOR, not a total. UNVERIFIED — how many of the 34 land on
+// an interaction tint: 17 of the 20 migrated sheets set --surface-hover or --surface-active
+// as a background somewhere, so more sites may resolve onto one. Settling experiment:
+// getComputedStyle backgroundColor on every migrated node in the running app, in the resting
+// AND hovered AND pressed state (the same probe the plane-resolution caveat below needs).
+//
+// Closing the two known ones needs a TOKEN-VALUE change plus tint suppression under the
+// Library meta lane — both outside a routing guard — so the AA assertions here stay on
+// ELEVATION_PLANES exactly as :671 does. Settling experiment: lift --status-error-text until
+// contrast() clears 4.5 on --surface-active AND give the hovered Remove button an opaque own
+// background, then re-run this file plus the five Library sheets.
+//
+// SIBLING GAP — DISCLOSED, deliberately NOT fixed here (out of W15's declared scope). This
+// block's whole thesis is "a subset-scoped guard hides the defect everywhere else", and a
+// structurally identical one is still live in this same file: :3-4 quotes tokens.css's rule
+// of use as GLOBAL — "Consume tokens only — no one-off hex values in component CSS" — but the
+// test that enforces it (`usageBar.css uses NO raw color literals`, :41, via USAGE_BAR_CSS
+// at :26) is scoped to exactly ONE sheet. Measured with RAW_COLOR (:33) over all 65 sheets,
+// comments stripped: 9 component sheets besides tokens.css carry raw literals —
+// captionCustomizer (10), captionDesigner (10), captionStylePicker (8), captionBox (6),
+// reframeOverridePanel (4), captionPreferences (3), captionOverlay (1), directorPanel (1),
+// modelsSystem (1). W15 touched three of those (captionPreferences, directorPanel,
+// modelsSystem) for the red-text migration without noting it. UNVERIFIED: whether each hit
+// is a genuine violation — several are plausibly legitimate non-palette values (e.g.
+// captionPreferences.css:71 `linear-gradient(160deg, #2a2a38, #0d0d12)` is the caption-
+// preview surface; :78 `rgba(0, 0, 0, 0.9)` is a text-shadow alpha). Settling experiment: point
+// RAW_COLOR at all 65 sheets and triage per-site, exactly as this block did for red text.
 
 /**
- * A bare `color: var(--status-error)` — the solid fill red used as a STRING.
+ * A `color` declaration carrying the solid FILL red — the red used as a STRING.
  *
  * The lookbehind rejects `background-color` / `border-color` / `outline-color` by their
- * `-`, and the closing `\)` rejects the `-soft` / `-text` siblings. Unlike the narrower
- * RED_TEXT_LEAK at :649 (`[^-]color:`) it also catches a declaration that starts a rule
- * body with no preceding character. Both patterns were run over this tree and agreed
- * exactly (20 sheets each), so the change is a strict widening with no reinterpretation.
+ * `-`; the trailing `[,)]` rejects the `-soft` / `-text` siblings (their next character is
+ * `-`) while accepting the var() FALLBACK form `var(--status-error, #e5484d)`. `--danger`
+ * is in the alternation because tokens.css:284 aliases it to the same fill red under a
+ * "keep consumers working" comment, so `color: var(--danger)` is the same defect by another
+ * spelling. Both extra forms have ZERO consumers today (measured over all 65 sheets, with
+ * the probe controlled against a known-present `color: var(--danger)` string) — they are
+ * closed here so a future lane cannot reach for either without tripping the guard.
+ *
+ * REFUTED, and corrected: the first pass claimed this pattern "catches a declaration that
+ * starts a rule body with no preceding character" which the narrower RED_TEXT_LEAK at :649
+ * (`[^-]color:`) "cannot match". False for the string the control cites — `{` satisfies
+ * `[^-]`, so `.a{color:var(--status-error)}` matches BOTH (measured: OLD=HIT NEW=HIT). The
+ * only body-start form :649 misses is a declaration at string index 0. The real, measured
+ * widenings are whitespace tolerance: `color : var(...)` and `var( --status-error )` are
+ * OLD=miss / NEW=HIT. Over this tree both patterns still agree exactly (20 sheets each).
  *
  * Scoped to the `color` property on purpose: the tree contains zero references to
  * --status-error from `-webkit-text-fill-color` or `caret-color` (measured), so widening
  * further would add a branch no fixture exercises.
  */
-const RED_TEXT_USE = /(?<![-\w])color\s*:\s*var\(\s*--status-error\s*\)/;
+const RED_TEXT_USE = /(?<![-\w])color\s*:\s*var\(\s*--(?:status-error|danger)\s*[,)]/;
+
+/** A sheet that still consumes --status-error as a FILL (background / border / outline).
+ *
+ * `[^;{}]*` and not `[^;]*`: the loose form crosses a `}`, so a sheet whose background
+ * and red text live in two SEPARATE rules would falsely count as a fill consumer. That
+ * matters because the assertion below sits exactly at its floor (19 sheets, `>= 19`), so
+ * one cross-block false positive would silently restore slack in the only test protecting
+ * the fills from a bulk find-and-replace. Pinned by a control at :1088. */
+const FILL_USE = /(?:background|border|outline)(?:-[\w-]+)?\s*:[^;{}]*var\(--status-error\)/;
 
 /** Selectors that set a bare `color: var(--status-error)` in ONE stylesheet.
  *
@@ -977,14 +1046,19 @@ const RED_TEXT_ALLOWLIST: readonly string[] = [
 describe('red status TEXT stays inside its allowlist, tree-wide (W15)', () => {
   const cssFiles = collectCssFiles(RENDERER_SRC);
 
-  it('the red-text scanner CAN see a leak — so a zero result means zero', () => {
+  it('the red-text scanner CAN see a leak — a zero means zero for un-nested rules', () => {
     // Detector control in BOTH directions. The tree-wide assertion below returns an
     // empty offender list, which is only meaningful once this scanner is shown to fire
-    // on a known-present leak and stay silent on the correct uses.
+    // on a known-present leak and stay silent on the correct uses. The title is scoped to
+    // un-nested rules on purpose — the nesting blind spot is pinned in the next test.
     expect(redTextSelectors('.a { color: var(--status-error); }')).toEqual(['.a']);
     expect(redTextSelectors('.a,\n.b { color: var(--status-error); }')).toEqual(['.a', '.b']);
-    // Minified / body-start form — the case the narrower :649 pattern cannot match.
+    // Minified form. NOT a case :649 misses — `{` satisfies its `[^-]` (see the docstring's
+    // REFUTED note). Kept because minified input must still tokenize.
     expect(redTextSelectors('.a{color:var(--status-error)}')).toEqual(['.a']);
+    // The genuine widenings over :649, both measured OLD=miss / NEW=HIT:
+    expect(redTextSelectors('.a { color : var(--status-error); }')).toEqual(['.a']);
+    expect(redTextSelectors('.a { color: var( --status-error ); }')).toEqual(['.a']);
     // The FILL uses must NEVER be flagged: this guard may not force a fill to migrate.
     expect(redTextSelectors('.a { background-color: var(--status-error); }')).toEqual([]);
     expect(redTextSelectors('.a { border-color: var(--status-error); }')).toEqual([]);
@@ -995,6 +1069,35 @@ describe('red status TEXT stays inside its allowlist, tree-wide (W15)', () => {
     expect(redTextSelectors('.a { color: var(--status-error-soft); }')).toEqual([]);
     // …and a leak quoted inside a COMMENT is a mention, not a use.
     expect(redTextSelectors('/* .a { color: var(--status-error); } */')).toEqual([]);
+    // The var() FALLBACK form and the legacy `--danger` alias (tokens.css:284 aliases it
+    // to the same fill red) are BOTH fill-red-as-text and must be seen.
+    expect(redTextSelectors('.a { color: var(--status-error, #e5484d); }')).toEqual(['.a']);
+    expect(redTextSelectors('.a { color: var(--danger); }')).toEqual(['.a']);
+  });
+
+  it('sees a leak inside @media/@supports, but NOT one beside a native-nested block', () => {
+    // Wrapping at-rules are the nesting shape this tree actually uses, and they are seen:
+    expect(redTextSelectors('@media (min-width: 10px) { .a { color: var(--status-error); } }')) //
+      .toEqual(['.a']);
+    expect(redTextSelectors('@supports (color: red) { .a { color: var(--status-error); } }')) //
+      .toEqual(['.a']);
+    // DISCLOSED BLIND SPOT, pinned here so the limitation is executable rather than
+    // folklore: the `([^{}]+)\{([^{}]*)\}` tokenizer — inherited verbatim from the H7
+    // editorial-serif guard at :763 — cannot see a declaration in a PARENT rule that also
+    // contains a native-nested `&` block. Measured over the 65 sheets: 0 use native
+    // nesting, so this is latent, not live. Settling change: tokenize by brace depth
+    // instead of a flat `[^{}]` pair, then DELETE this expectation (it will go red).
+    expect(redTextSelectors('.a {\n  color: var(--status-error);\n  &:hover { color: blue; }\n}')) //
+      .toEqual([]);
+  });
+
+  it('the FILL detector cannot count a fill that is in a DIFFERENT rule', () => {
+    // `[^;]*` would cross a `}`, so a sheet whose background and red text live in two
+    // separate rules would falsely count as a fill consumer — silently restoring slack in
+    // the only assertion protecting the fills from a bulk sweep.
+    expect(FILL_USE.test('.a { background: var(--status-error); }')).toBe(true);
+    expect(FILL_USE.test('.a { border: 1px solid var(--status-error); }')).toBe(true);
+    expect(FILL_USE.test('.a { background: red }\n.b { color: var(--status-error) }')).toBe(false);
   });
 
   it('scans the real sheet set, and the AA-safe token is genuinely in use', () => {
@@ -1052,11 +1155,7 @@ describe('red status TEXT stays inside its allowlist, tree-wide (W15)', () => {
     // still be consumed as a background / border; if a bulk find-and-replace had swept
     // the fills too (the obvious way to make the guard above green by accident), the
     // FAILED-dot, progress fills and danger borders would all have gone with it.
-    const fills = cssFiles.filter((f) =>
-      /(?:background|border|outline)(?:-[\w-]+)?\s*:[^;]*var\(--status-error\)/.test(
-        stripComments(readFileSync(f, 'utf8')),
-      ),
-    );
+    const fills = cssFiles.filter((f) => FILL_USE.test(stripComments(readFileSync(f, 'utf8'))));
     expect(fills.length).toBeGreaterThanOrEqual(19);
   });
 });
