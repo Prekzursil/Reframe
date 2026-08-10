@@ -137,10 +137,16 @@ jobs:
       # findings live in osv-scanner.toml (auto-loaded from the repo root).
       #
       # W23 — the last two arguments are the FIRST-RUN `pip --target` environments
-      # under sidecar/runtime_setup/. requirements-chatterbox.txt was scanned by
-      # NOTHING even though that environment ships (build/make-portable.ps1 stages
-      # a second, py3.14 embeddable CPython for it) and pins its own +cu128 torch
-      # build, which sidecar/requirements.lock.txt structurally cannot contain
+      # under sidecar/runtime_setup/. requirements-chatterbox.txt had NO coverage in
+      # THIS BLOCKING GATE (it was, and is, covered on the advisory Dependabot rail —
+      # 8 alerts on that manifest; an advisory rail cannot fail a PR) even though
+      # part of that environment ships: the dedicated py3.14 embeddable INTERPRETER
+      # is staged into the unpacked tree by build/make-portable.ps1, while torch and
+      # the weights are fetched on FIRST RUN and never enter the artifact
+      # (make-portable.ps1 fails the build on a torch package dir) — which is why
+      # osv-scanner.toml's SCOPE paragraph says "never ships inside the installer"
+      # about the same env without contradicting this line. It pins its own +cu128
+      # torch build, which sidecar/requirements.lock.txt structurally cannot contain
       # (sidecar/pyproject.toml forbids chatterbox-tts/torch in the main env).
       # Both files DO parse as requirements.txt under the pinned osv-scanner 2.3.8
       # and the +cu128 local version DOES match advisory ranges — measured against
@@ -153,8 +159,11 @@ jobs:
       # runtime_setup/generate_hashed_lock.py, whose output is generated rather
       # than committed; when such a lock IS staged beside a requirements file,
       # scanning either one satisfies the invariant asserted in section 5 of
-      # sidecar/tests/test_supply_chain_pins.py, which fails whenever a shipped
-      # environment has no argument here.
+      # sidecar/tests/test_supply_chain_pins.py, which fails whenever a DISCOVERED
+      # shipped environment has no argument here. "Discovered" is three globs, not a
+      # closure — a dependency set declared as a pyproject extra (the live
+      # `reframe-gpu` case) is not demanded. Scope + the assertions that pin it:
+      # osv-scanner.toml and TestDiscoveryScopeIsTheThreeGlobs.
       - name: gate-deps osv-scanner
         run: |
           osv-scanner scan source \

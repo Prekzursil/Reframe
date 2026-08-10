@@ -18,12 +18,21 @@ Three surfaces, all "an unverified artifact must never be EXECUTED":
   MUTABLE ``main`` branch and the scanner binary had no checksum at all.
 * ``.github/workflows/quality.yml`` again, W23 — the ``gate-deps`` osv-scanner
   invocation passed THREE ``--lockfile`` arguments and none of them was the
-  chatterbox environment, so a Python env that SHIPS (``build/make-portable.ps1``
-  ships a second, py3.14 embeddable CPython for it) and that carries its own
-  ``+cu128`` torch build had ZERO CVE scanning. Section 5 below turns "every
-  shipped dependency environment is in the deps gate" into an asserted
-  invariant, discovered from disk rather than from a hardcoded list, so a fourth
-  environment cannot be added unscanned later.
+  chatterbox environment, so a Python env that partly SHIPS (the dedicated py3.14
+  embeddable CPython is staged by ``build/make-portable.ps1``; torch and the
+  weights are fetched on first run and never enter the artifact) and that carries
+  its own ``+cu128`` torch build had NO coverage in the BLOCKING deps gate.
+  Scoped correction to the first wording, which said "ZERO CVE scanning": that is
+  false. GitHub's dependency graph HAS ingested
+  ``sidecar/runtime_setup/requirements-chatterbox.txt`` and has raised EIGHT CVE
+  alerts against it (measured 2026-08-10 via ``gh api …/dependabot/alerts``: seven
+  ``fixed``, one ``dismissed``). The env had real coverage on the ADVISORY rail;
+  what it lacked was a rail that can fail a PR. Section 5 below turns "every
+  DISCOVERED shipped environment is in the deps gate" into an asserted invariant,
+  read off disk rather than from a hardcoded list — and
+  :class:`TestDiscoveryScopeIsTheThreeGlobs` pins how far "discovered" reaches,
+  because three reviewers refuted the unqualified claim that a fourth environment
+  "cannot be added unscanned".
 
 The lockfile-mechanism tests live in ``test_env_lockfile.py``; this module only
 covers the WU-S10 pinning deltas.
@@ -317,7 +326,9 @@ class TestEmbedSetupPinIsMandatory:
 
 
 # --------------------------------------------------------------------------- #
-# 5. W23 — the deps gate must scan EVERY shipped dependency environment
+# 5. W23 — the deps gate must scan every DISCOVERED shipped dependency environment
+#    ("discovered" = the three globs in `shipped_dependency_manifests`, whose exact
+#     reach is asserted by TestDiscoveryScopeIsTheThreeGlobs — not a closure claim)
 # --------------------------------------------------------------------------- #
 #: `npm ci` / electron-builder create these; a manifest inside one is generated
 #: output, not a shipped environment, so discovery must not demand it be scanned.
