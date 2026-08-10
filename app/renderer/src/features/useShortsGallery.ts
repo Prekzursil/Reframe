@@ -8,8 +8,10 @@
 // `reloadVideoShorts` into its export/batch flows. Behaviour is identical to the
 // inline callbacks it replaced (same RPC method/field names, same error paths).
 
+import type React from 'react';
 import { useCallback, useState } from 'react';
 
+import { useConfirm } from '../components/ConfirmDialog';
 import type { Api } from './shortMakerLogic';
 import { errMsg } from './shortMakerLogic';
 import type { ShortInfo, ShortReexportHint } from '../lib/rpc';
@@ -17,6 +19,12 @@ import type { ShortInfo, ShortReexportHint } from '../lib/rpc';
 export interface ShortsGallery {
   /** The produced shorts FOR THIS VIDEO (enriched ShortInfo from shorts.list). */
   videoShorts: ShortInfo[];
+  /**
+   * W04: the themed delete gate. This hook is not a component, so it cannot put
+   * the dialog on screen itself — the container that renders the gallery must
+   * render this node, or `deleteShort` will ask a question nobody can answer.
+   */
+  confirmDialog: React.ReactElement | null;
   /** Path of the clip currently inline-playing ('' = none). */
   playingShortPath: string;
   /** Reload shorts.list for this video (best-effort; clears on failure). */
@@ -50,6 +58,7 @@ export function useShortsGallery({
 }: UseShortsGalleryOptions): ShortsGallery {
   const [videoShorts, setVideoShorts] = useState<ShortInfo[]>([]);
   const [playingShortPath, setPlayingShortPath] = useState<string>('');
+  const { confirm, confirmDialog } = useConfirm();
 
   const reloadVideoShorts = useCallback(async () => {
     if (!resolvedApi || !videoId) return;
@@ -96,9 +105,15 @@ export function useShortsGallery({
 
   const deleteShort = useCallback(
     async (path: string) => {
-      const ok = (globalThis as { confirm?: (m: string) => boolean }).confirm?.(
-        `Delete this short?\n\n${path}\n\nThis removes the exported file.`,
-      );
+      // W04: the themed gate, not the native `confirm()`. Native confirm is
+      // unthemeable, carries no author-controlled accessible name/description,
+      // and in Electron it blocks the whole renderer process while it is open.
+      const ok = await confirm({
+        title: 'Delete this short?',
+        blurb: `${path}\n\nThis removes the exported file.`,
+        confirmLabel: 'Delete short',
+        cancelLabel: 'Keep it',
+      });
       if (!ok || !resolvedApi) return;
       setError(null);
       try {
@@ -108,11 +123,12 @@ export function useShortsGallery({
         setError(errMsg(e));
       }
     },
-    [resolvedApi, reloadVideoShorts, setError],
+    [confirm, resolvedApi, reloadVideoShorts, setError],
   );
 
   return {
     videoShorts,
+    confirmDialog,
     playingShortPath,
     reloadVideoShorts,
     playShort,

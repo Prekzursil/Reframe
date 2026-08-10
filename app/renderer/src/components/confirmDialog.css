@@ -1,0 +1,124 @@
+/* confirmDialog.css — the shared themed destructive-confirm gate (W04).
+ *
+ * Only the `confirm-dialog` BEM block lives here. The Export inspector renders
+ * the SAME component with `block="export-inspector__confirm"`, and that skin
+ * stays in features/export/export.css where it already was — one component, two
+ * skins, no duplicated markup.
+ *
+ * Presentation is a centred overlay card, because these six gates replace a
+ * NATIVE confirm: the user expects the question to take over, not to appear as
+ * one more block at the bottom of a panel. The scrim is a pseudo-element, so
+ * modality costs no extra DOM node and no extra JS branch.
+ */
+
+.confirm-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  /* ABOVE `.shorts-modal__backdrop` (z-index 100, components/library-shell.css):
+     the Library raises this gate from INSIDE that modal, so an equal z-index would
+     bury the question behind the surface it is asking about. */
+  z-index: 200;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(28rem, calc(100vw - var(--space-6) * 2));
+  padding: var(--space-5);
+  background: var(--surface-overlay);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-3);
+}
+
+/* The scrim: dims the surface the question is about, and — because a fixed,
+   full-viewport pseudo-element is hit-testable — also swallows pointer input
+   aimed at the surface behind, which is what stops a second destructive click
+   landing while the first question is still open. That is POINTER modality only:
+   keyboard focus is NOT trapped (see the note in ConfirmDialog.tsx), which is why
+   the dialog does not claim `aria-modal`. A click on the scrim is intentionally
+   inert — it neither confirms nor cancels. */
+.confirm-dialog::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--overlay-scrim);
+}
+
+.confirm-dialog-title {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: var(--type-subhead-size);
+  color: var(--text-primary);
+}
+
+.confirm-dialog-blurb {
+  /* The messages carry `\n\n` between the question and its detail line — the
+     shape they had as native-confirm strings. `pre-line` keeps that break
+     visible instead of collapsing it into one run-on sentence. */
+  white-space: pre-line;
+  margin: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.confirm-dialog-approve {
+  flex: 1;
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-bold);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--accent-glow);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.confirm-dialog-approve:hover {
+  background: var(--accent-hover);
+}
+
+.confirm-dialog-approve:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.confirm-dialog-cancel {
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.confirm-dialog-cancel:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.confirm-dialog-cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm-dialog-approve,
+  .confirm-dialog-cancel {
+    transition: none;
+    transform: none;
+  }
+}

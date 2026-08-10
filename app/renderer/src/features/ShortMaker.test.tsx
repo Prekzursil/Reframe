@@ -3006,16 +3006,50 @@ describe('<ShortMaker /> component', () => {
     expect(onReexport).toHaveBeenCalledWith(expect.objectContaining({ videoId: 'v1' }));
   });
 
-  it('delete confirms then removes the short and reloads the gallery', async () => {
-    const confirmSpy = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
-    const { rpc } = await loadGallery([SHORT]);
+  // W04 — REVIEWED TEST CHANGE (not a weakening). This test used to stub
+  // `globalThis.confirm` true, which passed identically whether the gate was the
+  // native OS confirm or a themed dialog; it could not have caught W04. It now
+  // drives the themed gate `<ShortMaker/>` renders for `useShortsGallery`, which
+  // also proves the container actually MOUNTS that dialog (the hook cannot), and
+  // it gained the cancel path the original never had.
+  async function openDeleteGate(): Promise<HTMLElement> {
     await act(async () => {
       (byLabel('Delete Talk') as HTMLButtonElement).click();
       await Promise.resolve();
     });
+    const gate = container.querySelector<HTMLElement>('.confirm-dialog');
+    if (!gate) throw new Error('themed confirm gate did not open for Delete');
+    return gate;
+  }
+
+  it('delete gates on the THEMED dialog, then removes the short and reloads the gallery', async () => {
+    const native = vi.spyOn(globalThis, 'confirm');
+    const { rpc } = await loadGallery([SHORT]);
+    const gate = await openDeleteGate();
+    expect(gate.querySelector('.confirm-dialog-blurb')?.textContent).toContain('/out/clip.mp4');
+    expect(rpc).not.toHaveBeenCalledWith('shorts.delete', { path: '/out/clip.mp4' });
+
+    await act(async () => {
+      gate.querySelector<HTMLButtonElement>('.confirm-dialog-approve')?.click();
+      await Promise.resolve();
+    });
     await flush();
     expect(rpc).toHaveBeenCalledWith('shorts.delete', { path: '/out/clip.mp4' });
-    confirmSpy.mockRestore();
+    expect(native).not.toHaveBeenCalled();
+  });
+
+  it('delete does nothing when the themed gate is declined', async () => {
+    const native = vi.spyOn(globalThis, 'confirm');
+    const { rpc } = await loadGallery([SHORT]);
+    const gate = await openDeleteGate();
+    await act(async () => {
+      gate.querySelector<HTMLButtonElement>('.confirm-dialog-cancel')?.click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(rpc).not.toHaveBeenCalledWith('shorts.delete', { path: '/out/clip.mp4' });
+    expect(container.querySelector('.confirm-dialog')).toBeNull();
+    expect(native).not.toHaveBeenCalled();
   });
 
   it('play toggles inline playback of a produced short', async () => {

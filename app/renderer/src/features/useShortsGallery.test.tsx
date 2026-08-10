@@ -2,6 +2,14 @@
 // hook. A tiny harness component exposes the hook's API to the test; we drive
 // every action (reload success + failure, play toggle, open-folder present/
 // absent/error, re-export success/error, delete confirm/cancel/error).
+//
+// W04 — REVIEWED TEST CHANGE (not a weakening). The three delete tests used to
+// stub `globalThis.confirm`. That stub passed whether the gate was the native OS
+// confirm or a themed dialog, so it could not tell the two apart and it could not
+// have caught W04. They now DRIVE the themed gate the hook renders
+// (`gallery.confirmDialog`) and additionally assert the native confirm is never
+// called — strictly more than before: the approve path, the cancel path, the
+// message content, AND the absence of the native dialog.
 
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -53,7 +61,9 @@ describe('useShortsGallery', () => {
     function Harness() {
       gallery = useShortsGallery({ resolvedApi: api, videoId, setError, onReexport });
       return (
-        <div data-playing={gallery.playingShortPath} data-count={gallery.videoShorts.length} />
+        <div data-playing={gallery.playingShortPath} data-count={gallery.videoShorts.length}>
+          {gallery.confirmDialog}
+        </div>
       );
     }
     act(() => {
@@ -63,6 +73,18 @@ describe('useShortsGallery', () => {
 
   function host() {
     return container.firstElementChild as HTMLElement;
+  }
+
+  /** The themed gate's copy, or null while no question is open. */
+  function gateBlurb(): string | null {
+    return container.querySelector('.confirm-dialog-blurb')?.textContent ?? null;
+  }
+
+  function answerGate(approve: boolean): void {
+    const sel = approve ? '.confirm-dialog-approve' : '.confirm-dialog-cancel';
+    const btn = container.querySelector<HTMLButtonElement>(sel);
+    if (!btn) throw new Error(`themed confirm gate is not open (no ${sel})`);
+    act(() => btn.click());
   }
 
   function makeApi(over: Partial<Api> = {}): Api {
@@ -189,40 +211,78 @@ describe('useShortsGallery', () => {
     expect(setError).toHaveBeenCalledWith('reexport boom');
   });
 
-  it('deleteShort confirms, deletes, and reloads', async () => {
-    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+  it('deleteShort gates on the THEMED dialog, then deletes and reloads on approve', async () => {
+    const native = vi.spyOn(globalThis, 'confirm');
     const rpc = vi.fn(async (method: string) => {
       if (method === 'shorts.list') return { shorts: [] };
       return {};
     });
     mount(makeApi({ rpc: rpc as Api['rpc'] }));
+    let done!: Promise<void>;
+    act(() => {
+      done = gallery.deleteShort('/a.mp4');
+    });
+    // The gate names the clip and states the consequence, and NOTHING has been
+    // destroyed while the question is open.
+    expect(gateBlurb()).toContain('/a.mp4');
+    expect(gateBlurb()).toContain('This removes the exported file.');
+    expect(rpc).not.toHaveBeenCalled();
+
+    answerGate(true);
     await act(async () => {
-      await gallery.deleteShort('/a.mp4');
+      await done;
     });
     expect(rpc).toHaveBeenCalledWith('shorts.delete', { path: '/a.mp4' });
     expect(rpc).toHaveBeenCalledWith('shorts.list', { videoId: 'v1' });
+    // The renderer-blocking native dialog is never reached.
+    expect(native).not.toHaveBeenCalled();
+    expect(gateBlurb()).toBeNull();
   });
 
-  it('deleteShort is a no-op when the confirm is cancelled', async () => {
-    vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+  it('deleteShort is a no-op when the themed gate is declined', async () => {
+    const native = vi.spyOn(globalThis, 'confirm');
     const rpc = vi.fn(async () => ({}));
     mount(makeApi({ rpc: rpc as Api['rpc'] }));
+    let done!: Promise<void>;
+    act(() => {
+      done = gallery.deleteShort('/a.mp4');
+    });
+    answerGate(false);
     await act(async () => {
-      await gallery.deleteShort('/a.mp4');
+      await done;
     });
     expect(rpc).not.toHaveBeenCalled();
+    expect(native).not.toHaveBeenCalled();
+    expect(gateBlurb()).toBeNull();
   });
 
   it('deleteShort surfaces an error when the delete rpc fails', async () => {
-    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
     const rpc = vi.fn(async (method: string) => {
       if (method === 'shorts.delete') throw new Error('delete denied');
       return {};
     });
     mount(makeApi({ rpc: rpc as Api['rpc'] }));
+    let done!: Promise<void>;
+    act(() => {
+      done = gallery.deleteShort('/a.mp4');
+    });
+    answerGate(true);
     await act(async () => {
-      await gallery.deleteShort('/a.mp4');
+      await done;
     });
     expect(setError).toHaveBeenCalledWith('delete denied');
+  });
+
+  it('deleteShort is a no-op without an api, even after the gate is approved', async () => {
+    mount(undefined as unknown as Api);
+    let done!: Promise<void>;
+    act(() => {
+      done = gallery.deleteShort('/a.mp4');
+    });
+    answerGate(true);
+    await act(async () => {
+      await done;
+    });
+    expect(setError).not.toHaveBeenCalled();
   });
 });
