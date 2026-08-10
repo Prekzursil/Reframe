@@ -52,9 +52,10 @@ remember to edit in lock-step. That is the definition of drift-prone.
 >   recomputes those four, so each can rot exactly the way row 4 did. Settling
 >   experiment: extend the pin to them, or re-run the probes named here.
 > - **Row 3's probe has now failed twice, in opposite directions, which is why the
->   method is spelled out.** A backticked-token regex first reported `12` by matching
+>   method is spelled out.** A backticked-token regex reported `12` by matching
 >   `boundary.py` and `re.escape` — a reading that contradicted the doc it was
->   measuring, so a detector failure rather than a finding. During *this* revision a
+>   measuring, so a detector failure rather than a finding (recorded by the previous
+>   revision of this paragraph; not re-run here). During *this* revision a
 >   bare-`` `token` ``-only variant reported `6`, because `CONTRACTS.md` writes its
 >   methods as `library.add({path})` and the params defeat a closing-backtick anchor.
 >   Set membership against the live registry, with `library.add` as a known-present
@@ -88,10 +89,12 @@ remember to edit in lock-step. That is the definition of drift-prone.
 >   `plans/v1.5/flagship-auto-broll.md` (**DRAFT**) still says `~120 real handlers`.
 >   `plans/v1.5/flagship-lip-sync-dub.md` (**DRAFT**) separately calls the POC a
 >   "5-method slice" where `spec.py` declares six. The two DRAFT files were NOT
->   rewritten here because other live branches hold divergent copies of them and a
->   stray edit there is a merge conflict, not a fix — so this residual is real, and
->   nothing under `docs/**` guards it. Settling experiment: re-run that detector after
->   those branches land.
+>   rewritten here: three live worktree branches (`fix/uc-hermetic`, `fix/uc-hygiene`,
+>   `feat/v15-auto-broll`) hold blobs for them that differ from `origin/main`, so an
+>   edit here buys a merge conflict for no gain. (UNVERIFIED which direction that
+>   divergence runs — behind vs. ahead of main; only blob inequality was measured.)
+>   So this residual is real, and nothing under `docs/**` guards it. Settling
+>   experiment: re-run that detector after those branches land.
 > - **The pin's cost, disclosed because it lands on other branches:** registering one
 >   new method changes the live count, so any branch that adds a `reg(...)` / `@method`
 >   must also update ONE line here and one in the migration plan, or its own `gate:3`
