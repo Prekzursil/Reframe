@@ -130,7 +130,20 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
     setError('');
     setPct(0);
     setMessage('Starting…');
-    setTranscript(null);
+    // W11 (remediation): this used to `setTranscript(null)` here. That was
+    // harmless while the run was the ONLY writer of `transcript` — the slot held
+    // nothing but the previous run's output, so clearing it lost nothing. Once
+    // the mount-time hydrate above made this panel responsible for DISPLAYING
+    // disk-backed state, the same line started destroying it: a re-run that then
+    // FAILED or was CANCELLED left `transcript === null` with no re-read, so the
+    // panel rendered "No transcript yet — run a transcription to create one."
+    // about a video whose manifest still holds one, and re-promoted the accent
+    // "Start transcription" that W11 exists to remove. The saved transcript is
+    // therefore KEPT for the duration of the run and replaced only when a new one
+    // actually lands (`setTranscript(transcript)` below). `_transcribe_and_persist`
+    // (sidecar handlers/media_ops.py:480-488) only writes the manifest on success,
+    // so the on-disk transcript is genuinely still the one shown while a run is in
+    // flight — the note rendered below says exactly that.
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
@@ -275,6 +288,16 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
       {loadState === 'ready' && !transcript && !running && (
         <p className="empty" data-state="empty">
           No transcript yet — run a transcription to create one.
+        </p>
+      )}
+
+      {/* The summary below is the SAVED transcript, not this run's output — the
+          sidecar only rewrites the manifest when a run succeeds. Say so, so the
+          rendered segments are not mistaken for live output of the progress rail
+          next to them. */}
+      {running && transcript && (
+        <p className="status" data-state="saved-during-run">
+          Showing the saved transcript — this run will replace it only if it finishes.
         </p>
       )}
 
