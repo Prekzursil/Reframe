@@ -96,5 +96,5 @@
 }
 
 .caption-prefs__error {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }

@@ -59,7 +59,7 @@
 }
 
 .setup-status__error {
-  color: var(--status-error);
+  color: var(--status-error-text);
   background: var(--status-error-soft);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
@@ -78,7 +78,7 @@
 }
 
 .setup-status__summary.is-blocked {
-  color: var(--status-error);
+  color: var(--status-error-text);
   background: var(--status-error-soft);
 }
 
@@ -133,7 +133,7 @@
 }
 
 .setup-status__check-state[data-state="failed"] {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .setup-status__check-detail {

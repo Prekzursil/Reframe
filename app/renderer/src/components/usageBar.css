@@ -77,7 +77,7 @@
 }
 
 .usage-bar.is-critical .usage-bar__glyph {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .usage-bar__provider {
