@@ -1459,6 +1459,31 @@ class TestBatchServiceResume:
         reg.join()
         assert invoked == ["v1"]
 
+    def test_resume_all_error_batch_needs_retry_errors(self, tmp_path):
+        """The ALL-ERROR batch: plain resume is a no-op, ``retryErrors`` re-runs it.
+
+        Executes what was previously only read off :func:`derive_status` +
+        :func:`resumable_video_ids`. Every source terminal and none ``done`` gives
+        the aggregate ``error``, the default resume selects nothing and answers with
+        the ``{jobId: None, status}`` no-op shape, and only the explicit
+        ``retryErrors`` pass re-enqueues the failures. The renderer's retry surface
+        is built on exactly this pair, so both halves are pinned here.
+        """
+        reg = _registry()
+        runner, invoked = _make_runner(reg)
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg), ids=["v1", "v2"])
+        service.store.update_item(batch_id, "v1", status="error", error="boom")
+        service.store.update_item(batch_id, "v2", status="error", error="bang")
+        assert service.store.load(batch_id)["status"] == "error"
+        assert service.resume({"id": batch_id}, _ctx(reg)) == {"jobId": None, "status": "error"}
+        reg.join()
+        assert invoked == []
+        out = service.resume({"id": batch_id, "retryErrors": True}, _ctx(reg))
+        assert isinstance(out["jobId"], str)
+        reg.join()
+        assert invoked == ["v1", "v2"]
+
     def test_resume_no_registry_refuses(self, tmp_path):
         service = _service(tmp_path)
         batch_id = _created(service, _ctx(_registry()))
