@@ -971,6 +971,41 @@ class TestRerenderWithOverrides:
         target.write_text("{}", encoding="utf-8")
         assert ms._read_text_file(str(target)) == "{}"
 
+    def test_default_size_probe_measures_a_real_file(self, tmp_path):
+        # The DEFAULT SizeFn, against the real filesystem — every other test injects a
+        # fake, so without this the shipped probe is the one piece of the reuse key
+        # that nothing exercises.
+        target = tmp_path / "seg.mp4"
+        target.write_bytes(b"0123456789")
+        assert ms._segment_size(str(target)) == 10
+
+    def test_default_size_probe_reports_none_for_a_missing_file(self, tmp_path):
+        # The fail-closed arm: "no measurable size" is what denies reuse, so it must
+        # be an honest None and never a raised OSError escaping into the planner.
+        assert ms._segment_size(str(tmp_path / "gone.mp4")) is None
+
+    def test_default_size_probe_reports_none_for_a_directory(self, tmp_path):
+        # A directory at the segment path is not a truncation but it IS unusable.
+        # os.path.getsize succeeds on a directory on some platforms and raises on
+        # others, so assert only the property that must hold either way: whatever it
+        # returns must not license reuse of a manifest row. Detected, not hardcoded —
+        # this box's answer is not asserted as the contract.
+        measured = ms._segment_size(str(tmp_path))
+        row = ms.shot_manifest_row(
+            ro.ShotDecision(
+                index=0,
+                start_frame=0,
+                end_frame=6,
+                speaker="0",
+                layout="single",
+                crop=(0.0, 0.0, 8.0, 8.0),
+                speakers=("0",),
+            ),
+            ((0.0, 0.0, 8.0, 8.0),),
+            size_bytes=4096,
+        )
+        assert not ms.segment_is_reusable(row, decision=ms.manifest_row_decision(row), measured_bytes=measured)
+
 
 class TestEngineFailureContract:
     def test_explicit_unavailable_raises_typed_not_offline(self):

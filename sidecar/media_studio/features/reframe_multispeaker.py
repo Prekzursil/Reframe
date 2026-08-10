@@ -1371,7 +1371,11 @@ RemoveFn = Callable[[str], None]
 WriteConcatFn = Callable[[str, Sequence[str]], None]
 WriteTextFn = Callable[[str, str], None]
 ReadTextFn = Callable[[str], str]
-ExistsFn = Callable[[str], bool]
+#: Probe a path's byte size, or ``None`` when it cannot be measured (absent or
+#: unreadable). It REPLACED a plain ``exists`` seam: existence alone cannot tell a
+#: complete cached segment from a truncated one, and ``None`` is exactly how a
+#: vanished file presents, so the size probe strictly subsumes the boolean.
+SizeFn = Callable[[str], "int | None"]
 
 #: The per-shot render manifest suffix — ``<rendered clip>.shots.json`` (WU-E3).
 #: It records the EXACT shot decisions that produced the segment files kept
@@ -1393,7 +1397,34 @@ SHOT_MANIFEST_SUFFIX = ".shots.json"
 #: of which move pixels. A v1 file on disk is therefore correctly rejected as
 #: "unknown version": it cannot prove those four things, so the conservative
 #: answer is to re-encode.
-SHOT_MANIFEST_VERSION = 2
+#:
+#: **v3 (2026-08-10)** added the published segment's byte size (:data:`SEGMENT_BYTES_KEY`)
+#: to every row, closing the truncated-segment residual: the reuse predicate ended
+#: in a bare ``exists()``, so a segment truncated OUT-OF-BAND (a truncating disk
+#: error after the atomic rename, or a v1-era build that encoded straight to the
+#: cache path) still matched its row and its stump was concat-copied. A v2 file is
+#: rejected for the same reason a v1 file is — it cannot prove the bytes on disk are
+#: the bytes that were published — so the first re-render after this bump re-encodes
+#: every shot once and then caches normally.
+SHOT_MANIFEST_VERSION = 3
+
+#: The manifest-row key holding the published segment's byte size. Split out because
+#: it is the ONE row field that is NOT part of the decision: the decision half is
+#: compared for equality against a freshly-computed row, while this half is compared
+#: against the size measured on disk at plan time.
+SEGMENT_BYTES_KEY = "bytes"
+
+
+def _segment_size(path: str) -> int | None:
+    """Default size probe (the injectable :data:`SizeFn` seam's implementation).
+
+    ``None`` on any :class:`OSError` — a missing, unreadable or vanished-mid-probe
+    path is "no measurable size", which every caller treats as "do not reuse".
+    """
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
 
 
 def _write_text_file(path: str, text: str) -> None:
@@ -1523,11 +1554,92 @@ def shot_manifest_entry(shot: _override.ShotDecision, regions: Sequence[Box]) ->
     return {**shot.to_dict(), "regions": [list(box) for box in regions]}
 
 
+def shot_manifest_row(
+    shot: _override.ShotDecision,
+    regions: Sequence[Box],
+    *,
+    size_bytes: int | None,
+) -> dict[str, Any]:
+    """A full manifest ROW: :func:`shot_manifest_entry` plus the segment's byte size.
+
+    ``size_bytes`` is the size of the piece that was actually PUBLISHED for this
+    shot, measured after the atomic rename. ``None`` (unmeasurable) is recorded
+    faithfully as ``null`` rather than omitted or guessed, and
+    :func:`recorded_segment_bytes` then reads it back as "no recorded size", which
+    denies reuse — the fail-closed direction.
+    """
+    return {**shot_manifest_entry(shot, regions), SEGMENT_BYTES_KEY: size_bytes}
+
+
+def manifest_row_decision(row: Mapping[str, Any]) -> dict[str, Any]:
+    """``row`` minus the byte size — the half compared for DECISION equality.
+
+    The byte size cannot participate in that equality: at plan time there is no
+    "expected" size to compare a fresh decision against, only a size to MEASURE.
+    """
+    return {key: value for key, value in row.items() if key != SEGMENT_BYTES_KEY}
+
+
+def recorded_segment_bytes(row: Mapping[str, Any]) -> int | None:
+    """The byte size ``row`` recorded, or ``None`` when it recorded none usably.
+
+    FAIL-CLOSED: absent, ``null``, a string, a float or a negative all read as "no
+    recorded size". ``bool`` is rejected explicitly because ``isinstance(True, int)``
+    is ``True`` in Python, so a naive int check would silently accept ``True`` as a
+    1-byte segment.
+    """
+    value = row.get(SEGMENT_BYTES_KEY)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def segment_is_reusable(
+    row: Mapping[str, Any] | None,
+    *,
+    decision: Mapping[str, Any],
+    measured_bytes: int | None,
+) -> bool:
+    """Whether a previous render's piece may be concat-copied instead of re-encoded.
+
+    BOTH halves of the reuse key must agree:
+
+    * the DECISION half — span / speaker / layout / crop **and rendered regions**
+      (:func:`shot_manifest_entry`), over a manifest whose source identity already
+      matched (:func:`manifest_shot_decisions`);
+    * the BYTES half — the size ``row`` published must equal the size measured on
+      disk RIGHT NOW.
+
+    FAIL-CLOSED in every degenerate direction: no row, no usable recorded size, and
+    no measurable file (``measured_bytes is None``, which is also how a VANISHED
+    segment presents, so this subsumes the old ``exists`` seam) each deny reuse.
+    The absent-vs-absent case is called out because it is the trap: comparing an
+    unrecorded size to an unmeasurable file would compare ``None`` to ``None`` and
+    license reuse of a segment that is not even there.
+
+    HONEST SCOPE: a size match is not a proof of content. A corruption that
+    preserves the byte count exactly (an in-place overwrite of the same length)
+    still reuses. Closing THAT needs a content hash, which costs a full read of
+    every cached segment on every render; the size is the cheap check that catches
+    the observed failure mode — truncation. UNVERIFIED whether an equal-length
+    corruption occurs in practice on this path; the settling experiment is to
+    overwrite a published segment in place with the same number of random bytes and
+    confirm reuse is still granted (it will be).
+    """
+    if row is None:
+        return False
+    recorded = recorded_segment_bytes(row)
+    if recorded is None or measured_bytes is None:
+        return False
+    return manifest_row_decision(row) == dict(decision) and recorded == measured_bytes
+
+
 def shot_manifest_payload(
     plan: _override.ShotPlan,
     segments: Sequence[ShotSegment],
     *,
     aspect: str,
+    size: SizeFn,
 ) -> dict[str, Any]:
     """The full ``<clip>.shots.json`` payload for a completed render.
 
@@ -1535,6 +1647,11 @@ def shot_manifest_payload(
     as the per-shot rows, because all four decide a segment's content:
     :func:`regions_for_shot` is fed ``plan.source_width`` / ``plan.source_height``
     and every segment's ffmpeg ``-ss`` / ``-t`` is ``frame / fps``.
+
+    ``size`` measures each segment's published byte size for its row. It is called
+    ONCE per shot, and the caller must invoke this only AFTER every piece has been
+    atomically renamed into place — measuring a ``.part`` would record a size that
+    no longer describes the cache entry.
     """
     return {
         "version": SHOT_MANIFEST_VERSION,
@@ -1542,7 +1659,10 @@ def shot_manifest_payload(
         "fps": float(plan.fps),
         "sourceWidth": plan.source_width,
         "sourceHeight": plan.source_height,
-        "shots": [shot_manifest_entry(shot, seg.regions) for shot, seg in zip(plan.shots, segments, strict=True)],
+        "shots": [
+            shot_manifest_row(shot, seg.regions, size_bytes=size(seg.path))
+            for shot, seg in zip(plan.shots, segments, strict=True)
+        ],
     }
 
 
@@ -1607,7 +1727,7 @@ def plan_shot_segments(
     ext: str,
     affected_only: bool,
     manifest: Mapping[str, Any] | None,
-    exists: ExistsFn,
+    size: SizeFn,
 ) -> tuple[ShotSegment, ...]:
     """PURE: one :class:`ShotSegment` per shot of an edited ``plan``.
 
@@ -1616,9 +1736,13 @@ def plan_shot_segments(
     that index — same span, speaker, layout, crop **and rendered regions**, over a
     manifest whose aspect / fps / source dimensions match this plan
     (:func:`shot_manifest_entry` and :func:`manifest_shot_decisions` own those two
-    halves); and its segment file is still on disk. Row-equality — rather than
-    diffing two plans — is what makes the reuse survive a sidecar restart and makes
-    a first render (no manifest) correctly re-encode everything.
+    halves); and the segment file on disk is still exactly the size that row
+    published (:func:`segment_is_reusable`). Row-equality — rather than diffing two
+    plans — is what makes the reuse survive a sidecar restart and makes a first
+    render (no manifest) correctly re-encode everything.
+
+    ``size`` replaced an ``exists`` seam: existence alone could not distinguish a
+    complete cached segment from a truncated one, which is the residual this closes.
     """
     previous = manifest_shot_decisions(manifest, plan, aspect=aspect)
     segments: list[ShotSegment] = []
@@ -1640,7 +1764,12 @@ def plan_shot_segments(
                 layout=shot.layout,
                 regions=regions,
                 path=path,
-                reuse=affected_only and previous.get(shot.index) == shot_manifest_entry(shot, regions) and exists(path),
+                reuse=affected_only
+                and segment_is_reusable(
+                    previous.get(shot.index),
+                    decision=shot_manifest_entry(shot, regions),
+                    measured_bytes=size(path),
+                ),
             )
         )
     return tuple(segments)
@@ -1677,7 +1806,7 @@ class MultiSpeakerReframeEngine:
         write_concat_fn: WriteConcatFn = _write_concat_list,
         write_text_fn: WriteTextFn = _write_text_file,
         read_text_fn: ReadTextFn = _read_text_file,
-        exists_fn: ExistsFn = os.path.exists,
+        size_fn: SizeFn = _segment_size,
     ) -> None:
         self._settings = settings or {}
         self._allow_degrade = bool(allow_degrade)
@@ -1691,7 +1820,7 @@ class MultiSpeakerReframeEngine:
         self._write_concat = write_concat_fn
         self._write_text = write_text_fn
         self._read_text = read_text_fn
-        self._exists = exists_fn
+        self._size = size_fn
 
     def reframe(
         self,
@@ -1926,14 +2055,25 @@ class MultiSpeakerReframeEngine:
           path that a later run's bare ``exists()`` would trust — a killed run leaves
           only an orphan ``.part``.
 
-          SCOPED HONESTLY: this is a claim about what THIS code can leave behind. A
-          truncated segment written by an OLDER build (which encoded straight to the
-          cache path) is still trusted if its manifest row matches, because reuse
-          binds no size or hash to the row. That residual is closed by the v1->v2
-          manifest version bump for any clip whose manifest is re-written, but NOT
-          for a v2 segment truncated out-of-band (e.g. a truncating disk error after
-          the rename). UNVERIFIED — settling experiment: add the segment's byte size
-          to the manifest row and re-run the truncate-then-rerender probe.
+          SCOPED HONESTLY: that is a claim about what THIS code can leave behind, and
+          it was never the whole story — a segment truncated OUT-OF-BAND (a truncating
+          disk error after the rename, an older build that encoded straight to the
+          cache path, a user editing the cache) was still trusted, because reuse bound
+          no size or hash to the row and ended in a bare ``exists()``.
+
+          CLOSED 2026-08-10 by the v2->v3 manifest bump: every row now publishes its
+          segment's byte size and :func:`segment_is_reusable` re-measures the file at
+          plan time, so a truncated piece is re-encoded instead of concat-copied. The
+          settling experiment named here ("add the segment's byte size to the manifest
+          row and re-run the truncate-then-rerender probe") WAS RUN, in both states —
+          see ``test_a_truncated_cached_segment_is_re_encoded_end_to_end`` and its
+          intact-file control in ``sidecar/tests/test_reframe_analyze.py``.
+
+          RESIDUAL, deliberately not closed: a size match is not a content proof, so a
+          corruption that preserves the byte count exactly still reuses. UNVERIFIED
+          whether that occurs on this path; settling experiment on
+          :func:`segment_is_reusable`. A content hash would close it at the cost of
+          re-reading every cached segment on every render.
 
         Returns ``(out_path, reencoded_shot_indices)``.
         """
@@ -1949,7 +2089,7 @@ class MultiSpeakerReframeEngine:
             ext=ext,
             affected_only=affected_only,
             manifest=self._load_shot_manifest(out_path),
-            exists=self._exists,
+            size=self._size,
         )
         out_w, out_h = _aspect.output_dimensions(aspect)
         fps = float(plan.fps)
@@ -2040,7 +2180,7 @@ class MultiSpeakerReframeEngine:
         """
         path = shot_manifest_path(clip)
         try:
-            self._write_text(path, json.dumps(shot_manifest_payload(plan, segments, aspect=aspect)))
+            self._write_text(path, json.dumps(shot_manifest_payload(plan, segments, aspect=aspect, size=self._size)))
         except OSError as exc:
             _log.warning("could not write the reframe shot manifest %s: %s", path, exc)
             try:

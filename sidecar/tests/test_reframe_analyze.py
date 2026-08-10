@@ -129,6 +129,22 @@ def _trace_two(second_x: float, *, total: int = 6, layout: str = "split") -> Ref
     )
 
 
+#: The byte size every faked segment file reports. A manifest built by ``_manifest``
+#: publishes it and the ``_intact`` probe measures it, so the two agree and reuse is
+#: licensed; a probe that returns anything else is a segment that changed on disk.
+SEGMENT_BYTES = 4096
+
+
+def _intact(_path: str) -> int | None:
+    """A size probe for a cached segment that is present and the published size."""
+    return SEGMENT_BYTES
+
+
+def _absent(_path: str) -> int | None:
+    """A size probe for a segment that is not on disk (the no-cache default)."""
+    return None
+
+
 def _segments_for(plan: ro.ShotPlan, trace: ReframeTrace, aspect: str = ASPECT) -> tuple[ms.ShotSegment, ...]:
     """The segments a first (cache-less) render of ``plan`` would produce."""
     return ms.plan_shot_segments(
@@ -139,7 +155,7 @@ def _segments_for(plan: ro.ShotPlan, trace: ReframeTrace, aspect: str = ASPECT) 
         ext=".mp4",
         affected_only=False,
         manifest=None,
-        exists=lambda _p: False,
+        size=_absent,
     )
 
 
@@ -147,9 +163,10 @@ def _manifest(plan: ro.ShotPlan, aspect: str = ASPECT, trace: ReframeTrace | Non
     """The on-disk shot manifest a previous successful render would have left.
 
     Built through the PRODUCTION payload builder over the PRODUCTION segment
-    planner, so a test manifest can never drift from what a real render writes.
+    planner, so a test manifest can never drift from what a real render writes —
+    including the per-row byte size, which it publishes as ``SEGMENT_BYTES``.
     """
-    return ms.shot_manifest_payload(plan, _segments_for(plan, trace or _trace(), aspect), aspect=aspect)
+    return ms.shot_manifest_payload(plan, _segments_for(plan, trace or _trace(), aspect), aspect=aspect, size=_intact)
 
 
 def _bare_manifest(**over: Any) -> dict[str, Any]:
@@ -334,7 +351,11 @@ class TestManifestShotDecisions:
 
 
 class TestPlanShotSegments:
-    def _segments(self, plan, *, manifest=None, exists=False, affected_only=True, trace=None):
+    def _segments(self, plan, *, manifest=None, exists=False, affected_only=True, trace=None, measured=None):
+        # ``exists=True`` means "the cached segment is on disk AND is the size the
+        # manifest published"; ``measured`` overrides that with a specific size so a
+        # truncated cache entry can be expressed.
+        size = (lambda _p: measured) if measured is not None else (_intact if exists else _absent)
         return ms.plan_shot_segments(
             plan,
             trace if trace is not None else _trace(),
@@ -343,8 +364,15 @@ class TestPlanShotSegments:
             ext=".mp4",
             affected_only=affected_only,
             manifest=manifest,
-            exists=lambda _p: exists,
+            size=size,
         )
+
+    def test_a_truncated_cached_segment_is_re_encoded(self):
+        # The residual, at the planner boundary: an unchanged decision over a
+        # segment file that is present but SHORTER than the row published.
+        plan = _plan(_shot(0, start=0, end=3))
+        segments = self._segments(plan, manifest=_manifest(plan), measured=3)
+        assert [s.reuse for s in segments] == [False]
 
     def test_without_a_manifest_every_shot_is_re_encoded(self):
         segments = self._segments(_plan(_shot(0, start=0, end=3), _shot(1, start=3, end=6)))
@@ -403,6 +431,95 @@ class TestPlanShotSegments:
         assert [s.reuse for s in segments] == [True]
 
 
+class TestSegmentIsReusable:
+    """The BYTES half of the reuse key — the truncated-segment residual.
+
+    The predicate used to end in a bare ``exists(path)``, so a segment truncated
+    OUT-OF-BAND (a truncating disk error after the atomic rename, a v1-era build
+    that encoded straight to the cache path, a user editing the cache) still
+    satisfied it: the decision row matched, the file existed, and the 3-byte stump
+    was concat-copied. Recording the published segment's byte size in its manifest
+    row and re-measuring it at plan time is the settling experiment named in
+    ``render_shot_plan``'s docstring.
+    """
+
+    def _decision(self, shot=None, regions=((0.0, 0.0, 608.0, 1080.0),)):
+        return ms.shot_manifest_entry(shot if shot is not None else _shot(0), regions)
+
+    def _row(self, *, size_bytes, shot=None, regions=((0.0, 0.0, 608.0, 1080.0),)):
+        return ms.shot_manifest_row(shot if shot is not None else _shot(0), regions, size_bytes=size_bytes)
+
+    def test_a_matching_row_and_size_is_reusable(self):
+        # Detector control: without this passing, every refusal below could be a
+        # broken key rather than the property under test.
+        assert ms.segment_is_reusable(self._row(size_bytes=4096), decision=self._decision(), measured_bytes=4096)
+
+    def test_a_truncated_segment_is_not_reusable(self):
+        # THE residual. Same decision, same regions, file still present — but 3
+        # bytes instead of the 4096 the manifest published.
+        assert not ms.segment_is_reusable(self._row(size_bytes=4096), decision=self._decision(), measured_bytes=3)
+
+    def test_a_segment_that_grew_is_not_reusable(self):
+        # Direction matters: the check is EQUALITY, not a minimum. A file that grew
+        # is as unexplained as one that shrank.
+        assert not ms.segment_is_reusable(self._row(size_bytes=4096), decision=self._decision(), measured_bytes=8192)
+
+    def test_an_unmeasurable_segment_is_not_reusable(self):
+        # ``None`` is how a VANISHED (or unreadable) segment presents, so this arm
+        # also subsumes the old exists() check.
+        assert not ms.segment_is_reusable(self._row(size_bytes=4096), decision=self._decision(), measured_bytes=None)
+
+    def test_no_row_is_not_reusable(self):
+        assert not ms.segment_is_reusable(None, decision=self._decision(), measured_bytes=4096)
+
+    def test_a_changed_decision_is_not_reusable_even_at_the_same_size(self):
+        # Two different decisions can encode to the same byte count; the bytes half
+        # ADDS to the decision half, it does not replace it.
+        row = self._row(size_bytes=4096, shot=_shot(0, layout="single"))
+        moved = self._decision(shot=_shot(0, layout="single"), regions=((705.0, 0.0, 608.0, 1080.0),))
+        assert not ms.segment_is_reusable(row, decision=moved, measured_bytes=4096)
+
+    @pytest.mark.parametrize(
+        "recorded",
+        [None, "4096", 4096.0, True, -1],
+        ids=["null", "string", "float", "bool", "negative"],
+    )
+    def test_an_unusable_recorded_size_is_not_reusable(self, recorded):
+        # FAIL-CLOSED at the row boundary: a size we cannot read as a non-negative
+        # int is no size at all. ``True`` is called out because ``isinstance(True,
+        # int)`` is True in Python, so a naive int check would accept it as 1.
+        row = {**self._decision(), "bytes": recorded}
+        assert not ms.segment_is_reusable(row, decision=self._decision(), measured_bytes=4096)
+
+    def test_a_row_without_a_recorded_size_is_not_reusable(self):
+        # A row that predates the bytes half (or whose write could not measure the
+        # file) must deny reuse rather than fall back to the old exists() semantics.
+        assert not ms.segment_is_reusable(self._decision(), decision=self._decision(), measured_bytes=4096)
+
+    def test_an_unrecorded_size_over_a_missing_file_is_not_reusable(self):
+        # The None == None trap: "no recorded size" and "no measurable file" are
+        # both absences, and comparing them directly would license reuse of a
+        # segment that is not there at all.
+        assert not ms.segment_is_reusable(self._decision(), decision=self._decision(), measured_bytes=None)
+
+
+class TestRecordedSegmentBytes:
+    @pytest.mark.parametrize("value", [0, 1, 4096], ids=["zero", "one", "typical"])
+    def test_a_non_negative_int_is_returned(self, value):
+        assert ms.recorded_segment_bytes({"bytes": value}) == value
+
+    @pytest.mark.parametrize(
+        "value",
+        [None, "4096", 4096.0, True, False, -1],
+        ids=["null", "string", "float", "true", "false", "negative"],
+    )
+    def test_anything_else_reads_as_no_recorded_size(self, value):
+        assert ms.recorded_segment_bytes({"bytes": value}) is None
+
+    def test_an_absent_key_reads_as_no_recorded_size(self):
+        assert ms.recorded_segment_bytes({}) is None
+
+
 # --------------------------------------------------------------------------- #
 # Engine extensions — analyze() (no render) and render_shot_plan()
 # --------------------------------------------------------------------------- #
@@ -458,7 +575,7 @@ def _engine(**kw):
         "remove_fn": lambda _p: None,
         "write_text_fn": lambda _p, _t: None,
         "write_concat_fn": lambda _lp, _sp: None,
-        "exists_fn": lambda _p: False,
+        "size_fn": _absent,
         "runner": lambda _argv, **_kw: 0,
     }
     defaults.update(kw)
@@ -542,7 +659,7 @@ class TestRenderShotPlan:
         eng = _engine(
             runner=lambda argv, **_kw: runs.append(list(argv)) or 0,
             read_text_fn=lambda _p: json.dumps(_manifest(plan)),
-            exists_fn=lambda _p: True,
+            size_fn=_intact,
         )
         edited = _plan(_shot(0, start=0, end=3), _shot(1, start=3, end=6, layout="split"))
         _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", edited, _trace())
@@ -589,7 +706,7 @@ class TestRenderShotPlan:
 
     def test_the_shot_manifest_is_written_after_a_successful_render(self):
         writes: list[tuple[str, str]] = []
-        eng = _engine(write_text_fn=lambda p, t: writes.append((p, t)))
+        eng = _engine(write_text_fn=lambda p, t: writes.append((p, t)), size_fn=_intact)
         plan = _plan(_shot(0))
         eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
         assert writes[0][0] == "out.mp4.shots.json"
@@ -600,9 +717,84 @@ class TestRenderShotPlan:
         # segment's timing and geometry exactly as much as the aspect does.
         assert (payload["fps"], payload["sourceWidth"], payload["sourceHeight"]) == (30.0, 1920, 1080)
         # And each row carries the regions it rendered, so a trace change that moves
-        # a split/composite cell cannot present as an unchanged decision.
-        assert payload["shots"] == [ms.shot_manifest_entry(plan.shots[0], _segments_for(plan, _trace())[0].regions)]
+        # a split/composite cell cannot present as an unchanged decision, PLUS the
+        # byte size of the piece it published, so a truncated cache entry cannot.
+        assert payload["shots"] == [
+            ms.shot_manifest_row(plan.shots[0], _segments_for(plan, _trace())[0].regions, size_bytes=SEGMENT_BYTES)
+        ]
         assert payload["shots"][0]["regions"] == [[0.0, 0.0, 608.0, 1080.0]]
+        assert payload["shots"][0]["bytes"] == SEGMENT_BYTES
+
+    def test_the_manifest_records_the_size_of_the_published_segment_not_the_part(self):
+        # The size must be measured AFTER the atomic rename: measuring the .part
+        # would record a number that describes a file the next render never sees.
+        probed: list[str] = []
+        moves: list[tuple[str, str]] = []
+        writes: list[tuple[str, str]] = []
+
+        def size(path: str) -> int | None:
+            probed.append(path)
+            return SEGMENT_BYTES
+
+        eng = _engine(
+            size_fn=size,
+            replace_fn=lambda a, b: moves.append((a, b)),
+            write_text_fn=lambda p, t: writes.append((p, t)),
+        )
+        eng.render_shot_plan("in.mp4", "out.mp4", _plan(_shot(0)), _trace())
+        assert "out.multispeaker.shot000.mp4" in probed, "the manifest must measure the CACHE entry"
+        assert not any(".part" in p for p in probed), "a .part must never be what the manifest records"
+        # ...and the rename really did happen before the write that recorded it.
+        assert moves and json.loads(writes[0][1])["shots"][0]["bytes"] == SEGMENT_BYTES
+
+    def test_an_unmeasurable_segment_records_a_null_size_and_denies_later_reuse(self):
+        # FAIL-CLOSED at write time: if the size cannot be read, the row says so
+        # (null) rather than omitting the key or guessing, and a null row can never
+        # equal a measured size, so the next render re-encodes.
+        writes: list[tuple[str, str]] = []
+        plan = _plan(_shot(0))
+        eng = _engine(write_text_fn=lambda p, t: writes.append((p, t)), size_fn=_absent)
+        eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
+        payload = json.loads(writes[0][1])
+        assert payload["shots"][0]["bytes"] is None
+        assert not ms.segment_is_reusable(
+            payload["shots"][0],
+            decision=ms.shot_manifest_entry(plan.shots[0], _segments_for(plan, _trace())[0].regions),
+            measured_bytes=SEGMENT_BYTES,
+        )
+
+    def test_a_truncated_cached_segment_is_re_encoded_end_to_end(self):
+        # THE settling experiment named in render_shot_plan's docstring, run through
+        # the SHIPPED path: a manifest published by a previous render, the same plan
+        # re-rendered, and the cached segment truncated OUT-OF-BAND to 3 bytes. Before
+        # the bytes half of the reuse key this reported reencoded=() and ran exactly
+        # ONE ffmpeg pass (the concat), feeding the 3-byte stump into the concat list.
+        runs: list[list[str]] = []
+        plan = _plan(_shot(0))
+        eng = _engine(
+            runner=lambda argv, **_kw: runs.append(list(argv)) or 0,
+            read_text_fn=lambda _p: json.dumps(_manifest(plan)),
+            size_fn=lambda _p: 3,
+        )
+        _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
+        assert reencoded == (0,), "a truncated segment must be re-encoded, not concat-copied"
+        assert len(runs) == 2, "the re-encode plus the concat"
+        assert runs[0][-1] == "out.multispeaker.shot000.part.mp4"
+
+    def test_an_intact_cached_segment_is_still_reused_end_to_end(self):
+        # The BOTH-STATES control for the probe above. Without this passing, that
+        # refusal could be a permanently-broken reuse key rather than the truncation
+        # being detected — a test that can never grant reuse measures nothing.
+        runs: list[list[str]] = []
+        plan = _plan(_shot(0))
+        eng = _engine(
+            runner=lambda argv, **_kw: runs.append(list(argv)) or 0,
+            read_text_fn=lambda _p: json.dumps(_manifest(plan)),
+            size_fn=_intact,
+        )
+        _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
+        assert reencoded == (), "an unchanged shot whose bytes are intact must be reused"
+        assert len(runs) == 1, "the concat pass ONLY"
 
     def test_a_shot_manifest_write_failure_is_logged_not_fatal(self):
         # `util.get_logger` sets propagate=False, so caplog cannot see this record —
@@ -655,7 +847,7 @@ class TestRenderShotPlan:
         eng = _engine(
             runner=lambda argv, **_kw: runs.append(list(argv)) or 0,
             read_text_fn=lambda _p: json.dumps(_manifest(plan, trace=_trace_two(0.0))),
-            exists_fn=lambda _p: True,
+            size_fn=_intact,
         )
         _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace_two(705.0))
         assert reencoded == (0,)
@@ -672,7 +864,7 @@ class TestRenderShotPlan:
         eng = _engine(
             runner=lambda argv, **_kw: runs.append(list(argv)) or 0,
             read_text_fn=lambda _p: json.dumps(_manifest(old)),
-            exists_fn=lambda _p: True,
+            size_fn=_intact,
         )
         _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", new, _trace())
         assert reencoded == (0,)
@@ -735,13 +927,18 @@ class TestRenderShotPlan:
 
     @pytest.mark.parametrize(
         "raw",
-        ["{not json", json.dumps([1, 2]), json.dumps({"version": 999, "aspect": ASPECT, "shots": []})],
-        ids=["corrupt", "not-an-object", "unknown-version"],
+        [
+            "{not json",
+            json.dumps([1, 2]),
+            json.dumps({"version": 999, "aspect": ASPECT, "shots": []}),
+            json.dumps({"version": 2, "aspect": ASPECT, "shots": []}),
+        ],
+        ids=["corrupt", "not-an-object", "unknown-version", "v2-predates-the-byte-size"],
     )
     def test_an_unusable_shot_manifest_falls_back_to_re_encoding_everything(self, raw):
         # The degrade is LOUD (a warning) and conservative (re-encode), never a
         # silent reuse of a piece whose provenance we cannot establish.
-        eng = _engine(read_text_fn=lambda _p: raw, exists_fn=lambda _p: True)
+        eng = _engine(read_text_fn=lambda _p: raw, size_fn=_intact)
         with _captured_warnings() as seen:
             _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", _plan(_shot(0)), _trace())
         assert reencoded == (0,)
@@ -751,7 +948,7 @@ class TestRenderShotPlan:
         def missing(_p):
             raise OSError("no such file")
 
-        eng = _engine(read_text_fn=missing, exists_fn=lambda _p: True)
+        eng = _engine(read_text_fn=missing, size_fn=_intact)
         _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", _plan(_shot(0)), _trace())
         assert reencoded == (0,)
 
@@ -1281,6 +1478,65 @@ class TestRenderHandler:
         job = _run(reg, svc.render({"videoId": "v", "plan": collapsed}, _ctx(reg)))
         assert job.status.value == "done", job.error
         assert job.result["affected"] == []
+
+    def test_two_bundles_differing_only_in_a_flag_still_hit_the_exact_key(self, tmp_path):
+        # CORRECTION 2026-08-10 (this test was written to reproduce the disclosed
+        # `affected=(0,)` and REFUTED it). LruAnalysisCache.find's disclosure said the
+        # ambiguity bites "when two analyses of the same (video_id, aspect) differ only
+        # in flags and the caller omits them". Omitting is NOT unknown: _optional_bool
+        # DEFAULTS allowSplit/allowComposite to True, so a render that omits them
+        # builds the key (True, True, None) and `get` hits the allowSplit=True bundle
+        # EXACTLY. find() is never reached and the baseline is right.
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache()
+        svc, _b = _service(tmp_path, analysis=_two_talker_analysis(), cache=cache)
+        split = _run(reg, svc.analyze({"videoId": "v", "allowSplit": True}, _ctx(reg))).result["plan"]
+        collapsed = _run(reg, svc.analyze({"videoId": "v", "allowSplit": False}, _ctx(reg))).result["plan"]
+        assert split["shots"][0]["layout"] != collapsed["shots"][0]["layout"], "the fixture must differ"
+        job = _run(reg, svc.render({"videoId": "v", "plan": split}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["affected"] == [], "the exact key hits, so the baseline is the caller's own bundle"
+
+    def test_omitting_a_non_defaulting_field_can_report_an_unedited_shot(self, tmp_path):
+        # PINS the ambiguity LruAnalysisCache.find discloses, at its REAL precondition:
+        # the defaulted render key must miss BOTH bundles, which needs a differing
+        # field that does NOT default to the cached value. diarizeBackend is that field
+        # (it defaults to None, and no analysis can be cached under None while also
+        # carrying a backend). Both bundles here carry "pyannote" and differ in
+        # allowSplit, so the render's (True, True, None) key misses both, find()
+        # returns the most-recently-USED bundle (the COLLAPSED one) as the diff
+        # baseline, and the UNTOUCHED split plan is reported as affected=[0].
+        #
+        # Kept as a disclosure rather than fixed: the fallback is deliberate backward
+        # compatibility, the defect is metadata-only, and passing the flags avoids it
+        # (test_the_layout_flags_select_the_exact_cached_bundle). This test exists so
+        # the behaviour cannot drift — including drifting WORSE, into wrong pixels,
+        # which the second half asserts it has not.
+        reg, _ = _registry()
+        runs: list[list[str]] = []
+        cache = ra.LruAnalysisCache()
+        svc, _b = _service(
+            tmp_path,
+            analysis=_two_talker_analysis(),
+            cache=cache,
+            engine_kw={"runner": lambda argv, **_kw: runs.append(list(argv)) or 0},
+        )
+        split = _run(
+            reg, svc.analyze({"videoId": "v", "allowSplit": True, "diarizeBackend": "pyannote"}, _ctx(reg))
+        ).result["plan"]
+        collapsed = _run(
+            reg, svc.analyze({"videoId": "v", "allowSplit": False, "diarizeBackend": "pyannote"}, _ctx(reg))
+        ).result["plan"]
+        assert split["shots"][0]["layout"] != collapsed["shots"][0]["layout"], "the fixture must differ"
+        job = _run(reg, svc.render({"videoId": "v", "plan": split}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["affected"] == [0], "the disclosed metadata defect: an untouched shot reported"
+        # The PIXELS still come from the caller's own plan, not the baseline bundle:
+        # the split layout is what gets encoded, so the wrong `affected` is cosmetic.
+        assert job.result["reencoded"] == [0]
+        assert any("stack" in a for argv in runs for a in argv), (
+            "a split plan must still be composited as a split, whatever the baseline said"
+        )
 
     def test_a_non_boolean_render_flag_is_refused(self, tmp_path):
         reg, _ = _registry()

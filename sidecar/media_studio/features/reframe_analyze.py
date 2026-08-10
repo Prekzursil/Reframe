@@ -41,10 +41,21 @@ golden run on real footage.
 **NAMED RESIDUALS carried forward (2026-08-10 remediation).**
 
 * ``reframe.render``'s flag-insensitive cache FALLBACK can report an ``affected``
-  set that names a shot the caller did not edit when several analyses of the same
-  ``(videoId, aspect)`` differ only in the layout flags and the caller omits them.
-  Wrong metadata, never wrong pixels — full detail and the workaround on
-  :meth:`LruAnalysisCache.find`.
+  set that names a shot the caller did not edit. NARROWED 2026-08-10: this needs the
+  DEFAULTED render key to miss every cached bundle, not merely "the caller omitted
+  the layout flags" — omitting ``allowSplit`` / ``allowComposite`` supplies ``True``,
+  which hits the exact key. Wrong metadata, never wrong pixels — full detail, both
+  probes and the workaround on :meth:`LruAnalysisCache.find`.
+  KEPT as a disclosure after review (2026-08-10):
+  refusing on the ambiguity would break the documented backward-compatible fallback
+  for a metadata-only defect that the caller can already avoid by passing the flags.
+  What it lacked was an executable pin, so the measured claim is now a test
+  (``test_omitting_the_flags_can_report_an_unedited_shot``) instead of prose alone.
+* ``reframe.render`` runs NO availability / offline gate. Reviewed 2026-08-10 and
+  kept: it loads no model and reaches no network, so neither gate has anything to
+  check — the reasoning and the settling experiment are on :meth:`ReframeAnalyzeService.render`.
+  This was previously a disclosed residual that then went missing from both this
+  list and that docstring; it is restored here so it cannot silently vanish again.
 * An on-disk :class:`AnalysisStore` is still the DECLARED-OPTIONAL half of WU-E2, so
   a sidecar restart loses the cache and the next ``reframe.render`` refuses loudly.
 * ``app/renderer/src/features/ReframeCorrect.tsx:19-21`` states that "the registered
@@ -213,12 +224,27 @@ class LruAnalysisCache:
         flag-independent fields. The
         conclusion was not: ``render`` also uses ``bundle.plan`` as the diff BASELINE
         for the ``affected`` set it reports, and a plan's per-shot ``layout`` IS
-        flag-dependent. So when two analyses of the same ``(video_id, aspect)``
-        differ only in flags and the caller omits them, this returns the
-        most-recently-USED one and ``affected`` can name a shot the caller never
-        edited (measured: ``affected=(0,)`` for an untouched plan). Wrong reported
-        METADATA, never wrong output. Pass ``allowSplit`` / ``allowComposite`` /
-        ``diarizeBackend`` to ``reframe.render`` to get the exact bundle instead.
+        flag-dependent. So this can return a bundle whose plan is not the one the
+        caller's plan derives from, and ``affected`` then names a shot the caller
+        never edited (measured: ``affected=(0,)`` for an untouched plan). Wrong
+        reported METADATA, never wrong output — the pixels come from the caller's own
+        plan. Pass ``allowSplit`` / ``allowComposite`` / ``diarizeBackend`` to
+        ``reframe.render`` to get the exact bundle instead.
+
+        CORRECTION 2026-08-10 (second pass) — the PRECONDITION above was too wide. It
+        read "when two analyses of the same ``(video_id, aspect)`` differ only in flags
+        and the caller omits them". Omitting a flag is not the same as leaving it
+        unknown: :func:`_optional_bool` DEFAULTS ``allowSplit`` / ``allowComposite`` to
+        ``True``, so a render that omits both builds the key ``(True, True, None)``,
+        :meth:`get` hits the ``allowSplit=True`` bundle EXACTLY, and this method is
+        never reached — the baseline is correct and ``affected`` is empty. Executed
+        both ways: ``test_two_bundles_differing_only_in_a_flag_still_hit_the_exact_key``
+        (refutes the wide claim) and
+        ``test_omitting_a_non_defaulting_field_can_report_an_unedited_shot`` (confirms
+        the narrow one). The ambiguity therefore needs the DEFAULTED key to miss every
+        cached bundle, which in practice means the bundles were analysed under a
+        ``diarizeBackend`` — the one identity field with no cacheable default — while
+        the render omits it.
         """
         for key in reversed(self._items):
             if key.video_id == video_id and key.aspect == aspect:
@@ -468,6 +494,28 @@ class ReframeAnalyzeService:
 
         An EMPTY ``affected`` set is NOT an error — re-rendering the unedited plan
         is exactly how the first file gets produced after an analyze.
+
+        **NO AVAILABILITY / OFFLINE GATE, deliberately.** :meth:`analyze` runs both
+        (``availability_reason`` then :func:`~media_studio.features.offline.guard_network`,
+        :meth:`analyze` above); this method runs neither, and on inspection that is
+        the correct design rather than an omission. The two things
+        :func:`~media_studio.features.reframe_multispeaker.availability_reason`
+        probes are ``wsl`` on PATH and the LightASD weights
+        (``reframe_multispeaker.py:863-882``), and a re-render needs NEITHER: it
+        loads no model, imports no torch and downloads nothing — the trace comes from
+        the in-memory cache and each shot is composited by the pure
+        :func:`~media_studio.features.reframe_multispeaker.regions_for_shot` before
+        being handed to ffmpeg. Gating here would REFUSE a correction that provably
+        does not need a GPU or a weight file. Nothing reaches the network either, so
+        an offline guard would have nothing to guard. The one host binary this path
+        does need is ffmpeg, and its absence is already a typed, actionable failure:
+        :meth:`~media_studio.features.reframe_multispeaker.MultiSpeakerReframeEngine._run_pass`
+        wraps ANY runner exception in :class:`~media_studio.features.reframe_multispeaker.MultiSpeakerRenderError`
+        (``reframe_multispeaker.py:2204-2211``), which the job layer surfaces as a
+        failed job rather than a crash. UNVERIFIED at the UX level — whether that
+        message names ffmpeg clearly enough for a user to act on is not measured here;
+        the settling experiment is a render with ffmpeg renamed away, asserting on the
+        job's error text.
 
         The output path is composed from ``video_id`` **and the aspect**
         (:func:`multispeaker_out_name`), so it is deliberately built only AFTER
