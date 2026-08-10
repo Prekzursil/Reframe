@@ -13,7 +13,7 @@
 // app lists + opens + plays the exact same library record either way.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync, readdirSync, realpathSync } from 'node:fs';
+import { mkdtempSync, existsSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -184,6 +184,228 @@ function generateSample(samplePath: string): void {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SPEECH FIXTURE — a REAL spoken-word sample, synthesised at test time.
+//
+// WHY this exists: until it did, NO test in the repository proved that a spoken
+// word becomes text. The only media fixture was `generateSample` above
+// (`testsrc` + a 440 Hz `sine`), which carries no speech at all — so
+// `golden-journey.spec.ts` deliberately drives the manual-range path, and
+// `sidecar/tests/e2e/real_pipeline_smoke.py` asserts an EMPTY transcript and says
+// so in its own output. Transcription and captioning were therefore unproven in
+// BOTH directions: no evidence they worked, and none that they did not.
+//
+// WHY Windows-only SAPI and not a committed audio file: the repo tracks ZERO
+// audio/video binaries (verified: `git ls-tree -r --name-only origin/main` has no
+// media extensions), and adding a redistributable speech clip drags in a licence
+// question plus a binary in git. Windows ships a speech synthesiser in the OS
+// (`System.Speech.Synthesis.SpeechSynthesizer`, .NET), so the fixture GENERATES
+// its own speech offline, keeps nothing, and redistributes nothing. The cost is
+// that it only runs on Windows — the consuming spec must therefore `test.skip()`
+// LOUDLY elsewhere (see transcribe-journey.spec.ts) rather than pass vacuously.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The phrase the fixture speaks. Chosen for ASR-hostile-but-recoverable content:
+ * the pangram gives short, high-frequency, hard-to-mishear nouns, and the second
+ * sentence names the product's actual job.
+ *
+ * Measured (this box, `Microsoft David Desktop`): 22050 Hz mono `pcm_s16le`,
+ * 6.748 s, 297,640 bytes.
+ */
+export const SPEECH_PHRASE =
+  'The quick brown fox jumps over the lazy dog. Reframe converts landscape video to vertical.';
+
+/**
+ * The content words a transcript of :data:`SPEECH_PHRASE` must contain.
+ *
+ * DELIBERATELY NOT the product name. Measured with the shipped stack
+ * (faster_whisper 1.2.1, model `tiny`, cpu/int8) the transcript came back as
+ * "…lazy dog. **Refrain** converts landscape video to vertical." — "Reframe" was
+ * misheard. An exact-sentence or product-name assertion would therefore be flaky
+ * BY CONSTRUCTION, and a flaky keystone is a worse defect than the hole it closes.
+ */
+export const SPEECH_KEYWORDS: readonly string[] = ['fox', 'dog', 'landscape', 'vertical'];
+
+/**
+ * How many of :data:`SPEECH_KEYWORDS` a real transcript must carry.
+ *
+ * DO NOT "tighten" this to `SPEECH_KEYWORDS.length`. The synthesised voice is
+ * whatever the machine has installed, and `tiny` is the cheapest whisper model —
+ * so which individual words survive is machine-dependent. (Voice-count
+ * correction: this comment used to say "10 SAPI voices". MEASURED through the
+ * SAME `System.Speech.Synthesis` enumeration the fixture uses, this box exposes
+ * **3** — all enabled, all `en-*`. The 10 counts the OneCore voices too:
+ * `HKLM:\SOFTWARE\Microsoft\Speech\Voices\Tokens` has 3 tokens and
+ * `…\Speech_OneCore\Voices\Tokens` has 7, and `System.Speech` enumerates only the
+ * former, so 3 is the fixture's real selection pool. A GitHub windows-latest
+ * image ships its own set — UNVERIFIED which; the settling experiment is the
+ * `VOICE=` line this fixture already prints on every CI run.)
+ *
+ * SCOPE CORRECTION. An earlier version of this comment claimed the both-states
+ * proof for the THRESHOLD: "the same assertion scores 0 hits on the speechless
+ * `sine` sample (measured)". That was REFUTED and is wrong about which assertion
+ * the sine run exercises: on speechless audio the spec dies EARLIER, at the
+ * zero-segments arm (`transcribe-journey.spec.ts`, `.not.toHaveCount(0)`), so the
+ * keyword arm is never evaluated there. What is actually measured:
+ *   * the ZERO-SEGMENTS arm is both-states verified (sine red / speech green);
+ *   * the threshold's own failing direction is covered by
+ *     `speechKeywords.test.ts` — a 1-hit transcript is BELOW this floor and a
+ *     2-hit one is at it, so the arm demonstrably fails closed;
+ *   * the margin is wide: MEASURED by synthesising SPEECH_PHRASE with EACH of the
+ *     3 enabled `en-*` voices, muxing each the way `generateSpeechSample` does and
+ *     transcribing with `tiny`/cpu/int8 — David 4/4, Hazel 4/4, Zira 4/4, the only
+ *     difference being the product name ("Refrain" / "Refrain" / "Reframed"),
+ *     while the CONTROL (the repo's own 3 s `sine`) transcribed to `''` = 0 hits.
+ * So 2 tolerates one mangled word without ever tolerating silence.
+ */
+export const SPEECH_KEYWORD_MIN_HITS = 2;
+
+/** Which of :data:`SPEECH_KEYWORDS` appear in `text` (case-insensitive). */
+export function matchedSpeechKeywords(text: string): string[] {
+  const low = text.toLowerCase();
+  return SPEECH_KEYWORDS.filter((k) => low.includes(k));
+}
+
+/**
+ * The SAPI synthesiser, as a script rather than an inline `-Command`.
+ *
+ * Written to the per-run data root at test time (never committed) so it carries
+ * no `.gitattributes` end-of-line question and no shell-quoting hazard: the
+ * phrase and the output path arrive as bound `param()` values through argv, not
+ * spliced into a command line.
+ *
+ * Voice selection is by CULTURE (`en*`), not by name, so it works on any Windows
+ * image; it FAILS LOUD when no enabled English voice exists rather than silently
+ * producing a 0-byte file that would read as "transcription is broken".
+ *
+ * MEASURED — the guard's exit code is 1, NOT the literal 3 in the script. Under
+ * `$ErrorActionPreference = 'Stop'` the `Write-Error` is TERMINATING, so it
+ * unwinds through `finally` and PowerShell exits 1 before `exit 3` is reached.
+ * The `exit 3` is therefore belt-and-braces, not the observed code, and this
+ * comment used to claim otherwise. Both states measured through the SAME
+ * `spawnSync` shape the caller below uses:
+ *   no en-* voice -> status=1, no file, stderr "no ENABLED … SAPI voice …"
+ *   en-* voice    -> status=0, file present, stdout "VOICE=…\nBYTES=…"
+ * which is why the caller's guard is `status !== 0 || !existsSync(...)`: the OR
+ * makes it fail closed regardless of which code PowerShell picks.
+ */
+const SAPI_SCRIPT = [
+  '[CmdletBinding()]',
+  'param([Parameter(Mandatory=$true)][string]$Text,[Parameter(Mandatory=$true)][string]$Out)',
+  "$ErrorActionPreference = 'Stop'",
+  'Add-Type -AssemblyName System.Speech',
+  '$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer',
+  'try {',
+  "  $voices = @($synth.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name -like 'en*' })",
+  '  if ($voices.Count -eq 0) { Write-Error "no ENABLED en-* SAPI voice on this machine"; exit 3 }',
+  '  $pick = ($voices | Sort-Object { $_.VoiceInfo.Name } | Select-Object -First 1).VoiceInfo.Name',
+  '  $synth.SelectVoice($pick)',
+  '  $synth.Rate = 0',
+  '  $synth.SetOutputToWaveFile($Out)',
+  '  $synth.Speak($Text)',
+  '  $synth.SetOutputToNull()',
+  '  Write-Output "VOICE=$pick"',
+  '} finally { $synth.Dispose() }',
+  'if (-not (Test-Path -LiteralPath $Out)) { Write-Error "SAPI produced no file at $Out"; exit 4 }',
+  'Write-Output "BYTES=$((Get-Item -LiteralPath $Out).Length)"',
+  '',
+].join('\n');
+
+/** What the speech fixture produced — surfaced so a run self-documents. */
+export interface SpeechFixture {
+  /** Absolute path to the synthesised WAV (kept for diagnostics). */
+  wavPath: string;
+  /** The SAPI voice actually used (machine-dependent; logged, never asserted). */
+  voice: string;
+  /** Real duration of the synthesised speech, from ffprobe. */
+  speechDurationSec: number;
+}
+
+/** Duration in seconds of any media file, read with the spec's own ffprobe. */
+export function probeDurationSec(mediaPath: string): number {
+  const r = spawnSync(
+    resolveFfprobe(),
+    ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', mediaPath],
+    { encoding: 'utf8' },
+  );
+  if (r.status !== 0) {
+    throw new Error(`ffprobe duration failed (status ${r.status}) on ${mediaPath}: ${r.stderr ?? ''}`);
+  }
+  const seconds = Number((r.stdout ?? '').trim());
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`ffprobe reported a non-positive duration (${r.stdout?.trim()}) for ${mediaPath}`);
+  }
+  return seconds;
+}
+
+/**
+ * Synthesise :data:`SPEECH_PHRASE` to `wavPath` via Windows SAPI. Windows-only.
+ *
+ * `scriptDir` is where the throwaway .ps1 lands (the per-run data root).
+ */
+export function synthesizeSpeechWav(wavPath: string, scriptDir: string, text = SPEECH_PHRASE): string {
+  if (process.platform !== 'win32') {
+    throw new Error('synthesizeSpeechWav requires Windows SAPI (System.Speech); guard with test.skip');
+  }
+  const scriptPath = join(scriptDir, 'sapi-speech.ps1');
+  writeFileSync(scriptPath, SAPI_SCRIPT, 'utf8');
+  const r = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-Text', text, '-Out', wavPath],
+    { encoding: 'utf8' },
+  );
+  if (r.status !== 0 || !existsSync(wavPath)) {
+    throw new Error(
+      `SAPI speech synthesis failed (status ${r.status}) -> ${wavPath}\n` +
+        `stdout: ${r.stdout ?? ''}\nstderr: ${r.stderr ?? ''}`,
+    );
+  }
+  const voice = /VOICE=(.+)/.exec(r.stdout ?? '')?.[1]?.trim() ?? '';
+  if (!voice) throw new Error(`SAPI script did not report a voice; stdout: ${r.stdout ?? ''}`);
+  return voice;
+}
+
+/**
+ * Generate a real H.264/AAC MP4 that CARRIES SPEECH: the same `testsrc` video the
+ * silent fixture uses, muxed with a SAPI-synthesised speech track.
+ *
+ * The video is generated at `ceil(speech) + 2` s and the mux uses `-shortest`, so
+ * the output length equals the SPEECH length and the whole phrase is carried. The
+ * 3 s silent sample would truncate ~7 s of speech, which is precisely why this
+ * does not just reuse it.
+ */
+export function generateSpeechSample(samplePath: string, workDir: string): SpeechFixture {
+  const wavPath = join(workDir, 'speech.wav');
+  const voice = synthesizeSpeechWav(wavPath, workDir);
+  const speechDurationSec = probeDurationSec(wavPath);
+  const videoSec = Math.ceil(speechDurationSec) + 2;
+  const args = [
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    `testsrc=duration=${videoSec}:size=640x360:rate=24`,
+    '-i',
+    wavPath,
+    '-c:v',
+    'libx264',
+    '-pix_fmt',
+    'yuv420p',
+    '-movflags',
+    '+faststart',
+    '-c:a',
+    'aac',
+    '-shortest',
+    samplePath,
+  ];
+  const r = spawnSync(process.env.RF_FFMPEG?.trim() || 'ffmpeg', args, { encoding: 'utf8' });
+  if (r.status !== 0 || !existsSync(samplePath)) {
+    throw new Error(`ffmpeg speech-sample mux failed (status ${r.status}): ${r.stderr ?? ''}`);
+  }
+  return { wavPath, voice, speechDurationSec };
+}
+
 /** Run one JSON-RPC request against a one-shot sidecar process; return result. */
 function sidecarCall(python: string, dataRoot: string, method: string, params: unknown): unknown {
   const req = `${JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })}\n`;
@@ -205,10 +427,36 @@ function sidecarCall(python: string, dataRoot: string, method: string, params: u
 }
 
 /**
+ * Writes the seeded sample media into `samplePath`. `workDir` is the per-run data
+ * root, for any intermediate the generator needs (e.g. the speech WAV).
+ */
+export type MediaGenerator = (samplePath: string, workDir: string) => void;
+
+/**
  * Build a fresh data root, generate a real sample MP4, register it through the
  * real sidecar `library.add`, and return everything the launched app needs.
+ *
+ * `generateMedia` defaults to the silent `testsrc`+`sine` sample, so every
+ * existing caller is byte-for-byte unchanged; the transcribe journey passes
+ * :func:`generateSpeechSample` to get a SPEECH-bearing sample through the exact
+ * same seeding path (same `library.add`, same thumbnail, same env).
+ *
+ * The default is `generateSample`, which takes ONE parameter and therefore ignores
+ * the `workDir` second argument — that is WHY the zero-argument callers are
+ * unchanged rather than merely "probably fine". They are enumerated here so the
+ * count is checkable instead of asserted (a review of this branch put it at three
+ * by grepping only `e2e/*.spec.ts`; it is FOUR — the visual suite's helper is easy
+ * to miss because it lives under `e2e/visual/`, outside playwright.config.ts):
+ *   * `preview.spec.ts`               (executed on this branch: 9/9 green)
+ *   * `golden-journey.spec.ts`        (NOT executed here — UNVERIFIED)
+ *   * `packaged.spec.ts`              (NOT executed here — UNVERIFIED)
+ *   * `visual/_visualSetup.ts` `launchSeededApp()`, i.e. every visual + a11y spec
+ *                                     (NOT executed here — UNVERIFIED)
+ * The settling experiment for the three unexecuted ones is a full
+ * `npm run test:e2e` + `npm run test:e2e:visual`; the argument that they cannot
+ * have changed is the arity one above, not the test evidence.
  */
-export function seedEnvironment(): SeededEnv {
+export function seedEnvironment(generateMedia: MediaGenerator = generateSample): SeededEnv {
   const python = resolvePython();
   // realpathSync.NATIVE expands the tmp path's 8.3 SHORT name to its LONG form.
   // os.tmpdir() on Windows returns the SHORT name (C:\Users\PREKZU~1\...), which
@@ -219,7 +467,7 @@ export function seedEnvironment(): SeededEnv {
   // install's %APPDATA% root has no short/long split; canonicalising here matches it.
   const dataRoot = realpathSync.native(mkdtempSync(join(tmpdir(), 'reframe-e2e-data-')));
   const samplePath = join(dataRoot, 'sample.mp4');
-  generateSample(samplePath);
+  generateMedia(samplePath, dataRoot);
 
   const added = sidecarCall(python, dataRoot, 'library.add', { path: samplePath }) as {
     video: { id: string };
@@ -326,6 +574,28 @@ export function provisionAssets(python: string, dataRoot: string, names: string[
       `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'assets.ensure', params: { names } })}\n`,
     );
   });
+}
+
+/**
+ * Write settings into the per-run data root through the REAL `settings.set` RPC
+ * (the same one the Settings UI calls), returning the merged result.
+ *
+ * Used by the transcribe journey to PIN the ASR target before the app launches.
+ * Not a mock: `SettingsStore.set` merges + persists to `<dataRoot>/settings.json`,
+ * which is exactly where `_transcribe_and_persist` reads it from at job time.
+ *
+ * CONTRACT-NOTE: `settings.set`'s PARAMS OBJECT *is* the value map — the handler
+ * is `self.settings.set(dict(params))` (handlers/library_ops.py:382), with no
+ * `{values: …}` envelope. Wrapping it would silently persist a `values` key and
+ * leave `transcribeModel` unset, which is exactly the kind of no-op setup that
+ * makes a test measure nothing.
+ */
+export function applySettings(
+  python: string,
+  dataRoot: string,
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  return sidecarCall(python, dataRoot, 'settings.set', values) as Record<string, unknown>;
 }
 
 /** Direct `media.playable` probe (used to label the preview path honestly). */
