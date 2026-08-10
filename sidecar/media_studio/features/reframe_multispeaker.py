@@ -1534,6 +1534,12 @@ class ShotSegment:
     #: ``True`` when the previous render's piece is byte-valid for this decision,
     #: so it is concat-copied instead of re-encoded.
     reuse: bool
+    #: The size :func:`plan_shot_segments` measured at ``path`` when it decided
+    #: :attr:`reuse` — ``None`` when the file was absent or unmeasurable. Carried on
+    #: the segment so a REUSED shot's manifest row can republish the size its reuse
+    #: was granted against instead of being re-measured after the render (see
+    #: :func:`shot_manifest_payload`).
+    measured_bytes: int | None = None
 
 
 def shot_manifest_entry(shot: _override.ShotDecision, regions: Sequence[Box]) -> dict[str, Any]:
@@ -1583,10 +1589,22 @@ def manifest_row_decision(row: Mapping[str, Any]) -> dict[str, Any]:
 def recorded_segment_bytes(row: Mapping[str, Any]) -> int | None:
     """The byte size ``row`` recorded, or ``None`` when it recorded none usably.
 
-    FAIL-CLOSED: absent, ``null``, a string, a float or a negative all read as "no
-    recorded size". ``bool`` is rejected explicitly because ``isinstance(True, int)``
-    is ``True`` in Python, so a naive int check would silently accept ``True`` as a
-    1-byte segment.
+    Rejects — reads as "no recorded size" — an absent key, ``null``, a string, a
+    float, a ``bool`` and a negative. ``bool`` is called out because
+    ``isinstance(True, int)`` is ``True`` in Python, so a naive int check would
+    silently accept ``True`` as a 1-byte segment.
+
+    SCOPED 2026-08-11: the accepted set is every NON-NEGATIVE int, **``0``
+    included** — so a row recording ``0`` over a 0-byte file on disk satisfies the
+    bytes half and its (unusable) segment is reused. That is deliberate here (this
+    function answers "did the row record a size", not "is that size plausible") and
+    it is why :func:`segment_is_reusable` no longer claims to fail closed in *every*
+    degenerate direction. UNVERIFIED whether a 0-byte segment is reachable at all:
+    it needs the ffmpeg runner to exit 0 having written nothing, which was not
+    reproduced; reachability judged **remote (1-20%)** on that evidence, and the
+    failure would be a LOUD concat error rather than silent corruption. Settling
+    experiment: a runner stub that returns 0 without writing the ``.part``, then a
+    second render over the manifest it publishes.
     """
     value = row.get(SEGMENT_BYTES_KEY)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -1648,10 +1666,26 @@ def shot_manifest_payload(
     :func:`regions_for_shot` is fed ``plan.source_width`` / ``plan.source_height``
     and every segment's ffmpeg ``-ss`` / ``-t`` is ``frame / fps``.
 
-    ``size`` measures each segment's published byte size for its row. It is called
-    ONCE per shot, and the caller must invoke this only AFTER every piece has been
-    atomically renamed into place — measuring a ``.part`` would record a size that
-    no longer describes the cache entry.
+    ``size`` measures the byte size of each FRESHLY-ENCODED segment for its row. It
+    is called once per such shot, and the caller must invoke this only AFTER every
+    piece has been atomically renamed into place — measuring a ``.part`` would record
+    a size that no longer describes the cache entry.
+
+    A REUSED shot is NOT re-measured. It republishes
+    :attr:`ShotSegment.measured_bytes` — the size :func:`plan_shot_segments` already
+    proved equal to the previous row's — because this render wrote no new bytes for
+    it. Re-measuring was a LAUNDERING HOLE, executed and closed 2026-08-11: a segment
+    truncated between the plan-time probe and this write had its stump size published
+    as the new authoritative size, after which every later render measured 3, matched
+    3, and concat-copied the stump forever — the truncation check would be
+    permanently blind for that clip. Pinned by
+    ``test_a_reused_shots_row_republishes_the_size_reuse_was_granted_against``.
+
+    HONEST SCOPE: this closes the PERSISTENCE half only. A truncation landing inside
+    the same window still reaches THIS render's concat, because the bytes were proven
+    at plan time and the concat happens later; that window is a TOCTOU no size check
+    can close. What is now guaranteed is that the bad state does not become the
+    recorded truth — the next render re-encodes the shot.
     """
     return {
         "version": SHOT_MANIFEST_VERSION,
@@ -1660,7 +1694,7 @@ def shot_manifest_payload(
         "sourceWidth": plan.source_width,
         "sourceHeight": plan.source_height,
         "shots": [
-            shot_manifest_row(shot, seg.regions, size_bytes=size(seg.path))
+            shot_manifest_row(shot, seg.regions, size_bytes=seg.measured_bytes if seg.reuse else size(seg.path))
             for shot, seg in zip(plan.shots, segments, strict=True)
         ],
     }
@@ -1756,6 +1790,7 @@ def plan_shot_segments(
             width=plan.source_width,
             height=plan.source_height,
         )
+        measured = size(path)
         segments.append(
             ShotSegment(
                 index=shot.index,
@@ -1768,8 +1803,9 @@ def plan_shot_segments(
                 and segment_is_reusable(
                     previous.get(shot.index),
                     decision=shot_manifest_entry(shot, regions),
-                    measured_bytes=size(path),
+                    measured_bytes=measured,
                 ),
+                measured_bytes=measured,
             )
         )
     return tuple(segments)
@@ -2187,8 +2223,11 @@ class MultiSpeakerReframeEngine:
                 self._remove(path)
             except OSError as rm_exc:
                 # Belt and braces: a surviving stale manifest can only mis-license
-                # reuse if its row still matches, and v2 rows carry the regions, so
-                # the blast radius is a same-decision same-geometry re-render.
+                # reuse if its row still matches, and a v3 row carries the regions AND
+                # the published byte size, so the blast radius is a same-decision,
+                # same-geometry, same-size re-render. (This said "v2 rows carry the
+                # regions" until 2026-08-11 — stale from the moment the same commit
+                # bumped the constant to 3.)
                 _log.warning("could not drop the stale reframe shot manifest %s: %s", path, rm_exc)
 
     def _persist_sidecar(self, clip: str, payload: Mapping[str, Any]) -> None:

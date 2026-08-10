@@ -984,13 +984,24 @@ class TestRerenderWithOverrides:
         # be an honest None and never a raised OSError escaping into the planner.
         assert ms._segment_size(str(tmp_path / "gone.mp4")) is None
 
-    def test_default_size_probe_reports_none_for_a_directory(self, tmp_path):
-        # A directory at the segment path is not a truncation but it IS unusable.
-        # os.path.getsize succeeds on a directory on some platforms and raises on
-        # others, so assert only the property that must hold either way: whatever it
-        # returns must not license reuse of a manifest row. Detected, not hardcoded —
-        # this box's answer is not asserted as the contract.
+    def test_default_size_probe_answers_for_a_directory_without_raising(self, tmp_path):
+        # A directory at the segment path is not a truncation but it IS unusable, and
+        # what os.path.getsize reports for one is PLATFORM-DEFINED: MEASURED as 0 on
+        # this box's NTFS and as 4096 (the ext4 directory entry) under WSL/Linux, which
+        # is what CI runs on. So the published size is DERIVED from the probe's own
+        # answer rather than written down: the previous version of this test hardcoded
+        # ``size_bytes=4096``, which is green on Windows by luck and RED on Linux,
+        # where recorded == measured == 4096 licenses reuse and `assert not` fails.
+        #
+        # SCOPED HONESTLY: this does NOT claim a directory can never license reuse. If
+        # a row happened to publish exactly what the platform reports for a directory,
+        # both halves of the key would agree and reuse would be granted — the same
+        # equal-size residual already disclosed on ``segment_is_reusable``, not a
+        # separate hole. What is asserted is what holds everywhere: the probe ANSWERS
+        # instead of letting an OSError escape into the planner, and its answer refuses
+        # a row that published a different size.
         measured = ms._segment_size(str(tmp_path))
+        assert measured is None or measured >= 0, "an answer, not a raised OSError"
         row = ms.shot_manifest_row(
             ro.ShotDecision(
                 index=0,
@@ -1002,7 +1013,7 @@ class TestRerenderWithOverrides:
                 speakers=("0",),
             ),
             ((0.0, 0.0, 8.0, 8.0),),
-            size_bytes=4096,
+            size_bytes=(measured or 0) + 1,  # DERIVED: cannot alias the probe's answer
         )
         assert not ms.segment_is_reusable(row, decision=ms.manifest_row_decision(row), measured_bytes=measured)
 

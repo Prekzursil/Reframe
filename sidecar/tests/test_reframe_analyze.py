@@ -145,6 +145,32 @@ def _absent(_path: str) -> int | None:
     return None
 
 
+def _seg_path(index: int) -> str:
+    """Where shot ``index``'s cached piece lives for the ``out.mp4`` these tests render.
+
+    Built with the PRODUCTION helper so a keyed probe cannot drift from the paths the
+    planner and the manifest writer actually pass.
+    """
+    return ms.shot_segment_path("out", ".mp4", index)
+
+
+def _size_map(sizes: dict[str, int | None]):
+    """A size probe KEYED BY PATH — the seam ``_intact`` / ``_absent`` cannot express.
+
+    Every other fake in this file ignores its ``path`` argument and answers the same
+    number for anything, so a probe wired to the WRONG path (a sibling shot's, or a
+    path that is not a segment at all) still returns a plausible size and no assertion
+    can see it. MEASURED 2026-08-11: three such mutants survived the whole 287-test
+    suite. An unmapped path answers ``None`` — "unmeasurable" — which is exactly the
+    conservative reading a bogus path deserves.
+    """
+
+    def probe(path: str) -> int | None:
+        return sizes.get(path)
+
+    return probe
+
+
 def _segments_for(plan: ro.ShotPlan, trace: ReframeTrace, aspect: str = ASPECT) -> tuple[ms.ShotSegment, ...]:
     """The segments a first (cache-less) render of ``plan`` would produce."""
     return ms.plan_shot_segments(
@@ -351,11 +377,13 @@ class TestManifestShotDecisions:
 
 
 class TestPlanShotSegments:
-    def _segments(self, plan, *, manifest=None, exists=False, affected_only=True, trace=None, measured=None):
+    def _segments(self, plan, *, manifest=None, exists=False, affected_only=True, trace=None, measured=None, size=None):
         # ``exists=True`` means "the cached segment is on disk AND is the size the
         # manifest published"; ``measured`` overrides that with a specific size so a
-        # truncated cache entry can be expressed.
-        size = (lambda _p: measured) if measured is not None else (_intact if exists else _absent)
+        # truncated cache entry can be expressed; ``size`` passes a PATH-KEYED probe
+        # so per-shot answers can differ.
+        if size is None:
+            size = (lambda _p: measured) if measured is not None else (_intact if exists else _absent)
         return ms.plan_shot_segments(
             plan,
             trace if trace is not None else _trace(),
@@ -373,6 +401,28 @@ class TestPlanShotSegments:
         plan = _plan(_shot(0, start=0, end=3))
         segments = self._segments(plan, manifest=_manifest(plan), measured=3)
         assert [s.reuse for s in segments] == [False]
+
+    def test_each_shot_is_judged_against_its_own_segment_file(self):
+        # PATH BINDING — the half no path-insensitive fake can see. Two shots whose
+        # rows publish the SAME size, shot 0 intact on disk and its SIBLING truncated:
+        # only the path can tell the two files apart, so this is the case that fails
+        # when the probe is wired to the wrong one. MEASURED 2026-08-11 against the
+        # pre-existing suite: rewriting the read side to size(shot 0's path) — an index
+        # bug that judges every shot by shot 0 — and to size(root + ext) — not a segment
+        # path at all — each survived all 287 tests. Both go RED here.
+        plan = _plan(_shot(0, start=0, end=3), _shot(1, start=3, end=6))
+        manifest = _manifest(plan)
+        assert [row["bytes"] for row in manifest["shots"]] == [SEGMENT_BYTES, SEGMENT_BYTES], (
+            "equal published sizes: the PATH is the only thing that distinguishes the two rows"
+        )
+        segments = self._segments(
+            plan,
+            manifest=manifest,
+            size=_size_map({_seg_path(0): SEGMENT_BYTES, _seg_path(1): 3}),
+        )
+        assert [s.reuse for s in segments] == [True, False]
+        # And the size each shot was judged by is carried on the segment, per path.
+        assert [s.measured_bytes for s in segments] == [SEGMENT_BYTES, 3]
 
     def test_without_a_manifest_every_shot_is_re_encoded(self):
         segments = self._segments(_plan(_shot(0, start=0, end=3), _shot(1, start=3, end=6)))
@@ -728,24 +778,51 @@ class TestRenderShotPlan:
     def test_the_manifest_records_the_size_of_the_published_segment_not_the_part(self):
         # The size must be measured AFTER the atomic rename: measuring the .part
         # would record a number that describes a file the next render never sees.
-        probed: list[str] = []
-        moves: list[tuple[str, str]] = []
+        #
+        # ORDERED, because BOTH probe sites feed one list: the planner measures every
+        # segment path before any encode, so an unordered "the cache path appears in
+        # probed" assertion is satisfied by the PLANNER alone and says nothing about
+        # the manifest writer. MEASURED 2026-08-11: that is exactly why rewriting the
+        # writer's probe to a bogus path survived the whole suite. Slicing at the last
+        # rename attributes the tail probes to the writer.
+        events: list[tuple[str, str]] = []
         writes: list[tuple[str, str]] = []
 
         def size(path: str) -> int | None:
-            probed.append(path)
+            events.append(("size", path))
             return SEGMENT_BYTES
 
         eng = _engine(
             size_fn=size,
-            replace_fn=lambda a, b: moves.append((a, b)),
+            replace_fn=lambda a, b: events.append(("replace", b)),
             write_text_fn=lambda p, t: writes.append((p, t)),
         )
         eng.render_shot_plan("in.mp4", "out.mp4", _plan(_shot(0)), _trace())
-        assert "out.multispeaker.shot000.mp4" in probed, "the manifest must measure the CACHE entry"
-        assert not any(".part" in p for p in probed), "a .part must never be what the manifest records"
-        # ...and the rename really did happen before the write that recorded it.
-        assert moves and json.loads(writes[0][1])["shots"][0]["bytes"] == SEGMENT_BYTES
+        renames = [i for i, (kind, _p) in enumerate(events) if kind == "replace"]
+        assert renames, "the segment and the clip are both published by rename"
+        after_the_last_rename = [p for kind, p in events[renames[-1] :] if kind == "size"]
+        assert after_the_last_rename == ["out.multispeaker.shot000.mp4"], (
+            "the manifest's own probe: the CACHE entry, measured after every rename"
+        )
+        assert not any(".part" in p for kind, p in events if kind == "size"), (
+            "a .part must never be what the manifest records"
+        )
+        assert json.loads(writes[0][1])["shots"][0]["bytes"] == SEGMENT_BYTES
+
+    def test_each_manifest_row_records_the_size_of_its_own_segment(self):
+        # The WRITE side of the same path binding, pinned on the payload builder so it
+        # cannot lean on the planner's probes: DISTINCT sizes per segment, so a row
+        # built from a constant path, or from shot 0's path for every row, cannot
+        # produce this list. MEASURED 2026-08-11: the bogus-path mutant survived all
+        # 287 tests before this existed.
+        plan = _plan(_shot(0, start=0, end=3), _shot(1, start=3, end=6))
+        payload = ms.shot_manifest_payload(
+            plan,
+            _segments_for(plan, _trace()),
+            aspect=ASPECT,
+            size=_size_map({_seg_path(0): 111, _seg_path(1): 222}),
+        )
+        assert [row["bytes"] for row in payload["shots"]] == [111, 222]
 
     def test_an_unmeasurable_segment_records_a_null_size_and_denies_later_reuse(self):
         # FAIL-CLOSED at write time: if the size cannot be read, the row says so
@@ -795,6 +872,48 @@ class TestRenderShotPlan:
         _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
         assert reencoded == (), "an unchanged shot whose bytes are intact must be reused"
         assert len(runs) == 1, "the concat pass ONLY"
+
+    def test_a_reused_shots_row_republishes_the_size_reuse_was_granted_against(self):
+        # THE LAUNDERING WINDOW, closed here. The manifest is rewritten AFTER the
+        # render, and it used to re-measure EVERY row — including the shots this run
+        # did not write. So a segment truncated between the plan-time probe and that
+        # write had its STUMP size published as the new authoritative size, and every
+        # later render then measured 3, matched 3, and concat-copied the stump
+        # forever: the truncation check this lane built would be permanently blind for
+        # that clip. A shot this render did not encode must republish the size its
+        # reuse was granted against, and must not be re-measured at all.
+        plan = _plan(_shot(0))
+        writes: list[tuple[str, str]] = []
+        probed: list[str] = []
+
+        def size(path: str) -> int | None:
+            probed.append(path)
+            return SEGMENT_BYTES if len(probed) == 1 else 3  # truncated after plan time
+
+        eng = _engine(
+            read_text_fn=lambda _p: json.dumps(_manifest(plan)),
+            size_fn=size,
+            write_text_fn=lambda p, t: writes.append((p, t)),
+        )
+        _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
+        assert reencoded == (), "the plan-time probe saw an intact segment, so it was reused"
+        assert json.loads(writes[0][1])["shots"][0]["bytes"] == SEGMENT_BYTES, (
+            "the row must carry the proven size, never a fresh measurement of a file this run did not write"
+        )
+        assert probed == ["out.multispeaker.shot000.mp4"], "one probe: the planner's. A reused row is not re-measured"
+        # ...and the PERSISTENCE claim, executed: the NEXT render over the manifest
+        # this one just wrote still sees the stump for what it is. With the laundered
+        # size (3) recorded, this second render reported reencoded=() forever.
+        next_runs: list[list[str]] = []
+        laundered = writes[0][1]
+        again = _engine(
+            runner=lambda argv, **_kw: next_runs.append(list(argv)) or 0,
+            read_text_fn=lambda _p: laundered,
+            size_fn=lambda _p: 3,
+        )
+        _out2, reencoded2 = again.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
+        assert reencoded2 == (0,), "the stump must never become the recorded truth"
+        assert len(next_runs) == 2, "the re-encode plus the concat"
 
     def test_a_shot_manifest_write_failure_is_logged_not_fatal(self):
         # `util.get_logger` sets propagate=False, so caplog cannot see this record —
@@ -1499,12 +1618,14 @@ class TestRenderHandler:
 
     def test_omitting_a_non_defaulting_field_can_report_an_unedited_shot(self, tmp_path):
         # PINS the ambiguity LruAnalysisCache.find discloses, at its REAL precondition:
-        # the defaulted render key must miss BOTH bundles, which needs a differing
-        # field that does NOT default to the cached value. diarizeBackend is that field
-        # (it defaults to None, and no analysis can be cached under None while also
-        # carrying a backend). Both bundles here carry "pyannote" and differ in
-        # allowSplit, so the render's (True, True, None) key misses both, find()
-        # returns the most-recently-USED bundle (the COLLAPSED one) as the diff
+        # the defaulted render key (True, True, None) must miss EVERY cached bundle.
+        # A differing diarizeBackend is ONE route there — it defaults to None, and no
+        # analysis can be cached under None while also carrying a backend. It is NOT
+        # the only route: see
+        # test_two_bundles_each_non_default_on_a_different_flag_also_report_one, which
+        # reaches the same defect with no diarizeBackend at all. Both bundles here
+        # carry "pyannote" and differ in allowSplit, so the render's key misses both,
+        # find() returns the most-recently-USED bundle (the COLLAPSED one) as the diff
         # baseline, and the UNTOUCHED split plan is reported as affected=[0].
         #
         # Kept as a disclosure rather than fixed: the fallback is deliberate backward
@@ -1537,6 +1658,30 @@ class TestRenderHandler:
         assert any("stack" in a for argv in runs for a in argv), (
             "a split plan must still be composited as a split, whatever the baseline said"
         )
+
+    def test_two_bundles_each_non_default_on_a_different_flag_also_report_one(self, tmp_path):
+        # REFUTES the narrower precondition the previous pass shipped into
+        # LruAnalysisCache.find ("which in practice means the bundles were analysed
+        # under a diarizeBackend — the one identity field with no cacheable default").
+        # No diarizeBackend anywhere here: with THREE concurrent talkers, allowComposite
+        # decides composite-vs-single (decide_layout: 3+ -> composite unless forbidden),
+        # so bundle A is keyed (True, False, None) -> single and bundle B is keyed
+        # (False, True, None) -> composite. The render's DEFAULTED (True, True, None)
+        # misses BOTH, find() hands back the most-recently-used bundle (B) as the
+        # baseline for A's untouched plan, and affected=[0] again. Any cached bundle
+        # holding a non-default layout flag reaches this; the backend is one route, not
+        # the precondition.
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache()
+        svc, _b = _service(tmp_path, analysis=_two_talker_analysis(concurrent=3), cache=cache)
+        single = _run(reg, svc.analyze({"videoId": "v", "allowComposite": False}, _ctx(reg))).result["plan"]
+        composite = _run(reg, svc.analyze({"videoId": "v", "allowSplit": False}, _ctx(reg))).result["plan"]
+        assert (single["shots"][0]["layout"], composite["shots"][0]["layout"]) == ("single", "composite"), (
+            "the fixture must put the two bundles on DIFFERENT non-default flags"
+        )
+        job = _run(reg, svc.render({"videoId": "v", "plan": single}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["affected"] == [0], "no diarizeBackend needed to reach the disclosed ambiguity"
 
     def test_a_non_boolean_render_flag_is_refused(self, tmp_path):
         reg, _ = _registry()
