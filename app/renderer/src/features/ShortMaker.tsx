@@ -252,7 +252,24 @@ export function ShortMaker({
   // would carve the NEW video at the OLD video's timestamps. Clear ONLY per-video
   // review state (NOT app-level controls/brand/data-folder). Every reset is
   // idempotent against the initial state, so it is a harmless no-op on first mount.
+  //
+  // The reset alone is NOT sufficient. It closes the AFTER case (a job settles,
+  // THEN the user switches) but not the IN-FLIGHT one: shortmaker.select and
+  // shortmaker.export are DEFERRED jobs awaited for up to EXPORT_JOB_TIMEOUT_MS
+  // (35 min, _api.ts:62), this effect does NOT abort `abortRef.current` (only
+  // Cancel/unmount does), and each run loop closes over the videoId it started
+  // on. So a switch during those 35 minutes runs this reset FIRST and the
+  // in-flight job's own writes land AFTER it — re-creating the defect one seam
+  // over (measured: v1's clip paths rendered as v2's `.sm-exported` receipt, v1's
+  // candidates loaded into v2's review list, and `shorts.list {videoId:v1}`
+  // populating the gallery shown under v2). `videoIdRef` is the other half: it
+  // mirrors the COMMITTED prop so a settled job can ask "am I still the selected
+  // video?" before writing. Kept as a ref rather than read from the closure
+  // because the closure is frozen at start-of-job. This mirrors the same
+  // guard-the-write fix in views/MakeShorts.tsx:184-191 for the manual path.
+  const videoIdRef = useRef(videoId);
   useEffect(() => {
+    videoIdRef.current = videoId;
     dispatch({ type: 'clear' });
     setExportedClips(null);
     setPhase('idle');
@@ -525,6 +542,12 @@ export function ShortMaker({
     // resolvedApi is always present; the submit button is disabled while busy.
     /* v8 ignore next */
     if (!resolvedApi || busy) return;
+    // The video this run is FOR. Every settle-time write below is a factual claim
+    // about THIS id, so each is gated on the selection still being it when the job
+    // finishes (see `videoIdRef` above). Switching away and back re-admits the
+    // writes — by then they describe the selected video again, which is the
+    // truthful outcome, not a stale one.
+    const startedFor = videoId;
     setError(null);
     setRetryAction(null);
     setExportedClips(null);
@@ -559,11 +582,20 @@ export function ShortMaker({
       // this a cancel during the (non-job) sync path would still load results and
       // override the idle reset. Treat it as a clean cancel (the catch returns).
       if (ctrl.signal.aborted) throw new JobAbortedError();
+      // The user may have switched the picker during the wait. Loading v1's
+      // candidates into v2's review list is the WORST case in this family: the
+      // list is what "Export approved" carves from, so it would export the NEW
+      // video at the OLD video's timestamps — the exact hazard the reset effect's
+      // own comment names. Drop the load rather than mis-attribute it.
+      if (videoIdRef.current !== startedFor) return;
       dispatch({ type: 'load', candidates });
       setPhase('reviewing');
     } catch (e) {
       // F2: an aborted wait is a clean cancel — cancel() already reset to idle.
       if (e instanceof JobAbortedError) return;
+      // Same rule for the failure half — v1's error is not v2's, and its Retry
+      // would re-run against the newly selected video.
+      if (videoIdRef.current !== startedFor) return;
       setError(errMsg(e));
       setRetryAction('select');
       setPhase('idle');
@@ -643,6 +675,8 @@ export function ShortMaker({
       setError('Approve at least one clip before exporting.');
       return;
     }
+    // See `runSelect` above: the video this export is a receipt FOR.
+    const startedFor = videoId;
     setError(null);
     setRetryAction(null);
     setProgress({ jobId: '', pct: 0, message: 'Exporting approved clips…' });
@@ -689,12 +723,27 @@ export function ShortMaker({
       // the sync path would still load clips and record 'exported' feedback,
       // overriding the idle reset. Treat it as a clean cancel (the catch returns).
       if (ctrl.signal.aborted) throw new JobAbortedError();
-      setExportedClips(clips ?? []);
       // P3-D: a successful export is the strongest implicit label — record
       // one 'exported' action per exported candidate (fire-and-forget).
+      //
+      // DELIBERATELY ABOVE the stale guard, and NOT gated by it: `videoId` and
+      // `items` here are the CLOSURE's (frozen at export start), so each label is
+      // correctly attributed to the video that was actually exported, and this
+      // writes no component state. Dropping it after a mid-flight switch would
+      // lose a TRUE label rather than prevent a false claim. (Moving it above the
+      // guard leaves the RPC order unchanged: export -> feedback.record ->
+      // shorts.list.) This is the honest counterpart to the single-lane busy flag
+      // that views/MakeShorts.tsx:293-297 leaves unguarded for the same reason.
       for (const c of approvedCandidates(items)) {
         recordFeedback(resolvedApi, videoId, c, 'exported');
       }
+      // The user may have switched the picker during the wait: this receipt then
+      // describes a video that is no longer on screen. Both writes below are
+      // claims about the CURRENTLY selected video — `exportedClips` renders as its
+      // `.sm-exported` file list, and `reloadVideoShorts` resolves `shorts.list`
+      // for the OLD id into the produced-shorts gallery shown under the NEW one.
+      if (videoIdRef.current !== startedFor) return;
+      setExportedClips(clips ?? []);
       // P4 §6 / C11: reload the produced-shorts list for this video so the
       // exported clips gain the gallery card actions (fire-and-forget).
       void reloadVideoShorts();
@@ -702,6 +751,8 @@ export function ShortMaker({
     } catch (e) {
       // F2: an aborted wait is a clean cancel — cancel() already reset to idle.
       if (e instanceof JobAbortedError) return;
+      // Same rule for the failure half — v1's error is not v2's.
+      if (videoIdRef.current !== startedFor) return;
       setError(errMsg(e));
       setRetryAction('export');
       setPhase('reviewing');
@@ -722,6 +773,8 @@ export function ShortMaker({
     // resolvedApi/videoId are always present; the batch button is disabled while busy.
     /* v8 ignore next */
     if (!resolvedApi || busy || !videoId) return;
+    // See `runSelect` above: the video this batch is a receipt FOR.
+    const startedFor = videoId;
     setError(null);
     setRetryAction(null);
     setExportedClips(null);
@@ -750,17 +803,34 @@ export function ShortMaker({
       // orphaned-export window without extra job.cancel plumbing).
       if (ctrl.signal.aborted) throw new JobAbortedError();
       const candidates = found ?? [];
-      dispatch({ type: 'load', candidates }); // surface for post-hoc review
       const top = topByVirality(candidates, clean.count);
+      // The user may have switched the picker during the select wait. GUARD THE
+      // WRITES, NOT THE WORK: every component-state write below is a factual claim
+      // about the CURRENTLY selected video, but the export itself is the batch the
+      // user asked for, and `buildExportParams` uses the CLOSURE's `videoId`, so it
+      // still produces the requested clips for the right video. Suppressing only
+      // the on-screen receipt is the smaller cost — abandoning the export would
+      // trade a false-status defect for silently dropped work. Re-checked after the
+      // export wait, because the switch can land during THAT wait instead.
+      const mine = videoIdRef.current === startedFor;
+      if (mine) {
+        dispatch({ type: 'load', candidates }); // surface for post-hoc review
+        // A no-op when `top` is empty, so hoisting it above the zero-result return
+        // below is behaviour-identical to approving after that check.
+        for (const c of top) dispatch({ type: 'approve', id: candidateId(c) });
+      }
       if (top.length === 0) {
         // F1: a confirmed zero-result is NOT an error — fall through to the
         // "No candidates were proposed" empty state (no error/Retry surfaced).
-        setPhase('reviewing');
+        // Guarded too: that empty state would be a claim about a video this batch
+        // never asked about.
+        if (mine) setPhase('reviewing');
         return;
       }
-      for (const c of top) dispatch({ type: 'approve', id: candidateId(c) });
-      setPhase('exporting');
-      setProgress({ jobId: '', pct: 0, message: `Exporting ${top.length} clips…` });
+      if (mine) {
+        setPhase('exporting');
+        setProgress({ jobId: '', pct: 0, message: `Exporting ${top.length} clips…` });
+      }
       const expRes = await resolvedApi.rpc<ExportResult | JobHandle>(
         'shortmaker.export',
         // F45: same `output` slice as the review path (see runExport).
@@ -776,13 +846,19 @@ export function ShortMaker({
       );
       // Bug-sweep: honor a mid-flight Cancel before loading the exported clips.
       if (ctrl.signal.aborted) throw new JobAbortedError();
-      setExportedClips(clips ?? []);
+      // Unguarded for the same reason as runExport's copy: correctly attributed to
+      // the closure's video, and no component state is written.
       for (const c of top) recordFeedback(resolvedApi, videoId, c, 'exported');
+      // Re-read (not `mine`): the switch may have landed during the export wait.
+      if (videoIdRef.current !== startedFor) return;
+      setExportedClips(clips ?? []);
       void reloadVideoShorts();
       setPhase('reviewing');
     } catch (e) {
       // F2: an aborted wait is a clean cancel — cancel() already reset to idle.
       if (e instanceof JobAbortedError) return;
+      // Same rule for the failure half — v1's error is not v2's.
+      if (videoIdRef.current !== startedFor) return;
       setError(errMsg(e));
       setRetryAction('batch');
       setPhase('reviewing');

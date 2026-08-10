@@ -3675,4 +3675,441 @@ describe('<ShortMaker /> component', () => {
     expect(container.querySelector('.sm-exported')).toBeNull();
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
+
+  // -------------------------------------------------------------------------
+  // Item SM — a DEFERRED job that settles AFTER the parent swapped `videoId`
+  // must not write video 1's outcome as video 2's status.
+  //
+  // views/MakeShorts.tsx:358-366 renders <ShortMaker videoId={selectedId}>
+  // UNKEYED, so the picker swaps the prop instead of remounting, and
+  // shortmaker.select / shortmaker.export are deferred jobs awaited for up to
+  // EXPORT_JOB_TIMEOUT_MS (35 min). The reset effect (ShortMaker.tsx:255-266)
+  // clears per-video state on the switch but does NOT abort the in-flight wait,
+  // so the OLD video's settle-time writes land AFTER that reset.
+  //
+  // DETECTOR CONTROL — this is a measured false-pass trap, not a hypothetical.
+  // ShortMaker installs TWO job.done subscribers: the run loop's own
+  // `waitForJobDone` AND the media.playable preview watcher (ShortMaker.tsx:433),
+  // which is torn down and RE-subscribed on every videoId change. A double with a
+  // single callback slot (`doneCb = fn`, as the older tests above use) therefore
+  // has the in-flight wait's callback OVERWRITTEN by that post-switch
+  // re-subscribe: the emit never reaches the wait, the job never settles, and "no
+  // stale write" gets measured for entirely the wrong reason. `jobDoneBus` fans
+  // every event out to ALL live subscribers, and each switch test asserts the
+  // multi-subscriber condition was really present at emit time. Every switch case
+  // is ALSO paired with a NO-SWITCH control arm that must still show the write —
+  // a guard that simply suppressed everything would pass the switch arm alone.
+  // -------------------------------------------------------------------------
+
+  /** A `job.done` bridge double that fans each event out to EVERY subscriber. */
+  function jobDoneBus() {
+    const subs = new Set<(d: JobDone) => void>();
+    return {
+      onJobDone: (fn: (d: JobDone) => void) => {
+        subs.add(fn);
+        return () => {
+          subs.delete(fn);
+        };
+      },
+      emit: (d: JobDone) => {
+        for (const fn of [...subs]) fn(d);
+      },
+      /** Live subscriber count — the detector control for the note above. */
+      count: () => subs.size,
+    };
+  }
+
+  /**
+   * Method-aware rpc fake for the stale-write tests. `media.playable` answers
+   * FALSE by default so the preview watcher really does install the SECOND
+   * job.done subscriber that `jobDoneBus` exists for.
+   */
+  function staleRpc(over: Record<string, unknown> = {}) {
+    return vi.fn(async (method: string) => {
+      const h = over[method];
+      if (h instanceof Error) throw h;
+      if (h !== undefined) return h;
+      if (method === 'media.playable') return { playable: false };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+  }
+
+  /** Select (sync) then approve rank 1, leaving Export approved enabled. */
+  async function selectAndApproveOne() {
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+  }
+
+  async function clickExportApproved() {
+    const btn = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Export approved',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+      await Promise.resolve();
+    });
+  }
+
+  async function emitDone(bus: ReturnType<typeof jobDoneBus>, d: JobDone) {
+    await act(async () => {
+      bus.emit(d);
+      await Promise.resolve();
+    });
+    await flush();
+  }
+
+  function callsTo(rpc: ReturnType<typeof vi.fn>, method: string) {
+    return rpc.mock.calls.filter((c) => c[0] === method);
+  }
+
+  const EXPORTED_JOB = { jobId: 'exp-1' };
+  const V1_CLIPS = { clips: [{ path: '/out/v1-clip.mp4' }] };
+
+  // ---- runExport ----------------------------------------------------------
+
+  it('runExport: a job settling AFTER a videoId switch writes no clips and no shorts.list', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': EXPORTED_JOB,
+      'shorts.list': { shorts: [{ path: '/out/v1-clip.mp4' }] },
+    });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await selectAndApproveOne();
+    await clickExportApproved();
+
+    // The parent swaps the prop only (UNKEYED child) — same instance, new video.
+    render(<ShortMaker videoId="v2" api={api} />);
+    await flush();
+    // Detector control: the wait AND the re-subscribed preview watcher are both
+    // live, which is exactly what a single-slot double would silently break.
+    expect(bus.count()).toBeGreaterThanOrEqual(2);
+
+    await emitDone(bus, { jobId: 'exp-1', result: V1_CLIPS });
+
+    // v1's receipt must not be presented as v2's status...
+    expect(container.querySelector('.sm-exported')).toBeNull();
+    // ...and the gallery reload for the OLD video must not fire: its result is
+    // rendered as the CURRENTLY selected video's produced-shorts list.
+    expect(callsTo(rpc, 'shorts.list')).toHaveLength(0);
+  });
+
+  it('runExport control (no switch): the same deferred job DOES write clips + reload shorts.list', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': EXPORTED_JOB,
+      'shorts.list': { shorts: [{ path: '/out/v1-clip.mp4' }] },
+    });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc, onJobDone: bus.onJobDone })} />);
+    await selectAndApproveOne();
+    await clickExportApproved();
+    await emitDone(bus, { jobId: 'exp-1', result: V1_CLIPS });
+
+    expect(container.querySelector('.sm-exported')?.textContent).toContain('Exported 1 clip(s)');
+    expect(container.querySelector('.sm-exported')?.textContent).toContain('/out/v1-clip.mp4');
+    expect(callsTo(rpc, 'shorts.list')).toHaveLength(1);
+    expect(rpc).toHaveBeenCalledWith('shorts.list', { videoId: 'v1' });
+  });
+
+  it('runExport: the exported-label feedback still fires after a switch, attributed to v1', async () => {
+    // DELIBERATE and NOT guarded: `videoId`/`items` in the feedback loop are the
+    // CLOSURE's (frozen at export start), so the label is correctly attributed to
+    // the video that was actually exported and it writes no component state.
+    // Suppressing it would drop a true label, not prevent a false claim.
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': EXPORTED_JOB,
+    });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await selectAndApproveOne();
+    await clickExportApproved();
+    render(<ShortMaker videoId="v2" api={api} />);
+    await flush();
+    await emitDone(bus, { jobId: 'exp-1', result: V1_CLIPS });
+
+    const exported = rpc.mock.calls.filter(
+      (c) => c[0] === 'feedback.record' && (c[1] as { action?: string }).action === 'exported',
+    );
+    expect(exported).toHaveLength(1);
+    expect((exported[0][1] as { videoId: string }).videoId).toBe('v1');
+  });
+
+  it('runExport: a job FAILING after a videoId switch raises no error banner', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': EXPORTED_JOB,
+    });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await selectAndApproveOne();
+    await clickExportApproved();
+    render(<ShortMaker videoId="v2" api={api} />);
+    await flush();
+    await emitDone(bus, {
+      jobId: 'exp-1',
+      result: { error: { message: 'v1 export blew up', type: 'RuntimeError' } },
+    });
+
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('runExport control (no switch): the same failure DOES raise the error banner', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': EXPORTED_JOB,
+    });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc, onJobDone: bus.onJobDone })} />);
+    await selectAndApproveOne();
+    await clickExportApproved();
+    await emitDone(bus, {
+      jobId: 'exp-1',
+      result: { error: { message: 'v1 export blew up', type: 'RuntimeError' } },
+    });
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('v1 export blew up');
+  });
+
+  // ---- runSelect ----------------------------------------------------------
+  // The worst case in this family: v1's candidates loaded into v2's review list
+  // means "Export approved" would carve the NEW video at the OLD video's
+  // timestamps — the exact hazard the reset effect's own comment names.
+
+  it('runSelect: candidates arriving after a videoId switch are NOT loaded for the new video', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({ 'shortmaker.select': { jobId: 'sel-1' } });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await act(async () => {
+      container
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    render(<ShortMaker videoId="v2" api={api} />);
+    await flush();
+    expect(bus.count()).toBeGreaterThanOrEqual(2);
+
+    await emitDone(bus, { jobId: 'sel-1', result: { candidates: THREE } });
+
+    expect(container.querySelector('.sm-candidate')).toBeNull();
+    // Still the idle prompt form for v2 — no phantom 'reviewing' phase.
+    expect(byLabel('Prompt')).toBeTruthy();
+  });
+
+  it('runSelect control (no switch): the same deferred job DOES load the candidates', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({ 'shortmaker.select': { jobId: 'sel-1' } });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc, onJobDone: bus.onJobDone })} />);
+    await act(async () => {
+      container
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await emitDone(bus, { jobId: 'sel-1', result: { candidates: THREE } });
+
+    expect(container.querySelectorAll('.sm-candidate').length).toBe(3);
+  });
+
+  it('runSelect: a select FAILING after a videoId switch raises no error banner', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({ 'shortmaker.select': { jobId: 'sel-1' } });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await act(async () => {
+      container
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    render(<ShortMaker videoId="v2" api={api} />);
+    await flush();
+    await emitDone(bus, {
+      jobId: 'sel-1',
+      result: { error: { message: 'v1 select blew up', type: 'RuntimeError' } },
+    });
+
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  // ---- runBatch -----------------------------------------------------------
+
+  it('runBatch: a select settling after a switch loads no candidates but STILL exports v1', async () => {
+    // Guard-the-WRITE, not the work: the batch the user asked for still runs (its
+    // params carry the closure's videoId), only the on-screen receipt is dropped.
+    const bus = jobDoneBus();
+    const rpc = staleRpc({ 'shortmaker.select': { jobId: 'bsel-1' } });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} initialControls={{ count: 1 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    render(<ShortMaker videoId="v2" api={api} initialControls={{ count: 1 }} />);
+    await flush();
+    expect(bus.count()).toBeGreaterThanOrEqual(2);
+
+    await emitDone(bus, { jobId: 'bsel-1', result: { candidates: THREE } });
+
+    // No v1 candidates in v2's review list, and v2 is not falsely busy.
+    expect(container.querySelector('.sm-candidate')).toBeNull();
+    expect(
+      [...container.querySelectorAll('button')].find((b) => b.textContent === 'Cancel'),
+    ).toBeUndefined();
+    // The requested export still ran, attributed to v1.
+    expect(rpc).toHaveBeenCalledWith(
+      'shortmaker.export',
+      expect.objectContaining({ videoId: 'v1' }),
+    );
+  });
+
+  it('runBatch: a ZERO-candidate select settling after a switch shows no empty state', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({ 'shortmaker.select': { jobId: 'bsel-1' } });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} initialControls={{ count: 1 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    render(<ShortMaker videoId="v2" api={api} initialControls={{ count: 1 }} />);
+    await flush();
+
+    await emitDone(bus, { jobId: 'bsel-1', result: { candidates: [] } });
+
+    // "No candidates were proposed" would be a claim about v2, which was never
+    // asked. The control arm for the same assertion is the existing
+    // "batch shows the empty state ..." test above.
+    expect(container.querySelector('.sm-empty')).toBeNull();
+    expect(callsTo(rpc, 'shortmaker.export')).toHaveLength(0);
+  });
+
+  it('runBatch: an export settling after a switch writes no clips and no shorts.list', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': { jobId: 'bexp-1' },
+      'shorts.list': { shorts: [{ path: '/out/v1-clip.mp4' }] },
+    });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} initialControls={{ count: 1 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    // select resolved synchronously -> the export job is now in flight for v1.
+    render(<ShortMaker videoId="v2" api={api} initialControls={{ count: 1 }} />);
+    await flush();
+    expect(bus.count()).toBeGreaterThanOrEqual(2);
+
+    await emitDone(bus, { jobId: 'bexp-1', result: V1_CLIPS });
+
+    expect(container.querySelector('.sm-exported')).toBeNull();
+    expect(callsTo(rpc, 'shorts.list')).toHaveLength(0);
+  });
+
+  it('runBatch control (no switch): the same deferred export DOES write clips + shorts.list', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': { jobId: 'bexp-1' },
+      'shorts.list': { shorts: [{ path: '/out/v1-clip.mp4' }] },
+    });
+    render(
+      <ShortMaker
+        videoId="v1"
+        api={makeApi({ rpc, onJobDone: bus.onJobDone })}
+        initialControls={{ count: 1 }}
+      />,
+    );
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    await emitDone(bus, { jobId: 'bexp-1', result: V1_CLIPS });
+
+    expect(container.querySelector('.sm-exported')?.textContent).toContain('Exported 1 clip(s)');
+    expect(callsTo(rpc, 'shorts.list')).toHaveLength(1);
+  });
+
+  it('runBatch: an export FAILING after a videoId switch raises no error banner', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': { jobId: 'bexp-1' },
+    });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} initialControls={{ count: 1 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    render(<ShortMaker videoId="v2" api={api} initialControls={{ count: 1 }} />);
+    await flush();
+    await emitDone(bus, {
+      jobId: 'bexp-1',
+      result: { error: { message: 'v1 batch blew up', type: 'RuntimeError' } },
+    });
+
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('runBatch control (no switch): the same failure DOES raise the error banner', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': { jobId: 'bexp-1' },
+    });
+    render(
+      <ShortMaker
+        videoId="v1"
+        api={makeApi({ rpc, onJobDone: bus.onJobDone })}
+        initialControls={{ count: 1 }}
+      />,
+    );
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    await emitDone(bus, {
+      jobId: 'bexp-1',
+      result: { error: { message: 'v1 batch blew up', type: 'RuntimeError' } },
+    });
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('v1 batch blew up');
+  });
+
+  it('switching AWAY and BACK re-admits the receipt (the guard is not a permanent mute)', async () => {
+    const bus = jobDoneBus();
+    const rpc = staleRpc({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': EXPORTED_JOB,
+      'shorts.list': { shorts: [] },
+    });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await selectAndApproveOne();
+    await clickExportApproved();
+    render(<ShortMaker videoId="v2" api={api} />);
+    await flush();
+    render(<ShortMaker videoId="v1" api={api} />);
+    await flush();
+
+    await emitDone(bus, { jobId: 'exp-1', result: V1_CLIPS });
+
+    // Back on v1 the receipt describes the selected video again — truthful, so it
+    // is admitted (this is what makes the guard an id comparison, not a latch).
+    expect(container.querySelector('.sm-exported')?.textContent).toContain('/out/v1-clip.mp4');
+  });
 });
