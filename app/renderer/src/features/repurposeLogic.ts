@@ -218,6 +218,41 @@ export function remainingCount(counts: BatchSummary['counts']): number {
   return counts.total - counts.done - counts.skipped;
 }
 
+/** Aggregate statuses that mean a parent job can still be doing work RIGHT NOW. */
+const UNFINISHED: ReadonlySet<BatchStatus> = new Set(['queued', 'running']);
+
+/**
+ * The polite explanation for a `batch.resume` that started no job (W09).
+ *
+ * `BatchService.resume` (`batch.py`) reuses ONE `{jobId: null, status}` wire shape
+ * for two unrelated refusals, and only the returned aggregate `status` separates
+ * them:
+ *   * `queued`/`running` — the tracked parent job is still LIVE, so the resume was
+ *     refused to protect the running checkpoint (`_parent_job_is_live`);
+ *   * a TERMINAL aggregate (`done`/`partial`/`error`/`cancelled`) — `resume_batch`
+ *     found nothing resumable. By `derive_status`, a terminal aggregate means every
+ *     item is already terminal, and `resumable_video_ids` only re-enqueues
+ *     `queued`/`running` unless `retryErrors` is set — which is exactly why a
+ *     `partial` batch's plain Resume can never do anything.
+ *
+ * `retriedErrors` names which control the user pressed so the sentence matches it.
+ * A MISSING status proves nothing about liveness, so it takes the neutral branch
+ * rather than asserting a live run that may not exist.
+ *
+ * RESIDUAL (inline, not deferred): the discriminator is the aggregate status, not
+ * job liveness itself, so the narrow race where a live parent job has just written
+ * its last terminal item but has not returned yet reports the terminal wording.
+ * Liveness is not observable from the wire — `_parent_jobs` is sidecar-in-memory
+ * and deliberately not exposed. The settling experiment would be a distinct error
+ * code (or a `refused: "live"` field) on the live-refusal branch.
+ */
+export function resumeNoOpNotice(status: BatchStatus | undefined, retriedErrors: boolean): string {
+  if (status !== undefined && UNFINISHED.has(status)) return 'That batch is already running.';
+  return retriedErrors
+    ? 'Nothing left to retry in that batch.'
+    : 'Nothing left to resume in that batch.';
+}
+
 // ---- merged item view for the queue (store + nothing else) -----------------
 
 /** True when every item of a loaded `BatchState` is terminal (run is over). */

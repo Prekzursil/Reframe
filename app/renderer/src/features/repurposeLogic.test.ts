@@ -20,6 +20,7 @@ import {
   remainingCount,
   batchSettled,
   blankPreset,
+  resumeNoOpNotice,
 } from './repurposeLogic';
 import type { BatchItemStatus, BatchSummary, ProgressEvent } from '../lib/rpc';
 
@@ -233,6 +234,32 @@ describe('batchSettled', () => {
         ],
       }),
     ).toBe(false);
+  });
+});
+
+describe('resumeNoOpNotice', () => {
+  // `batch.resume` reuses ONE {jobId: null} shape for two refusals: the parent job
+  // is still LIVE (the aggregate is queued/running) vs nothing was resumable (the
+  // aggregate is terminal). Only the returned status separates them.
+  it('reads a queued/running aggregate as the live-parent refusal', () => {
+    expect(resumeNoOpNotice('running', false)).toContain('already running');
+    expect(resumeNoOpNotice('queued', false)).toContain('already running');
+  });
+
+  it('reads a TERMINAL aggregate as nothing-to-resume', () => {
+    for (const status of ['done', 'partial', 'error', 'cancelled'] as const) {
+      expect(resumeNoOpNotice(status, false)).toBe('Nothing left to resume in that batch.');
+    }
+  });
+
+  it('names the RETRY when the no-op came from a retry-errors resume', () => {
+    expect(resumeNoOpNotice('error', true)).toBe('Nothing left to retry in that batch.');
+  });
+
+  it('does not claim a live run when the wire carried no status at all', () => {
+    // A malformed/legacy reply proves nothing about liveness, so it must not
+    // assert "already running" — the one sentence that would be actively false.
+    expect(resumeNoOpNotice(undefined, false)).not.toContain('already running');
   });
 });
 

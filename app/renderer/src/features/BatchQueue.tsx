@@ -23,12 +23,15 @@ import { BatchConsentCard } from './BatchConsentCard';
 import { LiveStatusRegion } from './LiveStatusRegion';
 import {
   aggregateUpdate,
+  batchSettled,
   incompleteBatches,
   remainingCount,
+  resumeNoOpNotice,
   statusToken,
   terminalAnnouncement,
 } from './repurposeLogic';
 import './panels.css';
+import './batchQueue.css';
 
 /** Pull a {jobId} from any deferred result, or '' when absent. */
 function jobIdOf(result: unknown): string {
@@ -81,6 +84,16 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
   // clobber the aggregate pct bar and hijack the debounced a11y announcement
   // (§7.1). Mirrors the deliberate jobId filter in components/useJob.ts.
   const parentJobIdRef = useRef('');
+
+  // The SAME parent jobId, mirrored into state purely so the render can react to
+  // it (a ref deliberately does not re-render, and the onProgress subscription
+  // above must stay mounted once — re-subscribing on every id change would open a
+  // window where events are dropped). It gates the Cancel affordance: without it
+  // Cancel would also appear during the §9.1 consent step, where `batch.create`
+  // has mounted the live rows but no job exists yet, so the only reachable
+  // outcome would be the {ok:false} "nothing to cancel" reply. Written at the
+  // three places the ref is written, and nowhere else.
+  const [liveJobId, setLiveJobId] = useState('');
 
   // The created-but-not-yet-started batch, held so the post-acknowledge
   // `confirmRun` can start it without re-creating.
@@ -178,6 +191,7 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       // the ref stays '' and the onProgress guard drops everything, matching the
       // status-refresh skip below).
       parentJobIdRef.current = jobId;
+      setLiveJobId(jobId);
       setBatch({ ...created, status: 'running' });
       if (jobId !== '') {
         // pull the first authoritative status snapshot.
@@ -206,6 +220,7 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       setAssertive('');
       // Drop any prior batch's jobId so its late progress can't apply mid-swap.
       parentJobIdRef.current = '';
+      setLiveJobId('');
       if (confirmCloudBudget) {
         // §9.1 budget gate ON: compute the pure run/skip consent surface WITHOUT
         // starting a job (zero provider calls, plan_consent directly) and render
@@ -239,24 +254,31 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
     }
   }, [confirmCloudBudget, startBatch]);
 
+  // `retryErrors` re-enqueues the `error` items too (W09). Sent ONLY on the
+  // explicit Retry-errors path so a plain Resume keeps its minimal `{id}` wire
+  // shape (and the sidecar's own default, `retryErrors=False`).
   const resume = useCallback(
-    async (id: string) => {
+    async (id: string, retryErrors = false) => {
       try {
         setError('');
         setNotice('');
-        const out = await client.batch.resume(id);
+        const out = retryErrors
+          ? await client.batch.resume(id, { retryErrors: true })
+          : await client.batch.resume(id);
         const jobId = jobIdOf(out);
         if (jobId === '') {
-          // The sidecar declined: this batch's parent job is still live, so it
-          // returned the {jobId: null} no-op shape. Do NOT assign the ref — '' makes
-          // the onProgress gate (:129) drop every event for the run that IS in
-          // flight, freezing the bar and the a11y announcer. Say why instead; a
-          // silent no-op click would be a new dead control.
-          setNotice('That batch is already running.');
+          // The sidecar declined and returned the {jobId: null, status} no-op shape.
+          // Do NOT assign the ref — '' makes the onProgress gate (:129) drop every
+          // event for a run that IS in flight, freezing the bar and the a11y
+          // announcer. Say why instead; a silent no-op click would be a dead
+          // control. The returned aggregate `status` is what separates the two
+          // refusals the one shape covers (see `resumeNoOpNotice`).
+          setNotice(resumeNoOpNotice(out.status, retryErrors));
         } else {
           // Track the resumed run's parent jobId so its live progress is honoured
           // by the onProgress gate (batch.resume returns {jobId}).
           parentJobIdRef.current = jobId;
+          setLiveJobId(jobId);
         }
         await refreshBatch(id);
         await reload();
@@ -284,6 +306,30 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       }
     },
     [reload],
+  );
+
+  // Stop a batch that is mid-flight (W08). `batch.cancel` sets the parent job's
+  // cooperative cancel flag; the runner observes it between sources and unwinds,
+  // recording the in-flight source as `cancelled`. It is NOT instant, so this does
+  // not fake a terminal state locally — it pulls the authoritative snapshot and
+  // lets the normal `onJobDone` refresh carry the rest.
+  //
+  // `{ok: false}` is not a failure: it means THIS sidecar process tracks no parent
+  // job for the batch (`_parent_jobs` is in-memory — a restart empties it) or the
+  // job was evicted, so there was nothing to signal. That announces politely.
+  const cancelBatch = useCallback(
+    async (id: string) => {
+      try {
+        setError('');
+        setNotice('');
+        const { ok } = await client.batch.cancel(id);
+        if (!ok) setNotice('That batch has no running job to cancel.');
+        await refreshBatch(id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Cancel failed');
+      }
+    },
+    [refreshBatch],
   );
 
   // Deep-linked resume from the launch toast — fire ONCE per resumeId (guard
@@ -334,6 +380,15 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
                 <button type="button" onClick={() => void resume(b.id)}>
                   Resume
                 </button>
+                {/* Only offered when there IS something to retry. A plain Resume
+                    never re-runs an `error` item (`resumable_video_ids`), so on a
+                    batch whose failures are all that remain it is the only control
+                    that can start work at all. */}
+                {b.counts.error > 0 ? (
+                  <button type="button" onClick={() => void resume(b.id, true)}>
+                    Retry errors
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   aria-label={`Remove ${b.name}`}
@@ -422,7 +477,24 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
 
       {batch ? (
         <div className="batch-queue__live">
-          <ProgressBar pct={batch.pct ?? 0} message={aggregate} />
+          <div className="batch-queue__live-head">
+            <ProgressBar pct={batch.pct ?? 0} message={aggregate} />
+            {/* Two conditions, both necessary: a parent job must have been started
+                or resumed from THIS panel (see `liveJobId`), and the batch must
+                still have unfinished work. The second is gated on the ITEMS rather
+                than the aggregate status because `derive_status` reports `queued`
+                for the whole window between a start/resume and the pooled worker's
+                first `running` checkpoint — precisely when Cancel matters most. */}
+            {liveJobId === '' || batchSettled(batch) ? null : (
+              <button
+                type="button"
+                className="batch-queue__cancel"
+                onClick={() => void cancelBatch(batch.id)}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
           <ul className="batch-queue__rows">
             {batch.items.map((item) => (
               <li key={item.videoId} className="batch-queue__row">

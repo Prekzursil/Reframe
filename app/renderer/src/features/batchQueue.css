@@ -1,0 +1,320 @@
+/* batchQueue.css — the Batch queue panel (features/BatchQueue.tsx), W05.
+ *
+ * Measured before this sheet existed: the component declared 21 distinct
+ * `batch-queue*` class names and NOT ONE appeared in any renderer stylesheet, so
+ * the primary folder-to-shorts surface rendered as raw platform chrome — native
+ * checkboxes in an undelimited column, an unstyled Run button, and per-source
+ * rows with no status treatment at all. `features/batchQueue.conformance.test.ts`
+ * pins that every class the component renders is actually styled.
+ *
+ * SCOPE — what this sheet deliberately does NOT do:
+ *   * `select` / `fieldset` / `legend` chrome comes from the global floor in
+ *     `styles/controls.css` (H5); only layout is set here.
+ *   * the raised BUTTON voice comes from `components/shell.css`, which now lists
+ *     `.batch-queue button` alongside `.feature-panel button` — reused, not
+ *     re-declared. Only the two role-specific voices live here: the accent
+ *     primary (Run batch) and the destructive-quiet Cancel.
+ *
+ * Tokens only — no raw colour, size or weight literals (pinned by the
+ * conformance test). Class names are test-pinned throughout the component
+ * suite; this is a restyle, never a rename.
+ */
+
+.batch-queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ---- messages ---------------------------------------------------------------
+ * An alert and a notice are DIFFERENT weights on purpose: the alert is a failure
+ * (red rail, AA-safe red text — never the solid fill red on a wash), the notice
+ * is an outcome the user should read but has not lost anything to (quiet accent
+ * rail). Both carry their text; the hue is never the only signal. */
+
+.batch-queue__error,
+.batch-queue__notice {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--status-error);
+  border-radius: var(--radius-sm);
+  background: var(--status-error-soft);
+  color: var(--status-error-text);
+  font-size: var(--type-body-size);
+}
+
+.batch-queue__notice {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+}
+
+.batch-queue__loading {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+/* ---- incomplete batches (the resume surface, DESIGN §7.2) ------------------ */
+
+.batch-queue__resume {
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.batch-queue__resume h4 {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+.batch-queue__resume ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The row label takes the slack so the actions stay right-aligned in a column,
+   which is what makes a list of them scannable rather than ragged. */
+.batch-queue__resume-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+}
+
+.batch-queue__resume-row > span:first-child {
+  flex: 1 1 220px;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+/* ---- setup: sources + template + run --------------------------------------- */
+
+.batch-queue__setup {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+/* The fieldset chrome is the global floor (controls.css); this only turns the
+   source list into a scroll-capped column so a 200-video library cannot push the
+   Run button off-screen. */
+.batch-queue__sources {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* A whole-row hit target: the label wraps its checkbox, so the padded row IS the
+   control (a bare inline label gave a checkbox-sized target). */
+.batch-queue__source {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--size-target-min);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.batch-queue__source:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* The checkbox is the one control the app tints with the accent: it is a
+   selection, which is exactly what the accent is reserved for. */
+.batch-queue__source input {
+  accent-color: var(--accent);
+  flex: none;
+}
+
+.batch-queue__empty,
+.batch-queue__template-hint,
+.batch-queue__run-hint {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--type-caption-size);
+}
+
+/* Label above control (not beside it) — the same stacked field rhythm the Dub
+   and Audio-mix panels use. */
+.batch-queue__template {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+/* ACCENT voice — the one primary action on this surface.
+ * (0,2,0) on purpose: it must out-specify `.batch-queue button` (0,1,1) from
+ * shell.css, which would otherwise win regardless of import order. */
+.batch-queue .batch-queue__run {
+  background: var(--accent);
+  border-color: transparent;
+  box-shadow: var(--accent-glow);
+  color: var(--accent-ink);
+  font-weight: var(--weight-bold);
+}
+
+.batch-queue .batch-queue__run:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: var(--accent-glow-hover);
+  color: var(--accent-ink);
+}
+
+.batch-queue .batch-queue__run:active:not(:disabled) {
+  background: var(--accent-pressed);
+}
+
+/* The ring is COMPOSED with the glow, not swapped for it, so the primary keeps
+   its fill while gaining a visible keyboard state (same pattern as
+   shell.css `.feature-panel .actions > button:first-child`). */
+.batch-queue .batch-queue__run:focus-visible {
+  box-shadow: var(--focus-ring), var(--accent-glow);
+}
+
+/* ---- the live run ------------------------------------------------------------ */
+
+.batch-queue__live {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.batch-queue__live-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.batch-queue__live-head .progress {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Destructive-quiet: Cancel stops work in flight, so it must be reachable at a
+   glance but must never compete with Run for the primary slot. It keeps the
+   raised resting voice and only goes red on hover/focus — the same restraint
+   `.library__remove-btn` uses. */
+.batch-queue .batch-queue__cancel {
+  flex: none;
+}
+
+.batch-queue .batch-queue__cancel:hover:not(:disabled) {
+  border-color: var(--status-error);
+  background: var(--status-error-soft);
+  color: var(--status-error-text);
+}
+
+.batch-queue__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.batch-queue__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+}
+
+.batch-queue__row-title {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+/* The status token is a CHIP: tracked caps, fixed measure, so a column of rows
+   reads as a column of states. Text first — `statusToken` always renders the
+   word, and the tint below is redundant reinforcement, never the only signal. */
+.batch-queue__row-status {
+  flex: none;
+  min-width: 72px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: var(--type-chip-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.batch-queue__row-status[data-status="done"] {
+  background: var(--status-success-soft);
+  color: var(--status-success);
+}
+
+.batch-queue__row-status[data-status="running"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.batch-queue__row-status[data-status="error"] {
+  background: var(--status-error-soft);
+  color: var(--status-error-text);
+}
+
+.batch-queue__row-status[data-status="skipped"],
+.batch-queue__row-status[data-status="cancelled"] {
+  background: var(--status-warn-soft);
+  color: var(--status-warn);
+}
+
+/* Detail strings are quiet and truncate: a stack trace in an `error` field must
+   not blow the row height out (the full text stays in the `title` tooltip the
+   component sets). */
+.batch-queue__row-reason,
+.batch-queue__row-error {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}
+
+.batch-queue__row-error {
+  color: var(--status-error-text);
+}
