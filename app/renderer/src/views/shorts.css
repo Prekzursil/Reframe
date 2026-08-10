@@ -237,6 +237,39 @@
   color: var(--accent);
 }
 
+/* W59 — this ring must be painted INWARD, and that is the whole point.
+ *
+ * The button is `width: 100%; height: 100%` inside `.shorts__thumb`, which sets
+ * `overflow: hidden` (:216) — so its border box COINCIDES with the clip rectangle.
+ * Ancestor overflow clipping applies to a descendant's outline and box-shadow, not
+ * just its content, so anything drawn outside the border box is removed. With no
+ * rule here the button fell through to the global `:focus-visible` at
+ * components/shell.css:75-83, whose outline is deliberately TRANSPARENT (a
+ * forced-colors carrier) and whose only visible ring is `box-shadow:
+ * var(--focus-ring)` — `0 0 0 2px …, 0 0 0 4px …`, entirely OUTSET. Computed, then
+ * clipped: a keyboard user got no focus indication at all on the primary control of
+ * every gallery card (WCAG 2.4.7). A presence check could never have caught it,
+ * because the ring was never missing.
+ *
+ * Two channels, mirroring the structure of --focus-ring but reflected inward:
+ *   * `inset` box-shadow, 0-2px — the dark canvas gap that separates the ring from
+ *     arbitrary thumbnail pixels underneath;
+ *   * a REAL outline at `outline-offset: -2px`, so it spans 2-4px inward and sits
+ *     just inside that gap. Visible (not transparent) to match this sheet's own
+ *     convention at `.shorts__reload:focus-visible` (:418-421), and a real outline
+ *     because Chromium force-clears box-shadow under `forced-colors: active` while
+ *     preserving outline width/style with a substituted system colour. The NEGATIVE
+ *     offset is what makes that survive here — a positive one would land outside the
+ *     clip exactly as the shadow did.
+ *
+ * (0,2,0) on a class selector, so it beats the global `:where(…)` rule at (0,1,0)
+ * for `outline`, `outline-offset` and `box-shadow` alike. */
+.shorts__thumb-btn:focus-visible {
+  outline: 2px solid var(--accent-edge);
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 2px var(--surface-bg);
+}
+
 .shorts__thumb-img {
   position: absolute;
   inset: 0;
