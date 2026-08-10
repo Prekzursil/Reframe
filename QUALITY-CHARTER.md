@@ -18,7 +18,7 @@ gates that exist in the source charter do not apply here and have been dropped.
 
 | # | Gate | Tool(s) (pinned) | What it enforces |
 |---|------|------------------|------------------|
-| 1 | lint-format | ruff 0.15.17 · oxlint 1.69.0 · biome 2.5.0 · docs_check (stdlib) | Lint + format + security-lint across Python (sidecar) and JS/TS (app), **plus documentation anti-drift**. Auto-fixers: `ruff check --fix` + `ruff format`; `oxlint --fix --deny-warnings`; `biome format --write`. `.quality/docs_check.py` enforces the four anti-drift rules in [`docs/INDEX.md`](docs/INDEX.md#anti-drift) — status line, no dangling `docs/**` citation, every live doc indexed, no gitignored path cited. |
+| 1 | lint-format | ruff 0.15.17 · oxlint 1.69.0 · biome 2.5.0 · docs_check · reachability_check · electron_hardening_check (all stdlib) | Lint + format + security-lint across Python (sidecar) and JS/TS (app), **plus three stdlib anti-drift checkers**. Auto-fixers: `ruff check --fix` + `ruff format`; `oxlint --fix --deny-warnings`; `biome format --write`. `.quality/docs_check.py` enforces the anti-drift rules in [`docs/INDEX.md`](docs/INDEX.md#anti-drift) — status line, no dangling `docs/**` citation, every live doc indexed, no gitignored path cited, no bare-basename citation. `.quality/reachability_check.py` (W26) fails on a production `app/**` module that no entry point can reach, and on a dead waiver in `.quality/reachability_allowlist.json`. `.quality/electron_hardening_check.py` (W66) fails when `electron-builder.yml` stops declaring the required Electron fuses or `app/main/main.ts` stops declaring the BrowserWindow sandbox triple. |
 | 2 | types | tsc (typescript 5.x) · basedpyright 1.39.8 | `tsc --noEmit` for `app/` (main + renderer) and `app/render-cli/`; basedpyright (`typeCheckingMode=standard`) for `sidecar/media_studio`. |
 | 3 | tests-coverage | pytest 9 + pytest-cov (branch, `--cov-fail-under=100`) · vitest 3 (100% thresholds) | Strict 100% line+branch coverage **everywhere** — sidecar (`media_studio`) **and** the renderer (`renderer/src/**`). No hybrid/ratchet floor. Reasoned `# pragma: no cover — <reason>` / `/* v8 ignore — <reason> */` allowed only for genuinely-untestable platform/defensive branches. |
 | 4 | sast | opengrep 1.22.0 (CI) / semgrep 1.166.0 (local) | Static security analysis using the curated in-repo ruleset under `.quality/opengrep/` (NOT `--config auto`). Clean-zero lock: 0 findings, no baseline. |
@@ -78,6 +78,42 @@ tree, and github-actions); that is supply-chain hygiene, not part of the 6-gate 
   Both directions are asserted by `TestDiscoveryScopeIsTheThreeGlobs` (4 discovered shapes as
   a detector control, 6 undiscovered shapes as the boundary), so this paragraph cannot drift
   away from the code silently. Widening a glob must update that test and this text together.
+- **Reachability rides gate 1; the RPC half rides gate 3 (W26).** Five defects this
+  programme fixed (W16-W20) were *built, tested, 100%-covered and mounted nowhere*, and
+  gate 3 caught none of them — coverage proves a line EXECUTED under some test, which an
+  unreachable module still does. `.quality/reachability_check.py` walks the `app/**` TS
+  import graph from five declared entry points; the sidecar RPC surface is enumerated by
+  RUNNING `register_all` with a collecting registrar, so that half lives in
+  `sidecar/tests/test_reachability_gate.py` (a static scan of 14 handler modules would be
+  a guess). Both read one allowlist, `.quality/reachability_allowlist.json`, where every
+  waiver carries a WRITTEN reason — an allowlist is required because this repo ships some
+  code unreachable on purpose (the generated RPC-contract POC artifacts; `reframe.analyze`
+  / `reframe.render`, registered backend-only while the renderer wave is unstarted).
+  Waivers are checked in BOTH directions (u2/u3 + `test_no_dead_rpc_waivers`), so the list
+  tracks the tree rather than history. Neither half is a new gate.
+  **Scope, stated so it is not read as more:** this is MODULE reachability, not per-EXPORT
+  deadness — a module imported for one symbol while three others are dead still passes.
+  UNVERIFIED whether per-export deadness exists in this tree; the settling experiment is a
+  pinned in-repo `knip`/`ts-prune` run, which rule 3 (determinism, no network-fetched rule
+  packs) does not admit today.
+- **Electron hardening is enforced from the packaging config, and Electronegativity is
+  deliberately NOT wired (W66).** `.quality/electron_hardening_check.py` asserts (e1)
+  `electron-builder.yml` declares the whole `electronFuses` block — ASAR integrity +
+  `onlyLoadAppFromAsar` ON, `NODE_OPTIONS`/`--inspect` OFF, and `runAsNode` pinned **true**
+  because the caption render path spawns the Electron exe as plain Node — and (e2)
+  `app/main/main.ts` still declares `contextIsolation`/`nodeIntegration`/`sandbox`, with no
+  `app/main/**` file re-opening the renderer via `webSecurity: false`. e2 exists because of
+  a measured overclaim caught while writing this very note: `app/main/security.test.ts`
+  asserts the CSP header only, and the three `webPreferences` literals at
+  `main.ts:1080-1085` had NO assertion anywhere. Doyensec's Electronegativity itself would
+  have to be fetched and installed to be verified, and a blocking step whose first real run
+  happens on a shared runner is the "green gate that was never seen red" failure this
+  charter exists to prevent. Revisit it as a pinned devDependency once someone can run it
+  locally first.
+  **What is NOT proven by this gate:** it reads CONFIG, so it proves the fuses are
+  *declared*, not that the bits are flipped in a built exe. Settling experiment:
+  `npx electron-builder --config ../electron-builder.yml --win`, then
+  `npx electron-fuses read --app dist/win-unpacked/Reframe.exe`. Agents do not run builds.
 - **basedpyright mode = `standard`** (not `strict`) so "literal zero" stays achievable
   on partly-untyped code and untyped third-party libraries.
 - **react-hooks/exhaustive-deps = off** in oxlint: it is advisory and its auto-fix can
