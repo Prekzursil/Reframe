@@ -1375,7 +1375,7 @@ ReadTextFn = Callable[[str], str]
 #: unreadable). It REPLACED a plain ``exists`` seam: existence alone cannot tell a
 #: complete cached segment from a truncated one, and ``None`` is exactly how a
 #: vanished file presents, so the size probe strictly subsumes the boolean.
-SizeFn = Callable[[str], "int | None"]
+SizeFn = Callable[[str], int | None]
 
 #: The per-shot render manifest suffix — ``<rendered clip>.shots.json`` (WU-E3).
 #: It records the EXACT shot decisions that produced the segment files kept
