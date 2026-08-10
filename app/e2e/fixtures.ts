@@ -68,6 +68,19 @@ export const DIST_DIR = join(REPO_ROOT, 'dist');
  * which mis-resolves both shapes in their real install locations; see
  * `resolveInstalledApp` for the measurement and what replaced it.
  *
+ * REACHABILITY OF THE DARWIN ARM, scoped so the fix is not read as wider than it
+ * is: `electron-builder.yml` declares a `win:` target only (no `mac:` block), and
+ * both CI steps that set this variable are `runner.os == 'Windows'`, so no shipped
+ * artifact exercises the `.app` path today and a mis-resolution there could not
+ * have turned CI red. It still mattered enough to fix rather than to delete: the
+ * `.app` shape is documented as supported here and in `installed-app.spec.ts`'s
+ * skip message, `findBuiltApp.test.ts` runs on every OS leg and was therefore
+ * CERTIFYING the wrong answer on every push, and the failure mode is a silently
+ * wrong binary — which is the one outcome this whole escape hatch exists to
+ * prevent ("an installed-build leg reporting green while it drove `out/main/
+ * main.js` is worse than no leg at all"). Settling experiment for the launch half:
+ * add a `mac:` target and drive `installed-app.spec.ts` on a macOS runner.
+ *
  * Consumers: `installed-app.spec.ts` (which self-skips when it is unset) and
  * `findBuiltApp.test.ts` (the deterministic resolution proof).
  */
