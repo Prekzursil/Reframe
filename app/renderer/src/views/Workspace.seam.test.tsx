@@ -177,6 +177,65 @@ describe('Workspace ↔ Subtitles seam', () => {
   });
 });
 
+// ─── W19 / W20: the seam tests the lane's reachability claim actually needs ──
+// REFUTED IN REVIEW, twice and correctly: the lane offered
+// `Workspace.test.tsx`'s "renders the gaze panel for its tab" as "the actual
+// reachability test", but that file does `vi.mock('../features/Gaze', () =>
+// stubPanel('Gaze'))` — it mounts a STUB. It proves the TabBar + `renderPanel()`
+// switch and the props handed down; it cannot prove that
+// `lazy(() => import('../features/Gaze'))` resolves or that the real panel mounts.
+// That was resting on `tsc --noEmit`. These two cases close it in the file whose
+// whole purpose is real lazy panel mounts, so the claim is now executable rather
+// than narrowed away.
+describe('Workspace ↔ Gaze seam (W19)', () => {
+  it('mounts the REAL Gaze panel on the eye-contact tab', async () => {
+    await import('../features/Gaze'); // warm the lazy chunk (same idiom as above)
+    rpcMock.mockResolvedValue({ project });
+
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="gaze" />);
+    });
+    await flush();
+
+    // The real panel, not the Suspense fallback and not a marker div: its own
+    // section class plus the ethics gate that only the real component renders.
+    expect(container.querySelector('.gaze-panel')).not.toBeNull();
+    expect(container.querySelector('[data-testid="gaze-consent"]')).not.toBeNull();
+    expect(container.querySelector('[data-input="likeness-attest"]')).not.toBeNull();
+    // Fail-closed on this scaffold: the fake bridge answers `gaze.probe` with `{}`,
+    // so the panel treats the model as unavailable and the Run button stays shut.
+    // That IS the shipped behaviour for a machine without the YuNet asset.
+    expect((container.querySelector('[data-action="run"]') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+});
+
+describe('Workspace ↔ Dub/LipSync seam (W20)', () => {
+  it('mounts the REAL lip-sync section inside the Dub tab, disabled by default', async () => {
+    await import('../features/Dub'); // Dub hosts the LipSync section
+    rpcMock.mockResolvedValue({ project });
+
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="dub" />);
+    });
+    await flush();
+
+    // The reachability half that IS true for W20: the control exists on a surface a
+    // user can open. It is DISABLED here — the fake bridge answers `settings.get`
+    // with `{}`, so `lipSyncEnabled` is not the literal true, exactly as every stock
+    // build behaves. See the LipSync header: this is a call site, not a runnable
+    // feature, and this test pins that distinction rather than papering over it.
+    expect(container.querySelector('.lipsync-section')).not.toBeNull();
+    const start = container.querySelector('[data-action="start-lipsync"]') as HTMLButtonElement;
+    expect(start).not.toBeNull();
+    expect(start.disabled).toBe(true);
+    expect(container.querySelector('[data-section="disabled"]')?.textContent).toContain(
+      'lipSyncEnabled',
+    );
+  });
+});
+
 describe('Workspace ↔ Speed seam', () => {
   it('mounts the REAL Speed panel on the speed tab, threaded with the video duration', async () => {
     // The point of this test: before v1.5 the re-time engine had no control in

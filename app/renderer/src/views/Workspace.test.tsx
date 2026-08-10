@@ -88,6 +88,15 @@ vi.mock('../features/ReframeCorrect', () => stubPanel('ReframeCorrect'));
 // W19: eye-contact correction. `gaze.probe` + `gaze.run` were registered and
 // frozen into the RPC surface but had NO renderer caller at all (0 hits for
 // `gaze`, case-insensitive, under app/renderer); this tab is the entry point.
+//
+// SCOPE OF THAT CLAIM, narrowed after review: this is a STUB, like every other
+// panel here. The `it.each` case below therefore proves the TabBar + `renderPanel()`
+// switch and the props handed down — NOT that
+// `lazy(() => import('../features/Gaze'))` resolves or that the real panel mounts.
+// The lane originally offered it as "the actual reachability test", which was wider
+// than the evidence. The real lazy mount is asserted in `Workspace.seam.test.tsx`
+// ("Workspace ↔ Gaze seam"), which drains macrotasks and renders the REAL panel;
+// that case goes red if `case 'gaze'` is removed from `renderPanel` (measured).
 vi.mock('../features/Gaze', () => stubPanel('Gaze'));
 
 import {
