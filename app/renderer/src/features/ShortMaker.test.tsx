@@ -3696,9 +3696,22 @@ describe('<ShortMaker /> component', () => {
   // re-subscribe: the emit never reaches the wait, the job never settles, and "no
   // stale write" gets measured for entirely the wrong reason. `jobDoneBus` fans
   // every event out to ALL live subscribers, and each switch test asserts the
-  // multi-subscriber condition was really present at emit time. Every switch case
-  // is ALSO paired with a NO-SWITCH control arm that must still show the write —
-  // a guard that simply suppressed everything would pass the switch arm alone.
+  // multi-subscriber condition was really present at emit time.
+  //
+  // CONTROL ARMS — corrected count (the earlier wording here claimed every switch
+  // case was paired with a control arm written below; that was wider than the
+  // evidence). 5 of the 8 switch probes have a NO-SWITCH control arm written here;
+  // the other 3 are covered by PRE-EXISTING controls in this file, which assert
+  // exactly the write each probe expects to be suppressed:
+  //   * runSelect-catch          -> 'a select failure shows a DISTINCT error +
+  //                                 Retry that re-runs select' (:2711)
+  //   * runBatch-stale-select    -> '"Make N shorts" runs select -> auto-approve
+  //                                 top N by virality -> export unattended' (:2253)
+  //   * runBatch-zero-candidate  -> 'batch shows the empty state (not an error) and
+  //                                 does NOT export when no candidates are
+  //                                 proposed' (:2291)
+  // Either way no probe stands alone, so a guard that simply suppressed everything
+  // could not pass — but only 5 of those controls are new here.
   // -------------------------------------------------------------------------
 
   /** A `job.done` bridge double that fans each event out to EVERY subscriber. */
@@ -4111,5 +4124,334 @@ describe('<ShortMaker /> component', () => {
     // Back on v1 the receipt describes the selected video again — truthful, so it
     // is admitted (this is what makes the guard an id comparison, not a latch).
     expect(container.querySelector('.sm-exported')?.textContent).toContain('/out/v1-clip.mp4');
+  });
+
+  // -------------------------------------------------------------------------
+  // Item SM (remediation) — LANE OWNERSHIP.
+  //
+  // `activeJobRef`, `abortRef` and `progress` are ONE slot each, shared by all
+  // three run loops, and the reset effect leaves `phase` at 'idle' after a video
+  // switch — so the user really can start a SECOND job while the first is still
+  // in flight. On the runBatch path the videoId guard above is what makes that
+  // reachable: pre-guard, runBatch ran `setPhase('exporting')` unconditionally, so
+  // video 2 was falsely busy and its start controls stayed disabled for the whole
+  // export wait. Measured two-state, same script, only the source swapped —
+  // origin/main: batchDisabled=true cancelVisible=true exportFired=true; with the
+  // guard: batchDisabled=false cancelVisible=false exportFired=true. Un-blocking
+  // video 2 is correct — it has no job of its own, and the export still runs — but
+  // video 1 then settles into a lane video 2 owns, and its teardown cleared all
+  // three slots.
+  //
+  // Measured consequences, each RED against the previous commit:
+  //   * v2's progress bar never returns for the REST of its job — the relay is
+  //     keyed on `activeJobRef`, which v1's `finally` nulled.
+  //   * v2's Cancel emits ZERO `job.cancel` calls — `cancel()` reads the same
+  //     nulled handle, so the "cancelled" job is never aborted.
+  //   * v1's own in-flight events are relayed onto v2's bar once v1's late handle
+  //     wins the single slot (`resolveJobResult` writes it unconditionally, and it
+  //     was handed the real ref).
+  // Scope of "pre-existing": the CLASS is — on runSelect/runExport the reset
+  // already left phase='idle' before the guard, so a second job was always
+  // startable there. On the runBatch path it is the guard that opened it (the
+  // two-state probe above). Either way it is fixed here, not merely disclosed.
+  //
+  // Every probe below drives TWO real jobs and asserts BOTH directions: video 2's
+  // own lane keeps working, and video 1's events never render as video 2's. In the
+  // first five, "v2's progress relays BEFORE v1 settles" is a state-invariant
+  // control arm — it holds in the broken state too (verified: the pre-fix failure
+  // is the POST-settle assertion, never the control), so a fix that simply muted
+  // the bar could not pass. The sixth (pre-handle window) is two-DIRECTIONAL
+  // instead: both of its assertions are RED pre-fix, and its accept-path control
+  // is the pre-existing 'renders progress with an empty message …' test above.
+  // -------------------------------------------------------------------------
+
+  /** A promise plus its resolver, so an rpc can be held in flight on purpose. */
+  function deferred<T>() {
+    let settle!: (v: T) => void;
+    const promise = new Promise<T>((r) => {
+      settle = r;
+    });
+    return { promise, settle };
+  }
+
+  /**
+   * Method-keyed rpc fake whose handler is a QUEUE — one entry per call, the last
+   * entry repeating. These probes drive TWO real jobs through the SAME method
+   * (video 1's, then video 2's), so each call needs its own jobId; an entry may be
+   * a pending promise to hold that call in flight. `media.playable` answers FALSE
+   * by default for the same reason `staleRpc` does (the second job.done subscriber).
+   */
+  function laneRpc(over: Record<string, unknown[]>) {
+    const seen: Record<string, number> = {};
+    return vi.fn(async (method: string) => {
+      const q = over[method];
+      if (!q) return method === 'media.playable' ? { playable: false } : {};
+      const i = seen[method] ?? 0;
+      seen[method] = i + 1;
+      return q[Math.min(i, q.length - 1)];
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+  }
+
+  function bar() {
+    return container.querySelector('.sm-progress')?.textContent ?? null;
+  }
+
+  function cancelButton() {
+    return [...container.querySelectorAll('button')].find((b) => b.textContent === 'Cancel') as
+      | HTMLButtonElement
+      | undefined;
+  }
+
+  async function emitProgress(fn: (p: JobProgress) => void, p: JobProgress) {
+    await act(async () => {
+      fn(p);
+      await Promise.resolve();
+    });
+  }
+
+  /** Let a resumed run loop drain its remaining awaits. */
+  async function drain() {
+    await flush();
+    await flush();
+    await flush();
+  }
+
+  /** Switch the prop to v2 (same instance) and start v2's OWN deferred select. */
+  async function startV2Select(el: React.ReactElement) {
+    render(el);
+    await flush();
+    await submitForm();
+  }
+
+  const V2_SELECT = { jobId: 'sel-v2' };
+
+  it('lane: a v1 export settling while a v2 job runs leaves v2 progress relaying', async () => {
+    const bus = jobDoneBus();
+    let onP: ((p: JobProgress) => void) | null = null;
+    const rpc = laneRpc({
+      'shortmaker.select': [{ candidates: THREE }, V2_SELECT],
+      'shortmaker.export': [EXPORTED_JOB],
+    });
+    const api = makeApi({
+      rpc,
+      onJobDone: bus.onJobDone,
+      onProgress: (fn) => {
+        onP = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await selectAndApproveOne();
+    await clickExportApproved(); // v1: exp-1 in flight
+    await startV2Select(<ShortMaker videoId="v2" api={api} />);
+    expect(bus.count()).toBeGreaterThanOrEqual(2);
+
+    // CONTROL (must hold in the broken state too): v2's own progress relays.
+    await emitProgress(onP!, { jobId: 'sel-v2', pct: 33, message: 'v2 working' });
+    expect(bar()).toContain('33% v2 working');
+
+    await emitDone(bus, { jobId: 'exp-1', result: V1_CLIPS });
+
+    // v1's teardown must not clear the bar v2 owns...
+    expect(bar()).toContain('33% v2 working');
+    // ...and v2's LATER progress must still reach it (the relay needs the handle).
+    await emitProgress(onP!, { jobId: 'sel-v2', pct: 66, message: 'v2 still working' });
+    expect(bar()).toContain('66% v2 still working');
+    // ...while v1's receipt is still dropped (the videoId guard, unchanged).
+    expect(container.querySelector('.sm-exported')).toBeNull();
+  });
+
+  it('lane: a v1 export settling while a v2 job runs leaves v2 Cancel able to cancel v2', async () => {
+    const bus = jobDoneBus();
+    const rpc = laneRpc({
+      'shortmaker.select': [{ candidates: THREE }, V2_SELECT],
+      'shortmaker.export': [EXPORTED_JOB],
+    });
+    const api = makeApi({ rpc, onJobDone: bus.onJobDone });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await selectAndApproveOne();
+    await clickExportApproved();
+    await startV2Select(<ShortMaker videoId="v2" api={api} />);
+    // CONTROL: v2 is busy on its own job, so Cancel is on screen before AND after.
+    expect(cancelButton()).toBeTruthy();
+
+    await emitDone(bus, { jobId: 'exp-1', result: V1_CLIPS });
+
+    expect(cancelButton()).toBeTruthy();
+    await act(async () => {
+      cancelButton()!.click();
+      await Promise.resolve();
+    });
+    // v2's handle survived, so Cancel really aborts v2's job (not v1's, not none).
+    expect(rpc).toHaveBeenCalledWith('job.cancel', { jobId: 'sel-v2' });
+  });
+
+  it('lane: a v1 select handle resolving after v2 started never claims v2 lane', async () => {
+    const bus = jobDoneBus();
+    let onP: ((p: JobProgress) => void) | null = null;
+    const held = deferred<unknown>();
+    const rpc = laneRpc({ 'shortmaker.select': [held.promise, V2_SELECT] });
+    const api = makeApi({
+      rpc,
+      onJobDone: bus.onJobDone,
+      onProgress: (fn) => {
+        onP = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await submitForm(); // v1's select rpc is HELD — no handle yet
+    await startV2Select(<ShortMaker videoId="v2" api={api} />);
+    await emitProgress(onP!, { jobId: 'sel-v2', pct: 33, message: 'v2 working' });
+    expect(bar()).toContain('33% v2 working'); // control
+
+    await act(async () => {
+      held.settle({ jobId: 'sel-v1' });
+      await Promise.resolve();
+    });
+    await drain();
+
+    // v1's handle must not hijack the relay...
+    await emitProgress(onP!, { jobId: 'sel-v1', pct: 99, message: 'v1 select running' });
+    expect(bar()).not.toContain('v1 select running');
+    expect(bar()).toContain('33% v2 working');
+    // ...and v1's job settling must not clear v2's progress.
+    await emitDone(bus, { jobId: 'sel-v1', result: { candidates: THREE } });
+    expect(bar()).toContain('33% v2 working');
+    expect(container.querySelector('.sm-candidate')).toBeNull();
+  });
+
+  it('lane: a v1 export handle resolving after v2 started never claims v2 lane', async () => {
+    let onP: ((p: JobProgress) => void) | null = null;
+    const held = deferred<unknown>();
+    const rpc = laneRpc({
+      'shortmaker.select': [{ candidates: THREE }, V2_SELECT],
+      'shortmaker.export': [held.promise],
+    });
+    const api = makeApi({
+      rpc,
+      onJobDone: jobDoneBus().onJobDone,
+      onProgress: (fn) => {
+        onP = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await selectAndApproveOne();
+    await clickExportApproved(); // v1's export rpc is HELD — no handle yet
+    await startV2Select(<ShortMaker videoId="v2" api={api} />);
+    await emitProgress(onP!, { jobId: 'sel-v2', pct: 33, message: 'v2 working' });
+    expect(bar()).toContain('33% v2 working'); // control
+
+    await act(async () => {
+      held.settle({ jobId: 'exp-1' });
+      await Promise.resolve();
+    });
+    await drain();
+
+    await emitProgress(onP!, { jobId: 'exp-1', pct: 42, message: 'v1 export running' });
+    expect(bar()).not.toContain('v1 export running');
+    expect(bar()).toContain('33% v2 working');
+  });
+
+  it('lane: neither runBatch stage claims a lane a second video owns', async () => {
+    const bus = jobDoneBus();
+    let onP: ((p: JobProgress) => void) | null = null;
+    const heldSel = deferred<unknown>();
+    const rpc = laneRpc({
+      'shortmaker.select': [heldSel.promise, V2_SELECT],
+      'shortmaker.export': [{ jobId: 'bexp-1' }],
+    });
+    const api = makeApi({
+      rpc,
+      onJobDone: bus.onJobDone,
+      onProgress: (fn) => {
+        onP = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} initialControls={{ count: 1 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await startV2Select(<ShortMaker videoId="v2" api={api} initialControls={{ count: 1 }} />);
+    await emitProgress(onP!, { jobId: 'sel-v2', pct: 33, message: 'v2 working' });
+    expect(bar()).toContain('33% v2 working'); // control
+
+    // Stage 1 — v1's batch SELECT handle arrives late.
+    await act(async () => {
+      heldSel.settle({ jobId: 'bsel-1' });
+      await Promise.resolve();
+    });
+    await drain();
+    await emitProgress(onP!, { jobId: 'bsel-1', pct: 11, message: 'v1 batch select' });
+    expect(bar()).not.toContain('v1 batch select');
+
+    // Stage 2 — nor may its EXPORT handle claim the lane.
+    await emitDone(bus, { jobId: 'bsel-1', result: { candidates: THREE } });
+    await emitProgress(onP!, { jobId: 'bexp-1', pct: 42, message: 'v1 batch export' });
+    expect(bar()).not.toContain('v1 batch export');
+
+    // And the batch settling must not clear v2's progress.
+    await emitDone(bus, { jobId: 'bexp-1', result: V1_CLIPS });
+    expect(bar()).toContain('33% v2 working');
+    expect(container.querySelector('.sm-exported')).toBeNull();
+  });
+
+  it('lane: a previous run handle cannot paint the bar in the new pre-handle window', async () => {
+    // The relay documents (ShortMaker.tsx:239-242) that BEFORE the handle is known
+    // it accepts ONLY jobId-less early progress — which holds only while the slot is
+    // empty, i.e. only because a new run clears the previous owner's handle. Both
+    // assertions below are RED without that clear: the empty-jobId event is REJECTED
+    // (the slot still holds 'exp-1') and v1's event is ACCEPTED. The accept path
+    // itself is also pinned by the pre-existing 'renders progress with an empty
+    // message when the notification omits one' test above.
+    let onP: ((p: JobProgress) => void) | null = null;
+    const heldV2 = deferred<unknown>();
+    const rpc = laneRpc({
+      'shortmaker.select': [{ candidates: THREE }, heldV2.promise],
+      'shortmaker.export': [EXPORTED_JOB],
+    });
+    const api = makeApi({
+      rpc,
+      onJobDone: jobDoneBus().onJobDone,
+      onProgress: (fn) => {
+        onP = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await selectAndApproveOne();
+    await clickExportApproved(); // v1's exp-1 handle IS registered
+    // v2 takes the lane, but its select rpc is HELD: the pre-handle window is open.
+    await startV2Select(<ShortMaker videoId="v2" api={api} />);
+
+    await emitProgress(onP!, { jobId: '', pct: 5, message: 'v2 starting' });
+    expect(bar()).toContain('5% v2 starting');
+    await emitProgress(onP!, { jobId: 'exp-1', pct: 77, message: 'v1 export running' });
+    expect(bar()).not.toContain('v1 export running');
+    expect(bar()).toContain('5% v2 starting');
+  });
+
+  it('Cancel before the deferred handle arrives resets the UI and sends no job.cancel', async () => {
+    // NOT a fail-first probe — a regression pin for the pre-handle window, which
+    // was previously hidden behind a `/* v8 ignore */` on a two-operand guard whose
+    // `!jobId` half is REACHABLE: Cancel renders on `busy` ALONE
+    // (ShortMakerControls.tsx:349), i.e. before the handle exists.
+    const held = deferred<unknown>();
+    const rpc = laneRpc({ 'shortmaker.select': [held.promise] });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await submitForm();
+    expect(cancelButton()).toBeTruthy();
+
+    await act(async () => {
+      cancelButton()!.click();
+      await Promise.resolve();
+    });
+
+    expect(callsTo(rpc, 'job.cancel')).toHaveLength(0);
+    expect(bar()).toBeNull();
+    expect(cancelButton()).toBeUndefined();
   });
 });

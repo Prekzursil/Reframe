@@ -226,6 +226,32 @@ export function ShortMaker({
   // (JobAbortedError) and the subscription/timer tear down instead of leaking.
   const abortRef = useRef<AbortController | null>(null);
 
+  // ---- LANE OWNERSHIP ------------------------------------------------------
+  // `activeJobRef`, `abortRef` and `progress` are ONE slot each, shared by all
+  // three run loops — a single visible lane. The reset effect below leaves
+  // `phase` at 'idle' after a video switch, so the user CAN start a second job
+  // while the first is still in flight (up to EXPORT_JOB_TIMEOUT_MS = 35 min),
+  // and the first job then settles into a lane the second one owns.
+  //
+  // So every lane write is scoped to its owner: `abortRef` holds exactly one
+  // controller — the current owner's — which makes `abortRef.current === ctrl`
+  // the ownership test. Without it, video 1's settle-time teardown cleared all
+  // three slots and (measured) video 2's progress bar never returned for the
+  // rest of its job, its Cancel emitted no `job.cancel` because the handle it
+  // reads had been nulled, and video 1's own in-flight events were relayed onto
+  // video 2's bar once video 1's late handle won the single slot.
+  //
+  // A non-owning `finally` may safely skip the teardown because the handle slot
+  // is re-initialised by whichever run takes the lane NEXT, and while no run owns
+  // the lane nothing can read it: both the progress relay and the Cancel button
+  // are gated on `busy`, which is false outside a run.
+  //
+  // Not closed by this (single-lane by design, disclosed rather than widened):
+  // a job for a video that is NOT on screen is invisible — its progress fails
+  // the relay filter and `busy` is false — and it cannot be cancelled from the
+  // UI, because Cancel addresses the visible lane. The work still completes
+  // sidecar-side and its files still land; only the on-screen receipt is
+  // dropped (see the guard-the-write-not-the-work note in runBatch).
   const busy = phase === 'selecting' || phase === 'exporting';
 
   // ---- progress wiring ----------------------------------------------------
@@ -556,6 +582,10 @@ export function ShortMaker({
     const clean = sanitizeControls(controls);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    // This run is the new lane owner and has no handle yet, so drop any previous
+    // owner's. The relay's documented pre-handle rule ("accept ONLY jobId-less
+    // early progress") only actually holds while this slot is null.
+    activeJobRef.current = null;
     try {
       const res = await resolvedApi.rpc<SelectResult | JobHandle>('shortmaker.select', {
         videoId,
@@ -564,7 +594,10 @@ export function ShortMaker({
       });
       let candidates = extractCandidates(res);
       if (candidates === null && isJobHandle(res)) {
-        activeJobRef.current = res.jobId;
+        // LANE OWNERSHIP (see above): a second job may have started during this
+        // rpc. Claiming the handle then would point the progress relay and Cancel
+        // at THIS job instead of the visible one.
+        if (abortRef.current === ctrl) activeJobRef.current = res.jobId;
         // Deferred job: wait for job.done if a hook exists, else the rpc already
         // resolved above with the handle — fall through with empty list. F2: the
         // wait carries a timeout + the cancel/unmount AbortSignal.
@@ -600,15 +633,28 @@ export function ShortMaker({
       setRetryAction('select');
       setPhase('idle');
     } finally {
-      activeJobRef.current = null;
-      abortRef.current = null;
-      setProgress(null);
+      // LANE OWNERSHIP (see above): only the current owner tears the lane down.
+      if (abortRef.current === ctrl) {
+        activeJobRef.current = null;
+        abortRef.current = null;
+        setProgress(null);
+      }
     }
   }, [resolvedApi, busy, controls, videoId, prompt]);
 
   // ---- review actions (all non-destructive) -------------------------------
   // P3-D: each decision doubles as an implicit taste label — fire-and-forget
   // feedback.record with the candidate AS REVIEWED (current, possibly nudged).
+  //
+  // These three send the CURRENT `videoId` prop with the CURRENT `items` entry, so
+  // unlike the export label below they are only correct while `items` belongs to
+  // the selected video. On main they were genuinely MIS-ATTRIBUTABLE: the
+  // stale-select path loaded v1's candidates into v2's review list, and clicking
+  // Approve then sent `feedback.record {videoId: 'v2'}` carrying v1's `start`
+  // (measured on main; silent post-fix). Nothing here changed — the fix is
+  // UPSTREAM, in runSelect/runBatch, which now never load another video's
+  // candidates. Do not "fix" this by freezing videoId in the closure: that would
+  // paper over a stale list instead of preventing it.
   const approve = useCallback(
     (id: string) => {
       dispatch({ type: 'approve', id });
@@ -684,6 +730,8 @@ export function ShortMaker({
     const clean = sanitizeControls(controls);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    // See runSelect: the new owner starts with no handle (LANE OWNERSHIP above).
+    activeJobRef.current = null;
     try {
       // §2 sends `candidateIds`; the sidecar resolves them against its cached
       // select result. We ALSO forward the full approved `candidates` objects
@@ -706,7 +754,9 @@ export function ShortMaker({
       );
       let clips = extractClips(res);
       if (clips === null && isJobHandle(res)) {
-        activeJobRef.current = res.jobId;
+        // LANE OWNERSHIP (see above): mirror runSelect — a handle that arrives
+        // after a second job started must not claim the visible lane.
+        if (abortRef.current === ctrl) activeJobRef.current = res.jobId;
         // F2: race the wait against a timeout (and the cancel/unmount signal) so a
         // dead sidecar surfaces a user-facing error instead of hanging the UI.
         clips = await waitForJobDone(
@@ -734,6 +784,10 @@ export function ShortMaker({
       // guard leaves the RPC order unchanged: export -> feedback.record ->
       // shorts.list.) This is the honest counterpart to the single-lane busy flag
       // that views/MakeShorts.tsx:293-297 leaves unguarded for the same reason.
+      //
+      // SCOPE: that holds for THIS label only, because its arguments are frozen.
+      // It is NOT a claim that feedback.record was never mis-attributed — the
+      // review-action labels (see the note at `approve` above) were, on main.
       for (const c of approvedCandidates(items)) {
         recordFeedback(resolvedApi, videoId, c, 'exported');
       }
@@ -757,9 +811,12 @@ export function ShortMaker({
       setRetryAction('export');
       setPhase('reviewing');
     } finally {
-      activeJobRef.current = null;
-      abortRef.current = null;
-      setProgress(null);
+      // LANE OWNERSHIP (see above): only the current owner tears the lane down.
+      if (abortRef.current === ctrl) {
+        activeJobRef.current = null;
+        abortRef.current = null;
+        setProgress(null);
+      }
     }
   }, [resolvedApi, busy, items, videoId, controls, audioTrackId, output, reloadVideoShorts]);
 
@@ -783,6 +840,8 @@ export function ShortMaker({
     setProgress({ jobId: '', pct: 0, message: `Finding the top ${clean.count} clips…` });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    // See runSelect: the new owner starts with no handle (LANE OWNERSHIP above).
+    activeJobRef.current = null;
     try {
       const selRes = await resolvedApi.rpc<SelectResult | JobHandle>('shortmaker.select', {
         videoId,
@@ -790,11 +849,16 @@ export function ShortMaker({
         controls: clean,
       });
       // F2: select also carries a timeout + the cancel/unmount AbortSignal.
+      // LANE OWNERSHIP (see above): `resolveJobResult` records the deferred handle
+      // on the ref it is handed, and does so SYNCHRONOUSLY (no await precedes the
+      // write), so choosing the ref here is equivalent to gating that write. A
+      // non-owner gets a throwaway sink: its job is real and still awaited, it
+      // just must not claim the visible lane's progress/cancel handle.
       const found = await resolveJobResult(
         resolvedApi,
         selRes,
         extractCandidates,
-        activeJobRef,
+        abortRef.current === ctrl ? activeJobRef : { current: null },
         EXPORT_JOB_TIMEOUT_MS,
         ctrl.signal,
       );
@@ -840,7 +904,11 @@ export function ShortMaker({
         resolvedApi,
         expRes,
         extractClips,
-        activeJobRef,
+        // Same lane-ownership choice as the select stage above — and this is the
+        // one the videoId guard made newly reachable: with `setPhase('exporting')`
+        // now skipped for a non-owner, video 2 is idle and startable, so video 1's
+        // export handle can arrive while video 2 owns the lane.
+        abortRef.current === ctrl ? activeJobRef : { current: null },
         EXPORT_JOB_TIMEOUT_MS,
         ctrl.signal,
       );
@@ -863,14 +931,23 @@ export function ShortMaker({
       setRetryAction('batch');
       setPhase('reviewing');
     } finally {
-      activeJobRef.current = null;
-      abortRef.current = null;
-      setProgress(null);
+      // LANE OWNERSHIP (see above): only the current owner tears the lane down.
+      if (abortRef.current === ctrl) {
+        activeJobRef.current = null;
+        abortRef.current = null;
+        setProgress(null);
+      }
     }
   }, [resolvedApi, busy, videoId, prompt, controls, audioTrackId, output, reloadVideoShorts]);
 
   // F2: abort any in-flight job.done wait (cancel/unmount) so the wait rejects
   // with JobAbortedError and its subscription/timer tear down instead of leaking.
+  // It releases the CONTROLLER only: after a cancel the aborted run's `finally` is
+  // no longer the owner and skips the teardown, so the handle slot stays set until
+  // the next run takes the lane and re-initialises it. Nulling it here as well was
+  // tried and REMOVED — no test could distinguish it (the mutation survived),
+  // because the handle is unreadable while `phase` is idle: the relay renders only
+  // when `busy`, and Cancel renders only when `busy`.
   const tearDownWait = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -886,9 +963,16 @@ export function ShortMaker({
     tearDownWait();
     setPhase('idle');
     setProgress(null);
-    // The Cancel button renders only while busy with an active job; defensive guard.
+    // Cancel renders on `busy` ALONE (ShortMakerControls.tsx:349), NOT on "busy
+    // with a known handle" — so this half is a REAL path, not a defensive one: a
+    // cancel in the pre-handle window (the rpc that returns the handle is still in
+    // flight) has nothing to cancel server-side, and resetting the UI is the whole
+    // job. It used to share a `v8 ignore` with the guard below, which hid a
+    // reachable branch behind an unreachable one; it is covered by its own test now.
+    if (!jobId) return;
+    // resolvedApi is always present (prop or window.api); defensive guard.
     /* v8 ignore next */
-    if (!resolvedApi || !jobId) return;
+    if (!resolvedApi) return;
     try {
       await resolvedApi.rpc('job.cancel', { jobId });
     } catch (e) {
