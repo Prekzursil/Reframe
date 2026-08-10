@@ -60,6 +60,8 @@ import LipSync, {
   LIPSYNC_FACE_BOX_MARKER,
   LIPSYNC_NO_IN_APP_SETTER,
   LIPSYNC_DISABLED_REASON,
+  LIPSYNC_OBSERVED_REFUSAL_PREFIX,
+  LIPSYNC_UNWIRED_NOTICE,
 } from './LipSync';
 import type { AudioTrack } from './Dub';
 import type { DoneEvent, MediaStudioApi, ProgressEvent } from './_api';
@@ -830,5 +832,212 @@ describe('<LipSync />', () => {
     });
     await flush();
     expect(startButton().disabled).toBe(true);
+  });
+
+  // ─── the CONSENT-CARRYOVER door: the VIDEO changes under a ticked box ──────
+  // `consentAttested` was cleared only after a success (`LipSync.tsx:522`) —
+  // nothing was keyed to `videoId`. `Dub.tsx:529` renders `<LipSync
+  // videoId={videoId} …>` UNKEYED and `Dub` itself is mounted unkeyed
+  // (`Workspace.tsx:398-399`), all the way up an unkeyed App -> Edit -> Workspace
+  // chain, so a video swapped IN PLACE (`App.tsx:332-353`'s `[]`-deps
+  // launch-restore, which calls `setEditVideo` after two RPC awaits) kept the tick.
+  // The tick's own sentence is "I am the person ON SCREEN…", and the person on
+  // screen is exactly what a videoId change replaces.
+  //
+  // The sharpest form is tested below: the audio-track list is passed UNCHANGED
+  // across the swap, so the existing stale-track effect (`LipSync.tsx:424-426`)
+  // cannot mask the leak — only a videoId-keyed reset can close it.
+
+  /**
+   * Re-render IN PLACE with a new videoId. `quality` is the DETECTOR CONTROL in
+   * every test below: it is deliberately not reset, so a value back at the
+   * 'quality' default would mean this remounted and the consent assertions were
+   * measuring a fresh mount rather than a prop swap.
+   */
+  async function swapVideo(
+    api: MediaStudioApi,
+    videoId: string,
+    tracks: AudioTrack[] = [ORIGINAL, DUB_CLONE],
+  ): Promise<void> {
+    await act(async () => {
+      root.render(<LipSync videoId={videoId} audioTracks={tracks} api={api} />);
+    });
+    await flush();
+  }
+
+  const consentBox = (): HTMLInputElement =>
+    container.querySelector('[data-input="lipsync-consent"]') as HTMLInputElement;
+  const trackPicker = (): HTMLSelectElement =>
+    container.querySelector('[data-picker="lipsync-track"]') as HTMLSelectElement;
+  const qualityPicker = (): HTMLSelectElement =>
+    container.querySelector('[data-picker="lipsync-quality"]') as HTMLSelectElement;
+
+  it('the WIRE carries no attestation for a video the tick was never read against', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillReady();
+    pick('[data-picker="lipsync-quality"]', 'fast');
+    expect(startButton().disabled).toBe(false);
+
+    await swapVideo(fake.api, 'videoB');
+
+    expect(qualityPicker().value).toBe('fast'); // detector control: in-place swap
+    await clickStart();
+    expect(fake.calls.filter((c) => c.method === 'tts.lipsync.start').map((c) => c.params)).toEqual(
+      [],
+    );
+  });
+
+  it('CLEARS the consent tick AND the picked dub track when the VIDEO changes', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillReady();
+    pick('[data-picker="lipsync-quality"]', 'fast');
+    await swapVideo(fake.api, 'videoB');
+
+    expect(qualityPicker().value).toBe('fast'); // control
+    expect(consentBox().checked).toBe(false);
+    // The track id goes too: a dub belongs to the video it was made from, so
+    // sending video A's audioTrackId with video B's videoId is never right.
+    expect(trackPicker().value).toBe('');
+    expect(startButton().disabled).toBe(true);
+  });
+
+  it('a fresh tick after a video change attests the NEW video, and the wire says so', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillReady();
+    await swapVideo(fake.api, 'videoB');
+    fillReady();
+    await clickStart();
+    expect(fake.calls.find((c) => c.method === 'tts.lipsync.start')?.params).toEqual({
+      videoId: 'videoB',
+      audioTrackId: DUB_CLONE.id,
+      engine: DEFAULT_LIPSYNC_ENGINE,
+      quality: DEFAULT_LIPSYNC_QUALITY,
+      likenessConsentAttested: true,
+    });
+  });
+
+  it('drops the previous video relip result and failure banner when the video changes', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillReady();
+    await act(async () => {
+      startButton().click();
+    });
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-l', result: { path: '/out/lipsync/videoA.mp4', engine: 'x' } });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[data-section="lipsync-result"]')).not.toBeNull(); // control
+    await swapVideo(fake.api, 'videoB');
+    expect(container.querySelector('[data-section="lipsync-result"]')).toBeNull();
+
+    // …and the same for an error banner, which would otherwise blame video B for
+    // video A's failure.
+    fillReady();
+    await swapVideo(fake.api, 'videoC');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('keeps the OBSERVED face-box refusal across a video change — it is a BUILD fact, not a video one', async () => {
+    // The over-reset control, and the reason this reset is not a blanket one:
+    // `require_face_boxes` refuses because `composition.py` passes no probe, which
+    // no video change can fix. Clearing it here would re-offer a guaranteed-failing
+    // click on every video switch.
+    const fake = makeFakeApi({ startError: new Error(`${LIPSYNC_FACE_BOX_MARKER}: inject one`) });
+    await mount(fake.api);
+    fillReady();
+    await clickStart();
+    expect(container.querySelector('[data-section="face-box-refused"]')).not.toBeNull();
+    await swapVideo(fake.api, 'videoB');
+    expect(container.querySelector('[data-section="face-box-refused"]')).not.toBeNull();
+    expect(startButton().disabled).toBe(true);
+  });
+
+  // ─── in-flight variant of the same defect (precedent: origin/main 4408e033) ──
+  it('drops a late job.done from the PREVIOUS video instead of showing it under the new one', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillReady();
+    await act(async () => {
+      startButton().click();
+    });
+    await swapVideo(fake.api, 'videoB');
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-l', result: { path: '/out/lipsync/videoA.mp4', engine: 'x' } });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[data-section="lipsync-result"]')).toBeNull();
+    expect(container.querySelector('.progress')).toBeNull(); // the lane is freed
+  });
+
+  it('drops a late FAILURE from the previous video, but still records a face-box refusal', async () => {
+    // Two claims in one, because they are the SAME catch block and the asymmetry is
+    // the point: the error banner is per-video (dropped), the face-box verdict is
+    // per-BUILD (kept). No-switch control arms for both: 'surfaces the job-time
+    // face-box refusal LOUDLY as an alert' and 'a DIFFERENT failure leaves the
+    // control usable' above.
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillReady();
+    await act(async () => {
+      startButton().click();
+    });
+    await swapVideo(fake.api, 'videoB');
+    await act(async () => {
+      fake.fireDone({
+        jobId: 'job-l',
+        result: {
+          error: { message: `${LIPSYNC_FACE_BOX_MARKER}: inject one`, type: 'LipSyncError' },
+        },
+      });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('[data-section="face-box-refused"]')).not.toBeNull();
+  });
+
+  // ─── "disabled for the session" was an OVERCLAIM — measured, not reasoned ───
+  // `faceBoxRefusal` is component state and `Workspace.tsx:479-488` swaps the panel
+  // type inside ONE <Suspense>, so leaving the Dub tab unmounts this section. This
+  // test EXECUTES that consequence rather than asserting React semantics from
+  // memory: after a remount the refusal is gone and the guaranteed-failing click is
+  // on offer again. The copy is narrowed to match, and pinned below.
+  it('a REMOUNT re-offers the click, so the refusal is panel-scoped and the copy must not say "session"', async () => {
+    const fake = makeFakeApi({ startError: new Error(`${LIPSYNC_FACE_BOX_MARKER}: inject one`) });
+    await mount(fake.api);
+    fillReady();
+    await clickStart();
+    expect(startButton().disabled).toBe(true);
+
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await mount(fake.api);
+    fillReady();
+    expect(container.querySelector('[data-section="face-box-refused"]')).toBeNull();
+    expect(startButton().disabled).toBe(false);
+  });
+
+  it('scopes the disabling copy to this panel, not to the whole session', async () => {
+    for (const copy of [LIPSYNC_UNWIRED_NOTICE, LIPSYNC_OBSERVED_REFUSAL_PREFIX]) {
+      expect(copy).toMatch(/reopen|re-open/i);
+      expect(copy.toLowerCase()).not.toContain('for the session');
+    }
+  });
+
+  it('the consent hint names every trigger that really clears the tick, and the retry carve-out', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    const hint = container.querySelector('.dub-consent-hint')?.textContent ?? '';
+    expect(hint).toMatch(/finished run/i); // cleared on success
+    expect(hint).toMatch(/different video/i); // cleared on a videoId change
+    expect(hint).toMatch(/failed run/i); // …and deliberately NOT on failure
   });
 });

@@ -512,6 +512,217 @@ describe('<Gaze />', () => {
     expect(runButton().disabled).toBe(false);
   });
 
+  // ─── the THIRD carryover door: the VIDEO changes under a ticked box ────────
+  // A fresh skeptic found this AFTER the rename fix above and its three refuters
+  // all missed it: nothing was keyed to `videoId`, so re-rendering this panel in
+  // place with a new video kept `attested` AND `subject`. Measured on the wire
+  // before the fix: `{"videoId":"videoB","likenessSubject":"Ana","strength":0.7,
+  // "likenessAttested":true}` — a tick taken against video A authorising face
+  // alteration of video B, which `likeness.py:156-157` then stamps into the job
+  // audit trail via `gaze.py:668-672` as if the operator had given it.
+  //
+  // The swap is REACHABLE, not a thought experiment: nothing on the App -> Edit ->
+  // Workspace -> Gaze chain is keyed (`App.tsx:481-482`, `Edit.tsx:155-156`,
+  // `Workspace.tsx:388-393`), and `App.tsx:332-353`'s launch-restore effect has
+  // `[]` deps, no route guard, and calls `setEditVideo(match)` + `setRoute` after
+  // two RPC awaits — so a video opened and ticked before those resolve is swapped
+  // IN PLACE. `origin/main`'s `4408e033` is a merged fix for this exact structural
+  // pattern in an unkeyed sibling panel, so the repo already treats it as live.
+
+  /**
+   * Re-render IN PLACE with a new videoId — the SAME component type at the SAME
+   * position, so React updates it rather than remounting. Every test below then
+   * asserts `strength` as its DETECTOR CONTROL: strength is deliberately NOT
+   * reset, so a value back at the 0.70 default would mean the panel remounted and
+   * the consent assertions were measuring a fresh mount instead of a prop swap.
+   */
+  async function swapVideo(api: MediaStudioApi, videoId: string): Promise<void> {
+    await act(async () => {
+      root.render(<Gaze videoId={videoId} api={api} />);
+    });
+    await flush();
+  }
+
+  const subjectInput = (): HTMLInputElement =>
+    container.querySelector('[data-input="likeness-subject"]') as HTMLInputElement;
+
+  // THE WIRE ASSERTION FIRST — it is the falsifiable one, and asserting on the
+  // recorded params (not `some(...)`) makes the pre-fix failure print the leaked
+  // payload verbatim instead of a bare `true !== false`.
+  it('the WIRE carries no attestation for a video the tick was never read against', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillAttested('Ana');
+    pick('[data-input="strength"]', '0.4');
+    expect(runButton().disabled).toBe(false);
+
+    await swapVideo(fake.api, 'videoB');
+
+    // DETECTOR CONTROL: this was an in-place prop swap, not a remount.
+    expect(container.querySelector('.gaze-strength-value')?.textContent).toBe('0.40');
+    // No request can be dispatched at all, so none can carry `likenessAttested`
+    // for a video whose face the sentence was never read against.
+    await clickRun();
+    expect(fake.calls.filter((c) => c.method === 'gaze.run').map((c) => c.params)).toEqual([]);
+  });
+
+  it('CLEARS the tick AND the subject label when the VIDEO changes under them', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillAttested('Ana');
+    pick('[data-input="strength"]', '0.4');
+    await swapVideo(fake.api, 'videoB');
+
+    expect(container.querySelector('.gaze-strength-value')?.textContent).toBe('0.40'); // control
+    // The label goes too: a new video is a new person question, and a prefilled
+    // 'Ana' under a new face invites the wrong answer to it.
+    expect(attestBox().checked).toBe(false);
+    expect(subjectInput().value).toBe('');
+    expect(runButton().disabled).toBe(true);
+  });
+
+  it('a fresh tick after a video change attests the NEW video, and the wire says so', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillAttested('Ana');
+    await swapVideo(fake.api, 'videoB');
+    fillAttested('Bogdan');
+    await clickRun();
+    expect(fake.calls.find((c) => c.method === 'gaze.run')?.params).toEqual({
+      videoId: 'videoB',
+      likenessSubject: 'Bogdan',
+      likenessAttested: true,
+      strength: DEFAULT_GAZE_STRENGTH,
+    });
+  });
+
+  it('drops the finished result AND its likeness audit trail when the video changes', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillAttested('Ana');
+    await act(async () => {
+      runButton().click();
+    });
+    await act(async () => {
+      fake.fireDone({
+        jobId: 'job-g',
+        result: { path: '/out/gaze/videoA.mp4', strength: 0.7, report: REPORT, likeness: AUDIT },
+      });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[data-section="audit"]')).not.toBeNull(); // control
+    await swapVideo(fake.api, 'videoB');
+    // Video A's "Authorised by: Marius (self)" must not stand under video B: the
+    // audit block is a consent RECORD, and showing it here is a false attribution.
+    expect(container.querySelector('[data-section="result"]')).toBeNull();
+    expect(container.querySelector('[data-section="audit"]')).toBeNull();
+  });
+
+  it('drops the previous video failure banner when the video changes', async () => {
+    const fake = makeFakeApi({ runError: new Error('ffmpeg exploded') });
+    await mount(fake.api);
+    fillAttested('Ana');
+    await clickRun();
+    expect(container.querySelector('[role="alert"]')).not.toBeNull(); // control
+    await swapVideo(fake.api, 'videoB');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  // The over-reset control. `gaze.probe` takes NO videoId — the yunet asset is
+  // installed or not, per machine — so a video change must neither re-probe nor
+  // re-disable the control. Without this, "reset on videoId" could quietly become
+  // "reset everything", and the panel would flicker back to unavailable.
+  it('does NOT re-probe or re-disable availability on a video change', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await swapVideo(fake.api, 'videoB');
+    expect(fake.calls.filter((c) => c.method === 'gaze.probe')).toHaveLength(1);
+    expect(container.querySelector('[data-section="unavailable"]')).toBeNull();
+    fillAttested('Bogdan');
+    expect(runButton().disabled).toBe(false);
+  });
+
+  // ─── the SAME defect through the in-flight door ────────────────────────────
+  // The reset effect runs on the switch; a job that was ALREADY in flight settles
+  // AFTER it, so without an ownership guard the old video's write lands anyway —
+  // the exact hole `4408e033` describes for the sibling panel. Scoped honestly:
+  // the request itself carried A's videoId and a valid attestation for A, so this
+  // is a false ATTRIBUTION of A's consent record onto B's panel, not a forged
+  // consent on the wire.
+  it('drops a late job.done from the PREVIOUS video instead of stamping its audit under the new one', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillAttested('Ana');
+    await act(async () => {
+      runButton().click();
+    });
+    await swapVideo(fake.api, 'videoB');
+    await act(async () => {
+      fake.fireDone({
+        jobId: 'job-g',
+        result: { path: '/out/gaze/videoA.mp4', strength: 0.7, report: REPORT, likeness: AUDIT },
+      });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[data-section="result"]')).toBeNull();
+    expect(container.querySelector('[data-section="audit"]')).toBeNull();
+    // The lane is still freed, so the new video is not left permanently busy.
+    expect(container.querySelector('.progress')).toBeNull();
+  });
+
+  it('surfaces a job.done ERROR payload as an alert (the no-switch control arm)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillAttested('Ana');
+    await act(async () => {
+      runButton().click();
+    });
+    await act(async () => {
+      fake.fireDone({
+        jobId: 'job-g',
+        result: { error: { message: 'gaze backend died', type: 'GazeError' } },
+      });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('gaze backend died');
+  });
+
+  it('drops a late FAILURE from the previous video instead of blaming the new one', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillAttested('Ana');
+    await act(async () => {
+      runButton().click();
+    });
+    await swapVideo(fake.api, 'videoB');
+    await act(async () => {
+      fake.fireDone({
+        jobId: 'job-g',
+        result: { error: { message: 'gaze backend died', type: 'GazeError' } },
+      });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  // The copy the user reads BEFORE ticking is the strongest claim this panel
+  // makes, so it is pinned to what the code actually guarantees — including the
+  // deliberate carve-out (a FAILED run keeps the tick) that the previous absolute
+  // wording hid. Each clause here has a behavioural test above or beside it.
+  it('the consent hint names every trigger that really clears the tick, and the retry carve-out', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    const hint = container.querySelector('.gaze-consent-hint')?.textContent ?? '';
+    expect(hint).toMatch(/finished run/i); // cleared on success
+    expect(hint).toMatch(/name above/i); // cleared on rename
+    expect(hint).toMatch(/different video/i); // cleared on a videoId change
+    expect(hint).toMatch(/failed run/i); // …and NOT cleared on failure
+  });
+
   it('cancels the in-flight job via job.cancel', async () => {
     const fake = makeFakeApi();
     await mount(fake.api);

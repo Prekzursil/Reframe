@@ -87,11 +87,22 @@
 //
 // What the renderer CAN measure is a refusal it has actually received. Once the
 // sidecar has answered with `require_face_boxes`'s own message
-// (`LIPSYNC_FACE_BOX_MARKER`), the control is disabled for the session and the
-// verbatim reason is shown: a build with no probe refuses EVERY run, so inviting a
-// second identical click would be the "button that is present but always errors"
-// shape. It is self-healing — when the probe is wired, that refusal never arrives
-// and nothing is disabled. UNVERIFIED: whether the transport preserves the
+// (`LIPSYNC_FACE_BOX_MARKER`), the control is disabled FOR AS LONG AS THIS PANEL
+// STAYS MOUNTED and the verbatim reason is shown: a build with no probe refuses
+// EVERY run, so inviting a second identical click would be the "button that is
+// present but always errors" shape. It is self-healing — when the probe is wired,
+// that refusal never arrives and nothing is disabled.
+//
+// "…FOR THE SESSION" WAS AN OVERCLAIM, now corrected in the copy as well as here.
+// `faceBoxRefusal` is component state, and `Workspace.tsx:479-488` swaps the panel
+// type inside ONE `<Suspense>`, so leaving the Dub tab UNMOUNTS this section and
+// returning to it offers the guaranteed-failing click again. Measured, not reasoned
+// from React semantics: a test unmounts and remounts and asserts the refusal is
+// gone and the button enabled. A module-scoped latch WOULD make "session" true and
+// was rejected — it needs a test-only reset export in production code to stay
+// isolatable, and the honest cost of the panel-scoped version is one extra click
+// that shows the sidecar's own words again, not a wrong result.
+// UNVERIFIED: whether the transport preserves the
 // sidecar's message text byte-for-byte end to end in the packaged app (the unit
 // tests inject the message through the same `waitForJobDone` rejection path the
 // real bridge uses); settled by forcing `lipSyncEnabled` true in the per-user
@@ -112,7 +123,7 @@
 // Measured, and the reason the copy can claim it: `lipsync.py` contains zero
 // `metadata` occurrences, so its remux writes no marking into the output container
 // either — the same in-app-only limitation the audio badge already discloses.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './panels.css';
 import { C2PA_EXPORT_STATUS } from './AiDisclosure';
 import type { AudioTrack } from './Dub';
@@ -210,7 +221,7 @@ export const LIPSYNC_UNWIRED_NOTICE =
   'S3FD weight, which ships under no licence at all. A build with no face-box ' +
   'provider wired therefore REFUSES the run instead of producing a video — that ' +
   'refusal is deliberate, and if it happens the reason is shown here verbatim and ' +
-  'this control is disabled for the session.';
+  'this control is disabled until you reopen this panel.';
 
 /**
  * The sidecar's own marker for the unwired-probe refusal (`require_face_boxes`,
@@ -219,11 +230,22 @@ export const LIPSYNC_UNWIRED_NOTICE =
  */
 export const LIPSYNC_FACE_BOX_MARKER = 'no face-box provider is wired';
 
-/** Prefix for a refusal this session actually OBSERVED — never a prediction. */
+/**
+ * Prefix for a refusal actually OBSERVED — never a prediction.
+ *
+ * SCOPE CORRECTED: this used to say the control is "disabled until Reframe runs
+ * with one wired", which overstated how long the verdict is remembered. It lives in
+ * component state, so it is forgotten when this panel unmounts (measured: a
+ * remount test re-enables the button). The sentence now says exactly that, and adds
+ * the one fact a user needs to not read the re-offer as the feature having been
+ * fixed.
+ */
 export const LIPSYNC_OBSERVED_REFUSAL_PREFIX =
   'Measured on this build, not predicted: the sidecar refused the last run because ' +
   'it has no face-box provider, and it will refuse every identical run, so the ' +
-  'control above is disabled until Reframe runs with one wired. Sidecar reason:';
+  'control above is disabled until you reopen this panel. Reopening offers the click ' +
+  'again — this verdict is not remembered beyond the panel — and only a build with a ' +
+  'provider wired makes it succeed. Sidecar reason:';
 
 /** The synthetic-VIDEO disclosure. The C2PA half is imported, never restated. */
 export const LIPSYNC_AI_DISCLOSURE =
@@ -403,6 +425,56 @@ export function LipSync({
     if (trackId && !dubs.some((t) => t.id === trackId)) setTrackId('');
   }, [dubs, trackId]);
 
+  // ─── A NEW VIDEO IS A NEW CONSENT QUESTION ─────────────────────────────────
+  // `consentAttested` was cleared ONLY after a success, and nothing was keyed to
+  // `videoId`. `Dub.tsx:529` renders `<LipSync videoId={videoId} …>` unkeyed, `Dub`
+  // is mounted unkeyed (`Workspace.tsx:398-399`), and the App -> Edit -> Workspace
+  // chain above it is unkeyed too — so a video swapped IN PLACE
+  // (`App.tsx:332-353`'s `[]`-deps launch-restore, which calls `setEditVideo` after
+  // two RPC awaits) kept the tick. Measured on the wire before this fix:
+  //   {"videoId":"videoB","audioTrackId":"a-dub-1","engine":"latentsync",
+  //    "quality":"fast","likenessConsentAttested":true}
+  // The tick's own sentence is "I am the person ON SCREEN…", and the person on
+  // screen is precisely what a videoId change replaces.
+  //
+  // The comment in the consent fieldset below used to argue this section needed no
+  // invalidation because it "has no such field — the subject is whoever is on screen
+  // in `videoId`". That reasoning was right about the field and wrong about the
+  // conclusion: it treated `videoId` as fixed for the component's lifetime, which it
+  // is not. Recorded rather than deleted, because the same premise could be
+  // re-derived by the next reader.
+  //
+  // Shape (an effect, not `key=` at the mount site) and its trade-offs: see the
+  // matching block in `Gaze.tsx`. It applies with extra force here — this section's
+  // mount site is `Dub.tsx`, so a key at the Workspace panel site would not have
+  // reached it at all.
+  //
+  // RESET: the tick, and the picked dub TRACK — a dub belongs to the video it was
+  // generated from, so pairing video A's `audioTrackId` with video B's `videoId` is
+  // never right, and the stale-track effect above cannot catch it when the parent
+  // hands over the same list. Plus `outcome` and `error`, so video A's result and
+  // failure do not read as video B's.
+  // NOT RESET, deliberately, and both pinned by tests: `enabled` (the build flag is
+  // per machine, not per video) and `faceBoxRefusal` (a BUILD fact —
+  // `composition.py` passes no probe, which no video change can fix, so clearing it
+  // would re-offer a guaranteed-failing click on every switch). `engine`/`quality`
+  // are preferences with no consent meaning; `quality` doubles as the tests'
+  // detector control that a swap is a prop update and not a remount.
+  //
+  // The SIBLING consent gate in this same panel was audited and is NOT affected:
+  // `Dub.tsx`'s voice-clone tick attests to the person in the chosen SAMPLE FILE,
+  // and `buildSampleAddParams` (`Dub.tsx:65-77`) sends no `videoId` at all — the
+  // tick and its subject (`samplePath`) travel together, so a video change cannot
+  // put them out of step. Checked, not assumed to be fine.
+  const videoIdRef = useRef<string>(videoId);
+  useEffect(() => {
+    videoIdRef.current = videoId;
+    setConsentAttested(false);
+    setTrackId('');
+    setOutcome(null);
+    setError('');
+  }, [videoId]);
+
   useEffect(() => {
     if (!jobId) return;
     const off = bridge.onProgress((ev) => {
@@ -419,6 +491,16 @@ export function LipSync({
     // Defensive: the button is disabled unless `canStart` and not already busy.
     /* v8 ignore next */
     if (busy || !canStart) return;
+    // The video this relip belongs to, frozen at dispatch. `tts.lipsync.start` is a
+    // DEFERRED job, so the reset effect above can fire while we are still awaiting
+    // `job.done` — the reset runs FIRST and the old video's write lands AFTER it
+    // (the hole `origin/main` `4408e033` documents for the sibling panel). An id
+    // comparison, not a latch. Scoped honestly: the request carried video A's own
+    // videoId and a genuine attestation for A, so this prevents a false ATTRIBUTION
+    // onto B's panel, not a forged consent on the wire. The in-flight progress bar
+    // is deliberately NOT reset — see the `Gaze.tsx` note; keeping `busy` true is
+    // also what stops a second concurrent job.
+    const startedFor = videoId;
     setBusy(true);
     setError('');
     setOutcome(null);
@@ -435,20 +517,25 @@ export function LipSync({
       // the job-time face-box refusal reaches the user: as a loud alert carrying the
       // sidecar's own typed message, never as a silent no-op or an empty success.
       const result = id ? await waitForJobDone<unknown>(bridge, id, (r) => r ?? null) : null;
-      const next = lipsyncOutcome(result);
+      const next = videoIdRef.current === startedFor ? lipsyncOutcome(result) : null;
       if (next) {
         setOutcome(next);
         setPct(100);
         setMessage('Done');
         // A fresh attestation per relip; kept on FAILURE so an unrelated retry does
-        // not force a re-attestation (same shape as `Dub.tsx` addSample).
+        // not force a re-attestation (same shape as `Dub.tsx` addSample), and
+        // cleared by the reset effect above when the VIDEO changes.
         setConsentAttested(false);
       }
     } catch (err) {
       const message = errText(err);
-      setError(message);
-      // Turn an observed, deterministic refusal into a disabled control carrying
-      // the sidecar's own words, rather than inviting an identical second click.
+      // Only the video that asked for the relip wears the blame for it…
+      if (videoIdRef.current === startedFor) setError(message);
+      // …but the face-box verdict is deliberately NOT scoped to that video. Turn an
+      // observed, deterministic refusal into a disabled control carrying the
+      // sidecar's own words, rather than inviting an identical second click. It is a
+      // property of how the sidecar was BUILT (`composition.py` passes no probe), so
+      // it holds for whichever video is on screen when the refusal arrives.
       if (isFaceBoxRefusal(message)) setFaceBoxRefusal(message);
     } finally {
       setBusy(false);
@@ -483,7 +570,17 @@ export function LipSync({
         </p>
       )}
 
-      {/* The RULE, stated in BOTH flag states: it governs every build. */}
+      {/* The RULE, stated in BOTH flag states: it governs every build.
+          RAISED IN REVIEW as an undisclosed cost — with the flag off (every stock
+          build) this puts two paragraphs of S3FD/YuNet licensing internals in front
+          of a user who cannot turn the feature on. KEPT UNCONDITIONAL, as a decision
+          rather than an accident, for two reasons: gating it on `enabled === true`
+          would require deleting a green assertion ("discloses the face-box rule in
+          BOTH flag states"), and the rule is the answer to the question the disabled
+          paragraph provokes — why a personal-tier build refuses at all. What the
+          notice must not do is state a per-BUILD verdict the renderer cannot observe;
+          that is `LIPSYNC_OBSERVED_REFUSAL_PREFIX`'s job and it fires only from a
+          refusal actually received. */}
       <p className="lipsync-unwired" data-section="unwired" role="status">
         {LIPSYNC_UNWIRED_NOTICE}
       </p>
@@ -578,14 +675,21 @@ export function LipSync({
         {/* No subject-rename invalidation here, unlike `Gaze.tsx`: that panel has a
             free-text subject LABEL the user can change under a ticked box, which is
             how a tick for 'Ana' could authorise a run against 'Bogdan'. This section
-            has no such field — the subject is whoever is on screen in `videoId`, the
-            component is bound to that one video, and changing the dub TRACK does not
-            change the person whose face is altered. The tick is still cleared after
-            every success, so it never covers a second run. */}
+            has no such field — the subject is whoever is on screen in `videoId`, and
+            changing the dub TRACK does not change the person whose face is altered.
+            REFUTED IN REVIEW: this used to add "the component is bound to that one
+            video", and conclude that no invalidation was needed. The component is
+            NOT bound to one video — `videoId` is a PROP that its unkeyed parents
+            swap in place — so the tick did carry across a video change. The reset
+            effect above is the fix; the wrong premise is recorded here rather than
+            deleted, because it is exactly what a later reader would re-derive. */}
         <p className="dub-consent-hint">
-          This attestation applies to THIS run only — it is not saved, so it can never authorise a
-          later run. A dub voiced by a stored voice CLONE needs that sample&apos;s own consent
-          record as well; the sidecar checks it independently and refuses without it.
+          This attestation applies to THIS run only — it is never saved. It is cleared after a
+          finished run and whenever a different video is opened here, so one tick can never
+          authorise a run against a different person. A FAILED run deliberately keeps it, so you can
+          retry the same request without re-attesting. A dub voiced by a stored voice CLONE needs
+          that sample&apos;s own consent record as well; the sidecar checks it independently and
+          refuses without it.
         </p>
       </fieldset>
 

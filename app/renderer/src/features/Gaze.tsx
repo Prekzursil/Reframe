@@ -37,6 +37,10 @@
 //     would collide with that lane.
 //   * Per-job is the stronger consent shape: there is no durable grant that can
 //     silently authorise a LATER run, or a run against a DIFFERENT subject.
+//     Being per-job is NOT self-enforcing, though: the tick still has to be
+//     invalidated whenever the question changes. Three paths do that — a finished
+//     run, a subject RENAME, and a VIDEO change (the reset effect below); each was
+//     missing at some point in this file's history and each is separately tested.
 //   * The attestation is never minted by this UI. `buildGazeParams` OMITS
 //     `likenessAttested` unless the user actually ticked the box, and the Run
 //     button stays disabled until both the box and a non-blank subject exist. A
@@ -71,7 +75,7 @@
 // synthetic-VIDEO disclosure lives in the panel that produces the video, and the one
 // fact that IS shared — no C2PA provenance manifest on export — is IMPORTED from
 // `C2PA_EXPORT_STATUS` rather than restated, so both panels have one source.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './panels.css';
 import { C2PA_EXPORT_STATUS } from './AiDisclosure';
 import { extractJobId, getApi, pickField, waitForJobDone, type MediaStudioApi } from './_api';
@@ -262,6 +266,56 @@ export function Gaze({ videoId, api, c2pa = C2PA_EXPORT_STATUS }: GazeProps): Re
     })();
   }, [bridge]);
 
+  // ─── A NEW VIDEO IS A NEW CONSENT QUESTION ─────────────────────────────────
+  // Nothing in this panel was keyed to `videoId`, and it is mounted UNKEYED the
+  // whole way up (`Workspace.tsx:393` <- `Edit.tsx:155-156` <- `App.tsx:481-482`),
+  // so re-rendering it with a different video kept BOTH `attested` and `subject`.
+  // Measured on the wire before this fix, from the panel's own test double:
+  //   {"videoId":"videoB","likenessSubject":"Ana","strength":0.4,"likenessAttested":true}
+  // — a tick taken against video A authorising face alteration of video B. That is
+  // worse than an unauthorised run: `likeness.py:156-157` stamps whichever subject
+  // arrives into `Attestation(subject=…)` and `gaze.py:668-672` writes it into the
+  // job audit trail, so the false consent would be RECORDED as operator-given.
+  //
+  // REACHABLE, not hypothetical: `App.tsx:332-353`'s launch-restore effect has `[]`
+  // deps and no route guard, and calls `setEditVideo(match)` + `setRoute({name:
+  // 'edit'})` after two RPC awaits — so a video opened and ticked before those
+  // resolve is swapped IN PLACE, without an unmount.
+  //
+  // WHY AN EFFECT AND NOT `key={video.id}` AT THE MOUNT SITE — both close it:
+  //   * this is the repo's own merged shape for exactly this class. `origin/main`
+  //     `4408e033` fixes an unkeyed mid-flight videoId switch in `ShortMaker.tsx`
+  //     with a reset effect (`:248-264`) plus a `videoIdRef` write-guard, not a key;
+  //   * the guarantee travels with the COMPONENT. The consent hint below promises
+  //     the tick can never authorise a different person; a promise enforced by a
+  //     distant parent is one parent edit — or one new mount site — away from being
+  //     false, and no test in this file could see it go. The sibling proves the
+  //     point: `LipSync` is mounted by `Dub.tsx:529`, NOT by the Workspace, so a key
+  //     at the Workspace site would not have covered it at all;
+  //   * a key REMOUNTS, discarding the in-flight job lane and unrelated preferences
+  //     as collateral. The price of the surgical option is this enumeration.
+  //
+  // RESET (per-video, consent-adjacent): the tick; the SUBJECT LABEL, because a
+  // prefilled 'Ana' under a new face invites the wrong answer to a new question;
+  // `outcome`, whose audit block is a consent RECORD that must not stand against a
+  // video it was not given for; and `error`, so video A's refusal is not read as
+  // video B's. Each reset is idempotent against the initial state, so the mount
+  // pass is a no-op.
+  // NOT RESET, deliberately: `available` / `unavailableReason` — `gaze.probe` takes
+  // no videoId, the yunet asset is per MACHINE, and re-disabling on a video change
+  // would be a lie (pinned by a test) — and `strength`, a correction parameter with
+  // no consent meaning (it doubles as the detector control proving the tests
+  // measure a prop swap, not a remount). The in-flight job lane
+  // (`running`/`jobId`/`pct`/`message`) is left alone on purpose: see `run` below.
+  const videoIdRef = useRef<string>(videoId);
+  useEffect(() => {
+    videoIdRef.current = videoId;
+    setAttested(false);
+    setSubject('');
+    setOutcome(null);
+    setError('');
+  }, [videoId]);
+
   useEffect(() => {
     if (!jobId) return;
     const off = bridge.onProgress((ev) => {
@@ -302,6 +356,22 @@ export function Gaze({ videoId, api, c2pa = C2PA_EXPORT_STATUS }: GazeProps): Re
     // Defensive: the button is disabled unless `canRun` and not already running.
     /* v8 ignore next */
     if (running || !canRun) return;
+    // The video this run belongs to, frozen at dispatch. `gaze.run` is a DEFERRED
+    // job, so the reset effect above can fire while we are still awaiting
+    // `job.done`: the reset runs FIRST and the old video's write lands AFTER it,
+    // the exact hole `4408e033` documents. An id COMPARISON, not a latch — switch
+    // away and back and the write is re-admitted, because by then it describes the
+    // video on screen again.
+    //
+    // SCOPED HONESTLY: the request itself already carried video A's `videoId` and a
+    // genuine attestation for A, so this guard prevents a false ATTRIBUTION of A's
+    // consent record onto B's panel — it is not stopping a forged consent on the
+    // wire. What it deliberately does NOT close: the progress bar of a run started
+    // for the previous video stays visible after a switch (the run really is in
+    // flight, and it also keeps the button disabled, which is what prevents a second
+    // concurrent job — resetting `running` here would open the very concurrency hole
+    // `4408e033`'s second commit had to close in `ShortMaker.tsx`).
+    const startedFor = videoId;
     setRunning(true);
     setError('');
     setOutcome(null);
@@ -322,22 +392,25 @@ export function Gaze({ videoId, api, c2pa = C2PA_EXPORT_STATUS }: GazeProps): Re
       // waitForJobDone REJECTS on an {error} job.done payload (caught below), so a
       // refused or failed run is never laundered into a silent success.
       const result = id ? await waitForJobDone<unknown>(bridge, id, (r) => r ?? null) : null;
-      const next = gazeOutcome(result);
+      const next = videoIdRef.current === startedFor ? gazeOutcome(result) : null;
       if (next) {
         setOutcome(next);
         setPct(100);
         setMessage('Done');
-        // A fresh attestation per run. This is the RUN half of "one tick, one
-        // subject"; the SUBJECT half is `changeSubject` above (a rename clears the
-        // tick), and it was missing in the first draft — an adversarial probe
-        // showed a tick made for 'Ana' still authorising a run against 'Bogdan'.
-        // Mirrors the proven WU-A2 behaviour in `Dub.tsx` (`addSample`), including
-        // keeping the tick on FAILURE so a retry for the SAME person after an
-        // unrelated error does not force a re-attestation.
+        // A fresh attestation per run. This is the RUN third of "one tick, one
+        // subject, one video": the SUBJECT third is `changeSubject` above (a rename
+        // clears the tick) and the VIDEO third is the reset effect. Each of the
+        // three was absent at some point — the first draft had only this one, an
+        // adversarial probe showed a tick for 'Ana' authorising a run against
+        // 'Bogdan', and a later skeptic showed a tick for video A authorising
+        // video B. Mirrors the proven WU-A2 behaviour in `Dub.tsx` (`addSample`),
+        // including keeping the tick on FAILURE so a retry for the SAME person on
+        // the SAME video after an unrelated error does not force a re-attestation.
         setAttested(false);
       }
     } catch (err) {
-      setError(errText(err));
+      // Only the video that asked for the run wears the blame for it.
+      if (videoIdRef.current === startedFor) setError(errText(err));
     } finally {
       setRunning(false);
       setJobId(null);
@@ -399,11 +472,20 @@ export function Gaze({ videoId, api, c2pa = C2PA_EXPORT_STATUS }: GazeProps): Re
           />{' '}
           {LIKENESS_ATTESTATION_TEXT}
         </label>
+        {/* NARROWED, and the narrowing is the point. This used to promise the tick
+            "can never authorise a later run OR A DIFFERENT PERSON" — an absolute
+            that the code did not earn twice over: a VIDEO change kept the tick
+            (fixed above), and a FAILED run deliberately keeps it, so the same tick
+            does authorise the retry. It now names exactly the three triggers that
+            clear it and discloses the retry carve-out the absolute wording hid.
+            Every clause here has a behavioural test. */}
         <p className="gaze-consent-hint">
-          This attestation applies to THIS run only — it is not saved, and it is cleared both after
-          a finished run and whenever you change the name above, so it can never authorise a later
-          run or a different person. It is recorded in the finished job&apos;s audit trail (shown
-          below); nothing about the edit is written into the output file itself.
+          This attestation applies to THIS run only — it is never saved. It is cleared after a
+          finished run, whenever you change the name above, and whenever a different video is opened
+          here, so one tick can never authorise a run for a different person or a different video. A
+          FAILED run deliberately keeps it, so you can retry the same request without re-attesting.
+          It is recorded in the finished job&apos;s audit trail (shown below); nothing about the
+          edit is written into the output file itself.
         </p>
       </fieldset>
 
