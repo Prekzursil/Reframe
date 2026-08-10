@@ -123,7 +123,7 @@
 // Measured, and the reason the copy can claim it: `lipsync.py` contains zero
 // `metadata` occurrences, so its remux writes no marking into the output container
 // either — the same in-app-only limitation the audio badge already discloses.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import './panels.css';
 import { C2PA_EXPORT_STATUS } from './AiDisclosure';
 import type { AudioTrack } from './Dub';
@@ -466,8 +466,14 @@ export function LipSync({
   // and `buildSampleAddParams` (`Dub.tsx:65-77`) sends no `videoId` at all — the
   // tick and its subject (`samplePath`) travel together, so a video change cannot
   // put them out of step. Checked, not assumed to be fine.
+  // useLAYOUTEffect for the same reason as the Gaze reset (see the note there): a passive
+  // effect lets React paint the new videoId with the consent box still ticked, leaving a
+  // one-frame window in which a click sends `likenessConsentAttested: true` under the NEW
+  // video. Remote, but this is a face-alteration consent gate and the fix is one word.
+  // UNVERIFIED inline: indistinguishable under jsdom + `act()`, which flushes passive effects
+  // synchronously; settling experiment is in the Gaze note.
   const videoIdRef = useRef<string>(videoId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     videoIdRef.current = videoId;
     setConsentAttested(false);
     setTrackId('');

@@ -75,7 +75,7 @@
 // synthetic-VIDEO disclosure lives in the panel that produces the video, and the one
 // fact that IS shared — no C2PA provenance manifest on export — is IMPORTED from
 // `C2PA_EXPORT_STATUS` rather than restated, so both panels have one source.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import './panels.css';
 import { C2PA_EXPORT_STATUS } from './AiDisclosure';
 import { extractJobId, getApi, pickField, waitForJobDone, type MediaStudioApi } from './_api';
@@ -307,8 +307,21 @@ export function Gaze({ videoId, api, c2pa = C2PA_EXPORT_STATUS }: GazeProps): Re
   // no consent meaning (it doubles as the detector control proving the tests
   // measure a prop swap, not a remount). The in-flight job lane
   // (`running`/`jobId`/`pct`/`message`) is left alone on purpose: see `run` below.
+  // useLAYOUTEffect, not useEffect, and the distinction is load-bearing for a CONSENT gate.
+  // A passive effect runs AFTER the browser can paint, so React would commit (and could show)
+  // the new videoId with the box still ticked and Run still enabled. A click landing in that
+  // window would put `likenessAttested: true` on the wire under the NEW video — the same defect
+  // this reset exists to close, shrunk from indefinite to one frame rather than removed.
+  // Reachability was assessed as remote (1-20%): the passive flush is scheduled during the
+  // commit and is therefore queued ahead of any later click task. But "probably unreachable" is
+  // not a property to rest a face-alteration consent gate on when the fix is one word, so the
+  // reset is moved before paint and the question is closed outright.
+  // UNVERIFIED, inline and deliberately: no test here can distinguish the two, because
+  // jsdom + `act()` flushes passive effects synchronously. Settling experiment: drive the
+  // packaged app through App.tsx's launch-restore with the box ticked and click Run in the
+  // same frame, or delay passive effects via the scheduler in a jsdom probe.
   const videoIdRef = useRef<string>(videoId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     videoIdRef.current = videoId;
     setAttested(false);
     setSubject('');
