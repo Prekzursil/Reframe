@@ -2,8 +2,8 @@
 
 > **Status:** ACTIVE
 
-Status: **MERGED** (#282, `68036fdc`) — proof-of-concept scope (5 methods), not yet
-load-bearing for dispatch. It *is* load-bearing for the coverage gate:
+Status: **MERGED** (#282, `68036fdc`) — proof-of-concept scope (§5's representative
+slice, not the whole surface), not yet load-bearing for dispatch. It *is* load-bearing for the coverage gate:
 `app/vitest.config.ts` excludes `renderer/src/lib/rpc/generated/**`.
 Migration plan: [`rpc-contract-v2-migration.md`](./rpc-contract-v2-migration.md).
 
@@ -16,11 +16,11 @@ them in sync:
 
 | # | Surface (file) | What it hand-maintains | Failure mode when it drifts |
 |---|---|---|---|
-| 1 | `app/renderer/src/lib/rpc/client.ts` | 134 hand-written `rpc()` call sites | a renamed/retyped method compiles but calls a dead wire name |
+| 1 | `app/renderer/src/lib/rpc/client.ts` | 141 hand-written `rpc()` wire names — inline string literals, plus the dispatches routed through its `BROLL_METHODS` `as const` map | a renamed/retyped method compiles but calls a dead wire name |
 | 2 | `sidecar/media_studio/handlers/composition.py` | 82 direct `reg("name", handler)` registrations, plus each feature module's own `register()` — no one file lists the whole surface | a method exists on one side only; no cross-check |
-| 3 | `CONTRACTS.md` | 45 methods, marked "FROZEN" | **already stale** — describes 45 of 169; §0 even says "no keystore / no consent" while both now exist |
-| 4 | `app/renderer/src/lib/rpc/schemas.ts` | 1235 hand-maintained lines of TS types | a field renamed on the Python side silently diverges from TS |
-| 5 | `app/main/keyBridge.ts:61-88` | the `needsKeyInjection` allowlist (4 prefixes + 10 exact names) | **silent key omission** — a new provider-calling method not added here gets no key → cloud silently degrades to local |
+| 3 | `CONTRACTS.md` | 45 methods, marked "FROZEN" | **already stale** — describes 45 of them; §0 even says "no keystore / no consent" while both now exist |
+| 4 | `app/renderer/src/lib/rpc/schemas.ts` | 1521 hand-maintained lines of TS types | a field renamed on the Python side silently diverges from TS |
+| 5 | `app/main/keyBridge.ts` — `INJECT_PREFIXES` + `INJECT_METHODS`, read by `needsKeyInjection` | the key-injection allowlist (4 prefixes + 10 exact names) | **silent key omission** — a new provider-calling method not added here gets no key → cloud silently degrades to local |
 | 6 | `sidecar/media_studio/settings_store.py` | `DEFAULT_SETTINGS: dict[str, Any]` + every `settings.get("k")` read | untyped: a wrong key returns `None` with zero signal |
 | 7 | `sidecar/media_studio/features/shortmaker.py` | `settings: dict[str, Any]`, e.g. `settings.get("silenceTrimm")` | a typo returns `None` → the feature silently no-ops |
 
@@ -28,22 +28,56 @@ The through-line: **the contract is data, but it is expressed as hand-copied cod
 in six languages/locations.** Every one of the seven is a place a human must
 remember to edit in lock-step. That is the definition of drift-prone.
 
-> **Every count above is measured, not remembered — and now pinned by a test.**
-> `169` is `len(register_all(…) | protocol.METHODS)` (the live registry, the same
-> seam the parity suite's `_live_methods` uses); `134` is the anchored
-> `rpc('<name>'` call-site set in `client.ts`; `82` counts only the `reg("…")`
-> calls that live in `composition.py` itself; `45` is the live-method set
-> `CONTRACTS.md` actually names, computed by **set membership against the live
-> registry** rather than by a name-shaped regex — a backticked-token regex first
-> reported `12` here by matching `boundary.py` and `re.escape`, a reading that
-> contradicted the doc it was measuring and so was a detector failure, not a
-> finding. This paragraph replaces a hand-copied `~123` that had decayed to **73%
-> of the real surface** while every doc, and the eng-day estimate sized from it,
-> kept repeating it. `sidecar/tests/test_contract_parity.py::test_docs_state_the_measured_surface_size`
-> recomputes `169` and `134` on every `gate:3` run and fails if this doc drifts
-> from them, so the numbers cannot rot again; a sibling detector-control test
-> proves both probes find known-present methods, so two matching zeros cannot pass
-> for agreement. Re-measure before editing either number.
+> **Every count above was re-measured for this revision. TWO of the six are also
+> recomputed by a test; four are not — and that difference is not a footnote, it is
+> the finding: the rows no test could see are exactly the rows that had rotted.**
+>
+> - **Pinned (recomputed on every `gate:3` run).** The lead figure is
+>   `len(register_all(…) ∪ protocol.METHODS)` — the live registry, the same seam the
+>   parity suite's `_live_methods` uses. Row 1 is the anchored `rpc('<name>'` set in
+>   `client.ts` **plus** every `rpc(MAP.key)` resolved through its `as const` map.
+>   `sidecar/tests/test_contract_parity.py::test_docs_state_the_measured_surface_size`
+>   fails if either drifts, and its sibling
+>   `::test_docs_carry_exactly_one_literal_per_quantity` additionally asserts each
+>   number appears **exactly once** here and once in the migration plan — so a partial
+>   update cannot go green while a stale duplicate survives elsewhere in the file.
+>   A detector-control test proves both probes find known-present methods, including
+>   one that is only reachable through the constant map, so two matching zeros cannot
+>   pass for agreement.
+> - **Measured today but NOT pinned — UNVERIFIED against any future edit.** Row 2
+>   counts only the `reg("…")` calls that live in `composition.py` itself; row 3 is the
+>   live-method set `CONTRACTS.md` actually names, computed by **set membership against
+>   the live registry** rather than by a name-shaped regex; row 4 is a line count of the
+>   stored blob; row 5 counts the `INJECT_PREFIXES` / `INJECT_METHODS` entries. Nothing
+>   recomputes those four, so each can rot exactly the way row 4 did. Settling
+>   experiment: extend the pin to them, or re-run the probes named here.
+> - **Row 3's probe has now failed twice, in opposite directions, which is why the
+>   method is spelled out.** A backticked-token regex first reported `12` by matching
+>   `boundary.py` and `re.escape` — a reading that contradicted the doc it was
+>   measuring, so a detector failure rather than a finding. During *this* revision a
+>   bare-`` `token` ``-only variant reported `6`, because `CONTRACTS.md` writes its
+>   methods as `library.add({path})` and the params defeat a closing-backtick anchor.
+>   Set membership against the live registry, with `library.add` as a known-present
+>   control, is the reading that survives both.
+> - **Two numbers in the table above were REFUTED by this re-measurement, and the
+>   wording that vouched for them was wrong rather than merely stale.** Row 4 read
+>   `1235 hand-maintained lines`; `schemas.ts` is `1521` lines, and the file is
+>   byte-identical to `origin/main`, so that literal was already stale when the
+>   previous revision of this paragraph asserted "every count above is measured".
+>   Row 1 read `134`: the probe behind it saw only inline string literals and was blind
+>   to every dispatch routed through `BROLL_METHODS`, so it under-counted the surface
+>   **and** silently exempted those names from the parity suite's "no dead wire name"
+>   check. The probe now resolves such maps. Row 5's `keyBridge.ts` anchor was a line
+>   range that no longer covered the allowlist; it is a symbol citation now, because a
+>   line number in prose rots on the next edit above it and nothing checks it.
+> - The lead figure replaces a hand-copied `~123` that had decayed to **73% of the
+>   real surface** while every doc, and the eng-day estimate sized from it, kept
+>   repeating it. Re-measure before editing either pinned number.
+> - **The pin's cost, disclosed because it lands on other branches:** registering one
+>   new method changes the live count, so any branch that adds a `reg(...)` / `@method`
+>   must also update ONE line here and one in the migration plan, or its own `gate:3`
+>   goes red with a message pointing at these docs. That trade is deliberate — a red
+>   gate beats silent decay — but it is a coupling this doc imposes, not a free win.
 
 ## 2. The decision — a stdlib-typed Python contract module, JSON Schema as interchange
 
@@ -126,15 +160,18 @@ becomes impossible rather than merely discouraged.
 |---|---|---|
 | 1 | `client.ts` hand call sites (§1 count) | generated `client.generated.ts` wrappers — wire shape is emitted, not typed by hand. **Proven at parity** with the current `client.ts` (see §5). |
 | 2 | `composition.py` `reg()` + the per-feature `register()`s (§1 count) | `registry.method_names()` is the authority; the parity test asserts every declared method is actually registered, and (in migration) registration is driven from the contract. |
-| 3 | `CONTRACTS.md` stale (§1: 45 of 169) | the machine `contract.schema.json` replaces prose as the source of truth; docs are generated/derived, never the authority. |
-| 4 | `schemas.ts` 1235 hand lines | generated `schemas.generated.ts` — interfaces emitted from the same dataclasses that drive Python. |
+| 3 | `CONTRACTS.md` stale (§1 row 3: 45 of the live surface) | the machine `contract.schema.json` replaces prose as the source of truth; docs are generated/derived, never the authority. |
+| 4 | `schemas.ts` hand-maintained interface lines (§1 row 4) | generated `schemas.generated.ts` — interfaces emitted from the same dataclasses that drive Python. |
 | 5 | `keyBridge.ts` allowlist → silent key omission | `needsKeyInjection` is **generated** from each method's declared `needs_key`. A key-consuming method can't be forgotten: it declares its own flag, and a parity test (in migration) enforces "handler touches keys ⟺ `needs_key=True`". The POC proves the generated set equals the current keyBridge verdict. |
 | 6 | untyped `DEFAULT_SETTINGS` / `settings.get("k")` | the typed `Settings` model + `validate_settings`; both sides assert it. The parity test validates a real `settings.get()` payload against the generated schema. |
 | 7 | `shortmaker.py` `settings.get("silenceTrimm")` typo | the same typed `Settings` — it **declares** `silenceTrim`/`removeFillers`/`hookTitle`/`stabilize`/`captionSpeakerLabels` (previously only stringly-accessed), so a typo is a compile/type error, not a silent `None`. |
 
 ## 5. The POC — what it proves, and the evidence
 
-Five representative methods span every drift surface:
+The POC slice spans every drift surface (five rows below; `settings.get`/`settings.set`
+share one, so the slice is the six methods `contract/spec.py` declares — the parity
+suite's `POC_METHODS` is the authority, and "5 methods" elsewhere in the corpus counts
+rows rather than methods):
 
 | Method | Why it's in the slice |
 |---|---|
@@ -154,7 +191,9 @@ Five representative methods span every drift surface:
   imports the **real** `keyBridge.needsKeyInjection` and the generated set and
   asserts they agree for the slice, and that every generated key-method is
   key-needing per keyBridge.
-- **Python parity** (`sidecar/tests/test_contract_parity.py`, pytest, 29 assertions):
+- **Python parity** (`sidecar/tests/test_contract_parity.py`, pytest — the assertion
+  count that used to be quoted here was itself a hand-copied literal, so it is stated
+  qualitatively; the file is the authority):
   every declared method is really registered (`register_all` live registry); the
   generated validators accept valid params and reject invalid ones exactly like the
   hand-written `_require_str`/`_require_number` (incl. `bool`-is-not-`int`); the

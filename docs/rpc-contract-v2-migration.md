@@ -8,11 +8,18 @@ generated", with the 100%-coverage gate green at **every** commit.
 
 > **The surface size is measured, not remembered.** This plan previously said `123`
 > throughout — a literal typed once and never re-measured, so it decayed to **73% of
-> the real surface** while Wave 1's estimate below was *sized from it*. `169` is
-> `len(register_all(…) | protocol.METHODS)`, recomputed against this doc on every
-> `gate:3` run by
-> `sidecar/tests/test_contract_parity.py::test_docs_state_the_measured_surface_size`.
-> Re-measure before editing it; the test will reject a guess.
+> the real surface** while Wave 1's estimate below was *sized from it*. The count in
+> the line above is `len(register_all(…) ∪ protocol.METHODS)`; it is the ONLY place
+> this document states it, and `docs/rpc-contract-v2.md` §1 is where the number and
+> its probe are decided. Both facts are enforced on every `gate:3` run by
+> `sidecar/tests/test_contract_parity.py::test_docs_state_the_measured_surface_size`
+> (the count is current) and `::test_docs_carry_exactly_one_literal_per_quantity`
+> (it appears exactly once here). Re-measure before editing it; the test will reject
+> a guess — and it will also reject a second copy, which is how the previous
+> revision of this note could have gone green while three stale copies of the count
+> survived in this very file. (Writing that sentence with the digits in it tripped
+> the new assertion on the first run, which is the cheapest possible demonstration
+> that the guard is live.)
 
 ## Guiding invariants
 
@@ -118,7 +125,7 @@ contract package's suite, where it belongs) — never lower a threshold.
 | Wave | Work | Estimate |
 |---|---|---|
 | 0 | POC (this PR) | done |
-| 1 | Transcribe the 169 live-registered methods + ~50 data models; extend `schema.py` (enums/unions/intersections) + the wrapper override hatch; parameterize the parity suites; **reconcile every real drift the suites surface** | **~4-7 eng-days** (the long pole; mostly mechanical transcription, but the drift reconciliation carries the real, valuable surprises) |
+| 1 | Transcribe the whole live-registered surface (sized once in the header note above) + ~50 data models; extend `schema.py` (enums/unions/intersections) + the wrapper override hatch; parameterize the parity suites; **reconcile every real drift the suites surface** | **~4-7 eng-days** (the long pole; mostly mechanical transcription, but the drift reconciliation carries the real, valuable surprises) |
 | 2 | Flip keyBridge (~½d), client.ts (~1-2d), schemas.ts (~½d), Python dispatch validation + remove `_require_*` (~1-2d), Settings model (~1-2d) | **~1 eng-week** |
 | 3 | Docs/authority retire | **~½ eng-day** |
 | — | **Total** | **~2-3 focused engineer-weeks** |
