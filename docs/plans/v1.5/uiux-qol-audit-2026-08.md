@@ -11,6 +11,18 @@ corroboration. **All 8 rail destinations and all 8 Settings sub-tabs were ACTUAT
 **Honesty contract:** UNVERIFIED sits inline next to the claim it qualifies, naming the settling
 experiment. A control never actuated is `NOT-CHECKED`, never "works".
 
+> **READ THIS BEFORE ACTING ON ANY FINDING — reconciled 2026-08-10 against the tree at `db61ea6e`.**
+> This is an audit of the build as it stood on **2026-08-08**, and part of it has been fixed since. The
+> observations are preserved rather than rewritten (an audit that edits its own history stops being
+> evidence); each superseded one now carries a dated `SUPERSEDED`/`FIXED`/`Correction` note *inline*.
+> What changed: **C2, H1 and M7 are FIXED**; **H2 keeps its conclusion but lost its grounding** — §4.1's
+> "no `Menu`" is now false, and `app/main/appMenu.ts:4` cites this very section as the reason it was
+> written; **M3's** four-treatment count survives with its taxonomy now spelled out, because the prose
+> disagreed with §1's own table; **M6 was four surfaces, measured six**; and **every `file:line` in
+> §4.5 had drifted** (`views/Shorts.tsx:147` and `features/useShortsGallery.ts:99` are no longer confirm
+> sites at all). Cite the SYMBOL, not the line — three of the four anchors in that cluster rotted within
+> two days, which is the durable lesson here.
+
 ## COVERAGE
 
 | Section | Status |
@@ -49,7 +61,7 @@ reader who trusts my first pass would be misled.
 | "Make Shorts renders the Library panel" (a routing bug) | UIA tree read 1400 ms after the click — Chromium updates the a11y tree asynchronously | the screenshot moments later showed Make Shorts correct. Rewrote the dumper to block until the expected `tabpanel-*` is live (settle 319–856 ms). **No routing bug exists.** |
 | "Jobs / Capabilities have no actuation pattern" | my click script only tried Invoke/SelectionItem/Toggle | both are `ExpandCollapse`. Added it; both actuate fine |
 | "DONE jobs render white, not green" | eyeballing a compressed PNG; then a pixel sampler that returned an identical surface colour for visually different regions — a self-contradicting output, so a broken instrument | `jobqueue.css:214-216` — `.jobqueue__status--done { color: var(--status-success) }`. **The CSS is correct; I withdraw this finding** |
-| "the app has no destructive-action confirmations" | grepped `window.confirm` | the code uses `globalThis.confirm` (`Library.tsx:480`). **Confirmations do exist**; see §4.5 |
+| "the app has no destructive-action confirmations" | grepped `window.confirm` | the code used `globalThis.confirm` (`Library.tsx:480`) *as audited* — W04 has since replaced it with the themed gate, see the §4.5 correction. **Confirmations do exist**; see §4.5 |
 
 One further transient: a whole script run returned `matches=0` for every control including a known-present
 one, from a valid window handle — the renderer a11y tree had dropped. All affected steps were re-run after
@@ -69,8 +81,19 @@ visible. No finding below rests on that run.
 | Director | ghost-poster in a card | **Choose a video** + `What is Director?` | title in the editorial serif (§3.1) |
 | Settings | n/a | n/a | 8 sub-tabs, all actuated |
 
-**Four different CTA treatments for the same "you need media" state** (amber button / combo / nothing /
-`← Library`). Edit offering *nothing* is the worst case.
+**Four different CTA treatments for the same "you need media" state**, taxonomy stated so the count is
+checkable against the table above rather than taken on trust: a **primary button** (Library's amber
+*Add videos*, Director's *Choose a video*), a **combo** (Make Shorts), a **`← Library` back-link**
+(Caption, Export, Deliver), and **nothing at all** (Edit). Edit offering *nothing* is the worst case.
+
+> **Correction 2026-08-10.** The parenthetical here used to read "(amber button / combo / nothing /
+> `← Library`)", which omitted Director even though the row above gives Director its own CTA — so the
+> doc's prose and its own table disagreed on how the four were reached, and a reader recounting from
+> the table got five. The count of four survives; only the enumeration was incomplete. Grouping
+> Director's *Choose a video* with Library's amber button is a taxonomy CHOICE, now written down
+> instead of left implicit. **UNVERIFIED that eight live destinations still present exactly these four
+> treatments** — that was measured by actuation on 2026-08-08 and nothing re-drives the app on commit.
+> Settling experiment: re-run the §0 UIA walk over all 8 rail destinations and re-derive the table.
 
 ## 2. Settings sub-sections — all 8 actuated
 
@@ -161,7 +184,23 @@ caption-style presets with visual `Aa` previews.
 
 ## 4. QOL sweep
 
-### 4.1 The app ships Electron's stock menu — no application-level shortcuts
+### 4.1 The app shipped Electron's stock menu — no application-level shortcuts
+
+> **SUPERSEDED 2026-08-10 — signal (a) is now FALSE; this section describes the pre-fix build.**
+> A real application menu has since landed, and it cites *this section* as its reason
+> (`app/main/appMenu.ts:4` — "docs/plans/v1.5/uiux-qol-audit-2026-08.md §4.1, §5"). Re-measured:
+> `app/main/main.ts:13` now imports `Menu`, `:14` imports `buildAppMenuTemplate`, `:1562` calls
+> `Menu.setApplicationMenu(Menu.buildFromTemplate(buildAppMenuTemplate({ isDev })))`, and
+> `app/main/appMenu.ts:62` builds the template (File · Text · View · Window · Help). So
+> `setApplicationMenu`/`buildFromTemplate` DO now exist under `app/`. Detector control for that
+> re-measure: the same sweep finds the known-present `BrowserWindow` 25× and returns 11 hits for
+> `setApplicationMenu|buildFromTemplate|accelerator`, so the non-empty reading is not a matcher
+> artefact. Consequences below: **C2 and H1 are fixed** (no `Edit` menu at all — the items are
+> `Text ▸ Undo typing`/`Redo typing`, and the dev View items are gated on `isDev = !app.isPackaged`);
+> **H2's conclusion narrowly survives** — a menu exists, but `appMenu.ts:25-34` deliberately sets NO
+> `accelerator` on any item (an explicit one overrides the role's per-platform default), so the app
+> still adds no `Ctrl+O`/`Ctrl+,`/`Ctrl+E` of its own. The observation is preserved rather than
+> rewritten: this is an audit of a dated build, and the finding is what triggered the fix.
 
 Two independent signals: (a) `app/main/main.ts:13` imports `app, BrowserWindow, ipcMain, net,
 safeStorage, session, shell` — **no `Menu`**, and no `setApplicationMenu`/`buildFromTemplate`/`accelerator`
@@ -224,7 +263,32 @@ actionable, and its Download button sits at the far right edge where the Jobs sl
 `Lineage view`, `PRO HANDOFF`, `DIARIZATION BACKEND`, `Instant numeric`, `Video-LLM re-rank` and
 `dover-mobile-quality` carry no tooltip. `What is Director?` is the only explicit help affordance I found.
 
-### 4.5 Destructive actions: guarded, but by an unstyled native dialog
+### 4.5 Destructive actions: guarded, but (as audited) by an unstyled native dialog
+
+> **SUPERSEDED 2026-08-10 for the FIRST residual; the second still stands. Every `file:line` in this
+> section had also drifted.** Re-measured:
+>
+> * **The native dialog is gone (W04).** `globalThis.confirm`/`window.confirm` appear **zero** times in
+>   non-test renderer source; the destructive gate is now the themed `useConfirm` hook
+>   (`components/ConfirmDialog.tsx`, 17 import sites). Detector control: that same sweep finds
+>   `useConfirm` 17× and the component file on disk, so the zero is a real absence, not a broken
+>   matcher. **M7 is therefore FIXED**, and the "≈95% confidence" native-styling claim is moot.
+> * **The line numbers below are stale — cite the SYMBOL, not the line.** Measured today, the confirm
+>   sites are `Library.deleteShort` (`views/Library.tsx:474`, `confirm(` at `:488`),
+>   `Shorts.handleDelete` (`views/Shorts.tsx:156`, `confirm(` at `:161`) and
+>   `useShortsGallery.deleteShort` (`features/useShortsGallery.ts:106`, `confirm(` at `:111`). The cited
+>   `views/Shorts.tsx:147` is now `client.package.export(...)` and `useShortsGallery.ts:99` is a `catch`
+>   in the *re-export* handler — neither is a confirm site, so following either anchor lands a reader on
+>   unrelated code. `KeepCopyControl.tsx:21` is still exact (and the file is at
+>   `app/renderer/src/features/`, not `components/` — my first probe looked in the wrong directory and
+>   briefly read as "the file is deleted"; the `git ls-files` cross-check corrected it, which is why the
+>   full path is spelled out here).
+> * **The second residual is real and its anchor moved by one:** the *"the adapter owns any confirm"*
+>   contract comment is at `Library.tsx:54` (on `remove`), not `:53` (now `openFolder`).
+>
+> The three stale line numbers are a *class*, not three typos: a line number in prose rots on the next
+> edit above it, and nothing checks it. The same four confirm-site comments in the source carry the same
+> stale anchors — see the residual list in this unit's report; they are outside this lane's file scope.
 
 Confirmations exist. `app/renderer/src/views/Library.tsx:470-483` calls `globalThis.confirm(...)` before
 `shorts.delete`, and its comment records that this surface was *the* unguarded one because "four separate
@@ -244,8 +308,20 @@ managed copy) confirm. I could not reach them without media/keys.
 ### 4.6 Drag-and-drop is Library-only
 
 Implemented at `Library.tsx:309,321,510,512` via `webUtils.getPathForFile` (`preload.ts:340`), with real
-tests for edge cases. No other surface accepts a drop — including Edit / Caption / Export / Director,
-whose empty states all say "Pick a video from the Library". A user dragging a file onto Edit gets nothing.
+tests for edge cases. No other surface accepts a drop, and **six** of the other seven rail destinations
+gate on having media: Make Shorts, Edit, Caption, Export, Deliver and Director (Settings is the only
+one that does not). A user dragging a file onto Edit gets nothing.
+
+> **Correction 2026-08-10 — the count and the quote were both wrong.** This paragraph named only four
+> surfaces (Edit / Caption / Export / Director) and asserted their empty states "all say *Pick a video
+> from the Library*". Measured against the §1 table above and against source: the media-gated set is
+> **six**, not four — Make Shorts and Deliver were omitted while appearing in the very table this
+> section builds on. And that quoted string is exact for only **two** of them: `views/Caption.tsx:100`
+> and `views/Export.tsx:277` say "Pick a video from the Library to …"; the others say something else
+> entirely (`views/Edit.tsx:181` "No video open", `views/MakeShorts.tsx:433` "No video selected",
+> `panels/DirectorPanel.tsx:561` "No video open"). Attributing one uniform sentence to four surfaces
+> made the finding sound tidier than the evidence, and would have sent a fixer grepping for a string
+> that four of them never render. **M6 is restated to six below.**
 
 ### 4.7 Aggregate health verdicts contradict their own detail
 
@@ -272,12 +348,19 @@ offset. Settling experiment: `Ctrl+Shift+I`, log `scrollTop` on the panel's scro
 **C2. `Edit ▸ Undo (Ctrl+Z)` promises an undo the app does not have.** Stock Electron text-field role in an
 app with a dedicated Edit destination. Fix: `app/main/main.ts` — install a real `setApplicationMenu` and
 either wire Undo to a genuine edit-history stack or remove the item.
+**FIXED 2026-08-10** — `app/main/appMenu.ts` ships no `Edit` menu at all; the working text roles moved to
+a `Text` menu labelled `Undo typing` / `Redo typing`, installed at `main.ts:1562`. (§4.1 correction.)
 
 ### HIGH
 
 **H1. DevTools + Force Reload shipped to end users** (§4.1). Gate the dev items behind `!app.isPackaged`.
+**FIXED 2026-08-10** — `appMenu.ts:47,91` puts Reload / Force Reload / DevTools behind
+`isDev = !app.isPackaged`; Zoom and full screen stay in both builds.
 **H2. No application-level keyboard shortcuts** (§4.1) — add `Ctrl+O`, `Ctrl+,`, `Ctrl+E`, and renderer
 `Space` / `I` / `O`.
+**STILL OPEN 2026-08-10, but re-grounded** — an application menu now exists, so the original grounding
+("no `Menu`", "no `setApplicationMenu`") is false; the *conclusion* survives because `appMenu.ts:25-34`
+deliberately sets no `accelerator` on any item, so the app still contributes no shortcut of its own.
 **H3. Two identical `Analyze my system` buttons on one panel.** `ModelsSystemPanel.tsx:799-804` (toolbar,
 label cycles `Analyzing…`/`Re-analyze`) and `:842-847` (`empty-state__cta`), both calling the same
 `analyze()`; measured live at `552,161` **and** `576,326`. C1 currently hides the first, so **the two
@@ -293,11 +376,17 @@ conformance suite that already guards the accent.
 
 **M1.** Primary actions below the fold with no sticky footer — CAPTION DEFAULTS' `Save defaults` (§2).
 **M2.** `Edit`'s empty state offers no action at all — the only one of 8 with no way forward.
-**M3.** Four different CTA treatments for the same "you need media" state (§1).
+**M3.** Four different CTA treatments for the same "you need media" state — primary button (Library,
+Director) / combo (Make Shorts) / `← Library` back-link (Caption, Export, Deliver) / nothing (Edit). The
+taxonomy is spelled out because the bare number disagreed with §1's own table (§1).
 **M4.** Accent rationing exceeded on every screen (§3.2).
 **M5.** Two label voices, sometimes on one screen (§3.3).
-**M6.** Drag-and-drop works only on Library, while four other surfaces tell you to go get a video (§4.6).
+**M6.** Drag-and-drop works only on Library, while **six** other rail destinations gate on having media —
+Make Shorts, Edit, Caption, Export, Deliver, Director (§4.6). Was written as "four": Make Shorts and
+Deliver were omitted despite appearing in §1's table.
 **M7.** Destructive confirmation uses an unthemeable native `confirm()` dialog (§4.5).
+**FIXED 2026-08-10** — W04 replaced it with the themed `useConfirm` gate; `globalThis.confirm` /
+`window.confirm` now appear zero times in non-test renderer source (§4.5 correction).
 **M8.** Search + Sort live on an empty Library; three stacked blocked-state messages on Deliver (§4.3).
 **M9.** `AI MODEL` vs `WHERE JOBS RUN` remain near-identical twins — same Local/Cloud vocabulary, same
 visual treatment, adjacent. `docs/design-system.md:78-81` records this as already "disambiguated (v1.4)"
@@ -314,8 +403,9 @@ form, not only by label.
 the element is a fill or an empty track; settling experiment: inspect the `<meter>` value/max in DevTools.
 **L3.** Placeholder-as-label on the preset-name field.
 **L4.** `← Library` back buttons on sibling rail destinations mix a hierarchical affordance into a flat rail.
-**L5.** `LibraryShortsApi.remove`'s "the adapter owns any confirm" contract (`Library.tsx:53`) preserves
-the delegation pattern that already failed once (§4.5).
+**L5.** `LibraryShortsApi.remove`'s "the adapter owns any confirm" contract (`Library.tsx:54` — cited as
+`:53` until 2026-08-10; `:53` is now `openFolder`) preserves the delegation pattern that already failed
+once (§4.5). **STILL OPEN** — the comment is unchanged; only the anchor moved.
 
 ## 6. Evidence anchors
 
@@ -332,4 +422,7 @@ the delegation pattern that already failed once (§4.5).
 6. `app/renderer/src/components/JobQueue.tsx:41-43` + `JobQueue.test.tsx:115,118-119` + no clear path in
    `JobQueue.tsx` — a `cancelled` job has no available action. (H4)
 7. `app/renderer/src/views/Library.tsx:470-483` — `globalThis.confirm` guards `shorts.delete`; the comment
-   records the prior unguarded state and names the standard at `KeepCopyControl.tsx:21`. (§4.5)
+   records the prior unguarded state and names the standard at
+   `app/renderer/src/features/KeepCopyControl.tsx:21`. (§4.5) **Re-anchored 2026-08-10:** the guard is now
+   the themed `useConfirm` gate in `Library.deleteShort` (`:474`, `confirm(` at `:488`) — cite the SYMBOL,
+   not the line.
