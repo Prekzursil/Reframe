@@ -1985,6 +1985,45 @@ describe('<ShortMaker /> component', () => {
     expect(lis[1].querySelector('.sm-fillers')).toBeNull();
   });
 
+  // W12 — the sidecar's WU-3 NO-SILENT-FALLBACK signal (`reframeDegraded`) had no
+  // renderer consumer at all, so a center-cropped clip was presented as a
+  // successful tracked reframe. The badge renders the sidecar's OWN message; a
+  // healthy clip must stay unbadged (no false positive).
+  it('badges an exported clip whose reframe degraded, and only that clip', async () => {
+    const message = 'reframe: speaker tracking unavailable (detector failed) — used center crop';
+    const rpc = rpcFake({
+      'tracks.audio.list': { audioTracks: [] },
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': {
+        clips: [
+          {
+            path: '/out/1.mp4',
+            reframeDegraded: { type: 'reframe.degraded', message, reason: 'detector failed' },
+          },
+          { path: '/out/2.mp4' },
+        ],
+      },
+    });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await submitForm();
+
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    const exportBtn = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Export approved',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      exportBtn.click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    const lis = [...container.querySelectorAll('.sm-exported li')];
+    expect(lis).toHaveLength(2);
+    expect(lis[0].querySelector('.sm-degraded')?.textContent).toBe(message);
+    expect(lis[1].querySelector('.sm-degraded')).toBeNull();
+  });
+
   // -------------------------------------------------------------------------
   // P4 §5 — live caption overlay + preview-remount fix.
   // -------------------------------------------------------------------------

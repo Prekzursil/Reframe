@@ -164,12 +164,21 @@ vi.mock('../components/OutputTray', () => {
         >
           tray-recaption-sidecar
         </button>
-        <button type="button" onClick={() => onSaveShort?.()}>
-          tray-save-short
-        </button>
-        <button type="button" onClick={() => onSaveSrt?.()}>
-          tray-save-srt
-        </button>
+        {/* Mirrors the REAL tray's gate (OutputTray.tsx:139-148): a save button
+            exists ONLY when its handler was supplied. W06 relies on that gate —
+            MakeShorts supplies neither handler, so neither button may render.
+            Rendering them unconditionally here would hide a re-introduced
+            fabricated handler from the assertion below. */}
+        {onSaveShort ? (
+          <button type="button" onClick={() => onSaveShort()}>
+            tray-save-short
+          </button>
+        ) : null}
+        {onSaveSrt ? (
+          <button type="button" onClick={() => onSaveSrt()}>
+            tray-save-srt
+          </button>
+        ) : null}
       </div>
     ),
   };
@@ -568,7 +577,7 @@ describe('<MakeShorts />', () => {
     );
   });
 
-  it('drives the Output Tray change + save seams after a manual export', async () => {
+  it('drives the Output Tray change seam after a manual export', async () => {
     await mount();
     await selectVideo('v1');
     await act(async () => {
@@ -580,21 +589,97 @@ describe('<MakeShorts />', () => {
       await Promise.resolve();
     });
     await flush();
-    const click = (label: string) =>
-      act(() => {
-        (
-          [...container.querySelectorAll('button')].find(
-            (b) => b.textContent === label,
-          ) as HTMLButtonElement
-        ).click();
-      });
-    click('tray-change'); // exercises onChange={setTray}
-    click('tray-save-short');
-    expect(container.querySelector('.make-shorts__note')?.textContent).toContain('Saved the short');
-    click('tray-save-srt');
-    expect(container.querySelector('.make-shorts__note')?.textContent).toContain(
-      'Saved the SRT sidecar',
+    act(() => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'tray-change',
+        ) as HTMLButtonElement
+      ).click(); // exercises onChange={setTray}
+    });
+    expect(container.querySelector('[data-testid="output-tray"]')).not.toBeNull();
+  });
+
+  // W06 — REVIEWED REPLACEMENT of the two assertions that used to live in the
+  // test above:
+  //     expect(...note...).toContain('Saved the short');
+  //     expect(...note...).toContain('Saved the SRT sidecar');
+  // Those PINNED A DEFECT. `handleSaveShort`/`handleSaveSrt` only called
+  // `setManualNote(...)`; they issued ZERO IPC, so the note claimed a save that
+  // never happened. The old assertions therefore encoded "announce a save you did
+  // not perform" as correct behaviour, and any real fix turned CI red.
+  //
+  // The controls are REMOVED rather than re-wired because neither is a real
+  // action on this surface: `shortmaker.export` has already written the mp4 to
+  // the exports root (there is no unsaved short held in memory), and a standalone
+  // subtitle file is exactly the tray's own "Subtitles -> Separate file"
+  // delivery, which the same tray already offers. The tray hides a save button
+  // whose handler is omitted (OutputTray.tsx:139-148), so removing the handlers
+  // removes the buttons — no lie, and no dead control.
+  it('offers no fabricated save controls (a save button must do real work)', async () => {
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    const labels = [...container.querySelectorAll('button')].map((b) => b.textContent);
+    expect(container.querySelector('[data-testid="output-tray"]')).not.toBeNull();
+    expect(labels).not.toContain('tray-save-short');
+    expect(labels).not.toContain('tray-save-srt');
+    expect(container.querySelector('.make-shorts__note')?.textContent).not.toContain('Saved');
+  });
+
+  // W06 — what replaces the fabricated acknowledgement: the REAL paths the job
+  // reported. Until now the resolved clips were discarded except for `.length`.
+  it('lists the real exported clip paths the job reported', async () => {
+    exportMock.mockResolvedValue({ clips: [{ path: '/out/a.mp4' }, { path: '/out/b.mp4' }] });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    const paths = [...container.querySelectorAll('.make-shorts__output-path')].map(
+      (el) => el.textContent,
     );
+    expect(paths).toEqual(['/out/a.mp4', '/out/b.mp4']);
+  });
+
+  // W12 — the sidecar's WU-3 no-silent-fallback signal must reach the user. The
+  // per-clip line renders the sidecar's OWN message verbatim.
+  it('flags a clip whose reframe degraded, with the sidecar message verbatim', async () => {
+    const message = 'reframe: speaker tracking unavailable (no subject) — used center crop';
+    exportMock.mockResolvedValue({
+      clips: [
+        { path: '/out/a.mp4' },
+        {
+          path: '/out/b.mp4',
+          reframeDegraded: { type: 'reframe.degraded', message, reason: 'no subject' },
+        },
+      ],
+    });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    const badges = [...container.querySelectorAll('.make-shorts__degraded')].map(
+      (el) => el.textContent,
+    );
+    expect(badges).toEqual([message]);
+    expect(container.querySelector('.make-shorts__warn')?.textContent).toBe(
+      'Reframe degraded on 1 of 2 clip(s) — see the note on each file below.',
+    );
+  });
+
+  it('shows no degraded warning when every clip reframed normally', async () => {
+    exportMock.mockResolvedValue({ clips: [{ path: '/out/a.mp4' }] });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    expect(container.querySelector('.make-shorts__warn')).toBeNull();
+    expect(container.querySelector('.make-shorts__degraded')).toBeNull();
+  });
+
+  it('renders no output list when the export produced no clips', async () => {
+    exportMock.mockResolvedValue({ clips: [] });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    expect(container.querySelector('.make-shorts__outputs')).toBeNull();
+    expect(container.querySelector('.make-shorts__note')?.textContent).toContain('0 clip(s)');
   });
 
   // F08: the tray's "Caption" checkbox is the COARSE switch. Unchecking it must

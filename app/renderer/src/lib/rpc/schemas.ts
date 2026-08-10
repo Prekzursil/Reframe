@@ -5,6 +5,8 @@
 // re-exports both so existing `from '../lib/rpc'` importers keep ONE entry point.
 // Field names are identical to the Python/sidecar side - do NOT rename.
 
+import type { ReframeDegradedNotice } from '../reframeDegraded';
+
 // ---- §3 data schemas (field names identical to the Python side) ----------
 
 export interface Word {
@@ -126,6 +128,12 @@ export interface ExportedClip {
   path: string;
   fillersRemoved?: number;
   fillerSeconds?: number;
+  /**
+   * WU-3 NO-SILENT-FALLBACK (W12): the sidecar stamps this ONLY when the reframe
+   * stage degraded (`features/shortmaker.py` `_clip_payload`). Absent on a
+   * healthy tracked reframe. Read via `lib/reframeDegraded`.
+   */
+  reframeDegraded?: ReframeDegradedNotice;
 }
 
 /**

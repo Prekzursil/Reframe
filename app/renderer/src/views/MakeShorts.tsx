@@ -30,7 +30,9 @@ import {
   EXPORT_JOB_TIMEOUT_MS,
   resolveWindowApi,
   type Api,
+  type ExportedClipInfo,
 } from '../features/shortMakerLogic';
+import { describeDegraded, reframeDegradedNotice } from '../lib/reframeDegraded';
 import {
   type CaptionDesign,
   DEFAULT_CAPTION_DESIGN,
@@ -77,6 +79,11 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
   const [manualBusy, setManualBusy] = useState(false);
   const [manualNote, setManualNote] = useState<string | null>(null);
   const [manualError, setManualError] = useState<string | null>(null);
+  // W06: the clips the export job actually reported. Previously the resolved
+  // payload was read for `.length` and thrown away, so the surface had nothing
+  // true to show and fell back to fabricated "Saved …" copy. Keeping the records
+  // also carries the sidecar's per-clip `reframeDegraded` notice (W12).
+  const [exportedClips, setExportedClips] = useState<ExportedClipInfo[]>([]);
   const [tray, setTray] = useState<OutputTrayState>(DEFAULT_OUTPUT_TRAY);
   const [trayOpen, setTrayOpen] = useState(false);
   // P4 §4: the caption design (style + on-frame position) for the manual export,
@@ -147,10 +154,20 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
     setActive('make');
   }, []);
 
-  // Output Tray save seams (the caption-editor phase deepens these): record what
-  // the user chose to save so the action is acknowledged, never silent.
-  const handleSaveShort = useCallback(() => setManualNote('Saved the short.'), []);
-  const handleSaveSrt = useCallback(() => setManualNote('Saved the SRT sidecar.'), []);
+  // W06 — the tray's "Save short" / "Save SRT separately" controls are
+  // deliberately NOT wired here, and the tray hides a save button whose handler
+  // is omitted (OutputTray.tsx:139-148). They used to call `setManualNote('Saved
+  // the short.')` / `setManualNote('Saved the SRT sidecar.')` and issue ZERO IPC:
+  // the surface announced a save it had not performed.
+  //
+  // Neither is a real action on THIS surface. `shortmaker.export` has already
+  // written each mp4 into the exports root before the tray is even shown (there
+  // is no unsaved short held in memory), and a standalone subtitle file is
+  // precisely the tray's own "Subtitles -> Separate file" delivery
+  // (`SUBTITLE_MODE_META.sidecar`), which flows through `exportOutput` on the NEXT
+  // export. Re-adding a handler here without an RPC behind it re-opens the defect.
+  // What the user actually needed — WHERE the files landed — is rendered below
+  // from the job's own payload.
 
   // The caption design's export slice (style id + wire-rounded position box +
   // the optional V1.1 tuning patch), computed ONCE for every consumer: the
@@ -195,6 +212,7 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
     async (candidates: Candidate[]) => {
       setManualNote(null);
       setManualError(null);
+      setExportedClips([]);
       setTrayOpen(false);
       setManualBusy(true);
       try {
@@ -218,8 +236,9 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
             EXPORT_JOB_TIMEOUT_MS,
           );
         }
-        const exported = clips ?? [];
-        setManualNote(`Exported ${exported.length} clip(s) from your ranges.`);
+        const produced = clips ?? [];
+        setExportedClips(produced);
+        setManualNote(`Exported ${produced.length} clip(s) from your ranges.`);
         setTrayOpen(true);
       } catch (err) {
         setManualError(errText(err));
@@ -235,6 +254,9 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
     // callback would keep the pre-toggle binding).
     [selectedId, wire, exportOutput],
   );
+
+  // W12: null when every clip reframed normally (no scary banner on a clean run).
+  const degradedSummary = describeDegraded(exportedClips);
 
   return (
     <div className="make-shorts" aria-label="Make Shorts">
@@ -322,14 +344,33 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
                       {manualNote}
                     </p>
                   ) : null}
-                  {trayOpen ? (
-                    <OutputTray
-                      state={tray}
-                      onChange={setTray}
-                      onSaveShort={handleSaveShort}
-                      onSaveSrt={handleSaveSrt}
-                    />
+                  {/* W12 — the sidecar's WU-3 NO-SILENT-FALLBACK signal. The
+                      summary states the COUNT only: the same notice type is
+                      raised both by a center-crop fallback AND by the
+                      multi-speaker engine falling back to the single-speaker
+                      tracker, so naming an outcome here would be false for one of
+                      them. Each clip shows the sidecar's own message instead. */}
+                  {degradedSummary ? (
+                    <p className="make-shorts__warn" role="status">
+                      {degradedSummary}
+                    </p>
                   ) : null}
+                  {exportedClips.length > 0 ? (
+                    <ul className="make-shorts__outputs" aria-label="Exported files">
+                      {exportedClips.map((clip, i) => {
+                        const degraded = reframeDegradedNotice(clip);
+                        return (
+                          <li key={`${clip.path}-${i}`} className="make-shorts__output">
+                            <span className="make-shorts__output-path">{clip.path}</span>
+                            {degraded ? (
+                              <span className="make-shorts__degraded">{degraded.message}</span>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : null}
+                  {trayOpen ? <OutputTray state={tray} onChange={setTray} /> : null}
                 </section>
               </>
             ) : (

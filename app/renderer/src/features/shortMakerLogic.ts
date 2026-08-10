@@ -11,6 +11,7 @@
 // CONTRACT-NOTE: the wire field names here are FROZEN — identical to the
 // Python/sidecar side (§3 Candidate / §2 controls). Do not rename.
 import type { PlayerWindow } from '../components/Player';
+import type { ReframeDegradedNotice } from '../lib/reframeDegraded';
 import { logWarn } from '../lib/logger';
 // WU SP2: the hook-card top-N default + clamp live in the drift-guarded preset
 // mirror (hookCardPreset.ts) so the renderer config can't drift from the sidecar.
@@ -666,6 +667,13 @@ export interface ExportedClipInfo {
   path: string;
   fillersRemoved?: number;
   fillerSeconds?: number;
+  /**
+   * WU-3 NO-SILENT-FALLBACK (W12): present ONLY when the reframe stage degraded
+   * (`sidecar/media_studio/features/shortmaker.py` `_clip_payload`). Absent on a
+   * healthy tracked reframe, so its presence is the badge condition — read it
+   * with `lib/reframeDegraded.reframeDegradedNotice`, never by hand.
+   */
+  reframeDegraded?: ReframeDegradedNotice;
 }
 
 export interface ExportResult {

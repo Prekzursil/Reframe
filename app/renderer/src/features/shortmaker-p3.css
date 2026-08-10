@@ -173,6 +173,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* W12: the sidecar's WU-3 reframe "degraded" notice on an exported clip. Warn
+   colour, but the meaning is carried by the sidecar's own MESSAGE text — never by
+   hue alone. Block-level so it cannot be mistaken for part of the path. */
+.shortmaker .sm-degraded {
+  display: block;
+  color: var(--status-warn);
+}
+
 /* ---- taste-profile footer (P3-D) ---------------------------------------------- */
 
 .shortmaker .sm-feedback-stats {
