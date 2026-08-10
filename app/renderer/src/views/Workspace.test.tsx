@@ -52,7 +52,15 @@ function stubPanel(label: string) {
       const React_ = require('react');
       return React_.createElement(
         'div',
-        { 'data-panel': label, 'data-videoid': String(props.videoId ?? '') },
+        {
+          'data-panel': label,
+          'data-videoid': String(props.videoId ?? ''),
+          // W18: the video timeline is USELESS without the source geometry —
+          // `tracks.video.addClip` needs a real path + a duration for srcOut, so
+          // the stub surfaces what the Workspace actually passed down.
+          'data-sourcepath': String(props.sourcePath ?? ''),
+          'data-duration': String(props.sourceDurationSec ?? ''),
+        },
         label,
       );
     },
@@ -74,6 +82,9 @@ vi.mock('../features/Stabilize', () => stubPanel('Stabilize'));
 vi.mock('../features/TranscriptEditor', () => stubPanel('TranscriptEditor'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
+// W17 / W18: the two surfaces this lane mounts.
+vi.mock('../features/VideoTimeline', () => stubPanel('VideoTimeline'));
+vi.mock('../features/ReframeCorrect', () => stubPanel('ReframeCorrect'));
 
 import {
   Workspace,
@@ -158,9 +169,15 @@ describe('Workspace', () => {
   // Dub — it is the ONLY renderer entry point to the sidecar's audiomix.merge /
   // audiomix.normalize (sidechain auto-duck + EBU R128), which had zero callers.
   //
-  // The assertion remains exact and order-sensitive, three elements longer than
+  // SCOPE CHANGE #4 (W17 + W18 mount-editor-surfaces): the list gains 'Fix
+  // framing' and 'Video timeline'. Both mount panels that were complete, styled
+  // and 100%-covered but imported by NOTHING except their own test, so neither
+  // was reachable by any user. WIDENED by exactly two entries, never weakened —
+  // every previously pinned label keeps its position relative to the others.
+  //
+  // The assertion remains exact and order-sensitive, five elements longer than
   // the pre-v1.5 list and with two labels corrected. Nothing was weakened.
-  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize; speed: +Speed; audiomix-ui: +Audio mix)', () => {
+  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize; speed: +Speed; audiomix-ui: +Audio mix; W17/W18: +Fix framing/Video timeline)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Search',
@@ -171,7 +188,9 @@ describe('Workspace', () => {
       'Tracks',
       'Convert',
       'Short-maker',
+      'Fix framing',
       'Subtitle timeline',
+      'Video timeline',
       'Stabilize',
       // v1.5: the Speed panel joins "Frame & Cut". Before it, the re-time engine
       // had NO control in any panel — only an LLM-planned Director op reached it.
@@ -195,6 +214,10 @@ describe('Workspace', () => {
     // features/NleExport.tsx = CMX3600 EDL / CSV handoff for Premiere/Resolve.
     expect(byId('nle')).toBe('NLE export');
     expect(WORKSPACE_TABS.map((t) => t.label)).not.toContain('Timeline export');
+    // W18 closes the other half of that 2026 note: the tab comment said "a
+    // genuine video-timeline tab is free to claim it later". features/
+    // VideoTimeline.tsx IS that panel and now claims the name.
+    expect(byId('videoTimeline')).toBe('Video timeline');
   });
 
   // A constant saying "Subtitle timeline" is not the same signal as a BUTTON
@@ -372,7 +395,9 @@ describe('Workspace', () => {
     ['tracks', 'Tracks'],
     ['convert', 'Convert'],
     ['shortmaker', 'ShortMaker'],
+    ['reframeFix', 'ReframeCorrect'],
     ['timeline', 'Timeline'],
+    ['videoTimeline', 'VideoTimeline'],
     ['stabilize', 'Stabilize'],
     ['dub', 'Dub'],
     ['nle', 'NleExport'],
@@ -709,15 +734,22 @@ describe('Workspace tab clusters (WU-3a2)', () => {
   // These literals are the missing link: adding or regrouping a tab now fails
   // HERE, in the suite `quality` actually runs on every PR, and says which file
   // to update. Update both together, or the nightly goes red again.
+  //
+  // W17/W18 UPDATE: 17 -> 19 and 12 -> 14. Both new tabs go in the VISIBLE
+  // "Frame & Cut" cluster, so the painted count rises too. That is a real
+  // layout cost — the strip already scrolls (`workspace.css` `overflow-x:
+  // auto`) — and it is the price of the panels being reachable at all. The
+  // matching literals in `app/e2e/preview.spec.ts:229-230` were updated in the
+  // same commit; that is the whole point of this test existing.
   it('pins the strip counts that the nightly e2e spec hardcodes', () => {
-    expect(WORKSPACE_TABS).toHaveLength(17);
+    expect(WORKSPACE_TABS).toHaveLength(19);
     const hiddenWhenCollapsed = WORKSPACE_TAB_GROUPS.filter((g) => g.advanced).reduce(
       (n, g) => n + g.tabIds.length,
       0,
     );
     expect(hiddenWhenCollapsed).toBe(5);
     // What actually paints while the Advanced cluster is collapsed.
-    expect(WORKSPACE_TABS.length - hiddenWhenCollapsed).toBe(12);
+    expect(WORKSPACE_TABS.length - hiddenWhenCollapsed).toBe(14);
   });
 
   it('collapses the Deliver cluster behind Advanced by default and toggles it open/closed', async () => {
@@ -766,6 +798,66 @@ describe('Workspace tab clusters (WU-3a2)', () => {
     await flush();
     expect(tracks.getAttribute('aria-selected')).toBe('true');
     expect(container.querySelector('[data-panel="Tracks"]')).not.toBeNull();
+  });
+});
+
+// W17 + W18: two complete, 100%-covered editor surfaces that no user could
+// reach. `panels/ReframeOverridePanel.tsx` and `features/VideoTimeline.tsx` were
+// each imported by exactly one file — their own test. OWNER RULING 2026-08-09:
+// mount them, do not delete them.
+describe('W17/W18 mounted editor surfaces', () => {
+  async function mount(): Promise<void> {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+  }
+
+  async function open(tabId: string): Promise<void> {
+    const tab = container.querySelector(`[role="tab"][data-tab-id="${tabId}"]`);
+    expect(tab).not.toBeNull();
+    await act(async () => {
+      (tab as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+  }
+
+  it('puts both in the visible "Frame & Cut" cluster, not behind Advanced', () => {
+    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
+    expect(frame?.tabIds).toContain('reframeFix');
+    expect(frame?.tabIds).toContain('videoTimeline');
+    expect(frame?.advanced).not.toBe(true);
+    // and every new id is a real tab, not an orphan group entry
+    const ids = WORKSPACE_TABS.map((t) => t.id);
+    expect(ids).toContain('reframeFix');
+    expect(ids).toContain('videoTimeline');
+  });
+
+  // THE red-proof assertion for W18. Mounting VideoTimeline is not enough: its
+  // only path to putting an ARBITRARY clip in a lane is `tracks.video.addClip`,
+  // which needs a real source path and a duration for `srcOut`.
+  //
+  // CORRECTED 2026-08-10 — this comment used to end "without both, every lane is
+  // permanently empty and the mount is theatre", which is false:
+  // `tracks.video.list` auto-seeds lane 0 with the whole source
+  // (`video_tracks.py:595-612,653`). Without the props the editor can still trim
+  // and split that seeded clip; what it cannot do is fill a lane made by
+  // `addLane` or put material back after a remove/razor.
+  it('hands the video timeline the source path AND duration addClip needs', async () => {
+    await mount();
+    await open('videoTimeline');
+    const panel = container.querySelector('[data-panel="VideoTimeline"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.getAttribute('data-sourcepath')).toBe('/movies/talk.mp4');
+    expect(panel?.getAttribute('data-duration')).toBe('605');
+  });
+
+  it('mounts the reframe correction surface on its own tab', async () => {
+    await mount();
+    await open('reframeFix');
+    const panel = container.querySelector('[data-panel="ReframeCorrect"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.getAttribute('data-videoid')).toBe('v1');
   });
 });
 

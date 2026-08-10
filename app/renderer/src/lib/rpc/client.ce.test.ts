@@ -113,6 +113,15 @@ describe('client.reframe.* (V1.1 Lane R per-shot correction)', () => {
     await client.reframe.applyOverrides({ plan, overrides });
     expect(rpc).toHaveBeenCalledWith('reframe.applyOverrides', { plan, overrides });
   });
+
+  // W17: `shotPlanFor` is the ONLY method a renderer can use to obtain a plan —
+  // `shotPlan` needs a `trace` no renderer code can produce (the engine builds
+  // one in-process). See sidecar/media_studio/features/reframe_override.py:35-44.
+  it('shotPlanFor forwards the clip path', async () => {
+    const rpc = installApi();
+    await client.reframe.shotPlanFor('C:/shorts/clip.mp4');
+    expect(rpc).toHaveBeenCalledWith('reframe.shotPlanFor', { clip: 'C:/shorts/clip.mp4' });
+  });
 });
 
 describe('client.speed.retime (v1.5 — the user-driven door onto the re-time engine)', () => {

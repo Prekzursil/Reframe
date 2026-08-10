@@ -29,7 +29,44 @@ no `providers.editKey`, so an index-targeted key edit has no RPC method behind i
   keystore) and its YuNet "CORRECTION" are both false; this one line is its only
   live residue.
 
-### O-2 — `ReframeOverridePanel` is built, tested, and mounted nowhere
+### O-2 — `ReframeOverridePanel`: mounted 2026-08-09, correction loop still OPEN
+
+> **RECONCILED 2026-08-10.** The paragraphs below were written before the panel
+> was mounted and they now disagree with the tree in two places. Read this note
+> first; the body is kept because its measurements are still the record of how
+> the item got here.
+>
+> 1. **"the panel must stay unmounted for now" is SUPERSEDED, not satisfied.**
+>    Owner ruling 2026-08-09 was *mount, do not delete*, and W17 mounted it on the
+>    `reframeFix` tab via `app/renderer/src/features/ReframeCorrect.tsx`. This
+>    file's own warning — that mounting first "would ship a surface that looks
+>    functional and silently does nothing" — was the right worry and is answered
+>    by CONSTRUCTION, not by ignoring it: the container states inline that the
+>    corrections are not applied, refuses to offer re-export (which would discard
+>    them), and hands them back as the exact `reframeOverrides` entry.
+> 2. **"nothing in `app/renderer` calls either RPC" is now FALSE.**
+>    `ReframeCorrect` calls `client.reframe.shotPlanFor`, so `client.reframe.*`
+>    is reached by production code, not only by `client.ce.test.ts`.
+>
+> **What is still genuinely missing** — three renderer-side gaps, one closed:
+>
+> - CLOSED. `ReframeOverridePanel.onRerender` used to hand back shot INDICES
+>   only, so the `ShotOverride` objects never escaped the component and no host
+>   could send them anywhere. It now hands out the corrections too.
+> - OPEN. `client.shortmaker.export` (`app/renderer/src/lib/rpc/client.ts:296-309`)
+>   exposes no `reframeOverrides` option, so no renderer call can carry the map.
+> - OPEN. A produced clip cannot re-drive its own export. `shortmaker.export`
+>   resolves candidates by id from the select cache
+>   (`sidecar/media_studio/features/shortmaker.py:1525-1549`) and a produced clip
+>   records no candidate id, no `rank` and no source `start`/`end`
+>   (`shorts.py:64-72` `META_FIELDS`; `shorts.py:457-477` `reexport` returns a
+>   hook/template/virality/duration skeleton). `_assert_overrides_matched`
+>   (`shortmaker.py:1358-1367`) additionally keys the map on the NEW export's
+>   final path, so a re-export must reproduce the same rank-ordered stem.
+>   **Conclusion: the correction loop belongs on the Short-maker export surface,
+>   which still holds the live candidates — not on the produced-clip corrector.**
+>   Anyone reading the old text below as "build `reframe.render` sidecar-side"
+>   is being sent the wrong way; that method is not needed and never was.
 
 `app/renderer/src/panels/ReframeOverridePanel.tsx` is complete and 100% covered in
 isolation, and no production code imports it. It is WU-3a3 of the v1.4 plan; its
