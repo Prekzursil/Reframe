@@ -607,6 +607,59 @@ def test_job_retry_redispatches_stored_params_as_new_job(registry):
     assert again["jobId"] not in {first["jobId"], out["jobId"]}
 
 
+def test_job_retry_accepts_a_cancelled_job(registry):
+    """A CANCELLED job is retryable — the premise JobQueue's Retry button rests on.
+
+    ``protocol.py``'s A2 CONTRACT-NOTE says retry is deliberately NOT restricted
+    to a status and that "the UI is expected to offer retry on error/cancelled
+    jobs"; before W13 the renderer offered it on ``error`` only. This is a
+    CHARACTERIZATION test of the existing backend, not a red-proof: no sidecar
+    code changed for W13, so it passes on both sides of that commit. What it does
+    guard is the REVERSE regression — adding a terminal-status filter to
+    ``_job_retry`` breaks it, which would silently strand the new UI affordance.
+    """
+    ctx = _rpc_ctx(registry)
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[dict] = []
+
+    @protocol.method("demo.cancellable")
+    def _cancellable(params, c):
+        calls.append(dict(params))
+
+        def body(jctx: JobContext):
+            started.set()
+            while not jctx.cancelled:
+                if release.wait(0.01):
+                    return "finished"
+            # The loop only exits once ``jctx.cancelled`` is true, and
+            # ``JobContext._cancel_event`` is never cleared (jobs.py:192 is its
+            # sole writer and only calls ``set()``), so this call always raises
+            # and nothing after it is reachable. An earlier revision wrote a
+            # ``return None`` here behind a coverage-exclusion comment; the
+            # statement was dead, so the exclusion documented nothing. Both were
+            # removed — do not re-add either. See the commit that deleted them.
+            jctx.raise_if_cancelled()
+
+        return {"jobId": c.jobs.start(body).id}
+
+    first = _dispatch("demo.cancellable", {"videoId": "v1"}, ctx)
+    assert started.wait(timeout=5)
+    assert registry.cancel(first["jobId"]) is True
+    original = registry.get(first["jobId"])
+    assert original.wait(timeout=5)
+    assert original.status is JobStatus.CANCELLED
+    assert original.info()["status"] == "cancelled"  # the wire value the UI sees
+
+    release.set()  # the re-dispatched run may finish immediately
+    out = _dispatch("job.retry", {"jobId": first["jobId"]}, ctx)
+    registry.join(timeout=5)
+
+    assert out["jobId"] != first["jobId"]  # a NEW job from the stored request
+    assert calls == [{"videoId": "v1"}] * 2
+    assert registry.get(out["jobId"]).status is JobStatus.DONE
+
+
 def test_job_retry_unknown_job_raises_invalid_params(registry):
     ctx = _rpc_ctx(registry)
     with pytest.raises(RpcError) as ei:
