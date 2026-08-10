@@ -15,6 +15,7 @@
 // resolver extension; until applied the player shows the path instead).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import './panels.css';
+import { AiAudioBadge, AiDisclosurePanel, isAiGeneratedAudioTrack } from './AiDisclosure';
 import {
   extractJobId,
   getApi,
@@ -372,6 +373,10 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
         </label>
       </div>
 
+      {/* W21 — consent gate 3: label the generated result, and be explicit
+          about what the label does NOT cover. */}
+      <AiDisclosurePanel engineId={engine} />
+
       <div className="dub-sample-upload">
         <label>
           Voice sample (wav/mp3 path for cloning){' '}
@@ -479,6 +484,12 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
           <p className="dub-result-name">
             {result.audioTrack.name} · {result.audioTrack.lang}
             {result.audioTrack.voice ? ` · voice ${result.audioTrack.voice}` : ''}
+            {isAiGeneratedAudioTrack(result.audioTrack) && (
+              <>
+                {' '}
+                <AiAudioBadge />
+              </>
+            )}
           </p>
           {/* audition the WAV directly (plan: play the dub WAV) */}
           <audio controls src={dubMediaUrl(result.path)} data-testid="dub-audio" />
@@ -496,6 +507,7 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
             <span className="audio-track-lang">{t.lang}</span>
             <span className={`audio-track-kind audio-track-kind--${t.kind}`}>{t.kind}</span>
             {t.voice && <span className="audio-track-voice">{t.voice}</span>}
+            {isAiGeneratedAudioTrack(t) && <AiAudioBadge />}
           </li>
         ))}
       </ul>

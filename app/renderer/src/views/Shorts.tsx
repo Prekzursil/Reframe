@@ -15,6 +15,7 @@
 // Short-maker primed), keeping the view free of routing knowledge.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { client, hasApi, type ShortInfo, type ShortReexportHint } from '../lib/rpc';
+import { useConfirm } from '../components/ConfirmDialog';
 import { Player, shortMediaUrl } from '../components/Player';
 import { ShortClipActions } from '../components/ShortClipActions';
 import { useShortThumbnail } from '../components/useShortThumbnail';
@@ -70,6 +71,8 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
   const [packagingPath, setPackagingPath] = useState<string | null>(null);
   // captions-export: the last produced package ZIP path (for a confirmation note).
   const [packagedPath, setPackagedPath] = useState<string | null>(null);
+  // W04: the themed destructive gate that replaced the native `confirm()`.
+  const { confirm, confirmDialog } = useConfirm();
 
   const refresh = useCallback(async () => {
     if (!hasApi()) {
@@ -153,9 +156,14 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
   const handleDelete = useCallback(
     async (path: string) => {
       // Confirm before any destructive call (UI confirms first — §2 shorts.delete).
-      const ok = (globalThis as { confirm?: (m: string) => boolean }).confirm?.(
-        `Delete this short?\n\n${baseName(path)}\n\nThis removes the exported file.`,
-      );
+      // W04: the THEMED gate, not the native `confirm()` — native confirm cannot be
+      // themed or described for AT, and in Electron it freezes the renderer.
+      const ok = await confirm({
+        title: 'Delete this short?',
+        blurb: `${baseName(path)}\n\nThis removes the exported file.`,
+        confirmLabel: 'Delete short',
+        cancelLabel: 'Keep it',
+      });
       if (!ok) return;
       setError(null);
       try {
@@ -165,7 +173,7 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
         setError(errText(err));
       }
     },
-    [refresh],
+    [confirm, refresh],
   );
 
   return (
@@ -275,6 +283,8 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
           ))}
         </ul>
       )}
+
+      {confirmDialog}
     </div>
   );
 }

@@ -803,8 +803,18 @@ export const client = {
     status: (id: string): Promise<{ batch: BatchState }> => rpc('batch.status', { id }),
     list: (): Promise<{ batches: BatchSummary[] }> => rpc('batch.list'),
     cancel: (id: string): Promise<{ ok: boolean }> => rpc('batch.cancel', { id }),
-    resume: (id: string): Promise<JobHandle & { status?: BatchStatus }> =>
-      rpc('batch.resume', { id }),
+    /**
+     * `batch.resume {id, retryErrors?}` -> `{jobId}` — re-enqueue the not-yet-done
+     * sources as a fresh parent job. `retryErrors` additionally re-enqueues the
+     * `error` items (`resumable_video_ids`, `batch.py`); without it a batch whose
+     * aggregate is already terminal (e.g. `partial`) has nothing to select and the
+     * call answers with the `{jobId: null, status}` no-op shape.
+     */
+    resume: (
+      id: string,
+      opts?: { retryErrors?: boolean },
+    ): Promise<JobHandle & { status?: BatchStatus }> =>
+      rpc('batch.resume', { id, ...(opts ?? {}) }),
     delete: (id: string): Promise<{ ok: boolean }> => rpc('batch.delete', { id }),
   },
 

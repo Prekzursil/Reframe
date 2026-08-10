@@ -10,6 +10,7 @@
 // Driven through the canonical client (`client.exportPresets.*`). Reset restores
 // the seeds. CRUD is direct-return (no jobs).
 import React, { useCallback, useEffect, useState } from 'react';
+import { useConfirm } from '../components/ConfirmDialog';
 import { client, type ExportPreset } from '../lib/rpc';
 import {
   CAPTION_STYLE_OPTIONS,
@@ -197,6 +198,8 @@ export function ExportPresetsPanel({ onChanged }: ExportPresetsPanelProps): Reac
   const [error, setError] = useState('');
   /** Per-preset-id resync counter (see `RowProps.syncNonce`). */
   const [syncNonces, setSyncNonces] = useState<Record<string, number>>({});
+  // W04: the themed destructive gate that replaced the native `confirm()`.
+  const { confirm, confirmDialog } = useConfirm();
 
   const bumpSync = useCallback((ids: readonly string[]) => {
     setSyncNonces((prev) => {
@@ -240,10 +243,15 @@ export function ExportPresetsPanel({ onChanged }: ExportPresetsPanelProps): Reac
     async (id: string) => {
       // Confirm before any destructive call (the in-repo idiom — Library.tsx:461,
       // Shorts.tsx:147, useShortsGallery.ts:99 — and the standard this panel was
-      // violating: "never a silent one-click destructive action").
-      const ok = (globalThis as { confirm?: (m: string) => boolean }).confirm?.(
-        `Delete preset "${id}"?\n\nThis removes the preset; templates targeting it will fail to expand.`,
-      );
+      // violating: "never a silent one-click destructive action"). W04 swapped the
+      // native `confirm()` for the themed gate — same guard, themeable, announced,
+      // and it does not freeze the Electron renderer while it waits.
+      const ok = await confirm({
+        title: `Delete preset "${id}"?`,
+        blurb: 'This removes the preset; templates targeting it will fail to expand.',
+        confirmLabel: 'Delete preset',
+        cancelLabel: 'Keep it',
+      });
       if (!ok) return;
       try {
         await client.exportPresets.delete(id);
@@ -253,7 +261,7 @@ export function ExportPresetsPanel({ onChanged }: ExportPresetsPanelProps): Reac
         setError(err instanceof Error ? err.message : 'Delete failed');
       }
     },
-    [reload, onChanged],
+    [confirm, reload, onChanged],
   );
 
   const handleAdd = useCallback(async () => {
@@ -263,9 +271,13 @@ export function ExportPresetsPanel({ onChanged }: ExportPresetsPanelProps): Reac
   const handleReset = useCallback(async () => {
     // Reset re-seeds the WHOLE catalog and nothing retains the prior copy, so this
     // is irreversible — the loudest confirm in the panel.
-    const ok = (globalThis as { confirm?: (m: string) => boolean }).confirm?.(
-      'Reset export presets to defaults?\n\nThis replaces the whole catalog with TikTok / Reels / Shorts and discards every custom preset.',
-    );
+    const ok = await confirm({
+      title: 'Reset export presets to defaults?',
+      blurb:
+        'This replaces the whole catalog with TikTok / Reels / Shorts and discards every custom preset.',
+      confirmLabel: 'Reset presets',
+      cancelLabel: 'Keep my presets',
+    });
     if (!ok) return;
     try {
       const { presets: list } = await client.exportPresets.reset();
@@ -278,7 +290,7 @@ export function ExportPresetsPanel({ onChanged }: ExportPresetsPanelProps): Reac
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Reset failed');
     }
-  }, [onChanged, bumpSync]);
+  }, [confirm, onChanged, bumpSync]);
 
   return (
     <section className="export-presets" aria-label="Export presets">
@@ -325,6 +337,8 @@ export function ExportPresetsPanel({ onChanged }: ExportPresetsPanelProps): Reac
           ))}
         </tbody>
       </table>
+
+      {confirmDialog}
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { rpc, type Video } from '../components/api';
+import { useConfirm } from '../components/ConfirmDialog';
 import { CapabilitiesChip } from './CapabilitiesChip';
 import { LibraryCard } from './LibraryCard';
 import { LibraryToolbar } from './LibraryToolbar';
@@ -453,6 +454,9 @@ export function Library({
     [shorts, shortsByVideo],
   );
 
+  // W04: the themed destructive gate that replaced the native `confirm()`.
+  const { confirm, confirmDialog } = useConfirm();
+
   const openShorts = useCallback((video: LibraryVideo) => setShortsVideo(video), []);
   const closeShorts = useCallback(() => setShortsVideo(null), []);
 
@@ -477,9 +481,16 @@ export function Library({
       // standard — "never a silent one-click destructive action". This surface was
       // the lone exception because four separate comments each delegated the confirm
       // to another layer and it landed nowhere.
-      const ok = (globalThis as { confirm?: (m: string) => boolean }).confirm?.(
-        `Delete this short?\n\n${path}\n\nThis removes the exported file.`,
-      );
+      //
+      // W04: the THEMED gate replaced the native `confirm()` here — native confirm
+      // is unthemeable, carries no author-controlled accessible name/description,
+      // and blocks the whole Electron renderer while it is open.
+      const ok = await confirm({
+        title: 'Delete this short?',
+        blurb: `${path}\n\nThis removes the exported file.`,
+        confirmLabel: 'Delete short',
+        cancelLabel: 'Keep it',
+      });
       if (!ok) return;
       try {
         await api.remove(path);
@@ -495,7 +506,7 @@ export function Library({
         emitToast('error', errText(err));
       }
     },
-    [emitToast],
+    [confirm, emitToast],
   );
 
   // The visible grid: in-context search + sort, layered over the raw list.
@@ -670,6 +681,8 @@ export function Library({
           onEdit={onEditShort}
         />
       ) : null}
+
+      {confirmDialog}
     </div>
   );
 }

@@ -5,8 +5,8 @@
 // the panel is OPEN it re-polls `job.list` every 2 s and live-updates pct from
 // `job.progress` notifications (lib/rpc onProgress); while closed it renders
 // nothing and makes no RPC calls. Running/queued entries get a Cancel button
-// (`job.cancel`); error entries get a Retry button (`job.retry` — the
-// stored-request re-dispatch). No new RPC methods (A2 frozen surface only).
+// (`job.cancel`); error and cancelled entries get a Retry button (`job.retry` —
+// the stored-request re-dispatch). No new RPC methods (A2 frozen surface only).
 //
 // The toggle button lives in App.tsx's header; this file owns the panel.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -27,9 +27,21 @@ export function canCancel(job: JobInfo): boolean {
   return job.status === 'queued' || job.status === 'running';
 }
 
-/** Retry applies to failed jobs only (job.retry re-runs the stored request). */
+/**
+ * Retry applies to the two USER-VISIBLE dead ends — `error` and `cancelled`
+ * (job.retry re-runs the stored request as a new job).
+ *
+ * W13 (audit H4b): `cancelled` was excluded, which left a stopped job with no
+ * button of any kind — canCancel is false on it, canResume is `interrupted`
+ * only. The sidecar never required that: protocol.py's A2 CONTRACT-NOTE
+ * (:266-268) states retry is not status-restricted and that "the UI is expected
+ * to offer retry on error/cancelled jobs".
+ *
+ * `done` and `running` stay excluded on purpose — re-running a finished job or
+ * double-starting a live one are separate, unasked-for actions.
+ */
 export function canRetry(job: JobInfo): boolean {
-  return job.status === 'error';
+  return job.status === 'error' || job.status === 'cancelled';
 }
 
 /**

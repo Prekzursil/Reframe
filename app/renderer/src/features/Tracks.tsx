@@ -11,6 +11,7 @@
 //
 // Consumes the frozen `window.api` surface via the shared local types in `./_api`.
 import React, { useCallback, useEffect, useState } from 'react';
+import { useConfirm } from '../components/ConfirmDialog';
 import './panels.css';
 import { type SubtitleTrack, extractJobId, getApi, pickField, waitForJobDone } from './_api';
 
@@ -27,6 +28,9 @@ export function Tracks({ videoId, availableTracks = [] }: TracksProps): React.Re
   const [busy, setBusy] = useState<Busy>({ kind: 'none' });
   const [error, setError] = useState<string>('');
   const [status, setStatus] = useState<string>('');
+
+  // W04: the themed destructive gate that replaced the native `confirm()`.
+  const { confirm, confirmDialog } = useConfirm();
 
   // Burn is a long job; track its progress.
   const [burnJobId, setBurnJobId] = useState<string | null>(null);
@@ -128,15 +132,22 @@ export function Tracks({ videoId, availableTracks = [] }: TracksProps): React.Re
       // Wording is deliberately neutral about the outcome: a `kind:"hard"` row's
       // Remove is enabled and merely rejects with HardSubtitleError
       // (features/tracks.py:132-133), so the prompt must not promise a deletion.
-      const ok = (globalThis as { confirm?: (m: string) => boolean }).confirm?.(
-        `Remove the subtitle track "${t.name}" (${t.id})?\n\n` +
+      //
+      // W04: the THEMED gate replaced the native `confirm()`. The copy below is the
+      // native prompt's string split at the blank line into the dialog's title and
+      // its described body — same words, same code path, now announceable.
+      const ok = await confirm({
+        title: `Remove the subtitle track "${t.name}" (${t.id})?`,
+        blurb:
           `${t.cues?.length ?? 0} cue(s) would be dropped from this project. Hand edits, ` +
           `translations and caption polish on this track cannot be recovered.`,
-      );
+        confirmLabel: 'Remove track',
+        cancelLabel: 'Keep it',
+      });
       if (!ok) return;
       await runOp(t.id, 'remove', 'tracks.remove', { videoId, trackId: t.id }, 'Removed');
     },
-    [runOp, videoId],
+    [confirm, runOp, videoId],
   );
 
   const strip = useCallback(
@@ -305,6 +316,8 @@ export function Tracks({ videoId, availableTracks = [] }: TracksProps): React.Re
           <span className="progress-pct">{Math.round(pct)}%</span>
         </div>
       )}
+
+      {confirmDialog}
 
       {status && !error && <p className="status">{status}</p>}
       {error && (

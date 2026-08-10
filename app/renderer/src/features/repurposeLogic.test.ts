@@ -18,8 +18,10 @@ import {
   isIncomplete,
   incompleteBatches,
   remainingCount,
+  retryableBatches,
   batchSettled,
   blankPreset,
+  resumeNoOpNotice,
 } from './repurposeLogic';
 import type { BatchItemStatus, BatchSummary, ProgressEvent } from '../lib/rpc';
 
@@ -171,6 +173,16 @@ describe('sourceToken / aggregateUpdate (debounce per-pct chatter)', () => {
 });
 
 describe('resume-surface predicates (§7.2)', () => {
+  /** Every source failed — `derive_status` reports the terminal aggregate `error`. */
+  const COUNTS_ALL_ERROR: BatchSummary['counts'] = {
+    total: 3,
+    done: 0,
+    error: 3,
+    skipped: 0,
+    queued: 0,
+    running: 0,
+    cancelled: 0,
+  };
   function summary(status: BatchSummary['status'], over: Partial<BatchSummary> = {}): BatchSummary {
     return {
       id: 'b',
@@ -197,6 +209,27 @@ describe('resume-surface predicates (§7.2)', () => {
       summary('running', { id: 'r', createdAt: 8 }),
     ];
     expect(incompleteBatches(list).map((b) => b.id)).toEqual(['r', 'p']);
+  });
+  it('selects TERMINAL batches that still hold error sources, newest-first', () => {
+    // The all-error case W09's brief names. `isIncomplete` is
+    // {queued, running, partial}, so an aggregate of `error` — every source
+    // failed — is excluded from the resume surface entirely; this is the only
+    // selector that can find it.
+    const list = [
+      summary('error', { id: 'e1', createdAt: 5, counts: COUNTS_ALL_ERROR }),
+      summary('error', { id: 'e2', createdAt: 9, counts: COUNTS_ALL_ERROR }),
+    ];
+    expect(retryableBatches(list).map((b) => b.id)).toEqual(['e2', 'e1']);
+  });
+  it('excludes an INCOMPLETE batch even when it has errors (no double listing)', () => {
+    // A `partial` batch with errors already has a row on the resume surface; the
+    // two lists are disjoint by construction so it is not shown twice.
+    const list = [summary('partial', { id: 'p', counts: COUNTS_ALL_ERROR })];
+    expect(incompleteBatches(list).map((b) => b.id)).toEqual(['p']);
+    expect(retryableBatches(list)).toEqual([]);
+  });
+  it('excludes a terminal batch with no errors', () => {
+    expect(retryableBatches([summary('done', { id: 'd' })])).toEqual([]);
   });
   it('computes remaining (not done, not skipped)', () => {
     expect(
@@ -233,6 +266,32 @@ describe('batchSettled', () => {
         ],
       }),
     ).toBe(false);
+  });
+});
+
+describe('resumeNoOpNotice', () => {
+  // `batch.resume` reuses ONE {jobId: null} shape for two refusals: the parent job
+  // is still LIVE (the aggregate is queued/running) vs nothing was resumable (the
+  // aggregate is terminal). Only the returned status separates them.
+  it('reads a queued/running aggregate as the live-parent refusal', () => {
+    expect(resumeNoOpNotice('running', false)).toContain('already running');
+    expect(resumeNoOpNotice('queued', false)).toContain('already running');
+  });
+
+  it('reads a TERMINAL aggregate as nothing-to-resume', () => {
+    for (const status of ['done', 'partial', 'error', 'cancelled'] as const) {
+      expect(resumeNoOpNotice(status, false)).toBe('Nothing left to resume in that batch.');
+    }
+  });
+
+  it('names the RETRY when the no-op came from a retry-errors resume', () => {
+    expect(resumeNoOpNotice('error', true)).toBe('Nothing left to retry in that batch.');
+  });
+
+  it('does not claim a live run when the wire carried no status at all', () => {
+    // A malformed/legacy reply proves nothing about liveness, so it must not
+    // assert "already running" — the one sentence that would be actively false.
+    expect(resumeNoOpNotice(undefined, false)).not.toContain('already running');
   });
 });
 

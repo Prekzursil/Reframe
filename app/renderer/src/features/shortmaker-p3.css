@@ -8,6 +8,17 @@
    factor toggle (an active state). Factor bars are data display, not
    progress, so the fills stay tonal grays off the text ladder. */
 
+/* ---- W21 AI-content disclosure on the export audio picker ------------------- */
+
+/* An informational footnote under the audio-track picker, not an alarm: it rides
+   the muted text voice like the other field captions and claims no accent. */
+.shortmaker .sm-ai-audio-note {
+  margin: calc(-1 * var(--space-2)) 0 var(--space-4);
+  font-size: var(--type-caption-size);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 /* ---- the two pipeline toggles (ride the controls row) ----------------------- */
 
 .shortmaker .sm-toggle {

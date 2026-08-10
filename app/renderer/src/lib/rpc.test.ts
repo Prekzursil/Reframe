@@ -1009,6 +1009,9 @@ describe('client.exportPresets / templates / batch (WU11)', () => {
     expect(r).toHaveBeenCalledWith('batch.cancel', { id: 'b1' });
     await client.batch.resume('b1');
     expect(r).toHaveBeenCalledWith('batch.resume', { id: 'b1' });
+    // W09: the sidecar's `retryErrors` (batch.py:938) needs a way onto the wire.
+    await client.batch.resume('b1', { retryErrors: true });
+    expect(r).toHaveBeenCalledWith('batch.resume', { id: 'b1', retryErrors: true });
     await client.batch.delete('b1');
     expect(r).toHaveBeenCalledWith('batch.delete', { id: 'b1' });
   });

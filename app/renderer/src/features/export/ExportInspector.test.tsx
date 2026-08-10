@@ -149,6 +149,56 @@ describe('ExportInspector', () => {
     expect(q('.export-inspector__confirm')).toBeNull();
   });
 
+  // -------------------------------------------------------------------------
+  // The three things the W04 extraction actually changed on THIS surface.
+  // -------------------------------------------------------------------------
+  // Before W04 this gate was hand-rolled inline in ExportInspector.tsx: role,
+  // labelledby/describedby and focus-on-open, and nothing else. Sharing the
+  // ConfirmDialog component put three new behaviours within reach of it —
+  // `aria-modal`, a Tab cage, and Escape — and the cases above (role, ids, focus,
+  // copy, cancel) are structurally incapable of seeing any of them. Two are
+  // deliberately NOT taken here (this gate is an inline card in a live panel, not
+  // an overlay); one is. All three are pinned so the choice cannot drift silently.
+
+  it('does NOT claim aria-modal — the page around this inline card stays live', () => {
+    render(SEED);
+    act(() => q<HTMLButtonElement>('.export-inspector__primary')?.click());
+    const dialog = q('.export-inspector__confirm');
+    // export.css `.export-inspector__confirm` is a plain in-flow block: no fixed
+    // positioning, no scrim. `aria-modal="true"` here would tell a screen-reader
+    // user the inspector, the tab bar and the timeline behind are inert while a
+    // mouse user can still click every one of them.
+    expect(dialog?.hasAttribute('aria-modal')).toBe(false);
+    expect(q('.export-inspector__confirm-scrim')).toBeNull();
+  });
+
+  it('does NOT cage Tab — a keyboard user can leave a card a mouse user can click past', () => {
+    render(SEED);
+    act(() => q<HTMLButtonElement>('.export-inspector__primary')?.click());
+    const dialog = q<HTMLDivElement>('.export-inspector__confirm');
+    const cancel = q<HTMLButtonElement>('.export-inspector__confirm-cancel');
+    act(() => cancel?.focus());
+    act(() => {
+      dialog?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    });
+    // jsdom moves no focus on Tab by itself, so "still on cancel" is exactly "the
+    // trap did not wrap focus back to the approve button".
+    expect(document.activeElement).toBe(cancel);
+  });
+
+  it('DOES back out on Escape — the one affordance the shared gate adds here', () => {
+    render(SEED);
+    act(() => q<HTMLButtonElement>('.export-inspector__primary')?.click());
+    act(() => {
+      q<HTMLDivElement>('.export-inspector__confirm')?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(q('.export-inspector__confirm')).toBeNull();
+    expect(q('.export-inspector__primary')).not.toBeNull();
+  });
+
   it('lets the user back out of the confirm gate without committing', () => {
     render(SEED);
     act(() => q<HTMLButtonElement>('.export-inspector__primary')?.click());

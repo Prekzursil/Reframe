@@ -93,6 +93,51 @@ describe('<Tracks />', () => {
     });
   }
 
+  // W04 — REVIEWED TEST CHANGE (not a weakening). Remove used to be gated by a
+  // `window.confirm` stub. That stub is satisfied by the native OS confirm and by
+  // a themed dialog alike, so it passed in BOTH states and could not have caught
+  // W04 (native confirm is unthemeable, has no author-controlled accessible
+  // name/description, and blocks the Electron renderer while open). These tests
+  // now drive the themed gate. The two assertions that read the prompt STRING off
+  // the spy — `confirmSpy.mock.calls[0][0]` containing "English" / "1 cue" /
+  // "0 cue" — are preserved verbatim against the gate's rendered text, which is
+  // the same copy on the same code path.
+  function removeButton(): HTMLButtonElement {
+    const btn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Remove',
+    );
+    if (!btn) throw new Error('Remove button not found');
+    return btn as HTMLButtonElement;
+  }
+
+  /** The open gate's full text, or null when no gate is up. */
+  function gateText(): string | null {
+    return container.querySelector('.confirm-dialog')?.textContent ?? null;
+  }
+
+  async function answerGate(approve: boolean): Promise<void> {
+    const gate = container.querySelector('.confirm-dialog');
+    if (!gate) throw new Error('themed confirm gate is not open');
+    const sel = approve ? '.confirm-dialog-approve' : '.confirm-dialog-cancel';
+    await act(async () => {
+      gate.querySelector<HTMLButtonElement>(sel)?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  /** Press Remove on the single row and approve the themed gate it raises. */
+  async function removeAndApprove(): Promise<void> {
+    const btn = removeButton();
+    await act(async () => {
+      btn.click();
+      await Promise.resolve();
+    });
+    await answerGate(true);
+  }
+
   it('lists tracks on mount and renders the empty state when there are none', async () => {
     const fake = makeFakeApi({ tracks: [] });
     await mount(fake);
@@ -176,32 +221,32 @@ describe('<Tracks />', () => {
       tracks: [track({ cues: [{ index: 1, start: 0, end: 1, text: 'hand-edited' }] })],
     });
     await mount(fake);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Remove',
-    ) as HTMLButtonElement;
+    const native = vi.spyOn(window, 'confirm');
+    const removeBtn = removeButton();
 
     await act(async () => {
       removeBtn.click();
       await Promise.resolve();
     });
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    // The gate names the track AND the real loss (its cue count).
+    expect(gateText()).toContain('English');
+    expect(gateText()).toContain('1 cue');
     expect(fake.calls.find((c) => c.method === 'tracks.remove')).toBeUndefined();
-    // The prompt names the track AND the real loss (its cue count).
-    expect(confirmSpy.mock.calls[0][0]).toContain('English');
-    expect(confirmSpy.mock.calls[0][0]).toContain('1 cue');
+
+    // Declining removes nothing and closes the gate.
+    await answerGate(false);
+    expect(fake.calls.find((c) => c.method === 'tracks.remove')).toBeUndefined();
+    expect(gateText()).toBeNull();
 
     // Approving the same click removes for real (the guard must not break the
     // happy path).
-    confirmSpy.mockReturnValue(true);
-    await act(async () => {
-      removeBtn.click();
-      await Promise.resolve();
-    });
+    await removeAndApprove();
     expect(fake.calls.find((c) => c.method === 'tracks.remove')?.params).toEqual({
       videoId: 'v1',
       trackId: 't1',
     });
+    // The renderer-blocking native dialog is never reached on either path.
+    expect(native).not.toHaveBeenCalled();
   });
 
   it('the Remove prompt reads 0 cues for a legacy row with no cues field', async () => {
@@ -215,16 +260,13 @@ describe('<Tracks />', () => {
     const legacy = { id: 't1', lang: 'en', name: 'English', format: 'srt', kind: 'soft' };
     const fake = makeFakeApi({ tracks: [legacy as unknown as SubtitleTrack] });
     await mount(fake);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Remove',
-    ) as HTMLButtonElement;
+    const removeBtn = removeButton();
     await act(async () => {
       removeBtn.click();
       await Promise.resolve();
     });
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(confirmSpy.mock.calls[0][0]).toContain('0 cue');
+    expect(gateText()).toContain('0 cue');
+    await answerGate(true);
     expect(fake.calls.find((c) => c.method === 'tracks.remove')?.params).toEqual({
       videoId: 'v1',
       trackId: 't1',
@@ -237,9 +279,7 @@ describe('<Tracks />', () => {
     // section and Remove via the row.
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake, { availableTracks: [track({ id: 'avail-1' })] });
-    // Remove now confirms first (see the CONFIRM test above); approve it.
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-
+    // Remove now confirms first (see the CONFIRM test above); approve it below.
     const addBtn = container.querySelector('.available-tracks button') as HTMLButtonElement;
     await act(async () => {
       addBtn.click();
@@ -250,13 +290,7 @@ describe('<Tracks />', () => {
       trackId: 'avail-1',
     });
 
-    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Remove',
-    ) as HTMLButtonElement;
-    await act(async () => {
-      removeBtn.click();
-      await Promise.resolve();
-    });
+    await removeAndApprove();
     expect(fake.calls.find((c) => c.method === 'tracks.remove')?.params).toEqual({
       videoId: 'v1',
       trackId: 't1',
@@ -273,15 +307,8 @@ describe('<Tracks />', () => {
   it('surfaces an error when a mutation op rejects', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('remove failed'));
-    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Remove',
-    ) as HTMLButtonElement;
-    await act(async () => {
-      removeBtn.click();
-      await Promise.resolve();
-    });
+    await removeAndApprove();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('remove failed');
   });
 
@@ -482,15 +509,8 @@ describe('<Tracks />', () => {
   it('uses String(err) when a mutation op rejects with a non-Error value', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('plain remove error');
-    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Remove',
-    ) as HTMLButtonElement;
-    await act(async () => {
-      removeBtn.click();
-      await Promise.resolve();
-    });
+    await removeAndApprove();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain remove error');
   });
 
@@ -545,19 +565,12 @@ describe('<Tracks />', () => {
   it('shows the in-flight op label (…) while a mutation op is running', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     // Hang the next op so the busy label renders.
     let release: (v: unknown) => void = () => undefined;
     (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementationOnce(
       () => new Promise((res) => (release = res)),
     );
-    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Remove',
-    ) as HTMLButtonElement;
-    await act(async () => {
-      removeBtn.click();
-      await Promise.resolve();
-    });
+    await removeAndApprove();
     expect(
       [...container.querySelectorAll('.track-ops button')].some((b) => b.textContent === '…'),
     ).toBe(true);
@@ -570,18 +583,11 @@ describe('<Tracks />', () => {
   it('shows the … label on the Remove button while a remove op is running', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     let release: (v: unknown) => void = () => undefined;
     (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementationOnce(
       () => new Promise((res) => (release = res)),
     );
-    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Remove',
-    ) as HTMLButtonElement;
-    await act(async () => {
-      removeBtn.click();
-      await Promise.resolve();
-    });
+    await removeAndApprove();
     // The Remove button (1st op button now the row Add is gone) shows the ellipsis.
     const opButtons = [...container.querySelectorAll('.track-ops button')];
     expect(opButtons[0].textContent).toBe('…'); // Remove is the 1st op button

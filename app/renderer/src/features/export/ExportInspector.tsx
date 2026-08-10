@@ -10,8 +10,9 @@
 // A THIN CONSUMER of the shared editor state (`useEditor`): it reads the video/
 // cues/cropPlan to build the pre-flight and never owns the stage or a copy of them.
 
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import type { ConvertOptions } from '../../lib/rpc';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { useEditor } from '../EditorContext';
 import {
   type PlatformPreset,
@@ -60,21 +61,11 @@ export function ExportInspector({ onCommit }: ExportInspectorProps): React.React
   const durationSec = windowDurationSec(state);
   const [selected, setSelected] = useState<string[]>(() => [firstAvailablePresetId(durationSec)]);
   const [confirming, setConfirming] = useState(false);
-  const approveRef = useRef<HTMLButtonElement>(null);
-  const confirmTitleId = useId();
-  const confirmBlurbId = useId();
 
   const presets = presetsByIds(selected);
   const destination = fanoutDestinationLabel(presets);
   const preflight = buildFanoutPreflight(state, presets);
   const framing = framingSummary(state);
-
-  // WCAG 2.4.3: activating the primary unmounts it and mounts the confirm gate, so
-  // move focus into the alertdialog's primary action — otherwise focus drops to
-  // <body> and the gate goes unannounced. `?.` no-ops on mount/close (ref detached).
-  useEffect(() => {
-    approveRef.current?.focus();
-  }, [confirming]);
 
   const commit = (): void => {
     setConfirming(false);
@@ -124,36 +115,33 @@ export function ExportInspector({ onCommit }: ExportInspectorProps): React.React
       <p className="export-inspector__privacy">{EXPORT_PRIVACY_NOTE}</p>
 
       {confirming ? (
-        <div
-          className="export-inspector__confirm"
-          role="alertdialog"
-          aria-labelledby={confirmTitleId}
-          aria-describedby={confirmBlurbId}
-        >
-          <h3 id={confirmTitleId} className="export-inspector__confirm-title">
-            Export to {destination}?
-          </h3>
-          <p id={confirmBlurbId} className="export-inspector__confirm-blurb">
-            {EXPORT_CONFIRM_BLURB}
-          </p>
-          <div className="export-inspector__confirm-actions">
-            <button
-              ref={approveRef}
-              type="button"
-              className="export-inspector__confirm-approve"
-              onClick={commit}
-            >
-              Export now
-            </button>
-            <button
-              type="button"
-              className="export-inspector__confirm-cancel"
-              onClick={() => setConfirming(false)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+        // W04: the shared themed gate — this inspector was where the pattern was
+        // first written, so the six former native-`confirm()` sites now render the
+        // SAME component under a different BEM block rather than a second dialog.
+        // `block` keeps this skin's class names (and its CSS in export.css) exactly
+        // as they were; the alertdialog role, the id wiring and the focus move all
+        // moved into the component.
+        //
+        // `modal={false}` IS THE HONEST VALUE HERE. This gate is an INLINE card in
+        // the inspector panel (export.css `.export-inspector__confirm` is a plain
+        // in-flow block — no fixed positioning, no scrim), so the page around it
+        // stays live to the mouse. An earlier cut of the extraction let this skin
+        // inherit the overlay's `aria-modal="true"` + Tab cage, which told
+        // assistive tech the surface behind was inert when it was not, and stranded
+        // keyboard users in a card a mouse user could click straight past. The one
+        // affordance the extraction DOES add here on purpose is Escape-to-cancel —
+        // pinned by ExportInspector.test.tsx, alongside the absence of the other
+        // two.
+        <ConfirmDialog
+          block="export-inspector__confirm"
+          modal={false}
+          title={`Export to ${destination}?`}
+          blurb={EXPORT_CONFIRM_BLURB}
+          confirmLabel="Export now"
+          cancelLabel="Cancel"
+          onConfirm={commit}
+          onCancel={() => setConfirming(false)}
+        />
       ) : (
         <button
           type="button"
