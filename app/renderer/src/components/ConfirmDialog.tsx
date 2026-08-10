@@ -16,6 +16,11 @@
 //                       an "am I confirming?" boolean (the Export inspector).
 //   useConfirm()      — a promise wrapper for the six call sites, so their code
 //                       keeps its original shape: `const ok = await confirm(…)`.
+//
+// The two SKINS also differ in MODALITY, and that is explicit in the `modal` prop
+// rather than implied: `useConfirm()` gates are overlay modals (scrim + Tab cage +
+// aria-modal); the Export inspector's gate is an inline card in a panel and gets
+// none of the three. See the `modal` prop doc for why they cannot be mixed.
 
 import React, { useCallback, useId, useRef, useState } from 'react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -24,12 +29,31 @@ import './confirmDialog.css';
 export interface ConfirmDialogProps {
   /**
    * BEM block for the emitted classes: `{block}`, `{block}-title`, `{block}-blurb`,
-   * `{block}-actions`, `{block}-approve`, `{block}-cancel`. A prop rather than a
-   * constant so the pre-existing Export gate keeps its own skin while sharing this
-   * implementation — those suffixes are ITS vocabulary, adopted here unchanged so
-   * reuse costs the export gate no renames.
+   * `{block}-actions`, `{block}-approve`, `{block}-cancel`, plus `{block}-scrim`
+   * on the overlay wrapper when `modal`. A prop rather than a constant so the
+   * pre-existing Export gate keeps its own skin while sharing this implementation —
+   * those suffixes are ITS vocabulary, adopted here unchanged so reuse costs the
+   * export gate no renames.
    */
   block: string;
+  /**
+   * MODALITY IS ONE DECISION, NOT THREE. All three of these move together:
+   *
+   *   `true`  — renders a real `{block}-scrim` ELEMENT (fixed, full-viewport,
+   *             opaque to the pointer) around the card, cages Tab inside the card,
+   *             and sets `aria-modal="true"`. Pointer and keyboard are both held,
+   *             so the ARIA claim that the rest of the page is inert is TRUE.
+   *   `false` — renders the bare card with NO scrim, does NOT cage Tab, and emits
+   *             NO `aria-modal`. Escape still cancels. This is the inline gate the
+   *             Export inspector ships: a card inside a panel, with a live page
+   *             around it.
+   *
+   * There is deliberately no way to ask for `aria-modal` without the scrim. The
+   * first cut of this component did exactly that and it was a false claim to
+   * assistive tech: it advertised the page as inert while every control behind the
+   * card stayed clickable.
+   */
+  modal: boolean;
   /** The question. Rendered as the dialog's accessible NAME. */
   title: string;
   /** The consequence. Rendered as the accessible DESCRIPTION; `\n` is honoured. */
@@ -42,6 +66,7 @@ export interface ConfirmDialogProps {
 
 export function ConfirmDialog({
   block,
+  modal,
   title,
   blurb,
   confirmLabel,
@@ -51,23 +76,27 @@ export function ConfirmDialog({
 }: ConfirmDialogProps): React.ReactElement {
   const titleId = useId();
   const blurbId = useId();
-  // Reuse the repo's modal trap (hooks/useFocusTrap.ts) rather than re-deriving
+  // Reuse the repo's focus trap (hooks/useFocusTrap.ts) rather than re-deriving
   // focus behaviour here: it moves focus to the primary on mount (WCAG 2.4.3 —
-  // otherwise the gate opens with focus still on the button behind it), cycles
-  // Tab/Shift+Tab inside the dialog, routes Escape to cancel (the affordance the
-  // native confirm had), and restores focus to the opener on unmount. The Tab
-  // trap is what makes `aria-modal` below TRUE rather than a claim.
+  // otherwise the gate opens with focus still on the button behind it), routes
+  // Escape to cancel (the affordance the native confirm had), and restores focus
+  // to the opener on unmount. Tab is caged ONLY when `modal`, because caging the
+  // keyboard while the pointer roams free is the inconsistency `aria-modal` then
+  // lies about — see the `modal` prop doc.
   const trapRef = useFocusTrap<HTMLDivElement>({
     onEscape: onCancel,
     initialFocus: `.${block}-approve`,
+    trapTab: modal,
   });
 
-  return (
+  const card = (
     <div
       ref={trapRef}
       className={block}
       role="alertdialog"
-      aria-modal="true"
+      // Only ever set alongside the scrim + the Tab cage below. `undefined` omits
+      // the attribute entirely rather than emitting aria-modal="false".
+      aria-modal={modal ? 'true' : undefined}
       aria-labelledby={titleId}
       aria-describedby={blurbId}
     >
@@ -87,6 +116,20 @@ export function ConfirmDialog({
       </div>
     </div>
   );
+
+  if (!modal) return card;
+
+  // A real ELEMENT, not a `::before`. The first cut painted the scrim as a
+  // pseudo-element of the card — and the card was `position: fixed` WITH a
+  // `transform: translate(-50%,-50%)` centring, which makes the card its own
+  // fixed-position containing block (CSS Transforms L1 §3). The "full-viewport"
+  // scrim was therefore clipped to the card's own box: no page dim, no pointer
+  // interception, while `aria-modal` claimed both. The wrapper both centres the
+  // card and IS the scrim, so the two cannot drift apart again.
+  //
+  // It carries no onClick: a stray background click must not answer a destructive
+  // question in either direction. Its job is to SWALLOW the click, not route it.
+  return <div className={`${block}-scrim`}>{card}</div>;
 }
 
 /** What a call site asks the user. Every field is required — no silent default copy. */
@@ -148,6 +191,10 @@ export function useConfirm(): Confirmer {
     pending === null ? null : (
       <ConfirmDialog
         block="confirm-dialog"
+        // The six former native-`confirm()` sites are genuine modals: the native
+        // dialog they replace froze the whole renderer, so the themed gate holds
+        // both pointer (scrim) and keyboard (Tab cage) instead.
+        modal
         title={pending.request.title}
         blurb={pending.request.blurb}
         confirmLabel={pending.request.confirmLabel}

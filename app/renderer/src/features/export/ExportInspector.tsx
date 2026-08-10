@@ -121,8 +121,20 @@ export function ExportInspector({ onCommit }: ExportInspectorProps): React.React
         // `block` keeps this skin's class names (and its CSS in export.css) exactly
         // as they were; the alertdialog role, the id wiring and the focus move all
         // moved into the component.
+        //
+        // `modal={false}` IS THE HONEST VALUE HERE. This gate is an INLINE card in
+        // the inspector panel (export.css `.export-inspector__confirm` is a plain
+        // in-flow block — no fixed positioning, no scrim), so the page around it
+        // stays live to the mouse. An earlier cut of the extraction let this skin
+        // inherit the overlay's `aria-modal="true"` + Tab cage, which told
+        // assistive tech the surface behind was inert when it was not, and stranded
+        // keyboard users in a card a mouse user could click straight past. The one
+        // affordance the extraction DOES add here on purpose is Escape-to-cancel —
+        // pinned by ExportInspector.test.tsx, alongside the absence of the other
+        // two.
         <ConfirmDialog
           block="export-inspector__confirm"
+          modal={false}
           title={`Export to ${destination}?`}
           blurb={EXPORT_CONFIRM_BLURB}
           confirmLabel="Export now"
