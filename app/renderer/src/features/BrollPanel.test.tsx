@@ -546,14 +546,34 @@ describe('<BrollPanel />', () => {
     expect(btn('add').disabled).toBe(false);
   });
 
-  it('surfaces the registry-door refusal instead of swallowing it', async () => {
+  // The registry door refuses three real cases (missing path, a DIRECTORY with a
+  // media extension, a non-b-roll extension) and each is INVALID_PARAMS, i.e. loud.
+  // Two properties are pinned together because the second is what makes the first
+  // usable: the message is shown, AND the typed path survives so the user can
+  // correct it rather than retype it. `withBusy` swallows the rejection, so an
+  // earlier draft that cleared the field in a `.then()` chained onto it wiped the
+  // path on the refusal path too — this case is the red-proof for that fix.
+  it('surfaces the registry-door refusal AND keeps the typed path for correction', async () => {
     const fake = makeFakeApi({
       addError: new Error('not a file (a directory cannot be a b-roll asset): D:/album.png'),
     });
     await mount(fake.api);
     pick('[data-input="add-path"]', 'D:/album.png');
+    pick('[data-input="add-title"]', 'Album');
     await click('add');
     expect(q('.error')?.textContent).toContain('not a file');
+    expect((q('[data-input="add-path"]') as HTMLInputElement).value).toBe('D:/album.png');
+    expect((q('[data-input="add-title"]') as HTMLInputElement).value).toBe('Album');
+  });
+
+  it('clears the add fields ONLY after a successful registration', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    pick('[data-input="add-path"]', 'D:/pictures/hero dog.png');
+    pick('[data-input="add-title"]', 'Hero dog');
+    await click('add');
+    expect((q('[data-input="add-path"]') as HTMLInputElement).value).toBe('');
+    expect((q('[data-input="add-title"]') as HTMLInputElement).value).toBe('');
   });
 
   it('offers unregister on a REGISTERED row only — a scanned file is not ours to drop', async () => {

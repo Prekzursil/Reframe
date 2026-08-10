@@ -380,8 +380,14 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
     [runJob, videoId],
   );
 
-  /** Shared prologue/epilogue so every action has one busy + progress contract. */
-  const act = useCallback(async (label: string, body: () => Promise<void>): Promise<void> => {
+  /**
+   * Shared prologue/epilogue so every action has ONE busy + progress + error
+   * contract. It SWALLOWS the rejection (surfacing it as `error` instead), which is
+   * why a caller must never chain post-success work onto the returned promise — see
+   * `addAsset`. Deliberately NOT called `act`: React's test `act()` is all over this
+   * panel's suite and a same-named callback inside the component reads as that.
+   */
+  const withBusy = useCallback(async (label: string, body: () => Promise<void>): Promise<void> => {
     setBusy(label);
     setError('');
     setPct(0);
@@ -398,28 +404,34 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
 
   const refresh = useCallback(
     (label: string, mutate: () => Promise<unknown>): Promise<void> =>
-      act(label, async () => {
+      withBusy(label, async () => {
         await mutate();
         await loadLibrary();
       }),
-    [act, loadLibrary],
+    [loadLibrary, withBusy],
   );
 
   const addAsset = useCallback(
     (): Promise<void> =>
-      refresh('add', () => {
+      withBusy('add', async () => {
         const title = addTitle.trim();
-        return bridge.rpc('broll.addAsset', {
+        await bridge.rpc('broll.addAsset', {
           path: addPath.trim(),
           // A blank field means "no title", which is the ABSENT param — not an
           // empty-string title. `add_broll` falls back to the file stem itself.
           ...(title.length > 0 ? { title } : {}),
         });
-      }).then(() => {
+        // Cleared INSIDE the body and only after the rpc resolves. `withBusy`
+        // swallows the rejection, so a `.then()` chained onto it would also run on
+        // the REFUSAL path — and the registry door refuses three real cases (missing
+        // path, a directory with a media extension, a non-b-roll extension). Wiping
+        // the field there would make the user retype a path they need to CORRECT,
+        // right next to the error telling them what was wrong with it.
         setAddPath('');
         setAddTitle('');
+        await loadLibrary();
       }),
-    [addPath, addTitle, bridge, refresh],
+    [addPath, addTitle, bridge, loadLibrary, withBusy],
   );
 
   const removeAsset = useCallback(
@@ -434,7 +446,7 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
 
   const suggest = useCallback(
     (): Promise<void> =>
-      act('suggest', () =>
+      withBusy('suggest', () =>
         runVideoJob(
           'broll.suggest',
           // Sent EXPLICITLY, always: an omitted threshold would make the sidecar's
@@ -450,19 +462,19 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
           },
         ),
       ),
-    [act, coverage, layout, runVideoJob, threshold],
+    [coverage, layout, runVideoJob, threshold, withBusy],
   );
 
   const approved = insertions.filter((_row, index) => accepted[index]);
 
   const apply = useCallback(
     (): Promise<void> =>
-      act('apply', () =>
+      withBusy('apply', () =>
         runVideoJob('broll.apply', { insertions: approved }, (result) => {
           setAppliedPath(str(pickField<string>(result, 'path')));
         }),
       ),
-    [act, approved, runVideoJob],
+    [approved, runVideoJob, withBusy],
   );
 
   const cancel = useCallback(async (): Promise<void> => {
