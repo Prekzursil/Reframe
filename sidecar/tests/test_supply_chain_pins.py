@@ -16,6 +16,14 @@ Three surfaces, all "an unverified artifact must never be EXECUTED":
   lock that ``runtime_setup.generate_hashed_lock`` produces.
 * ``.github/workflows/quality.yml`` — the CI installer was fetched from the
   MUTABLE ``main`` branch and the scanner binary had no checksum at all.
+* ``.github/workflows/quality.yml`` again, W23 — the ``gate-deps`` osv-scanner
+  invocation passed THREE ``--lockfile`` arguments and none of them was the
+  chatterbox environment, so a Python env that SHIPS (``build/make-portable.ps1``
+  ships a second, py3.14 embeddable CPython for it) and that carries its own
+  ``+cu128`` torch build had ZERO CVE scanning. Section 5 below turns "every
+  shipped dependency environment is in the deps gate" into an asserted
+  invariant, discovered from disk rather than from a hardcoded list, so a fourth
+  environment cannot be added unscanned later.
 
 The lockfile-mechanism tests live in ``test_env_lockfile.py``; this module only
 covers the WU-S10 pinning deltas.
@@ -27,6 +35,7 @@ import calendar
 import re
 from pathlib import Path
 
+import pytest
 from media_studio.assets import manifest
 from media_studio.assets.manager import (
     GET_PIP_SHA256,
@@ -40,6 +49,9 @@ from media_studio.features.tts import chatterbox as cb
 REPO_ROOT = Path(__file__).resolve().parents[2]
 QUALITY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "quality.yml"
 EMBED_SETUP_PS1 = REPO_ROOT / "build" / "python-embed-setup.ps1"
+APP_DIR = REPO_ROOT / "app"
+SIDECAR_DIR = REPO_ROOT / "sidecar"
+RUNTIME_SETUP_DIR = SIDECAR_DIR / "runtime_setup"
 
 
 def _recording_manager(root: Path, **kwargs: object) -> tuple[AssetManager, list[list[str]]]:
@@ -302,3 +314,207 @@ class TestEmbedSetupPinIsMandatory:
         body = self._body()
         assert "[switch]$RecordHashes" in body
         assert "staged NOTHING by design" in body
+
+
+# --------------------------------------------------------------------------- #
+# 5. W23 — the deps gate must scan EVERY shipped dependency environment
+# --------------------------------------------------------------------------- #
+#: `npm ci` / electron-builder create these; a manifest inside one is generated
+#: output, not a shipped environment, so discovery must not demand it be scanned.
+GENERATED_APP_DIRS = frozenset({"node_modules", "dist", "out"})
+
+#: `name:` as the FIRST key of a sequence item — i.e. a real workflow STEP. Same
+#: shape `.quality/charter_check.py` matches on, and for the same reason: a
+#: job-level or `with:`-block `name:` is a plain mapping key, not a step.
+STEP_NAME_KEY = re.compile(r"^\s*-\s+name:\s*(?P<value>\S.*)$")
+#: `--lockfile=<path>`; the trailing `\` of a shell line continuation is excluded
+#: from the path by the character class.
+LOCKFILE_ARG = re.compile(r"--lockfile[=\s]+(?P<path>[^\s\\]+)")
+
+
+def _repo_rel(path: Path) -> str:
+    return path.relative_to(REPO_ROOT).as_posix()
+
+
+def gate_deps_lockfile_args(workflow_text: str) -> set[str]:
+    """The ``--lockfile`` paths the ``gate-deps`` STEP actually passes.
+
+    Measure the FIELD, not the document. Two shapes in this workflow would
+    otherwise let a deleted lockfile keep satisfying the invariant below: the
+    explanatory comment block directly above the step names all three original
+    lockfiles in prose, and a ``#``-disabled argument inside the ``run:`` body is
+    not an argument at all. So the scan is scoped to the lines that follow the
+    ``gate-deps`` step name (up to the next step) and skips comment lines.
+    """
+    inside = False
+    found: set[str] = set()
+    for line in workflow_text.splitlines():
+        step = STEP_NAME_KEY.match(line)
+        if step:
+            inside = step.group("value").startswith("gate-deps")
+            continue
+        if not inside or line.lstrip().startswith("#"):
+            continue
+        found.update(match.group("path") for match in LOCKFILE_ARG.finditer(line))
+    return found
+
+
+def shipped_dependency_manifests() -> dict[str, frozenset[str]]:
+    """``{environment -> the manifests that would cover it}``, read off disk.
+
+    Deliberately NOT a hardcoded list: the whole point of the invariant is that a
+    FOURTH environment cannot be introduced unscanned, and a literal list would
+    be edited by the very commit that introduces one.
+
+    * one environment per npm tree — ``app/`` plus every immediate subdirectory
+      that owns a committed ``package-lock.json``;
+    * one per ``sidecar/requirements*.txt`` (the resolved closure the gate has
+      read since it was written);
+    * one per ``sidecar/runtime_setup/requirements-<env>.txt`` — the first-run
+      ``pip --target`` environments. A sibling ``requirements-<env>.lock.txt`` is
+      an F1 build-prep artifact that is generated rather than committed, so
+      scanning EITHER file covers that environment; hence a SET per environment
+      instead of a single path.
+
+    Both globs are single-level on purpose: a recursive walk would descend into
+    ``sidecar/.venv`` and ``app/node_modules`` and pick up third-party
+    requirements files that this repo does not ship.
+    """
+    environments: dict[str, set[str]] = {}
+    npm_roots = [
+        APP_DIR,
+        *(d for d in sorted(APP_DIR.iterdir()) if d.is_dir() and d.name not in GENERATED_APP_DIRS),
+    ]
+    for root in npm_roots:
+        lock = root / "package-lock.json"
+        if lock.is_file():
+            environments[_repo_rel(lock)] = {_repo_rel(lock)}
+    for req in sorted(SIDECAR_DIR.glob("requirements*.txt")):
+        environments[_repo_rel(req)] = {_repo_rel(req)}
+    for req in sorted(RUNTIME_SETUP_DIR.glob("requirements*.txt")):
+        env = req.name.removesuffix(".txt").removesuffix(".lock")
+        environments.setdefault(env, set()).add(_repo_rel(req))
+    return {name: frozenset(paths) for name, paths in environments.items()}
+
+
+def _distribution_names(path: Path) -> set[str]:
+    """The normalized distribution names pinned in a requirements-style file."""
+    names: set[str] = set()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", "-")):  # comment / `--extra-index-url` / `--hash`
+            continue
+        names.add(re.split(r"[=<>!~\[; ]", line, maxsplit=1)[0].strip().lower().replace("_", "-"))
+    return names
+
+
+class TestDepsGateCoversEveryShippedEnv:
+    @staticmethod
+    def _body() -> str:
+        return QUALITY_WORKFLOW.read_text(encoding="utf-8")
+
+    # --- detector control: both halves must find KNOWN-PRESENT items --------- #
+    def test_arg_parser_finds_the_three_long_standing_lockfiles(self):
+        """A zero read here would make every assertion below vacuously true.
+
+        These three have been in the ``gate-deps`` step since it was written, so
+        the parser must see them before its silence about a fourth means anything.
+        """
+        found = gate_deps_lockfile_args(self._body())
+        assert {
+            "app/package-lock.json",
+            "app/render-cli/package-lock.json",
+            "sidecar/requirements.lock.txt",
+        } <= found, f"the --lockfile parser is broken, it found {sorted(found)}"
+
+    def test_discovery_finds_the_known_environments(self):
+        environments = shipped_dependency_manifests()
+        assert "app/package-lock.json" in environments
+        assert "app/render-cli/package-lock.json" in environments
+        assert "sidecar/requirements.lock.txt" in environments
+        assert environments["requirements-chatterbox"] >= {"sidecar/runtime_setup/requirements-chatterbox.txt"}
+        assert environments["requirements-sidecar"] >= {"sidecar/runtime_setup/requirements-sidecar.txt"}
+
+    def test_arg_parser_ignores_lockfiles_outside_the_gate_deps_step(self):
+        text = "\n".join(
+            [
+                "      # --lockfile=prose/one.json is read by the deps gate",
+                "      - name: gate-sast opengrep",
+                "        run: echo --lockfile=other-step/two.json",
+                "      - name: gate-deps osv-scanner",
+                "        run: |",
+                "          osv-scanner scan source \\",
+                "            --lockfile=real/three.json \\",
+                "            # --lockfile=disabled/four.json",
+                "      - name: charter-check",
+                "        run: echo --lockfile=later-step/five.json",
+            ]
+        )
+        assert gate_deps_lockfile_args(text) == {"real/three.json"}
+
+    # --- the invariant ------------------------------------------------------- #
+    def test_every_shipped_environment_is_scanned_by_the_deps_gate(self):
+        scanned = gate_deps_lockfile_args(self._body())
+        missing = {env: sorted(paths) for env, paths in shipped_dependency_manifests().items() if not (paths & scanned)}
+        assert not missing, (
+            f"these dependency environments SHIP but no --lockfile in the gate-deps step scans them, "
+            f"so their known CVEs are invisible to the gate: {missing}. Add one manifest per "
+            f"environment to the osv-scanner invocation in .github/workflows/quality.yml (and, if a "
+            f"finding is genuinely unfixable, a dated + reasoned ignore in osv-scanner.toml)."
+        )
+
+    # --- MUTATION: the invariant must be able to FAIL ------------------------ #
+    @pytest.mark.parametrize(
+        "env",
+        [
+            "app/package-lock.json",
+            "app/render-cli/package-lock.json",
+            "sidecar/requirements.lock.txt",
+            "requirements-chatterbox",
+            "requirements-sidecar",
+        ],
+    )
+    def test_removing_one_environments_lockfile_arg_is_caught(self, env: str):
+        """Drop each environment's argument in turn; the invariant must name it.
+
+        A green invariant proves nothing on its own — this is the both-states
+        check that it goes RED in the known-broken state, run permanently rather
+        than once at authoring time.
+        """
+        body = self._body()
+        mutated = body
+        for path in shipped_dependency_manifests()[env]:
+            mutated = re.sub(rf"^.*--lockfile={re.escape(path)}.*$\n?", "", mutated, flags=re.MULTILINE)
+        assert mutated != body, f"no --lockfile argument for {env} was found to remove"
+        scanned = gate_deps_lockfile_args(mutated)
+        still_missing = sorted(name for name, paths in shipped_dependency_manifests().items() if not (paths & scanned))
+        assert still_missing == [env]
+
+    def test_a_commented_out_lockfile_arg_does_not_satisfy_the_invariant(self):
+        """use-vs-mention on the live file: a disabled argument is not passed."""
+        target = "sidecar/runtime_setup/requirements-chatterbox.txt"
+        body = self._body()
+        mutated = re.sub(rf"^(\s*)(--lockfile={re.escape(target)})", r"\1# \2", body, flags=re.MULTILINE)
+        assert mutated != body, f"no --lockfile argument for {target} was found to comment out"
+        assert target not in gate_deps_lockfile_args(mutated)
+
+    # --- WHY the chatterbox env needs its own argument ----------------------- #
+    def test_the_chatterbox_env_pins_distributions_no_other_manifest_covers(self):
+        """``sidecar/requirements.lock.txt`` structurally cannot cover this env.
+
+        ``sidecar/pyproject.toml`` states that chatterbox-tts/torch must NOT be
+        added to the main sidecar env (isolated env asset only), so the only
+        Python lockfile the gate read before W23 sees none of them. Measured at
+        this commit ALL THREE pins are absent from it (chatterbox-tts, torch,
+        torchaudio — the latter two a ``+cu128`` build the sidecar tree never
+        names); the assertion is the weaker "at least one", so a future dep
+        change cannot make it brittle while the load-bearing property holds.
+        """
+        chatterbox = _distribution_names(RUNTIME_SETUP_DIR / "requirements-chatterbox.txt")
+        sidecar_closure = _distribution_names(SIDECAR_DIR / "requirements.lock.txt")
+        assert chatterbox, "the chatterbox requirements file parsed to zero distributions"
+        assert len(sidecar_closure) > 1, "the sidecar closure parsed to nothing — the parser is broken"
+        assert chatterbox - sidecar_closure, (
+            "every chatterbox distribution is already pinned in sidecar/requirements.lock.txt; "
+            "re-check whether this environment still needs its own --lockfile argument"
+        )
