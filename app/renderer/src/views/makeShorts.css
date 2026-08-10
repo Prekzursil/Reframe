@@ -72,7 +72,7 @@
 
 .make-shorts__error {
   margin: 0;
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .make-shorts__note {

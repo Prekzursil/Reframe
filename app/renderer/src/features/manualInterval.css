@@ -24,7 +24,7 @@
 
 .manual-interval__error {
   margin: 0;
-  color: var(--status-error);
+  color: var(--status-error-text);
   font-size: var(--type-body-size);
 }
 

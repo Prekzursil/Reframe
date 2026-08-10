@@ -337,7 +337,7 @@
 }
 
 .director-panel .director-op__reason {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .director-panel .director-op__controls {

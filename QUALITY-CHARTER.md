@@ -23,7 +23,7 @@ gates that exist in the source charter do not apply here and have been dropped.
 | 3 | tests-coverage | pytest 9 + pytest-cov (branch, `--cov-fail-under=100`) · vitest 3 (100% thresholds) | Strict 100% line+branch coverage **everywhere** — sidecar (`media_studio`) **and** the renderer (`renderer/src/**`). No hybrid/ratchet floor. Reasoned `# pragma: no cover — <reason>` / `/* v8 ignore — <reason> */` allowed only for genuinely-untestable platform/defensive branches. |
 | 4 | sast | opengrep 1.22.0 (CI) / semgrep 1.166.0 (local) | Static security analysis using the curated in-repo ruleset under `.quality/opengrep/` (NOT `--config auto`). Clean-zero lock: 0 findings, no baseline. |
 | 5 | secrets | gitleaks 8.30.1 | Secret scanning with the committed `.gitleaks.toml` allowlist (vendored deps + reasoned test fixtures only). Gate on 0. |
-| 6 | deps | osv-scanner 2.3.8 | Known-CVE scan of the lockfiles (`app` + `app/render-cli` npm, `sidecar` pyproject). Reasoned per-vuln ignores only in `osv-scanner.toml`; no baseline. Gate on 0. |
+| 6 | deps | osv-scanner 2.3.8 | Known-CVE scan of **five lockfiles**: the `app` + `app/render-cli` npm lockfiles, the resolved `sidecar/requirements.lock.txt`, and both first-run `pip --target` environments (`sidecar/runtime_setup/requirements-sidecar.txt` plus `requirements-chatterbox.txt`, whose own `+cu128` torch build no other lockfile can contain). Read flat (`--no-resolve`), so declared pins rather than the transitive closure. **NOT scanned by this gate:** the `reframe-gpu` extra in `sidecar/pyproject.toml` (`torch==2.6.0`, inside GHSA-rrmf-rvhw-rf47's range), which the shipped sidecar asks the user to install at runtime — an open item, covered today only by the advisory Dependabot rail. Reasoned, dated per-vuln ignores only in `osv-scanner.toml`; no baseline. Gate on 0. |
 
 <!-- END GATES -->
 
@@ -57,6 +57,27 @@ tree, and github-actions); that is supply-chain hygiene, not part of the 6-gate 
 - **JS/TS formatter = Biome (format-only), not oxfmt.** As of the build date the OXC
   formatter (`oxfmt`) is still **beta** (no 1.0/GA), so the formatter gate uses
   Biome 2.5.0 `format --write` (linter disabled in `biome.json`; linting is oxlint's job).
+- **The deps gate scans environments, not just the two npm trees.** The isolated
+  py3.14 chatterbox voice-clone env is a *deliberate* separation — `sidecar/pyproject.toml`
+  forbids chatterbox-tts/torch in the main sidecar env, and the env exists at all because
+  chatterbox-tts 0.1.7 only accepts py3.14 — so the fix for its missing CVE coverage was to
+  add its requirements file to the EXISTING gate-6 lockfile set, never to unify the torch
+  pins. Adding a scanned lockfile is not a new gate and does not touch the one-in/one-out
+  rule (rule 2), which is about the closed list of six gates. Section 5 of
+  `sidecar/tests/test_supply_chain_pins.py` asserts that every **discovered** shipped
+  environment has a `--lockfile` argument.
+  **Scope of that invariant, measured — it is three globs, not a closure.** An earlier
+  wording here claimed a fourth environment "cannot be added unscanned" full stop; three
+  reviewers refuted it by executing the discovery against synthetic trees. A new environment
+  is caught only if it arrives as `app/package-lock.json`,
+  `app/<immediate-subdir>/package-lock.json`, `sidecar/requirements*.txt`, or
+  `sidecar/runtime_setup/requirements*.txt`. One declared anywhere else is invisible to it —
+  a repo-root lockfile, two levels under `app/`, a sibling top-level tree, a `sidecar/envs/…`
+  tree, a pin list not named `requirements*`, or a dependency set declared as a `pyproject`
+  extra. The last is live, not hypothetical: it is exactly how `reframe-gpu` escapes gate 6.
+  Both directions are asserted by `TestDiscoveryScopeIsTheThreeGlobs` (4 discovered shapes as
+  a detector control, 6 undiscovered shapes as the boundary), so this paragraph cannot drift
+  away from the code silently. Widening a glob must update that test and this text together.
 - **basedpyright mode = `standard`** (not `strict`) so "literal zero" stays achievable
   on partly-untyped code and untyped third-party libraries.
 - **react-hooks/exhaustive-deps = off** in oxlint: it is advisory and its auto-fix can
