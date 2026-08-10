@@ -855,6 +855,27 @@ describe('<BrollPanel />', () => {
     expect(copy).toContain(BROLL_REASON_NO_MATCH);
   });
 
+  // The explanation must quote the dials the RETURNED plan ran with, not whatever
+  // the controls happen to say now. Reading live state here would reintroduce the
+  // very defect the copy exists to avoid — stating a number that was not measured.
+  it('quotes the dials the plan RAN with, not the ones the user moved to afterwards', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    pick('[data-input="coverage"]', '25');
+    pick('[data-input="threshold"]', '0.35');
+    await suggestWith(fake, { insertions: [], reason: BROLL_REASON_NO_MATCH });
+    expect(q('[data-section="no-match"]')?.textContent).toContain('coverage cap of 25%');
+
+    // the user now drags both dials WITHOUT re-running
+    pick('[data-input="coverage"]', '60');
+    pick('[data-input="threshold"]', '0.80');
+    const copy = q('[data-section="no-match"]')?.textContent ?? '';
+    expect(copy).toContain('coverage cap of 25%');
+    expect(copy).toContain('0.35');
+    expect(copy).not.toContain('coverage cap of 60%');
+    expect(copy).not.toContain('0.80');
+  });
+
   it('a suggest answer with no jobId leaves an honest empty plan', async () => {
     const fake = makeFakeApi({ jobless: true });
     await mount(fake.api);

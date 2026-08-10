@@ -440,7 +440,20 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
   const [insertions, setInsertions] = useState<BrollInsertion[]>([]);
   const [accepted, setAccepted] = useState<boolean[]>([]);
   const [reason, setReason] = useState<string>('');
-  const [planned, setPlanned] = useState<boolean>(false);
+  /**
+   * The dials the RETURNED plan was actually computed with — `null` until one
+   * comes back, which is also the "a plan has been run" flag (it replaced a plain
+   * `planned` boolean, so the two can never disagree).
+   *
+   * SNAPSHOT, NOT LIVE STATE, and that distinction is the whole point of the
+   * empty-plan copy: reading `threshold`/`coverage` straight out of the controls
+   * would make the explanation quote whatever the user has since dragged the
+   * slider to, which is a different number from the one that ran — the same class
+   * of "state something you did not measure" defect the copy exists to avoid.
+   */
+  const [plannedWith, setPlannedWith] = useState<{ threshold: number; coverage: number } | null>(
+    null,
+  );
   const [appliedPath, setAppliedPath] = useState<string>('');
   // job lane
   const [busy, setBusy] = useState<string>('');
@@ -493,7 +506,7 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
     setInsertions([]);
     setAccepted([]);
     setReason('');
-    setPlanned(false);
+    setPlannedWith(null);
     setAppliedPath('');
     setError('');
   }, [videoId]);
@@ -628,7 +641,9 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
             setInsertions(plan.insertions);
             setAccepted(plan.insertions.map(() => true));
             setReason(plan.reason);
-            setPlanned(true);
+            // The values SENT above, captured for the explanation — not re-read
+            // from the controls at render time.
+            setPlannedWith({ threshold, coverage });
             setAppliedPath('');
           },
         ),
@@ -937,9 +952,10 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
           something anyway is the competitor behaviour being avoided. What it is
           NOT is a measurement: see `emptyPlanExplanation` for the executed proof
           that the engine's single reason string covers five different causes. */}
-      {planned && insertions.length === 0 && (
+      {plannedWith !== null && insertions.length === 0 && (
         <p className="broll-no-match" data-section="no-match" role="status">
-          {emptyPlanExplanation(threshold, coverage)} Reason from the engine: {reason}
+          {emptyPlanExplanation(plannedWith.threshold, plannedWith.coverage)} Reason from the
+          engine: {reason}
         </p>
       )}
 
