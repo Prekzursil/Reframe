@@ -18,18 +18,8 @@
 //                       keeps its original shape: `const ok = await confirm(…)`.
 
 import React, { useCallback, useId, useRef, useState } from 'react';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import './confirmDialog.css';
-
-/**
- * WCAG 2.4.3: the gate mounts in response to a click on a control that stays on
- * screen, so focus would otherwise remain outside the dialog and the gate would
- * go unannounced. A CALLBACK ref (not an effect) moves focus the moment the node
- * attaches — and React hands it `null` on unmount, which is the branch that runs
- * when the gate closes.
- */
-function focusOnAttach(node: HTMLButtonElement | null): void {
-  if (node !== null) node.focus();
-}
 
 export interface ConfirmDialogProps {
   /**
@@ -61,26 +51,25 @@ export function ConfirmDialog({
 }: ConfirmDialogProps): React.ReactElement {
   const titleId = useId();
   const blurbId = useId();
+  // Reuse the repo's modal trap (hooks/useFocusTrap.ts) rather than re-deriving
+  // focus behaviour here: it moves focus to the primary on mount (WCAG 2.4.3 —
+  // otherwise the gate opens with focus still on the button behind it), cycles
+  // Tab/Shift+Tab inside the dialog, routes Escape to cancel (the affordance the
+  // native confirm had), and restores focus to the opener on unmount. The Tab
+  // trap is what makes `aria-modal` below TRUE rather than a claim.
+  const trapRef = useFocusTrap<HTMLDivElement>({
+    onEscape: onCancel,
+    initialFocus: `.${block}-approve`,
+  });
 
   return (
-    // Deliberately NOT `aria-modal="true"`. The scrim below the card blocks
-    // POINTER input, but keyboard focus is not trapped and the background is not
-    // inert, so a Tab out of these two buttons lands on the surface behind. Saying
-    // `aria-modal` would tell a screen reader the rest of the page is unavailable
-    // when it is still reachable — a worse lie than the honest non-modal markup.
-    // Settling experiment for closing the gap: a keyboard e2e that Tabs off the
-    // cancel button and asserts focus stays inside the gate, added together with a
-    // two-node focus trap + focus restore on close.
     <div
+      ref={trapRef}
       className={block}
       role="alertdialog"
+      aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={blurbId}
-      onKeyDown={(event) => {
-        // Escape is the affordance the native confirm had; losing it silently
-        // would be a regression the themed gate hides behind nicer pixels.
-        if (event.key === 'Escape') onCancel();
-      }}
     >
       <h3 id={titleId} className={`${block}-title`}>
         {title}
@@ -89,12 +78,7 @@ export function ConfirmDialog({
         {blurb}
       </p>
       <div className={`${block}-actions`}>
-        <button
-          ref={focusOnAttach}
-          type="button"
-          className={`${block}-approve`}
-          onClick={onConfirm}
-        >
+        <button type="button" className={`${block}-approve`} onClick={onConfirm}>
           {confirmLabel}
         </button>
         <button type="button" className={`${block}-cancel`} onClick={onCancel}>

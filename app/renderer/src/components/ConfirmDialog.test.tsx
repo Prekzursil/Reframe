@@ -68,10 +68,8 @@ describe('ConfirmDialog', () => {
     expect(bodyId).toBeTruthy();
     expect(dialog?.getAttribute('aria-labelledby')).toBe(titleId);
     expect(dialog?.getAttribute('aria-describedby')).toBe(bodyId);
-    // NOT aria-modal: focus is not trapped and the background is not inert, so
-    // claiming modality would misdescribe the page to a screen reader. Pinned so a
-    // later edit cannot add the attribute without also adding the focus trap.
-    expect(dialog?.getAttribute('aria-modal')).toBeNull();
+    // aria-modal is only honest because Tab is actually trapped — pinned below.
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
     // The whole message survives — including the detail line the native confirm
     // used to carry after a blank line.
     expect(q('.confirm-dialog-title')?.textContent).toBe('Delete this short?');
@@ -101,6 +99,28 @@ describe('ConfirmDialog', () => {
     act(() => q<HTMLButtonElement>('.confirm-dialog-cancel')?.click());
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('traps Tab inside the gate, so aria-modal="true" is not a false claim', () => {
+    // Without a trap, Tab off the last control lands on the surface the question
+    // is about — while aria-modal tells a screen reader that surface is inert.
+    render();
+    const dialog = q<HTMLDivElement>('.confirm-dialog');
+    const approve = q<HTMLButtonElement>('.confirm-dialog-approve');
+    const cancel = q<HTMLButtonElement>('.confirm-dialog-cancel');
+    // Forward off the LAST control wraps to the first.
+    act(() => cancel?.focus());
+    act(() => {
+      dialog?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    });
+    expect(document.activeElement).toBe(approve);
+    // Backward off the FIRST control wraps to the last.
+    act(() => {
+      dialog?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }),
+      );
+    });
+    expect(document.activeElement).toBe(cancel);
   });
 
   it('cancels on Escape and ignores every other key', () => {

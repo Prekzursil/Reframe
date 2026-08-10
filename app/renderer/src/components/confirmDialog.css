@@ -33,11 +33,12 @@
 
 /* The scrim: dims the surface the question is about, and — because a fixed,
    full-viewport pseudo-element is hit-testable — also swallows pointer input
-   aimed at the surface behind, which is what stops a second destructive click
-   landing while the first question is still open. That is POINTER modality only:
-   keyboard focus is NOT trapped (see the note in ConfirmDialog.tsx), which is why
-   the dialog does not claim `aria-modal`. A click on the scrim is intentionally
-   inert — it neither confirms nor cancels. */
+   aimed at the surface behind, so a second destructive click cannot land while
+   the first question is open. Together with the keyboard trap in
+   ConfirmDialog.tsx (hooks/useFocusTrap) this is what backs `aria-modal="true"`:
+   neither pointer nor keyboard reaches the background. A click on the scrim is
+   intentionally inert — it neither confirms nor cancels, because a stray click
+   must not answer a destructive question either way. */
 .confirm-dialog::before {
   content: "";
   position: fixed;
