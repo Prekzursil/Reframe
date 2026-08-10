@@ -440,6 +440,21 @@ export type MediaGenerator = (samplePath: string, workDir: string) => void;
  * existing caller is byte-for-byte unchanged; the transcribe journey passes
  * :func:`generateSpeechSample` to get a SPEECH-bearing sample through the exact
  * same seeding path (same `library.add`, same thumbnail, same env).
+ *
+ * The default is `generateSample`, which takes ONE parameter and therefore ignores
+ * the `workDir` second argument — that is WHY the zero-argument callers are
+ * unchanged rather than merely "probably fine". They are enumerated here so the
+ * count is checkable instead of asserted (a review of this branch put it at three
+ * by grepping only `e2e/*.spec.ts`; it is FOUR — the visual suite's helper is easy
+ * to miss because it lives under `e2e/visual/`, outside playwright.config.ts):
+ *   * `preview.spec.ts`               (executed on this branch: 9/9 green)
+ *   * `golden-journey.spec.ts`        (NOT executed here — UNVERIFIED)
+ *   * `packaged.spec.ts`              (NOT executed here — UNVERIFIED)
+ *   * `visual/_visualSetup.ts` `launchSeededApp()`, i.e. every visual + a11y spec
+ *                                     (NOT executed here — UNVERIFIED)
+ * The settling experiment for the three unexecuted ones is a full
+ * `npm run test:e2e` + `npm run test:e2e:visual`; the argument that they cannot
+ * have changed is the arity one above, not the test evidence.
  */
 export function seedEnvironment(generateMedia: MediaGenerator = generateSample): SeededEnv {
   const python = resolvePython();
