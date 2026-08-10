@@ -392,6 +392,14 @@ describe('the preview mirrors the burn it previews (W58 fidelity)', () => {
     // diff the rendered frame against a screenshot of this overlay at the same scale.
     expect(HOOK).toMatch(/top:\s*5%/);
     expect(/play_y\s*\*\s*0\.07/.test(readFileSync(CAPTION_PY, 'utf8'))).toBe(true);
+    // Nor the burn's ≤2-line headline balancing: `wrap_hook_title` caps the ASS
+    // headline at two lines, this overlay renders the raw string and lets CSS wrap.
+    // So the font size is faithful but the LINE COUNT is not, and at the faithful
+    // size a long headline is tall — measured on the real stage: a 12-word hook is
+    // 139.4px with 89.6px of clearance above the line, a 21-word hook is 250.9px and
+    // overlaps it by 21.9px. Deliberately NOT clipped here (see the sheet).
+    expect(/_HOOK_TITLE_MAX_LINES\s*=\s*2/.test(readFileSync(CAPTION_PY, 'utf8'))).toBe(true);
+    expect(readFileSync(resolve(HERE, 'CaptionOverlay.tsx'), 'utf8')).not.toContain('wrapHook');
     // Nor does it apply the template's `sizeScale`: `previewSizeScale`
     // (lib/captionOverridePreview.ts:48-50) is consumed by the CaptionDesigner
     // sample, not by this overlay, while the burn multiplies the font by it

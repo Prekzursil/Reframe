@@ -86,7 +86,20 @@
  * `9.78cqw` is 5.5% of the frame HEIGHT (caption.py:351) expressed against the
  * container's INLINE size, which is what `cqw` measures: 0.055 x 16/9 = 0.09778. The
  * clamp bounds are legibility insurance only and must not bind at the real 248px
- * stage — the conformance test asserts exactly that. */
+ * stage — the conformance test asserts exactly that.
+ *
+ * RESIDUAL, measured and disclosed rather than papered over: at the export-faithful
+ * size a LONG headline is tall. Measured on the real stage — 12-word hook: 139.4px
+ * tall, 89.6px of clearance above the caption line; 21-word hook: 250.9px tall,
+ * clearance -21.9px, i.e. it overlaps the line. No `max-height` is imposed here on
+ * purpose: clipping the preview would invent behaviour the burn does not have and
+ * would HIDE the fact that the same headline is equally tall in the export. The real
+ * cap belongs where the burn has one — `wrap_hook_title` (caption.py:132) balances
+ * the headline onto at most 2 lines and this overlay renders the raw string, so the
+ * preview's LINE COUNT is not faithful even though its font size now is. UNVERIFIED:
+ * how libass re-wraps those 2 long lines at the 60px margins, i.e. whether the burn
+ * shows 2 lines or more. Settling experiment: burn a clip with a 21-word hook and
+ * count the rendered lines. */
 .caption-overlay__hook {
   position: absolute;
   top: 5%;
