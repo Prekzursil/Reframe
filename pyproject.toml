@@ -95,8 +95,11 @@ pythonVersion = "3.12"
 include = [
   "sidecar/media_studio",
   # The schema-first RPC contract source of truth + generator (v1.5 POC). Type-gated
-  # so the "typed" claim is enforced; it is NOT in the pytest --cov=media_studio root
-  # (it is a build-time tool + additive runtime loader, not shipped in the package).
+  # so the "typed" claim is enforced. W37 (2026-08-10): it is now ALSO a pytest coverage
+  # root — `--cov=contract` beside `--cov=media_studio` in quality.yml gate:3. This
+  # comment used to say it was NOT covered "(a build-time tool + additive runtime loader,
+  # not shipped in the package)"; being a build-time tool is exactly why it was the one
+  # interface-critical tree with no floor, measured at 59% while the gate read green.
   "sidecar/contract",
 ]
 exclude = [

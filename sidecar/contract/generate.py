@@ -188,7 +188,12 @@ def render_client_ts(contract: dict[str, Any]) -> str:
     # Param types referenced in wrapper signatures also need importing.
     own.update({"Settings", "ShortmakerControls"})
     imports = ["import { rpc } from '../client';"]
-    if own:
+    # pragma: no branch — `own` was just unconditionally seeded with Settings +
+    # ShortmakerControls two lines above, so the empty case cannot occur. The guard is
+    # kept for symmetry with `hand` below (whose empty case IS reachable, and is covered
+    # by test_client_ts_omits_the_hand_written_import_when_nothing_needs_it) rather than
+    # deleted, so the two import blocks stay the same shape.
+    if own:  # pragma: no branch
         imports.append(f"import type {{ {', '.join(sorted(own))} }} from './schemas.generated';")
     if hand:
         imports.append(f"import type {{ {', '.join(sorted(hand))} }} from '../schemas';")
@@ -302,5 +307,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — module CLI entry point
     raise SystemExit(main())
