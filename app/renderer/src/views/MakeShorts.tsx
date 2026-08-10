@@ -154,6 +154,28 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
     setActive('make');
   }, []);
 
+  // ---- clear the manual-export RECEIPT when the selected video changes ------
+  // The manual section is NOT unmounted by a video switch (the outer conditional
+  // is only `selectedId ?`), so without this every receipt below survives into the
+  // next video: the real clip paths, the W12 degrade summary, the "Exported N
+  // clip(s)" note and the tray. W06 is what made that concrete — it replaced vague
+  // stale copy with REAL paths and a REAL degrade warning, so a survived receipt
+  // stopped being cosmetic and became a false factual claim about the newly
+  // selected video's data (measured: export v1, switch to v2 → the panel still
+  // showed v1's files and v1's warning while the child ShortMaker had already
+  // re-keyed to v2). `manualNote`/`trayOpen` are cleared alongside `exportedClips`
+  // for the same reason: all four describe an export of the PREVIOUS video, and
+  // clearing only some of them would leave the same lie one line over.
+  // This mirrors ShortMaker.tsx:255-264, which resets its own per-video review
+  // state for exactly this reason. Every reset is idempotent against the initial
+  // state, so it is a harmless no-op on first mount.
+  useEffect(() => {
+    setExportedClips([]);
+    setManualNote(null);
+    setManualError(null);
+    setTrayOpen(false);
+  }, [selectedId]);
+
   // W06 — the tray's "Save short" / "Save SRT separately" controls are
   // deliberately NOT wired here, and the tray hides a save button whose handler
   // is omitted (OutputTray.tsx:139-148). They used to call `setManualNote('Saved

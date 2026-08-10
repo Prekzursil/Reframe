@@ -664,6 +664,65 @@ describe('<MakeShorts />', () => {
     );
   });
 
+  // The receipt is a factual claim about ONE video. Switching the "Source video"
+  // picker does NOT unmount the manual section (the outer conditional is just
+  // `selectedId ?`), so before the reset effect the whole receipt survived the
+  // switch: video 1's real paths and video 1's degrade warning were presented as
+  // video 2's status while the child ShortMaker had already re-keyed to v2.
+  it('clears the export receipt when the source video changes (no stale paths/warning)', async () => {
+    const message = 'reframe: speaker tracking unavailable (no subject) — used center crop';
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    exportMock.mockResolvedValue({
+      clips: [
+        { path: '/out/A1.mp4' },
+        {
+          path: '/out/A2.mp4',
+          reframeDegraded: { type: 'reframe.degraded', message, reason: 'no subject' },
+        },
+      ],
+    });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    // PRECONDITION: the receipt for video 1 is on screen.
+    expect(
+      [...container.querySelectorAll('.make-shorts__output-path')].map((el) => el.textContent),
+    ).toEqual(['/out/A1.mp4', '/out/A2.mp4']);
+    expect(container.querySelector('.make-shorts__warn')?.textContent).toContain(
+      'Reframe degraded on 1 of 2 clip(s)',
+    );
+
+    await selectVideo('v2');
+
+    // The child re-keys to the new video…
+    expect(
+      container.querySelector('[data-testid="shortmaker"]')!.getAttribute('data-video-id'),
+    ).toBe('v2');
+    // …and NOTHING from video 1's export may still be presented as video 2's status.
+    expect(container.querySelector('.make-shorts__outputs')).toBeNull();
+    expect(container.querySelector('.make-shorts__degraded')).toBeNull();
+    expect(container.querySelector('.make-shorts__warn')).toBeNull();
+    expect(container.querySelector('.make-shorts__note')).toBeNull();
+    expect(container.querySelector('[data-testid="output-tray"]')).toBeNull();
+  });
+
+  // The error half of the same receipt: a failed export for video 1 must not be
+  // shown as video 2's error either.
+  it('clears a manual-export error when the source video changes', async () => {
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    exportMock.mockRejectedValue(new Error('export blew up'));
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    expect(container.querySelector('.make-shorts__error')?.textContent).toContain('export blew up');
+    await selectVideo('v2');
+    expect(container.querySelector('.make-shorts__error')).toBeNull();
+  });
+
   it('shows no degraded warning when every clip reframed normally', async () => {
     exportMock.mockResolvedValue({ clips: [{ path: '/out/a.mp4' }] });
     await mount();
