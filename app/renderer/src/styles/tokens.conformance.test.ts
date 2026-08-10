@@ -992,7 +992,10 @@ describe('global form-control floor (H5)', () => {
  * `[^-]`, so `.a{color:var(--status-error)}` matches BOTH (measured: OLD=HIT NEW=HIT). The
  * only body-start form :649 misses is a declaration at string index 0. The real, measured
  * widenings are whitespace tolerance: `color : var(...)` and `var( --status-error )` are
- * OLD=miss / NEW=HIT. Over this tree both patterns still agree exactly (20 sheets each).
+ * OLD=miss / NEW=HIT. Both patterns still agree exactly on this tree — re-measured against
+ * the origin/main CSS blobs with a standalone probe (not this file): 20 sheets each, and 0
+ * each at HEAD. So the widening changes which FUTURE spellings are caught, and changes
+ * nothing about the migration set it was used to derive.
  *
  * Scoped to the `color` property on purpose: the tree contains zero references to
  * --status-error from `-webkit-text-fill-color` or `caret-color` (measured), so widening
@@ -1009,7 +1012,9 @@ const RED_TEXT_USE = /(?<![-\w])color\s*:\s*var\(\s*--(?:status-error|danger)\s*
  * the fills from a bulk find-and-replace. Pinned by a control at :1088. */
 const FILL_USE = /(?:background|border|outline)(?:-[\w-]+)?\s*:[^;{}]*var\(--status-error\)/;
 
-/** Selectors that set a bare `color: var(--status-error)` in ONE stylesheet.
+/** Selectors that set the FILL red as text in ONE stylesheet — i.e. any spelling
+ * RED_TEXT_USE matches, which since the refuter pass is `color: var(--status-error)`, its
+ * var() fallback form, and the `--danger` alias.
  *
  * Comments are stripped FIRST so a declaration quoted inside a comment cannot register
  * as a real use (the use-vs-mention trap). */
@@ -1036,7 +1041,7 @@ function deadRedTextEntries(
   return allowlist.filter((sel) => !seen.has(sel));
 }
 
-/** Every selector permitted to set a bare `color: var(--status-error)`. */
+/** Every selector permitted to carry the FILL red as text (any RED_TEXT_USE spelling). */
 const RED_TEXT_ALLOWLIST: readonly string[] = [
   // EMPTY BY MEASUREMENT — see the block comment above. Every one of the 34 sites that
   // existed at 775a97ea was routed to --status-error-text. To add an entry here you owe
