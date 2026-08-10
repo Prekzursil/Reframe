@@ -9,8 +9,10 @@ WIRING agent must apply to the shared files (`app/main/preload.ts`, `app/main/ma
 
 > **Path corrected** — `app/renderer/src/lib/rpc.ts` was split (F4b) into
 > `lib/rpc/client.ts` (runtime + the `client` object) and `lib/rpc/schemas.ts` (the §3
-> data interfaces), re-exported by `lib/rpc/index.ts`. §3 below edits the `MediaApi`
-> interface, which is now at `lib/rpc/schemas.ts:1494`.
+> data interfaces), re-exported by `lib/rpc/index.ts`. §3 below edits the **`MediaApi`
+> interface**, now declared in `lib/rpc/schemas.ts`. The SYMBOL is the anchor, not a
+> line: this section's previous `file:line` citation is exactly the class that rotted,
+> and `.quality/docs_check.py` r2 checks the path only.
 
 No sidecar changes. No new JSON-RPC methods. No native modules to pre-import.
 `dialog.openVideos` is a plain Electron ipc channel handled in the MAIN process — it never reaches
@@ -99,7 +101,7 @@ let disposeDialogIpc: (() => void) | null = null;
 
 `Library.tsx` reads `window.api.openVideos` / `window.api.pathForFile` STRUCTURALLY (safe cast with
 runtime `typeof` checks), so nothing breaks if this step is skipped. For canonical typing, add the two
-members to the `MediaApi` interface at `lib/rpc/schemas.ts:1494` (and mirror in `components/api.ts` if
+members to the `MediaApi` interface in `lib/rpc/schemas.ts` (and mirror in `components/api.ts` if
 desired) as OPTIONAL members, so tests/SSR contexts without the bridge still typecheck:
 
 ```ts

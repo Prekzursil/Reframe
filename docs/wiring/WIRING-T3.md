@@ -24,13 +24,19 @@ ONLY changes T3 needs in shared files. Apply exactly.
 >
 > | sub-step | symbol | lives in |
 > |---|---|---|
-> | 1a | `Services.__init__` | `handlers/_services.py:40` |
-> | 1b | beside `_get_provider` | `handlers/ai_ops.py:42` |
-> | 1c | `subtitles_translate` | `handlers/media_ops.py:144` |
+> | 1a | `Services.__init__` | `handlers/_services.py` |
+> | 1b | beside `_get_provider` | `handlers/ai_ops.py` |
+> | 1c | `subtitles_translate` | `handlers/media_ops.py` |
+>
+> The **symbol** column is the anchor, deliberately: three of the four `file:line`
+> anchors this section used to carry rotted within two days, and a line number in
+> prose has nothing checking it. `.quality/docs_check.py` r2 resolves the PATH only,
+> never the line.
 >
 > **UNVERIFIED that the code below still applies as written**: the split also turned
 > these from `Services` METHODS into module-level functions taking `self: Services`
-> (`ai_ops.py:42`, `media_ops.py:144`), so the `def _get_model_runner(self)` /
+> (see `_get_provider` in `ai_ops.py` and `subtitles_translate` in `media_ops.py`),
+> so the `def _get_model_runner(self)` /
 > `self._get_provider()` forms in 1b/1c no longer match the surrounding style even
 > though the intent is unchanged. Treat the snippets as intent, not as paste-ready.
 > Settling experiment: apply 1b against `ai_ops.py` and run

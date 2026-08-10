@@ -31,7 +31,13 @@ exact algorithm can answer was answered by an algorithm, not by reading and gues
 2. **RPC layer** — extracted every registered wire method by regexing `@method("…")`,
    `register…("…"`, and `reg("…"` across the sidecar. Verified against the composition root
    `sidecar/media_studio/handlers/composition.py:90-93` (`reg()` wraps `protocol.register`), which
-   confirmed the extraction matches the real registry. Result: **~150 dotted RPC methods**.
+   confirmed the extraction matches the real registry. Result: **~150 dotted RPC methods** —
+   **treat that as this audit's own regex yield, not as the surface size.** It UNDERCOUNTS the live
+   registry, whose count is measured from `register_all(…)` itself and test-pinned in
+   `docs/rpc-contract-v2.md` §1; read it there. The figure is left in place because the capability
+   gaps below were derived from this extraction, so the reader needs to know which set was searched —
+   but nothing downstream should be sized from it. (UNVERIFIED: exactly which registrations the regex
+   misses. Settling experiment: diff this extraction against `register_all(…) ∪ protocol.METHODS`.)
 3. **UI layer** — extracted every method string reachable from `app/` non-test code.
    **My first detector here was incomplete and I corrected it**: a `rpc\('literal'\)` regex missed
    `system.recommend` and `diarize.rename`, which reach the UI as `api.system.recommend(...)`

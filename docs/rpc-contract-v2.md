@@ -73,6 +73,25 @@ remember to edit in lock-step. That is the definition of drift-prone.
 > - The lead figure replaces a hand-copied `~123` that had decayed to **73% of the
 >   real surface** while every doc, and the eng-day estimate sized from it, kept
 >   repeating it. Re-measure before editing either pinned number.
+> - **Remaining disagreements elsewhere in the corpus, disclosed rather than left to be
+>   discovered.** A tight detector (`~?\d{3}` directly modifying `methods?`/`handlers`,
+>   line citations excluded, proven to fire on the known-present `123-method` string)
+>   over `docs/**` reported **10** hits before this pass and **6** after. The detector
+>   cannot tell an ASSERTION from a QUOTATION, and four of the six are quotations:
+>   `plans/v1.5/PROGRAM.md` and `plans/v1.5/flagship-transcript-editing.md` each quote
+>   their own retired figure inside the correction that retired it, and this very
+>   bullet quotes two more — writing it took the count from 4 to 6, which is the
+>   detector's limitation stated rather than hidden. The two live disagreements are
+>   left in place on purpose:
+>   `plans/v1.5/competitor-matrix-2026-08.md` keeps `~150` as *its own audit's regex
+>   yield* with an inline "not the surface size" caveat, and
+>   `plans/v1.5/flagship-auto-broll.md` (**DRAFT**) still says `~120 real handlers`.
+>   `plans/v1.5/flagship-lip-sync-dub.md` (**DRAFT**) separately calls the POC a
+>   "5-method slice" where `spec.py` declares six. The two DRAFT files were NOT
+>   rewritten here because other live branches hold divergent copies of them and a
+>   stray edit there is a merge conflict, not a fix — so this residual is real, and
+>   nothing under `docs/**` guards it. Settling experiment: re-run that detector after
+>   those branches land.
 > - **The pin's cost, disclosed because it lands on other branches:** registering one
 >   new method changes the live count, so any branch that adds a `reg(...)` / `@method`
 >   must also update ONE line here and one in the migration plan, or its own `gate:3`

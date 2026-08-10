@@ -193,9 +193,19 @@ caption-style presets with visual `Aa` previews.
 > `Menu.setApplicationMenu(Menu.buildFromTemplate(buildAppMenuTemplate({ isDev })))`, and
 > `app/main/appMenu.ts:62` builds the template (File · Text · View · Window · Help). So
 > `setApplicationMenu`/`buildFromTemplate` DO now exist under `app/`. Detector control for that
-> re-measure: the same sweep finds the known-present `BrowserWindow` 25× and returns 11 hits for
-> `setApplicationMenu|buildFromTemplate|accelerator`, so the non-empty reading is not a matcher
-> artefact. Consequences below: **C2 and H1 are fixed** (no `Edit` menu at all — the items are
+> re-measure — **BOTH-STATES, ONE scope, and the scope is stated**: over every tracked *non-test*
+> `.ts`/`.tsx` under `app/`, the matcher `setApplicationMenu|buildFromTemplate|accelerator` returns
+> **0× at the parent of the commit that added `appMenu.ts`** (`5d99bd2e`) and **3× at that commit and
+> still at HEAD** (`appMenu.ts:25`, `main.ts:1562` ×2), while the known-present `BrowserWindow` reads
+> **25× in all three** — so the matcher fires only in the state it should, and its file walk is intact
+> in both states.
+> **The control this paragraph carried before was fabricated, and is REFUTED:** it paired
+> `BrowserWindow` **25×** with **11** alternation hits, and *no single scope yields both* — 25 requires
+> tests EXCLUDED (with tests the same matcher counts 41), while 11 requires them INCLUDED (without
+> tests it is 3). 8 of those 11 sit in `appMenu.test.ts`, and its `accelerator` matches assert the
+> attribute's ABSENCE (`:93 expect(item.accelerator).toBeUndefined()`) — cited as evidence of a
+> non-empty production reading while asserting the opposite. A pair stitched from two scopes is a
+> detector failure, not a control. Consequences below: **C2 and H1 are fixed** (no `Edit` menu at all — the items are
 > `Text ▸ Undo typing`/`Redo typing`, and the dev View items are gated on `isDev = !app.isPackaged`);
 > **H2's conclusion narrowly survives** — a menu exists, but `appMenu.ts:25-34` deliberately sets NO
 > `accelerator` on any item (an explicit one overrides the role's per-platform default), so the app
@@ -268,11 +278,23 @@ actionable, and its Download button sits at the far right edge where the Jobs sl
 > **SUPERSEDED 2026-08-10 for the FIRST residual; the second still stands. Every `file:line` in this
 > section had also drifted.** Re-measured:
 >
-> * **The native dialog is gone (W04).** `globalThis.confirm`/`window.confirm` appear **zero** times in
->   non-test renderer source; the destructive gate is now the themed `useConfirm` hook
->   (`components/ConfirmDialog.tsx`, 17 import sites). Detector control: that same sweep finds
->   `useConfirm` 17× and the component file on disk, so the zero is a real absence, not a broken
->   matcher. **M7 is therefore FIXED**, and the "≈95% confidence" native-styling claim is moot.
+> * **The native dialog is gone (W04)** — but the probe that first "proved" it measured nothing, so
+>   the evidence below is a different probe. The destructive gate is now the themed `useConfirm` hook
+>   (`components/ConfirmDialog.tsx`, imported at **5 production sites**: `features/ExportPresetsPanel.tsx`,
+>   `features/Tracks.tsx`, `features/useShortsGallery.ts`, `views/Library.tsx`, `views/Shorts.tsx`).
+>   **REFUTED — "17 import sites" was wrong by 3.4×**: `17` is the raw `useConfirm` occurrence count
+>   across 7 files, which includes the hook's own definition (3) and its test (4); the import
+>   statements number 6, of which 5 are production. A reader sizing the migration's reach was handed
+>   the wrong quantity, in a section whose whole subject is wrong quantities.
+>   **And the stated control was invalid — it failed the both-states test.** A
+>   `globalThis\.confirm\(`/`window\.confirm\(` matcher returns **0 in the BROKEN state too**, because
+>   pre-W04 the six sites were spelled `(globalThis as { confirm?: … }).confirm?.(` — an optional call
+>   behind a cast. Measured over the same one scope (tracked non-test `app/renderer/src/**` `.ts`/`.tsx`)
+>   at `a44ba906`'s parent and at HEAD: the naive matcher reads `0 / 0` (it measures nothing), while a
+>   matcher that allows the cast and `?.(` reads **6 pre-fix → 0 post-fix**, and the 6 sites it names
+>   are exactly the ones W04's own commit message claims to have replaced. Six native sites across five
+>   files is also why the import count is 5. **M7 is therefore FIXED**, on that second probe, and the
+>   "≈95% confidence" native-styling claim is moot.
 > * **The line numbers below are stale — cite the SYMBOL, not the line.** Measured today, the confirm
 >   sites are `Library.deleteShort` (`views/Library.tsx:474`, `confirm(` at `:488`),
 >   `Shorts.handleDelete` (`views/Shorts.tsx:156`, `confirm(` at `:161`) and
@@ -317,11 +339,18 @@ one that does not). A user dragging a file onto Edit gets nothing.
 > from the Library*". Measured against the §1 table above and against source: the media-gated set is
 > **six**, not four — Make Shorts and Deliver were omitted while appearing in the very table this
 > section builds on. And that quoted string is exact for only **two** of them: `views/Caption.tsx:100`
-> and `views/Export.tsx:277` say "Pick a video from the Library to …"; the others say something else
-> entirely (`views/Edit.tsx:181` "No video open", `views/MakeShorts.tsx:433` "No video selected",
-> `panels/DirectorPanel.tsx:561` "No video open"). Attributing one uniform sentence to four surfaces
-> made the finding sound tidier than the evidence, and would have sent a fixer grepping for a string
-> that four of them never render. **M6 is restated to six below.**
+> and `views/Export.tsx:277` say "Pick a video from the Library to …"; the other **four** say something
+> else entirely — `views/Edit.tsx:181` "No video open", `views/MakeShorts.tsx:433` "No video selected",
+> `panels/DirectorPanel.tsx:561` "No video open", and `views/Deliver.tsx:83` "Open a video from the
+> Library to hand its clips off to Premiere or DaVinci Resolve." Attributing one uniform sentence to
+> four surfaces made the finding sound tidier than the evidence, and would have sent a fixer grepping
+> for a string that four of them never render. **M6 is restated to six below.**
+>
+> **A correction inside the correction, recorded rather than quietly patched:** the first version of
+> this paragraph enumerated only three of the four non-matching surfaces — it dropped **Deliver**,
+> which is the *same* omission it exists to correct, one sentence later. Deliver is restored above.
+> Anchor discipline: the quoted STRING is the durable anchor in each of these six citations; the line
+> number is a convenience that rots, so grep the string if it does not land.
 
 ### 4.7 Aggregate health verdicts contradict their own detail
 
