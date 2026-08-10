@@ -632,8 +632,14 @@ def test_job_retry_accepts_a_cancelled_job(registry):
             while not jctx.cancelled:
                 if release.wait(0.01):
                     return "finished"
+            # The loop only exits once ``jctx.cancelled`` is true, and
+            # ``JobContext._cancel_event`` is never cleared (jobs.py:192 is its
+            # sole writer and only calls ``set()``), so this call always raises
+            # and nothing after it is reachable. An earlier revision wrote a
+            # ``return None`` here behind a coverage-exclusion comment; the
+            # statement was dead, so the exclusion documented nothing. Both were
+            # removed — do not re-add either. See the commit that deleted them.
             jctx.raise_if_cancelled()
-            return None  # pragma: no cover - raise_if_cancelled always raises here
 
         return {"jobId": c.jobs.start(body).id}
 
