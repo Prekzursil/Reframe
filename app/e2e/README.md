@@ -54,23 +54,67 @@ Three deliberate design choices, each with its reason in the source:
   workflow. Because `tiny` is *not* a registered manifest asset,
   `transcribe.resolve_model_source` hands faster-whisper the bare id and the
   snapshot is fetched from huggingface.co at run time — measured on a cold, empty
-  `HF_HOME`: 13 files / 74.6 MB. **So this leg needs network; it is NOT an offline
-  proof** (the same dependency the `e2e-sidecar` leg already carries). Making it
-  offline would mean registering a pinned `tiny` asset, which adds a user-visible
-  component to `assets.list` for the sole benefit of a nightly test — deliberately
-  not done.
+  `HF_HOME`: **6 model blobs / 78,207,087 B = 74.6 MB** (14 files in the repo dir
+  once the snapshot symlinks and `refs/` are counted). **So this leg needs network;
+  it is NOT an offline proof** (the same dependency the `e2e-sidecar` leg already
+  carries). Making it offline would mean registering a pinned `tiny` asset, which
+  adds a user-visible component to `assets.list` for the sole benefit of a nightly
+  test — deliberately not done.
+- **The fetch is forced ANONYMOUS** (`HF_HUB_DISABLE_IMPLICIT_TOKEN=1`, set on the
+  app env in the spec). `fixtures.definedEnv` copies the whole ambient environment
+  into the app env, so the sidecar inherits any `HF_TOKEN` the developer exported —
+  and huggingface_hub sends it implicitly *even for a public repo*, so a token that
+  no longer authenticates turns the public `tiny` fetch into
+  `RepositoryNotFoundError: 401` ("the model does not exist"). MEASURED on this box
+  end-to-end through the spec: **without** the override, a cold-`HF_HOME` run goes
+  red in 41 s carrying `User Access Token "Reframe" is expired`; **with** it, the
+  same cold cache and the same ambient token pass. Isolated four ways on a fresh
+  empty `HF_HOME` — huggingface_hub 1.27.0 and 1.26.0 (the lock pin), each with and
+  without the flag: ambient token → 401 (cache left at 5,698 B), flag → OK. The
+  credential is not touched (AGENTS.md §9); the consumer is fixed, which also
+  covers *any* `HF_TOKEN` that 401s (revoked / wrong org / insufficient scope).
+  A GitHub runner has no `HF_TOKEN`, so CI was already anonymous and is unchanged.
 
-**BOTH-STATES verified** (a test that passes in both states measures nothing).
-Same spec, same code, only the fixture's audio changed:
+**BOTH-STATES verified — for the TRANSCRIPT arm.** Same spec, same code, only the
+fixture's audio changed:
 
 | fixture audio | result |
 | --- | --- |
-| SAPI speech | **PASS** — keyword hits 4/4, 2 cues both carrying keywords |
-| speechless `sine` (the pre-existing fixture) | **FAIL** — "the transcription completed but produced ZERO segments" |
+| SAPI speech | **PASS** — keyword hits 4/4; 2 cues, both carrying keywords |
+| speechless `sine` (the repo's own 3 s fixture) | **FAIL** — "the transcription completed but produced ZERO segments" (failing test 12.6 s) |
+
+Two honest limits on that table — because a both-states claim that overreaches is
+worse than none — and one extra arm that IS measured:
+
+- **The CAPTION arm is not both-states controlled.** The broken run aborts at the
+  zero-segments assertion, so the caption half never executes with speechless
+  audio. Those assertions are fail-closed *by construction* (they require
+  `.cue-list .cue-row` to appear and then require cue text to be non-empty and to
+  carry a keyword), but "fail-closed by construction" is a code-reading, not a
+  measurement. The settling experiment is to seed a transcript with segments and
+  break `subtitles.generate`.
+- **The keyword THRESHOLD is controlled elsewhere.** With speechless audio there is
+  no transcript at all, so the `SPEECH_KEYWORD_MIN_HITS` comparison is never
+  evaluated in the broken state. `speechKeywords.test.ts` (vitest, every OS leg)
+  covers its failing direction directly — a 1-hit transcript must be below the
+  floor — and is mutation-checked: setting the floor to 1 turns that case red.
+- A THIRD arm is measured too: **ASR error**. A cold `HF_HOME` plus an ambient
+  `HF_TOKEN` that 401s lands on the panel's `p.error[role="alert"]` in 41 s with the
+  sidecar's own reason, rather than timing out anonymously.
 
 **It gates nothing.** `e2e.yml` is `workflow_dispatch` + nightly `cron` only, so
 this proves the capability nightly and on demand; it cannot prevent a
 transcription regression from merging.
+
+**It runs as its OWN, LAST CI step**, not inside the shared `npm run test:e2e`
+invocation (that step excludes it with `--grep-invert transcribe-journey`). A red
+Playwright step makes later steps inherit GitHub's implicit `success()` gate, and
+the blocking visual/a11y diff step deliberately has no `always()` — so folding the
+most environment-dependent spec in the repo (an `en-*` SAPI voice on the image plus
+huggingface.co egress) into that one invocation would let its first red silently
+drop visual + a11y coverage. This repo has already measured that cascade on run
+30612141716. Everything after the new step carries `always()`, so its own red
+suppresses no artifact.
 
 ### Packaged data-pipeline: a documented CI limitation
 
@@ -137,11 +181,19 @@ npm run test:e2e:visual:update  # regenerate the `*-win32.png` baselines
 - Python 3.12 reachable as `py -3.12` (or set `RF_PY` to the interpreter path).
   The sidecar runs on the **standard library only** — no ML deps needed for the
   preview path (`library.add` / `library.list` / `media.playable` / `nle.export`).
-- `transcribe-journey.spec.ts` ONLY: `faster-whisper==1.2.1` in that interpreter
-  (`e2e.yml` installs it on the Windows leg), plus network access to
-  huggingface.co for the 74.6 MB `tiny` snapshot on the first run. Windows only —
-  the speech fixture needs SAPI. It needs no `assets.ensure` and no GPU (it pins
-  `transcribeDevice: 'cpu'`).
+- `transcribe-journey.spec.ts` ONLY: `faster-whisper==1.2.1` in that interpreter,
+  plus network access to huggingface.co for the 74.6 MB `tiny` snapshot on the
+  first run. Windows only — the speech fixture needs SAPI. It needs no
+  `assets.ensure` and no GPU (it pins `transcribeDevice: 'cpu'`). Install it the
+  way `e2e.yml` does, so the transitives match the shipped stack instead of
+  floating (measured: unconstrained gives `av 18.0.0` against lock `av==17.1.0`):
+
+  ```sh
+  pip install "faster-whisper==1.2.1" --constraint sidecar/requirements.lock.txt
+  ```
+
+  A stale or mis-scoped `HF_TOKEN` in your environment does **not** break this —
+  the spec forces the HF fetch anonymous. You do not need to unset anything.
 
 ## Run
 
