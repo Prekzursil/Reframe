@@ -85,6 +85,19 @@ vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
 // W17 / W18: the two surfaces this lane mounts.
 vi.mock('../features/VideoTimeline', () => stubPanel('VideoTimeline'));
 vi.mock('../features/ReframeCorrect', () => stubPanel('ReframeCorrect'));
+// W19: eye-contact correction. `gaze.probe` + `gaze.run` were registered and
+// frozen into the RPC surface but had NO renderer caller at all (0 hits for
+// `gaze`, case-insensitive, under app/renderer); this tab is the entry point.
+//
+// SCOPE OF THAT CLAIM, narrowed after review: this is a STUB, like every other
+// panel here. The `it.each` case below therefore proves the TabBar + `renderPanel()`
+// switch and the props handed down — NOT that
+// `lazy(() => import('../features/Gaze'))` resolves or that the real panel mounts.
+// The lane originally offered it as "the actual reachability test", which was wider
+// than the evidence. The real lazy mount is asserted in `Workspace.seam.test.tsx`
+// ("Workspace ↔ Gaze seam"), which drains macrotasks and renders the REAL panel;
+// that case goes red if `case 'gaze'` is removed from `renderPanel` (measured).
+vi.mock('../features/Gaze', () => stubPanel('Gaze'));
 
 import {
   Workspace,
@@ -175,9 +188,16 @@ describe('Workspace', () => {
   // was reachable by any user. WIDENED by exactly two entries, never weakened —
   // every previously pinned label keeps its position relative to the others.
   //
-  // The assertion remains exact and order-sensitive, five elements longer than
+  // SCOPE CHANGE #5 (W19 gaze-entrypoint): the list gains 'Eye contact'. It sits
+  // immediately after 'Stabilize' because it is the same KIND of operation — a
+  // whole-clip, token-free, local image correction that writes a new file and
+  // never touches the source — and because `stabilize` is the de-facto neighbour
+  // for "polish the footage" ops in the Frame & Cut cluster. WIDENED by exactly
+  // one entry, never weakened.
+  //
+  // The assertion remains exact and order-sensitive, six elements longer than
   // the pre-v1.5 list and with two labels corrected. Nothing was weakened.
-  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize; speed: +Speed; audiomix-ui: +Audio mix; W17/W18: +Fix framing/Video timeline)', () => {
+  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize; speed: +Speed; audiomix-ui: +Audio mix; W17/W18: +Fix framing/Video timeline; W19: +Eye contact)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Search',
@@ -192,6 +212,9 @@ describe('Workspace', () => {
       'Subtitle timeline',
       'Video timeline',
       'Stabilize',
+      // W19: eye-contact correction. Before it, gaze.probe/gaze.run had no caller
+      // anywhere in the renderer, so the whole feature was user-unreachable.
+      'Eye contact',
       // v1.5: the Speed panel joins "Frame & Cut". Before it, the re-time engine
       // had NO control in any panel — only an LLM-planned Director op reached it.
       'Speed',
@@ -241,6 +264,44 @@ describe('Workspace', () => {
     const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
     expect(frame?.tabIds).toContain('stabilize');
     expect(frame?.advanced).not.toBe(true);
+  });
+
+  // W19. A tab id present in WORKSPACE_TABS but absent from every GROUP would not
+  // paint at all (TabBar renders from the groups when `groups` is passed), and the
+  // "every id stays in the tablist" test below would catch that — but not the
+  // weaker failure of parking it behind the Advanced disclosure. Eye-contact
+  // correction is a normal editing op, not an advanced/deliver one, so it must be
+  // in a VISIBLE cluster: burying an ethics-gated control makes the gate harder to
+  // find, which is the opposite of the point.
+  it('puts Eye contact in the VISIBLE "Frame & Cut" cluster, not behind Advanced', async () => {
+    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
+    expect(frame?.tabIds).toContain('gaze');
+    expect(frame?.advanced).not.toBe(true);
+    // and in no other cluster (exactly-once membership across the strip)
+    const owners = WORKSPACE_TAB_GROUPS.filter((g) => g.tabIds.includes('gaze'));
+    expect(owners).toHaveLength(1);
+
+    // A SECOND, mechanically different signal: the config array above is a claim
+    // about intent; this reads the rendered DOM. The `gaze` tab must sit OUTSIDE
+    // `.tabbar__advanced-panel` (the container the disclosure hides), which is what
+    // "painted by default" actually means. jsdom does not compute visibility, so DOM
+    // POSITION is the strongest check available at this level — the true pixel check
+    // is `.tab:visible` in the nightly `app/e2e/preview.spec.ts`.
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+    const gazeTab = container.querySelector('[role="tab"][data-tab-id="gaze"]');
+    expect(gazeTab).not.toBeNull();
+    expect(gazeTab?.closest('.tabbar__advanced-panel')).toBeNull();
+    // Control for that assertion: a tab that IS behind the disclosure must be found
+    // inside it, otherwise the `.closest()` selector could be silently wrong and the
+    // check above would pass for every tab.
+    expect(
+      container
+        .querySelector('[role="tab"][data-tab-id="tracks"]')
+        ?.closest('.tabbar__advanced-panel'),
+    ).not.toBeNull();
   });
 
   it('puts Speed in the Frame & Cut group and selects it from a deep-link', async () => {
@@ -399,6 +460,7 @@ describe('Workspace', () => {
     ['timeline', 'Timeline'],
     ['videoTimeline', 'VideoTimeline'],
     ['stabilize', 'Stabilize'],
+    ['gaze', 'Gaze'],
     ['dub', 'Dub'],
     ['nle', 'NleExport'],
     ['recipes', 'Recipes'],
@@ -741,15 +803,22 @@ describe('Workspace tab clusters (WU-3a2)', () => {
   // auto`) — and it is the price of the panels being reachable at all. The
   // matching literals in `app/e2e/preview.spec.ts:229-230` were updated in the
   // same commit; that is the whole point of this test existing.
+  //
+  // W19 UPDATE: 19 -> 20 and 14 -> 15. The new `gaze` tab goes in the VISIBLE
+  // "Frame & Cut" cluster for the reason given by its own test above, so both
+  // counts move. The matching literals in `app/e2e/preview.spec.ts` were updated
+  // in the SAME commit — that file is owned by another live lane this wave, so the
+  // edit there is confined to the two count literals and the sentences that state
+  // them, nothing else.
   it('pins the strip counts that the nightly e2e spec hardcodes', () => {
-    expect(WORKSPACE_TABS).toHaveLength(19);
+    expect(WORKSPACE_TABS).toHaveLength(20);
     const hiddenWhenCollapsed = WORKSPACE_TAB_GROUPS.filter((g) => g.advanced).reduce(
       (n, g) => n + g.tabIds.length,
       0,
     );
     expect(hiddenWhenCollapsed).toBe(5);
     // What actually paints while the Advanced cluster is collapsed.
-    expect(WORKSPACE_TABS.length - hiddenWhenCollapsed).toBe(14);
+    expect(WORKSPACE_TABS.length - hiddenWhenCollapsed).toBe(15);
   });
 
   it('collapses the Deliver cluster behind Advanced by default and toggles it open/closed', async () => {

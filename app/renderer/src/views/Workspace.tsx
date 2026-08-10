@@ -65,6 +65,11 @@ const VideoTimeline = lazy(() => import('../features/VideoTimeline'));
 // W17: manual per-shot reframe correction (panels/ReframeOverridePanel), wrapped
 // by the container that finds a clip and loads its persisted decision plan.
 const ReframeCorrect = lazy(() => import('../features/ReframeCorrect'));
+// W19: eye-contact correction. `gaze.probe` + `gaze.run` were registered
+// (`features/gaze.py:699-700`) and frozen into the RPC surface, but `gaze` appeared
+// ZERO times, case-insensitively, anywhere under `app/renderer` — so the entire
+// feature, ethics gate included, was unreachable by any user. This mounts it.
+const Gaze = lazy(() => import('../features/Gaze'));
 
 /**
  * v1.5 timeline-naming — two LABELS name their real subject. Ids are untouched
@@ -108,6 +113,12 @@ export const WORKSPACE_TABS: TabDef[] = [
   // W18: the real video timeline (see the reconciliation note above).
   { id: 'videoTimeline', label: 'Video timeline' },
   { id: 'stabilize', label: 'Stabilize' },
+  // W19: eye-contact correction sits next to Stabilize because it is the same KIND
+  // of operation — a whole-clip, token-free, fully local image correction that
+  // writes a NEW file and never rewrites the source. It is NOT filed under
+  // "Advanced": it carries a likeness-attestation ethics gate, and burying that
+  // gate behind a disclosure would make the consent surface harder to find.
+  { id: 'gaze', label: 'Eye contact' },
   // v1.5: constant-factor speed / slow motion. The re-time ENGINE was already
   // wired for the Director, but nothing in the renderer could reach it, so a
   // user had to prompt the planner and hope. This is the direct control.
@@ -140,7 +151,11 @@ export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
     // `overflow-x: auto`), a real cost accepted deliberately: burying a
     // correction surface behind the Advanced disclosure would leave a wrong
     // auto-crop effectively uncorrectable, which is the defect being fixed.
-    tabIds: ['shortmaker', 'reframeFix', 'timeline', 'videoTimeline', 'stabilize', 'speed'],
+    //
+    // W19: 'gaze' joins the same VISIBLE cluster, taking the painted strip to 15
+    // for the same reason — plus one specific to it: the panel IS the likeness
+    // consent gate, so it must be findable, not filed under Advanced.
+    tabIds: ['shortmaker', 'reframeFix', 'timeline', 'videoTimeline', 'stabilize', 'gaze', 'speed'],
   },
   { id: 'audio', label: 'Audio', tabIds: ['dub', 'audiomix'] },
   {
@@ -370,6 +385,12 @@ export function Workspace({
         );
       case 'stabilize':
         return <Stabilize videoId={video.id} />;
+      case 'gaze':
+        // No extra props: `gaze.run` accepts only {videoId|path, strength,
+        // likeness*} (`gaze.py:619-637`), and the panel owns the strength control
+        // plus the likeness attestation itself. Passing a duration/path here would
+        // imply per-run inputs the RPC does not take.
+        return <Gaze videoId={video.id} />;
       case 'speed':
         // durationSec drives the before/after prediction only; the sidecar
         // probes the real length itself, so a stale/zero value cannot mis-render.

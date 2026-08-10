@@ -13,9 +13,18 @@
 // auditioned directly in an <audio> tag through the mstream:// protocol's
 // `dub:<path>` id form (see docs/wiring/WIRING-T2.md for the one-line main-process
 // resolver extension; until applied the player shows the path instead).
+//
+// W20: this panel also hosts the LIP-SYNC section (`./LipSync`), the only entry
+// point to `tts.lipsync.start` — which was registered unconditionally
+// (`features/tts/__init__.py:141`) and frozen into the RPC surface, yet this file
+// was 519 lines with ZERO `lipSync`/`lipsync` references, so no user could reach
+// it. It lives here because a re-lip consumes a FINISHED dub AudioTrack, and it is
+// a separate component (not more code in this file) because this file was already
+// long and that section carries four independent fail-closed gates.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import './panels.css';
 import { AiAudioBadge, AiDisclosurePanel, isAiGeneratedAudioTrack } from './AiDisclosure';
+import LipSync from './LipSync';
 import {
   extractJobId,
   getApi,
@@ -512,6 +521,12 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
         ))}
       </ul>
       {audioTracks.length === 0 && <p className="audio-track-empty">No audio tracks yet.</p>}
+
+      {/* W20 — lip-sync sits AFTER the track list because it consumes a finished
+          dub from it. `audioTracks` is handed down rather than re-fetched, so the
+          section adds no second `tracks.audio.list` call, and the SAME bridge is
+          passed so an injected test api reaches it too. */}
+      <LipSync videoId={videoId} audioTracks={audioTracks} api={bridge} />
     </section>
   );
 }

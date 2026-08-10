@@ -924,4 +924,26 @@ describe('<Dub />', () => {
     expect(row?.textContent).toContain('Not available');
     expect(row?.textContent).toContain('signing identity');
   });
+
+  // W20 — the ONLY entry point to `tts.lipsync.start`, which was registered
+  // unconditionally (`features/tts/__init__.py:141`) and frozen into the RPC surface
+  // but had no caller: this file's subject was 519 lines with ZERO `lipsync`
+  // references before this lane. Its own gates/params/job flow are tested in
+  // LipSync.test.tsx; what THIS test pins is reachability — that the section is
+  // mounted in the dub surface and is handed the audio tracks Dub already fetched,
+  // so lip-sync needs no second `tracks.audio.list` call.
+  it('mounts the lip-sync section in the dub surface, fed by the tracks Dub already fetched', async () => {
+    const { api, calls } = makeBridge();
+    await mount(api);
+    const section = container.querySelector('[aria-label="Lip-sync"]');
+    expect(section).not.toBeNull();
+    // The dub track from AUDIO_TRACKS is offerable; the `original` one is not.
+    const options = Array.from(
+      section!.querySelectorAll('[data-picker="lipsync-track"] option'),
+    ).map((o) => (o as HTMLOptionElement).value);
+    expect(options).toContain('a2');
+    expect(options).not.toContain('a1');
+    // Exactly one tracks.audio.list on mount — the child reuses Dub's list.
+    expect(calls.filter((c) => c.method === 'tracks.audio.list')).toHaveLength(1);
+  });
 });
