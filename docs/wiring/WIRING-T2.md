@@ -67,6 +67,37 @@ Methods registered: `tracks.audio.list` / `tracks.audio.mux` /
 `tracks.audio.replace` / `tracks.audio.strip` / `tts.voices` /
 `tts.sample.add` / `tts.dub.start` (all frozen A2 names).
 
+> **W62 correction, 2026-08-10 — "registered" is not "wired", and this file used
+> to conflate them.** Registering a method and typing a client wrapper for it
+> makes it *callable*, not *reachable*. Measured on `db61ea6e`: of the four
+> `tracks.audio.*` methods, only `list` had a renderer caller
+> (`features/Dub.tsx`, `features/ShortMaker.tsx`); `mux`, `replace` and `strip`
+> existed sidecar-side and in the §8 client snippet below with **zero** call
+> sites, so no user could reach them — `mux` ran only in-process from the dub job
+> (`tracks_audio.mux_for_dub`). §8's list of "the T2 methods" is a client
+> inventory and was being read as a wiring receipt.
+>
+> All three are now reachable from the Audio-tracks section of
+> `features/Dub.tsx`: **Import an audio track** (`mux`), and per-row **Replace
+> audio** (`replace`) / **Remove** (`strip`).
+>
+> Two scope limits, stated here because they are deliberate, not omissions:
+>
+> 1. **`replace` / `strip` are offered for a `kind: 'dub'` row only.** For a dub
+>    both are pure manifest edits. For an ORIGINAL both re-mux the entire
+>    container into a new derived path which the handler **returns but never
+>    writes back to the project** (`tracks_audio.py:533-554`, `:578-588`), so the
+>    app would keep resolving the untouched source while the manifest row
+>    vanished. Making original-track editing real is sidecar work — re-point the
+>    project at the derivative — and is NOT done. Settling experiment: call
+>    `tracks.audio.strip` on an `original` row, then `library.get` that video and
+>    assert its `path` is the returned `-noaud-` derivative; today it is not.
+> 2. **An imported track's `kind` is fixed to `dub`, never user-selectable.**
+>    `isAiGeneratedAudioTrack` withholds the AI-generated badge for exactly one
+>    value, `original`, so a kind picker would be a switch that turns the
+>    Article-50 label off. Over-labelling an imported human recording is the
+>    already-disclosed direction (`AiDisclosure.AI_AUDIO_BADGE_TITLE`).
+
 ## 2. The translator seam (T3 `models/translation.py`)
 
 `tts.dub.start` with a `targetLang` needs the **models.translation seam**
@@ -183,6 +214,12 @@ const Dub = lazyPanel<{ videoId: string }>('../features/Dub', 'Dub');
 needed**.
 
 ## 8. `app/renderer/src/lib/rpc.ts` — optional typed client additions
+
+**This section is a client-wrapper inventory, NOT evidence that anything calls
+these methods** — see the W62 correction under §1 for what was actually reachable
+and what is now. The wrappers below shipped in
+`app/renderer/src/lib/rpc/client.ts`; three of the four `tracksAudio` entries had
+no caller until 2026-08-10.
 
 If the canonical client is being extended this round, the T2 methods are:
 
