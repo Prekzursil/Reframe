@@ -43,8 +43,9 @@
 //      candidates by id out of the select cache (`shortmaker.py:1525-1549`), and
 //      a produced clip carries no candidate id, no `rank` and no source
 //      `start`/`end` — `shorts.META_FIELDS` is {videoId, sourceTitle, template,
-//      viralityPct, durationSec, hook} (`shorts.py:64-72`) and `shorts.reexport`
-//      returns a hook/template/virality/duration SKELETON (`shorts.py:457-477`).
+//      viralityPct, durationSec, hook, createdAt} (`shorts.py:64-72`) and
+//      `shorts.reexport` returns a hook/template/virality/duration SKELETON
+//      (`shorts.py:457-477`).
 //      On top of that `_assert_overrides_matched` keys the map on the NEW
 //      export's final path, so the re-export must reproduce the same
 //      rank-ordered stem. The correction loop therefore belongs on the

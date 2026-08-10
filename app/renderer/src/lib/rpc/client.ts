@@ -879,12 +879,37 @@ export const client = {
    * rendered clip's persisted decision sidecar, and `applyOverrides` resolves a
    * user's per-shot edits and returns the `affected` shot indices.
    *
-   * HONEST LIMIT (measured 2026-08-09 against
+   * SCOPE OF THIS NAMESPACE (measured 2026-08-09 against
    * `sidecar/tests/test_handlers_rpc_surface.py:118-121`): the whole registered
-   * `reframe.*` surface is exactly these four names plus `reframe.eval`. There is
-   * **no** `reframe.render` and **no** method that persists overrides, so
-   * `affected` cannot be handed to anything that re-encodes. Any UI built on this
-   * must say so rather than offer a re-render loop that cannot run.
+   * `reframe.*` surface is exactly FOUR names — `reframe.applyOverrides`,
+   * `reframe.eval`, `reframe.shotPlan`, `reframe.shotPlanFor`. Three are wrapped
+   * below; `reframe.eval` has no wrapper here. There is no `reframe.render`.
+   *
+   * RETRACTION 2026-08-10. This comment used to infer from that list that
+   * `affected` "cannot be handed to anything that re-encodes" and that a UI must
+   * therefore not offer a re-render loop. That inference is WRONG and is
+   * retracted — re-render was never meant to live in this namespace. It is BUILT,
+   * in the export pipeline: `MultiSpeakerReframeEngine.rerender_with_overrides`
+   * replays corrections onto the persisted plan, and `shortmaker.export` accepts
+   * `reframeOverrides: {clipPath: [ShotOverride]}`, threading each clip's entry
+   * into its own reframe stage (`sidecar/media_studio/features/shortmaker.py`
+   * `:257,1344-1355,1450-1455`).
+   *
+   * What is missing is RENDERER-side — three gaps, stated in full at
+   * `features/ReframeCorrect.tsx:35-55`:
+   *   1. CLOSED. `ReframeOverridePanel.onRerender` now hands back the
+   *      `ShotOverride` objects, not only the shot indices.
+   *   2. OPEN. `shortmaker.export` above (`:296-309`) exposes no
+   *      `reframeOverrides` option, so no renderer call can carry the map yet.
+   *   3. OPEN. A re-export needs the CANDIDATE that produced the clip, and a
+   *      produced clip carries no candidate id, no `rank` and no source
+   *      `start`/`end` — `shorts.META_FIELDS` is {videoId, sourceTitle, template,
+   *      viralityPct, durationSec, hook, createdAt}
+   *      (`sidecar/media_studio/features/shorts.py:64-72`).
+   *
+   * So a correction UI hands `affected` plus the overrides back to the
+   * Short-maker export surface (which still holds the live candidates); it must
+   * not claim, here or in the UI, that no re-encode path exists.
    */
   reframe: {
     /** `reframe.shotPlan {trace, sourceWidth, sourceHeight, fps}` -> {plan}. */
