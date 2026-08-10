@@ -129,8 +129,22 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "recipes.save",
         "refine.apply",
         "refine.preview",
+        # v1.5 DELIBERATE addition (flagship-active-speaker WU-E1/E3): `reframe.analyze`
+        # is the trace PRODUCER and `reframe.render` renders an EDITED ShotPlan,
+        # affected-shot-only, over the cached analysis. Named explicitly because
+        # adding an RPC method must be a conscious act: before them the override
+        # layer below was a decision surface with no producer and no renderer —
+        # `reframe.shotPlan` consumed a trace nothing emitted over the wire, and an
+        # edited plan could not be turned back into pixels. Verified this gate is not
+        # vacuous: registering both with the set unchanged failed
+        # test_rpc_surface_is_byte_identical first.
+        #
+        # NOT user-reachable yet: the UI wave (WU-U1..U4) is a separate work unit, so
+        # these are registered backend methods only.
+        "reframe.analyze",
         "reframe.applyOverrides",
         "reframe.eval",
+        "reframe.render",
         "reframe.shotPlan",
         "reframe.shotPlanFor",
         "savePresets.apply",

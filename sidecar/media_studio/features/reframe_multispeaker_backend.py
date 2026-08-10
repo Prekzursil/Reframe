@@ -28,7 +28,7 @@ import tempfile
 from typing import Any
 
 from ..util import get_logger
-from .reframe_multispeaker import ShotAnalysis
+from .reframe_multispeaker import MultiSpeakerReframeError, ShotAnalysis
 
 log = get_logger("media_studio.features.reframe_multispeaker_backend")
 
@@ -69,6 +69,17 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
         Light-ASD + VAD -> release. The heavy imports live inside the helpers so
         an OOM/model-load failure surfaces as the job's typed error (the engine
         wraps it + cleans up the partial output).
+
+        WU-E1: ``on_progress`` and ``should_cancel`` are now actually HONOURED
+        between stages. Both parameters existed since R1 and were never called, so
+        a caller asking for staged progress got silence and a cancel request was
+        only observed after the whole multi-minute pipeline finished. Each stage
+        reports before it starts and cancellation is checked at the two stage
+        boundaries (the natural cooperative checkpoints — a stage itself is one
+        native call). UNVERIFIED by unit test: this class is
+        ``# pragma: no cover`` because it needs torch/cv2 + real weights, so the
+        experiment that would settle it is the opt-in ``@e2e`` golden run on real
+        footage, not the branch gate.
         """
         import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
 
@@ -81,12 +92,27 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
         finally:
             cap.release()
 
+        def stage(pct: float, message: str) -> None:
+            if on_progress is not None:
+                on_progress(pct, message)
+
+        def cancelled() -> bool:
+            return should_cancel is not None and bool(should_cancel())
+
+        stage(5.0, "detecting shot cuts")
         shot_boundaries = self._stage_shots(media_path, fps)
         self.release()
+        if cancelled():
+            raise MultiSpeakerReframeError("multi-speaker analysis cancelled after shot detection")
+        stage(25.0, "diarizing speakers")
         diarize_per_frame = self._stage_diarize(media_path, total, fps)
         self.release()
+        if cancelled():
+            raise MultiSpeakerReframeError("multi-speaker analysis cancelled after diarization")
+        stage(55.0, "detecting faces + active speaker")
         boxes, scores, vad = self._stage_visual(media_path, total, fps)
         self.release()
+        stage(95.0, "analysis complete")
 
         return ShotAnalysis(
             width=width,
