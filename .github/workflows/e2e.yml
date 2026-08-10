@@ -10,7 +10,13 @@ name: e2e
 #   * sidecar  : real_pipeline_smoke.py   (standalone real-ffmpeg + tiny-whisper
 #                                          short-making pipeline)
 #   * app      : npm run test:e2e         (Playwright Electron GUI E2E — preview +
-#                                          PACKAGED `app.isPackaged` proof)
+#                                          PACKAGED `app.isPackaged` proof + the
+#                                          golden Make-Shorts journey + the
+#                                          SPEECH-to-caption journey, which is
+#                                          WINDOWS-ONLY and self-skips loudly
+#                                          elsewhere — it synthesises its own
+#                                          speech with Windows SAPI, see
+#                                          app/e2e/transcribe-journey.spec.ts)
 #   * app      : npm run test:e2e:dom     (vitest DOM caption-over-video + nasty-
 #                                          caption proofs)
 #   * app      : npm run test:e2e:visual  (Wave-2b VISUAL screenshot-diff +
@@ -192,6 +198,38 @@ jobs:
         # the e2e-sidecar job's install.
         run: pip install "opencv-python-headless==4.13.0.92" numpy httpx huggingface_hub
 
+      # --- WINDOWS ONLY: the ASR runtime for the speech-to-caption journey. ---
+      # transcribe-journey.spec.ts drives the REAL `transcribe.start` through the
+      # GUI, so the sidecar must be able to load a whisper model. The
+      # `sidecar[dev] --no-deps` install above deliberately omits faster-whisper,
+      # and WITHOUT it the transcribe job dies with ModuleNotFoundError — which the
+      # spec would surface as a named UI error, but a named error is still a red
+      # leg, not a proof.
+      #
+      # WINDOWS-ONLY because the spec is: its speech fixture synthesises audio with
+      # Windows SAPI (`System.Speech.Synthesis.SpeechSynthesizer`) and `test.skip()`s
+      # loudly on the macOS/Linux legs. Installing ~200 MB of ctranslate2 /
+      # onnxruntime / tokenizers wheels for a spec that skips would be pure cost.
+      #
+      # PINNED to the version in `sidecar/requirements.lock.txt` (== what the
+      # shipped app runs) per A6 lesson 5 — deliberately unlike the e2e-sidecar
+      # job's unpinned `faster-whisper`, so a new upstream release cannot silently
+      # change this nightly's ASR behaviour. Its own pinned transitives
+      # (ctranslate2 4.8.1 / tokenizers 0.23.1 / onnxruntime 1.28.0 / av 17.1.0)
+      # come along as declared dependencies.
+      #
+      # NO `assets.ensure` step, on purpose. The spec pins whisper `tiny` via the
+      # real `settings.set`, and `tiny` is NOT a registered manifest asset — so
+      # `transcribe.resolve_model_source` hands faster-whisper the bare id and it
+      # fetches the ~75 MB snapshot from huggingface.co at run time. MEASURED
+      # alternative: provisioning the registered Default-profile asset instead
+      # (`whisper-large-v3-turbo`) is 1546.5 MB. This leg therefore carries the SAME
+      # network dependency the e2e-sidecar job's real_pipeline_smoke.py already has,
+      # and is NOT an offline proof.
+      - name: Install the ASR runtime for the speech-to-caption journey (Windows only)
+        if: runner.os == 'Windows'
+        run: pip install "faster-whisper==1.2.1"
+
       - name: Install app deps
         working-directory: app
         run: npm ci
@@ -286,6 +324,12 @@ jobs:
       # COLD packaged launch pip-installs the heavy sidecar runtime on first run
       # (multi-minute, network) and cannot answer RPCs inside a CI window — a
       # documented packaged-runtime limitation, not a regression (see app/e2e/README).
+      #
+      # transcribe-journey.spec (speech -> transcript -> caption) runs HERE and only
+      # here: it needs Windows SAPI for its speech fixture, so the macOS/Linux legs
+      # above self-skip it with a named reason. RF_E2E_DEV=1 puts it on the dev
+      # build, whose sidecar is the system python the ASR step above installed
+      # faster-whisper into.
       - name: E2E GUI — Playwright Electron (Windows packaged .exe + dev-build pipeline)
         if: runner.os == 'Windows'
         working-directory: app
