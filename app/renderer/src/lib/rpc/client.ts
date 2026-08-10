@@ -1011,11 +1011,27 @@ export const client = {
    * rendered clip's persisted decision sidecar, and `applyOverrides` resolves a
    * user's per-shot edits and returns the `affected` shot indices.
    *
-   * SCOPE OF THIS NAMESPACE (measured 2026-08-09 against
-   * `sidecar/tests/test_handlers_rpc_surface.py:118-121`): the whole registered
-   * `reframe.*` surface is exactly FOUR names — `reframe.applyOverrides`,
-   * `reframe.eval`, `reframe.shotPlan`, `reframe.shotPlanFor`. Three are wrapped
-   * below; `reframe.eval` has no wrapper here. There is no `reframe.render`.
+   * SCOPE OF THIS NAMESPACE — re-measured 2026-08-10 against
+   * `sidecar/tests/test_handlers_rpc_surface.py` (the file, deliberately not a line
+   * range; the old citation said `:118-121` and that range MOVED, which is exactly how
+   * a pinned range rots without anyone noticing). The registered `reframe.*` surface is
+   * **SIX** names:
+   *   `reframe.analyze` · `reframe.applyOverrides` · `reframe.eval` ·
+   *   `reframe.render` · `reframe.shotPlan` · `reframe.shotPlanFor`
+   *
+   * SUPERSEDED 2026-08-10, recorded rather than deleted. This block previously read
+   * "exactly FOUR names … There is no `reframe.render`." That was true when written and
+   * is now FALSE: W22 shipped `reframe.analyze` (the trace producer) and
+   * `reframe.render` (affected-only re-render over a cached `ShotAnalysis`).
+   *
+   * IMPORTANT — the new pair is BACKEND-ONLY and has no wrapper here on purpose. W22
+   * was a sidecar lane; the renderer surface for it (WU-U1..U4) is a separate,
+   * unstarted wave. So `reframe.analyze` / `reframe.render` are registered and NOT
+   * user-reachable, which is the same shape as five defects this programme already
+   * fixed — stated here so the next reader does not infer from their presence in the
+   * frozen list that a UI can already reach them.
+   *
+   * Of the six, three are wrapped below; `reframe.eval` still has no wrapper.
    *
    * RETRACTION 2026-08-10. This comment used to infer from that list that
    * `affected` "cannot be handed to anything that re-encodes" and that a UI must

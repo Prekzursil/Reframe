@@ -15,11 +15,21 @@
 // CORRECTION 2026-08-10. The first version of this file said the corrections
 // cannot be applied because "the sidecar registers no reframe.render method …
 // reframe.render (or an override-persist method) has to be built sidecar-side
-// first". That named the WRONG BLOCKER and it is retracted here. The literal
-// half is still true — the registered reframe surface really is exactly four
-// methods (`sidecar/tests/test_handlers_rpc_surface.py:118-121`):
-//   reframe.applyOverrides · reframe.eval · reframe.shotPlan · reframe.shotPlanFor
-// — but the re-render path was never supposed to live in that namespace. It is
+// first". That named the WRONG BLOCKER and it is retracted here.
+//
+// SECOND CORRECTION, same day, AFTER W22 LANDED. The paragraph above used to add
+// that "the literal half is still true — the registered reframe surface really is
+// exactly four methods". That is now FALSE and is retracted in turn: W22 shipped
+// `reframe.analyze` and `reframe.render`, so the frozen surface
+// (`sidecar/tests/test_handlers_rpc_surface.py`) carries SIX names:
+//   reframe.analyze · reframe.applyOverrides · reframe.eval · reframe.render ·
+//   reframe.shotPlan · reframe.shotPlanFor
+// The old line-range citation (`:118-121`) moved with that change, which is why
+// this comment cites the file rather than a range — a pinned range is the part
+// most likely to rot silently.
+//
+// What has NOT changed is this file's actual point, and it still stands: the
+// re-render path THIS panel uses was never supposed to live in that namespace. It is
 // BUILT, and it lives in the export pipeline:
 //   * `MultiSpeakerReframeEngine.rerender_with_overrides` replays corrections
 //     onto the persisted plan without re-running the ML analysis;
