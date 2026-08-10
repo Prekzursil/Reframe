@@ -25,6 +25,7 @@ the real SyncNet/LSE-C measurement is the separate opt-in ``@e2e`` gate.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 from pathlib import Path
@@ -845,17 +846,39 @@ class TestSettingParity:
 # --------------------------------------------------------------------------- #
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _NOTICES_TSX = _REPO_ROOT / "app" / "renderer" / "src" / "features" / "ThirdPartyNotices.tsx"
+_PANEL_TSX = _REPO_ROOT / "app" / "renderer" / "src" / "features" / "LipSync.tsx"
 _LICENSES_DOC = _REPO_ROOT / "docs/THIRD-PARTY-LICENSES.md"  # ssot-allow: this IS the path, joined for the gate's r5
 
 
+def _tsx_prose(path: Path) -> str:
+    """A .tsx file's user-facing sentences, with concat seams closed up.
+
+    A long sentence in a .tsx file is written as several quoted literals joined
+    with ``+`` across lines, so a raw substring search for the sentence reports a
+    FALSE ABSENCE. This rejoins ``' + '`` seams and collapses whitespace so a
+    clause can be searched as the user reads it. Controlled by
+    ``test_the_prose_normaliser_can_find_a_known_present_clause``.
+    """
+    return " ".join(re.sub(r"'\s*\+\s*'", "", path.read_text(encoding="utf-8")).split())
+
+
 class TestLicenceDriftGuard:
-    """The same licence fact lives in three files. Assert it agrees in all three.
+    """The same licence fact lives in FOUR files. Assert it agrees in all four.
 
     A licence claim is precisely the kind of duplicated fact that must not drift:
-    the engine registry decides what runs, the notices component is what the user
-    is shown, and the licences doc is where the pass-through obligation is
-    recorded. A silent disagreement between them is a misrepresentation, so this
-    reads the other two files rather than trusting a comment to keep them in step.
+    the engine registry decides what runs, the notices component is the reference
+    list the user can browse, the licences doc is where the pass-through
+    obligation is recorded, and ``features/LipSync.tsx`` shows it AT THE POINT OF
+    USE (the panel where the user clicks "Re-lip to this dub"). A silent
+    disagreement between them is a misrepresentation, so this reads the other
+    three files rather than trusting a comment to keep them in step.
+
+    W19/W20 UPDATE — this guard was written for THREE files and an adversarial
+    review caught the gap: the new panel introduced a fourth copy of the same
+    facts (weights licence, engine label, the OpenRAIL pass-on obligation) that
+    the guard did not read, so its own premise had gone stale. The panel copy is
+    the one a user actually reads before consenting, which makes it the worst
+    place for a drifted licence, not the most forgivable.
     """
 
     def test_the_renderer_notice_quotes_the_same_weights_licences(self):
@@ -890,6 +913,50 @@ class TestLicenceDriftGuard:
 
     def test_the_setting_name_is_the_same_string_in_the_ui_and_the_gate(self):
         assert f"gatedBy: '{ls.SETTING_ENABLED}'" in _NOTICES_TSX.read_text(encoding="utf-8")
+
+    def test_the_lipsync_PANEL_quotes_the_same_engines_labels_and_licences(self):
+        # The panel is the FOURTH copy and the one shown at the point of consent.
+        # Field-shaped assertions (`id: '...'`, not a bare substring) so a mention
+        # in a comment cannot satisfy the gate — the use-vs-mention discipline.
+        source = _PANEL_TSX.read_text(encoding="utf-8")
+        for spec in ls.ENGINES.values():
+            assert f"id: '{spec.id}'" in source, f"{spec.id}: the lip-sync panel does not offer this engine"
+            assert f"label: '{spec.label}'" in source, f"{spec.id}: the panel's label has drifted from ENGINES"
+            assert f"weightsLicense: '{spec.weights_license}'" in source, (
+                f"{spec.id}: the panel does not carry weights licence {spec.weights_license!r}"
+            )
+
+    def test_the_lipsync_PANEL_never_offers_a_denied_engine(self):
+        # `wav2lip` is genuinely non-commercial and permanently denied. It IS named
+        # in the panel's comments (explaining the absence), so the assertion is on
+        # the offered FIELD, never on the document.
+        source = _PANEL_TSX.read_text(encoding="utf-8")
+        for denied in ls.DENIED_ENGINES:
+            assert f"id: '{denied}'" not in source, f"{denied} is DENIED but the panel offers it"
+
+    def test_the_panel_carries_the_openrail_pass_on_obligation_verbatim(self):
+        # The obligation is the half of an OpenRAIL licence an attribution block
+        # does NOT discharge: it binds the USER and must be passed downstream. The
+        # panel rewords the sentence around it for a user reading it mid-task, so
+        # only the load-bearing clause is pinned verbatim in both files.
+        clause = "must pass on to anyone you give the output or the model to"
+        assert clause in ls._OPENRAIL_NOTICE
+        source = _tsx_prose(_PANEL_TSX)
+        assert clause in source
+        # ...and it must not be softened into the "non-commercial" misreading the
+        # sidecar module exists to correct.
+        assert "Commercial use IS permitted" in source
+
+    def test_the_prose_normaliser_can_find_a_known_present_clause(self):
+        # DETECTOR CONTROL for the test above. `_tsx_prose` exists because a
+        # user-facing sentence in a .tsx file is written as several string literals
+        # joined with `+` across lines, so a raw substring search reports a FALSE
+        # ABSENCE — measured: the first draft of that assertion failed against a
+        # panel that carries the clause. Prove the reassembly works on a literal
+        # that IS split, and that the raw source does NOT contain it.
+        clause = "must pass on to anyone you give the output or the model to"
+        assert clause not in _PANEL_TSX.read_text(encoding="utf-8")
+        assert clause in _tsx_prose(_PANEL_TSX)
 
 
 # --------------------------------------------------------------------------- #
