@@ -475,10 +475,15 @@ def register_all(
         return svc.data_dir / _broll_ops.INDEX_FILENAME
 
     def _list_broll_assets() -> list[dict[str, Any]]:
-        # BR1: the SAME seam as before, now delegating to the union lister so a
-        # REGISTERED asset (one that lives outside brollDir) is indexed and
+        # BR1: the same seam POSITION as before, now delegating to the union lister so
+        # a REGISTERED asset (one that lives outside brollDir) is indexed and
         # suggestible too. Kept as this one closure rather than a second lister:
         # the panel and the engine must never see two different libraries.
+        #
+        # Not a drop-in equal of the old scan-only closure, in two measured ways, both
+        # documented at broll_asset_rows: it costs one realpath per DIRECTORY on top of
+        # the scan, and it now reads the Library, so a corrupt library.json fails
+        # broll.status/assets/index where before those could not fail on library state.
         return _library_ops.broll_asset_rows(svc)
 
     def _load_broll_index() -> Any:

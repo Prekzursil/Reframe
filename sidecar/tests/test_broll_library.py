@@ -7,8 +7,18 @@ the registry (``role='broll'`` rows in the SAME ``entity`` table as the source
 videos), the three ``broll.assets`` / ``broll.addAsset`` / ``broll.removeAsset``
 handlers, and the UNION lister that feeds the already-wired engine.
 
-Four things here are correctness claims rather than shape assertions, and each has
+Six things here are correctness claims rather than shape assertions, and each has
 its own test because getting any of them wrong is silent:
+
+* **The registry door admits exactly what the folder scan admits** — BOTH of the
+  scanner's gates, not just the extension set. ``add_broll`` originally checked only
+  ``src.exists()``, which is TRUE for a directory, so ``mkdir album.png`` registered as
+  a b-roll IMAGE and reached ``broll.index``' embed plan, where the batched image tower
+  fails the WHOLE job on one unopenable path.
+* **The dedup survives an EMPTY registry.** A junction inside ``brollDir`` makes the
+  SCAN itself emit one file twice (measured: ``os.path.islink`` is False for a junction
+  and ``rglob`` descends into it), so the union may not short-circuit when nothing is
+  registered — only memoise the ``realpath`` per directory.
 
 * **The kind vocabulary is translated on the way out.** The DB stores the PROV
   kinds ``brollImage`` / ``brollClip``; ``broll_compose`` treats anything that is
@@ -35,6 +45,7 @@ images so no ffprobe subprocess is ever spawned.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +56,12 @@ from media_studio.handlers import Services, register_all
 from media_studio.handlers import library_ops as _library_ops
 from media_studio.library import Library
 from media_studio.protocol import RpcContext, RpcError
+
+#: sidecar/tests/<this file> -> sidecar/tests -> sidecar -> <repo root>. The
+#: key-injection allowlist is READ from here rather than transcribed (see
+#: :func:`test_the_registry_methods_are_absent_from_the_REAL_key_injection_allowlist`);
+#: ``test_director_op_kind_parity.py`` establishes this cross-language-read pattern.
+_KEY_BRIDGE_TS = Path(__file__).resolve().parents[2] / "app" / "main" / "keyBridge.ts"
 
 
 # --------------------------------------------------------------------------- #
@@ -169,17 +186,68 @@ def test_add_broll_unsupported_extension_raises(lib: Library, tmp_path: Path):
         lib.add_broll(str(notes))
 
 
-def test_add_broll_accepts_exactly_what_the_folder_scan_accepts(lib: Library, tmp_path: Path):
-    """The accepted extension set is READ from the scanner, never restated.
+def test_add_broll_accepts_the_same_extension_sets_as_the_folder_scan(lib: Library, tmp_path: Path):
+    """The accepted extension SET is READ from the scanner, never restated.
 
     A second copy could drift, and then a file the scan happily indexes would be
     refused by addAsset (or the reverse) — so assert against the scanner's own sets.
+
+    Scoped deliberately: this covers the extension sets ONLY, which is all it ever
+    measured. The scanner's OTHER gate — ``path.is_file()`` — is asserted by
+    :func:`test_add_broll_refuses_a_DIRECTORY_named_like_an_image` and
+    :func:`test_the_registry_door_and_the_folder_scan_refuse_THE_SAME_directory`.
+    (The earlier name, ``..._accepts_exactly_what_the_folder_scan_accepts``, was
+    REFUTED: it claimed full acceptance parity while the is_file half was missing.)
     """
     for ext in sorted(broll_ops.IMAGE_EXTS | broll_ops.VIDEO_EXTS):
         f = tmp_path / f"asset{ext}"
         f.write_bytes(b"x")
         registered = lib.add_broll(str(f))
         assert registered["kind"] == ("image" if ext in broll_ops.IMAGE_EXTS else "video")
+
+
+def test_add_broll_refuses_a_DIRECTORY_named_like_an_image(lib: Library, tmp_path: Path):
+    """The scanner's ``is_file()`` gate, reproduced at the registry door.
+
+    ``scan_assets`` skips anything that is not ``path.is_file()``
+    (``features/broll_ops.py``); ``add_broll`` used to gate only on ``src.exists()``,
+    which is TRUE for a directory. Measured before the fix, end to end against the
+    real composition root: ``broll.addAsset(<dir album.png>)`` -> ACCEPTED
+    ``kind='image' exists=True sizeBytes=0``; it then passed the union lister's
+    ``exists`` filter (``os.stat`` of a directory succeeds), and ``broll.status``
+    reported ``libraryCount=3 staleCount=3`` — and ``staleCount`` IS
+    ``len(refresh_plan()['embed'])``, verbatim the list ``broll.index`` hands to the
+    image tower, where ``open()`` on that path raises ``PermissionError``. One bad row
+    fails the WHOLE index job because the tower stacks the batch, so this is a
+    library-wide failure, not a per-asset one.
+    """
+    bogus = tmp_path / "album.png"
+    bogus.mkdir()
+    with pytest.raises(_library.BrollAssetError, match="not a file"):
+        lib.add_broll(str(bogus))
+    assert lib.list_broll() == []
+
+
+def test_the_registry_door_and_the_folder_scan_refuse_THE_SAME_directory(wired, tmp_path: Path):
+    """Acceptance parity asserted by RUNNING both gates over one tree, not by prose.
+
+    The control is in the same run: both gates ACCEPT ``real.png``, so a zero from
+    either of them is a refusal and not a broken probe.
+    """
+    handlers, services = wired
+    folder = tmp_path / "scanned"
+    folder.mkdir()
+    (folder / "real.png").write_bytes(b"x")
+    bogus = folder / "album.png"
+    bogus.mkdir()
+    # control: the scanner takes the real file and skips the directory
+    assert [Path(a["path"]).name for a in broll_ops.scan_assets(str(folder))] == ["real.png"]
+    services.settings.set({broll_ops.BROLL_DIR_KEY: str(folder)})
+    # control: the SAME door takes the real file
+    assert handlers["broll.addAsset"]({"path": str(folder / "real.png")}, _ctx())["asset"]["kind"] == "image"
+    with pytest.raises(RpcError, match="not a file"):
+        handlers["broll.addAsset"]({"path": str(bogus)}, _ctx())
+    assert [Path(r["path"]).name for r in _library_ops.broll_asset_rows(services)] == ["real.png"]
 
 
 # --------------------------------------------------------------------------- #
@@ -480,30 +548,53 @@ def test_a_registered_asset_lands_in_the_index_EMBED_PLAN(wired, tmp_path: Path)
     assert (after["stale"], after["staleCount"], after["libraryCount"]) == (True, 1, 2)
 
 
-def test_the_registry_methods_never_enter_the_key_injection_allowlist(wired):
-    """broll.* is LOCAL-only: no provider, so no key may ever be injected."""
+def test_the_registry_methods_are_absent_from_the_REAL_key_injection_allowlist(wired):
+    """broll.* is LOCAL-only: no provider, so no key may ever be injected.
+
+    This reads the ACTUAL allowlist out of ``app/main/keyBridge.ts`` — the file whose
+    ``INJECT_PREFIXES`` / ``INJECT_METHODS`` literals ``needsKeyInjection()`` consults
+    — instead of comparing against a second copy transcribed here. The previous
+    version of this test hardcoded both literals, so two of its three assertions were
+    constant-true over its own constants and adding ``broll.assets`` to the real
+    allowlist could never have turned it red: it was REFUTED as a gate that cannot
+    fail, and this is the replacement.
+
+    Detector control (asserted below before the real claim): the parse must find the
+    four known prefix families and the known-present ``subtitles.translate`` entry. A
+    regex that silently matched nothing would otherwise yield empty sets that every
+    method trivially passes.
+
+    Scope: this pins the DECLARED literals. It does not EXECUTE
+    ``needsKeyInjection()`` — that is ``app/main/keyBridge.test.ts``' job, and
+    measured on this branch that suite's "is false for non-provider methods" list
+    contains no ``broll.*`` case (UNVERIFIED whether a later lane adds one; the
+    settling experiment is a grep of ``keyBridge.test.ts`` for ``broll.``).
+    """
     handlers, _services = wired
-    prefixes = ("ai.", "director.", "shortmaker.", "index.")
-    exact = {
-        "subtitles.translate",
-        "providers.usage",
-        "providers.openrouterUsage",
-        "providers.revealKey",
-        "thumbnail.select",
-        "phase8.select",
-        "recipes.run",
-        "templates.apply",
-        "batch.start",
-        "batch.resume",
-    }
+    source = _KEY_BRIDGE_TS.read_text(encoding="utf-8")
+    prefix_match = re.search(r"const INJECT_PREFIXES[^=]*=\s*\[(.*?)\];", source, re.DOTALL)
+    methods_match = re.search(r"const INJECT_METHODS[^=]*=\s*new Set\(\[(.*?)\]\);", source, re.DOTALL)
+    assert prefix_match is not None, f"INJECT_PREFIXES not found in {_KEY_BRIDGE_TS} — update this gate, don't drop it"
+    assert methods_match is not None, f"INJECT_METHODS not found in {_KEY_BRIDGE_TS} — update this gate, don't drop it"
+    prefixes = tuple(re.findall(r"'([^']+)'", prefix_match.group(1)))
+    exact = set(re.findall(r"'([^']+)'", methods_match.group(1)))
+    # --- detector control: the parse really did read the live allowlist ---------
+    assert prefixes == ("ai.", "director.", "shortmaker.", "index.")
+    assert "subtitles.translate" in exact and "providers.revealKey" in exact
+    # --- the claim -------------------------------------------------------------
     for name in ("broll.assets", "broll.addAsset", "broll.removeAsset"):
         assert name in handlers
-        assert not name.startswith(prefixes)
-        assert name not in exact
+        assert not name.startswith(prefixes), f"{name} is prefix-matched by keyBridge.ts INJECT_PREFIXES"
+        assert name not in exact, f"{name} was added to keyBridge.ts INJECT_METHODS — broll.* takes no provider key"
 
 
-def test_the_real_path_dedup_key_collapses_short_names_and_dot_segments(tmp_path: Path):
-    """Control for the dedup key itself: it must see through both spellings."""
+def test_the_real_path_dedup_key_collapses_dot_segments(tmp_path: Path):
+    """Control for the dedup key itself: it must see through both spellings.
+
+    Scoped to the ``..`` dot-segment spelling, which is the only one this test
+    constructs. (The earlier name claimed 8.3 short names too; the module docstring
+    already admitted that case is NOT exercised here, so the name was REFUTED.)
+    """
     folder = tmp_path / "b"
     folder.mkdir()
     dog = folder / "dog.png"
@@ -512,3 +603,87 @@ def test_the_real_path_dedup_key_collapses_short_names_and_dot_segments(tmp_path
     assert weird != str(dog)
     assert _library_ops._real_key(weird) == _library_ops._real_key(str(dog.resolve()))
     assert _library_ops._real_key(weird) == os.path.normcase(os.path.realpath(str(dog)))
+
+
+def test_the_dedup_key_is_IDENTICAL_with_and_without_the_directory_cache(tmp_path: Path):
+    """The per-call directory memo must not change the key for ANY spelling.
+
+    ``_real_key`` resolves the DIRECTORY and normcases the basename onto it, memoising
+    the directory, because ``realpath`` is a per-path syscall and the union lister
+    calls it once per scanned asset. Equivalence is the whole safety argument for that
+    optimisation, so it is asserted rather than reasoned about.
+    """
+    folder = tmp_path / "b"
+    folder.mkdir()
+    dog = folder / "dog.png"
+    dog.write_bytes(b"x")
+    cache: dict[str, str] = {}
+    for spelling in (str(dog), str(folder / ".." / "b" / "dog.png"), str(dog).upper(), str(folder / "DOG.PNG")):
+        assert _library_ops._real_key(spelling, cache) == _library_ops._real_key(spelling)
+    # one entry per distinct directory spelling, and the uncached call is unaffected
+    assert len({_library_ops._real_key(s, cache) for s in (str(dog), str(dog).upper())}) == 1
+    # a trailing-separator spelling has no basename to join: it resolves whole
+    assert _library_ops._real_key(str(folder) + os.sep, cache) == _library_ops._real_key(str(folder) + os.sep)
+
+
+def test_the_union_lister_resolves_each_DIRECTORY_once_not_each_file(wired, tmp_path: Path, monkeypatch):
+    """PERF pin: N scanned assets in one folder cost ONE ``realpath``, not N.
+
+    Measured on this box before the memo, 2000 one-folder assets with an EMPTY
+    registry: ``scan_assets`` alone 94 ms vs ``broll_asset_rows`` 479 ms (x5.1), and
+    ``broll.status`` is a direct-return handler, so that delta is paid synchronously on
+    the RPC loop on every status/index/suggest call. Counting the syscall is a stabler
+    pin than a wall-clock threshold.
+    """
+    _handlers, services = wired
+    folder = tmp_path / "many"
+    folder.mkdir()
+    for i in range(12):
+        (folder / f"a{i}.png").write_bytes(b"x")
+    services.settings.set({broll_ops.BROLL_DIR_KEY: str(folder)})
+    outside = tmp_path / "elsewhere" / "city.jpg"
+    outside.parent.mkdir()
+    outside.write_bytes(b"y")
+    services.library.add_broll(str(outside))
+
+    real_realpath = os.path.realpath
+    calls: list[str] = []
+
+    def counting(path):
+        calls.append(str(path))
+        return real_realpath(path)
+
+    monkeypatch.setattr(_library_ops.os.path, "realpath", counting)
+    rows = _library_ops.broll_asset_rows(services)
+    assert len(rows) == 13  # 12 scanned + 1 registered — the memo changed no output
+    # 2 distinct directories (the scanned folder + the registered asset's folder).
+    assert len(calls) == 2, f"expected one realpath per DIRECTORY, got {len(calls)}: {calls}"
+
+
+def test_the_union_still_dedups_two_SCANNED_spellings_of_one_file(wired, tmp_path: Path, monkeypatch):
+    """Scanned-vs-scanned dedup must survive even with an EMPTY registry.
+
+    This is why the union CANNOT short-circuit to ``[{**row, 'registered': False} ...]``
+    when nothing is registered. Measured with ``mklink /J``: ``os.path.islink`` returns
+    **False** for a Windows junction and ``Path.rglob`` DOES descend into it, so a
+    junction inside ``brollDir`` makes ``scan_assets`` emit ``mirror\\dog.png`` AND
+    ``real\\dog.png`` — two spellings of ONE file, collapsing to one ``_real_key``.
+    Skipping the dedup on an empty registry would embed that file twice.
+
+    The two spellings are injected through the scanner seam rather than by creating a
+    junction, so this runs on every platform the gate runs on.
+    """
+    _handlers, services = wired
+    folder = tmp_path / "scanned"
+    folder.mkdir()
+    dog = folder / "dog.png"
+    dog.write_bytes(b"x")
+    services.settings.set({broll_ops.BROLL_DIR_KEY: str(folder)})
+    (row,) = broll_ops.scan_assets(str(folder))
+    twin = {**row, "path": str(folder / ".." / "scanned" / "dog.png")}
+    monkeypatch.setattr(_library_ops._broll_ops, "scan_assets", lambda _root: [row, twin])
+
+    assert services.library.list_broll() == []  # the registry really is empty
+    rows = _library_ops.broll_asset_rows(services)
+    assert len(rows) == 1, "one file spelled twice by the SCAN must still yield one row"
+    assert rows[0]["registered"] is False

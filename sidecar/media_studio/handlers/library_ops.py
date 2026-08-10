@@ -330,7 +330,7 @@ def library_managed_clear(self: Services, params: dict[str, Any], ctx: RpcContex
 # --------------------------------------------------------------------------- #
 # BR1 — the b-roll asset registry surface (broll.assets / addAsset / removeAsset)
 # --------------------------------------------------------------------------- #
-def _real_key(path: str) -> str:
+def _real_key(path: str, dir_cache: dict[str, str] | None = None) -> str:
     """A spelling-insensitive identity for a file path (the union's dedup key).
 
     ``broll_ops.scan_assets`` reports each file as the CONFIGURED folder with the
@@ -340,8 +340,34 @@ def _real_key(path: str) -> str:
     ``brollDir``, a relative folder, a symlinked folder, letter case, or an 8.3 short
     component on Windows. ``normcase(realpath(...))`` collapses all of those. Keying
     the union on the raw string would count that file twice and embed it twice.
+
+    PERF: ``realpath`` is a SYSCALL PER PATH (on Windows it opens the file to ask for
+    its final name), and the union calls this once per scanned asset. Measured on this
+    box with 2000 assets in one folder and an EMPTY registry: ``scan_assets`` alone
+    94 ms vs the union lister 479 ms (x5.1) — paid synchronously on the RPC loop,
+    because ``broll.status`` is a direct-return handler. So when ``dir_cache`` is
+    supplied the DIRECTORY is resolved once per distinct directory and the basename is
+    ``normcase``d onto it (2000 assets -> 1 syscall). Equivalence with the uncached
+    form is asserted, not assumed, for every spelling above.
+
+    Residual of the memo, disclosed: the final component is no longer passed through
+    ``realpath``, so a per-FILE symlink (or an 8.3 short BASENAME) is not expanded.
+    Neither is reachable through the two producers — ``rglob`` yields real long
+    basenames and ``Path.resolve()`` expands them — and the failure direction if it
+    ever were would be an asset embedded twice, never an asset dropped. UNVERIFIED:
+    whether any platform's ``rglob`` can yield a short basename; the settling
+    experiment is to create ``LONGFILENAME.png`` and scan a ``brollDir`` spelled with
+    the ``LONGFI~1.PNG`` form and compare the two keys.
     """
-    return os.path.normcase(os.path.realpath(path))
+    if dir_cache is None:
+        return os.path.normcase(os.path.realpath(path))
+    head, tail = os.path.split(path)
+    if not tail:  # a trailing-separator (bare directory) spelling has nothing to join
+        return os.path.normcase(os.path.realpath(path))
+    real_head = dir_cache.get(head)
+    if real_head is None:
+        real_head = dir_cache[head] = os.path.realpath(head)
+    return os.path.normcase(os.path.join(real_head, tail))
 
 
 def broll_asset_rows(self: Services, registered: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -363,19 +389,63 @@ def broll_asset_rows(self: Services, registered: list[dict[str, Any]] | None = N
 
     * **Dedup on the REAL path** (:func:`_real_key`), not on the path string or the
       ``assetId`` derived from it — see that helper for the measured reason. A
-      REGISTERED row WINS the collision because it carries the title/thumbnail the
-      UI shows; it keeps the scanned row's position so the list stays deterministic.
+      REGISTERED row WINS the collision because it carries the ``title`` the UI shows;
+      it keeps the scanned row's position so the list stays deterministic. (It also
+      carries ``thumbnailPath``, but that field is UNCONDITIONALLY ``""`` on this
+      branch: ``add_broll`` writes ``""`` and the only poster writer,
+      ``Library.set_thumbnail``, is ``role='source'``-scoped — measured,
+      ``set_thumbnail(<brollAssetId>, ...)`` returns ``None`` and changes nothing. So
+      the thumbnail half of this rationale is aspiration, not fact: BR1 surfaces the
+      column, no b-roll poster extractor exists yet. Do not cite it as a reason.)
     * **A registered asset whose file is gone is EXCLUDED.** It must not reach
       ``broll.index``, which would hand a vanished path to the image tower and fail
       the whole job. It is surfaced as ``broll.assets``' ``missing`` instead — loud,
-      the same way ``library.reveal`` reports a missing source.
+      the same way ``library.reveal`` reports a missing source. Note the filter checks
+      LIVENESS, not usability: the "is it a usable file at all" question is answered at
+      the registry door (``Library.add_broll``' ``is_file`` gate), because ``os.stat``
+      of a directory succeeds and would sail through here.
+
+    Two consequences worth naming, because neither is obvious from the signature:
+
+    * **The dedup is NOT skippable when the registry is empty.** Measured with
+      ``mklink /J``: ``os.path.islink`` returns False for a Windows junction and
+      ``Path.rglob`` descends into it, so a junction inside ``brollDir`` makes
+      ``scan_assets`` emit two spellings of ONE file. An "if nothing is registered,
+      return the scan verbatim" short-circuit would embed that file twice. The
+      per-directory memo in :func:`_real_key` is the cheap fix instead.
+    * **Registering a file that is ALREADY scanned can cost one re-embed.** The
+      registered row wins, and it spells the path ``Path.resolve()``'d, so when
+      ``brollDir`` is spelled non-canonically the surviving row's ``path`` — and
+      therefore its ``assetId`` and its ``broll_index.fingerprint`` — differ from the
+      scanned row's. Measured on one file with three ``brollDir`` spellings: resolved
+      absolute -> both equal; with a ``..`` segment or an upper-cased directory -> both
+      differ. The asset is re-embedded ONCE and then stable; nothing is lost, because
+      ``broll.apply`` composites from ``path`` + ``kind`` (not ``assetId``) and
+      ``broll_plan``'s id lookup is validated inside a single ``suggest`` call, so an
+      already-accepted suggestion is not invalidated by the id flip. And
+      ``tempfile.gettempdir()`` on this box IS an 8.3 short form, so a non-canonical
+      ``brollDir`` is not hypothetical.
+    * **This seam now depends on library state.** Reading the registry runs
+      ``Library._open`` -> ``_migrate``, which raises ``LibraryMigrationError`` on a
+      corrupt/wrong-shape ``library.json``. Measured: at 775a97ea ``broll.status`` /
+      ``broll.assets`` / ``broll.index`` could not fail on library state; now they can,
+      and ``LibraryMigrationError`` is NOT an ``RpcError``, so it surfaces as an untyped
+      internal error. That is deliberate rather than swallowed: ``library.list`` fails
+      in exactly that state too, and degrading to "empty registry" would show the user
+      a b-roll panel with their registered assets silently absent — the failure
+      ``missing`` exists to prevent. UNVERIFIED whether the renderer renders that error
+      usefully; the settling experiment is to corrupt ``data/library.json`` and drive
+      the b-roll panel.
     """
     known = self.library.list_broll() if registered is None else registered
     scanned = _broll_ops.scan_assets(str(self.settings.get().get(_broll_ops.BROLL_DIR_KEY) or ""))
-    rows: dict[str, dict[str, Any]] = {_real_key(str(row["path"])): {**row, "registered": False} for row in scanned}
+    dir_cache: dict[str, str] = {}  # one realpath per DIRECTORY, not per asset
+    rows: dict[str, dict[str, Any]] = {
+        _real_key(str(row["path"]), dir_cache): {**row, "registered": False} for row in scanned
+    }
     for asset in known:
         if asset["exists"]:
-            rows[_real_key(str(asset["path"]))] = asset
+            rows[_real_key(str(asset["path"]), dir_cache)] = asset
     return list(rows.values())
 
 
@@ -391,6 +461,12 @@ def broll_assets(self: Services, params: dict[str, Any], ctx: RpcContext) -> dic
     are reported rather than silently dropped, so the UI can offer a re-register or
     an unregister instead of leaving a phantom in the grid. No model, no provider,
     no network: a scan plus ONE SQLite read.
+
+    DEVIATION from ``docs/plans/v1.5/flagship-auto-broll.md`` §5, which declared
+    ``{assets}`` only: this returns ``{assets, missing}``, and each row is the
+    scan/registry shape (``assetId``, ``thumbnailPath``), not the doc's first-draft
+    ``BrollAsset`` (``id``, ``thumbPath``). The doc has been corrected; a renderer lane
+    reading an older copy of it will write ``asset.id`` and break.
 
     The registry is read ONCE and the two halves are a partition of that single
     snapshot, so every registered asset lands in exactly one of them. Reading twice
@@ -410,8 +486,19 @@ def broll_add_asset(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
 
     THE missing door: before this method the b-roll library could only ever be a
     folder scan, so nothing in the app could put a specific asset into it. Registers
-    the file by path (no copy, no move) as a ``role='broll'`` entity. A missing file
-    or a non-b-roll extension is INVALID_PARAMS (loud).
+    the file by path (no copy, no move) as a ``role='broll'`` entity. A path that is
+    missing, is not a FILE (a directory with a media extension is the case that used
+    to slip through), or carries a non-b-roll extension is INVALID_PARAMS (loud) —
+    ``Library.add_broll`` owns those three gates and they mirror the folder scan's.
+
+    CONTRACT-NOTE: ``title`` applies on FIRST registration only. Re-posting the same
+    path returns the existing row unchanged and the new ``title`` is dropped without a
+    signal (``Library.add_broll`` mirrors ``Library.add`` here). BR1 ships no rename
+    door; the renderer's own path to a new title is ``removeAsset`` + ``addAsset``.
+
+    The wire shape is ``{asset}`` where the asset row carries ``assetId`` and
+    ``thumbnailPath`` — NOT the ``id`` / ``thumbPath`` the design doc's first draft
+    named. See the deviation note in ``docs/plans/v1.5/flagship-auto-broll.md`` §5.
     """
     path = _require_str(params, "path")
     title = params.get("title")
@@ -429,6 +516,10 @@ def broll_remove_asset(self: Services, params: dict[str, Any], ctx: RpcContext) 
     holds a path, not bytes) — the same rule ``library.remove`` follows for a source
     video. Idempotent: an id that is not registered returns ``{ok: false}`` rather
     than an error, so a double-click cannot fail.
+
+    DEVIATION from ``docs/plans/v1.5/flagship-auto-broll.md`` §5, which declared
+    ``{removed: bool}``: the key is ``ok``, matching every other boolean-ack handler in
+    this module. The doc has been corrected.
     """
     return {"ok": self.library.remove_broll(_require_str(params, "id"))}
 
