@@ -153,6 +153,29 @@ vi.mock('./components/SidecarBanner', () => ({ SidecarBanner: () => <div /> }));
 // mock and reading the gate-tests-coverage vitest step; the stub is correct either
 // way because the panel is irrelevant here.
 vi.mock('./features/TranscriptEditor', () => ({ default: () => <div /> }));
+// CORRECTION to the paragraph above, measured 2026-08-10 while remediating the
+// W21 review. A review objection proposed adding the same stub for the Dub panel
+// (also `lazy()` at `views/Workspace.tsx:42`) on the premise that a lazy sibling
+// panel's module graph is paid for by this suite. An executable probe REFUTES the
+// module-EVALUATION half of that premise for BOTH panels: a `throw` planted at
+// module top-level in `features/Dub.tsx` did NOT fire here, and the same probe in
+// `features/TranscriptEditor.tsx` (with its mock above temporarily disabled) did
+// NOT fire either — while the identical Dub probe DID fire in
+// `features/Dub.test.tsx`, so the detector is known-good in the loading state.
+// Neither panel is evaluated by this suite; `lazy()` defers the import until the
+// tab is rendered, and this suite never leaves the Director tab. A Dub stub would
+// therefore have saved nothing, so none was added. (Scope: EVALUATION is what the
+// probe measures. Whether Vite still TRANSFORMS an unevaluated dynamic import is
+// NOT measured here — the timings could not settle it, see below.)
+//
+// The timeout risk is real anyway, and its real cause is machine load, not this
+// file's imports. Measured on this box, three runs per configuration, first case:
+// without a Dub stub 2607 / 1542 / 1158 ms, with one 3438 / 3005 / 2770 ms — the
+// spread is larger than any effect and the ordering inverts, i.e. the single
+// 3628ms datapoint the objection cited is a load artifact, exactly like the
+// earlier 3/3 timeout. Against a 5000ms default that is a coin-flip on a busy
+// runner, so the margin is removed explicitly instead of by proxy.
+vi.setConfig({ testTimeout: 30_000 });
 
 import { App } from './App';
 

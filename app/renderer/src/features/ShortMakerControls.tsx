@@ -22,6 +22,14 @@ import {
   type ShortMakerControls as ShortMakerControlsState,
   clamp,
 } from './shortMakerLogic';
+// W21 (EU AI Act Art. 50): this picker is where a dub is chosen to be muxed
+// into an EXPORTED short, so the AI-generated marking and the "in-app only"
+// caveat have to be reachable here, not only on the Dub panel.
+import {
+  AI_EXPORT_LABEL_NOTE,
+  audioTrackPickerLabel,
+  isAiGeneratedAudioTrack,
+} from './AiDisclosure';
 import { type PlatformPresetId, PLATFORM_PRESETS, PLATFORM_PRESET_IDS } from './shortMakerPresets';
 import { CAPTION_STYLES } from './shortMakerLogic';
 import { LanguageSelect } from '../components/LanguageSelect';
@@ -68,6 +76,7 @@ export function ShortMakerControls({
   onBatch,
   onCancel,
 }: ShortMakerControlsProps): React.JSX.Element {
+  const selectedAudioTrack = audioTracks.find((t) => t.id === audioTrackId);
   return (
     <form
       className="shortmaker-form"
@@ -188,11 +197,17 @@ export function ShortMakerControls({
             <option value="">Original</option>
             {audioTracks.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.name} ({t.lang}, {t.kind})
+                {audioTrackPickerLabel(t)}
               </option>
             ))}
           </select>
         </label>
+
+        {selectedAudioTrack && isAiGeneratedAudioTrack(selectedAudioTrack) && (
+          <p className="sm-ai-audio-note" data-testid="sm-ai-audio-note">
+            {AI_EXPORT_LABEL_NOTE}
+          </p>
+        )}
 
         {/* P3-A: hook-title overlay toggle (default ON). */}
         <label className="sm-field sm-toggle">
