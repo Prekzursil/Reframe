@@ -18,6 +18,7 @@ import {
   isIncomplete,
   incompleteBatches,
   remainingCount,
+  retryableBatches,
   batchSettled,
   blankPreset,
   resumeNoOpNotice,
@@ -172,6 +173,16 @@ describe('sourceToken / aggregateUpdate (debounce per-pct chatter)', () => {
 });
 
 describe('resume-surface predicates (§7.2)', () => {
+  /** Every source failed — `derive_status` reports the terminal aggregate `error`. */
+  const COUNTS_ALL_ERROR: BatchSummary['counts'] = {
+    total: 3,
+    done: 0,
+    error: 3,
+    skipped: 0,
+    queued: 0,
+    running: 0,
+    cancelled: 0,
+  };
   function summary(status: BatchSummary['status'], over: Partial<BatchSummary> = {}): BatchSummary {
     return {
       id: 'b',
@@ -198,6 +209,27 @@ describe('resume-surface predicates (§7.2)', () => {
       summary('running', { id: 'r', createdAt: 8 }),
     ];
     expect(incompleteBatches(list).map((b) => b.id)).toEqual(['r', 'p']);
+  });
+  it('selects TERMINAL batches that still hold error sources, newest-first', () => {
+    // The all-error case W09's brief names. `isIncomplete` is
+    // {queued, running, partial}, so an aggregate of `error` — every source
+    // failed — is excluded from the resume surface entirely; this is the only
+    // selector that can find it.
+    const list = [
+      summary('error', { id: 'e1', createdAt: 5, counts: COUNTS_ALL_ERROR }),
+      summary('error', { id: 'e2', createdAt: 9, counts: COUNTS_ALL_ERROR }),
+    ];
+    expect(retryableBatches(list).map((b) => b.id)).toEqual(['e2', 'e1']);
+  });
+  it('excludes an INCOMPLETE batch even when it has errors (no double listing)', () => {
+    // A `partial` batch with errors already has a row on the resume surface; the
+    // two lists are disjoint by construction so it is not shown twice.
+    const list = [summary('partial', { id: 'p', counts: COUNTS_ALL_ERROR })];
+    expect(incompleteBatches(list).map((b) => b.id)).toEqual(['p']);
+    expect(retryableBatches(list)).toEqual([]);
+  });
+  it('excludes a terminal batch with no errors', () => {
+    expect(retryableBatches([summary('done', { id: 'd' })])).toEqual([]);
   });
   it('computes remaining (not done, not skipped)', () => {
     expect(

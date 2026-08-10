@@ -7,6 +7,12 @@
  * rows with no status treatment at all. `features/batchQueue.conformance.test.ts`
  * pins that every class the component renders is actually styled.
  *
+ * It also styles `features/BatchConsentCard.tsx` (the `batch-consent*` block
+ * below). That card is mounted from exactly one place — inside this panel — and
+ * its eleven classes were unstyled too, which the first pass of this sheet MISSED
+ * because its guard only enumerated `batch-queue*` names. The guard now covers
+ * both components.
+ *
  * SCOPE — what this sheet deliberately does NOT do:
  *   * `select` / `fieldset` / `legend` chrome comes from the global floor in
  *     `styles/controls.css` (H5); only layout is set here.
@@ -98,6 +104,54 @@
 }
 
 .batch-queue__resume-row > span:first-child {
+  flex: 1 1 220px;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+/* ---- batches with failed sources (the ALL-ERROR retry surface, W09) --------
+ * Same card shell as the resume surface, warn-tinted rather than neutral: these
+ * batches are FINISHED and unsuccessful, not merely unfinished, and the panel
+ * must not present the two as the same thing. The tint is redundant — the
+ * heading and the "K of N failed" count carry the meaning on their own. */
+
+.batch-queue__retry {
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.batch-queue__retry h4 {
+  margin: 0 0 var(--space-3);
+  color: var(--status-warn);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+.batch-queue__retry ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.batch-queue__retry-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+}
+
+.batch-queue__retry-row > span:first-child {
   flex: 1 1 220px;
   min-width: 0;
   color: var(--text-secondary);
@@ -197,6 +251,119 @@
    shell.css `.feature-panel .actions > button:first-child`). */
 .batch-queue .batch-queue__run:focus-visible {
   box-shadow: var(--focus-ring), var(--accent-glow);
+}
+
+/* ---- the §9.1 consent card (features/BatchConsentCard.tsx) ------------------
+ * Mounted INSIDE `.batch-queue`, mid-flow, between the setup block and the live
+ * rows — and it shipped with all ELEVEN of its `batch-consent*` classes unstyled,
+ * so the one screen in the app that asks for cloud-egress consent rendered as
+ * bare platform chrome. It lives in this sheet rather than its own because the
+ * card is mounted from exactly one place (BatchQueue.tsx) and shares this panel's
+ * card language; its `button` already inherits the shared raised voice through
+ * the `.batch-queue button` group in components/shell.css. */
+
+.batch-consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.batch-consent__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--type-card-title-size);
+  font-weight: var(--weight-semibold);
+}
+
+.batch-consent__split {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--type-body-size);
+}
+
+.batch-consent__skips {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+}
+
+.batch-consent__skips-title {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+.batch-consent__skips ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.batch-consent__skip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--type-body-size);
+}
+
+.batch-consent__skip-title {
+  color: var(--text-primary);
+}
+
+/* The reason is the whole point of the visible-skip contract (§9.1), so it is
+   quiet but never truncated — a skipped source stays attributed. */
+.batch-consent__skip-reason {
+  color: var(--status-warn);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+}
+
+/* The ack is the card's primary action: accent fill, out-specifying the shared
+   `.batch-queue button` voice (0,1,1) at (0,2,0) exactly as `__run` does. */
+.batch-queue .batch-consent__ack {
+  align-self: flex-start;
+  background: var(--accent);
+  border-color: transparent;
+  box-shadow: var(--accent-glow);
+  color: var(--accent-ink);
+  font-weight: var(--weight-bold);
+}
+
+.batch-queue .batch-consent__ack:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: var(--accent-glow-hover);
+}
+
+.batch-queue .batch-consent__ack:focus-visible {
+  box-shadow: var(--focus-ring), var(--accent-glow);
+}
+
+/* Acknowledged is a DISABLED state carrying a settled meaning, so it drops the
+   accent fill entirely rather than sitting there at 45% opacity looking broken. */
+.batch-queue .batch-consent__ack:disabled {
+  background: var(--status-success-soft);
+  box-shadow: none;
+  color: var(--status-success);
+  opacity: 1;
+}
+
+.batch-consent__info,
+.batch-consent__hint {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--type-caption-size);
 }
 
 /* ---- the live run ------------------------------------------------------------ */

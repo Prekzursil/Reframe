@@ -27,6 +27,7 @@ import {
   incompleteBatches,
   remainingCount,
   resumeNoOpNotice,
+  retryableBatches,
   statusToken,
   terminalAnnouncement,
 } from './repurposeLogic';
@@ -55,6 +56,11 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
   const [templateId, setTemplateId] = useState('');
   const [batch, setBatch] = useState<BatchState | null>(null);
   const [incomplete, setIncomplete] = useState<BatchSummary[]>([]);
+  // Terminal batches that still hold `error` sources (`retryableBatches`). Held
+  // SEPARATELY from `incomplete` because an all-error batch reports the terminal
+  // aggregate `error`, which `isIncomplete` excludes — so before this list existed
+  // the canonical "retry the failures" batch had no row on the panel at all.
+  const [retryable, setRetryable] = useState<BatchSummary[]>([]);
   const [error, setError] = useState('');
   // A non-error explanation for an action the sidecar declined (today: a resume
   // refused because the batch's parent job is still live). Kept separate from
@@ -92,8 +98,18 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
   // Cancel would also appear during the §9.1 consent step, where `batch.create`
   // has mounted the live rows but no job exists yet, so the only reachable
   // outcome would be the {ok:false} "nothing to cancel" reply. Written at the
-  // three places the ref is written, and nowhere else.
+  // FOUR places the ref is written (start, run-reset, resume, and the parent
+  // `job.done` teardown below), and nowhere else — the two are always assigned
+  // adjacently so the mirror cannot drift.
   const [liveJobId, setLiveJobId] = useState('');
+
+  // True between a successful `batch.cancel` and the parent job's `job.done`.
+  // Cancellation is COOPERATIVE (the runner observes the flag between sources),
+  // so without this the click had no observable effect at all: the button stayed
+  // enabled and identical, and a second press hit `JobRegistry.cancel` on a job
+  // whose flag was already set (`jobs.py:829` — a known job returns True and does
+  // nothing), i.e. a dead click manufactured by this panel's own new control.
+  const [cancelling, setCancelling] = useState(false);
 
   // The created-but-not-yet-started batch, held so the post-acknowledge
   // `confirmRun` can start it without re-creating.
@@ -114,6 +130,7 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       setVideos(vids);
       setTemplates(tmpl);
       setIncomplete(incompleteBatches(batches));
+      setRetryable(retryableBatches(batches));
       if (tmpl.length > 0) setTemplateId((prev) => prev || tmpl[0].id);
       // NOTE: a successful reload does NOT clear `error` — a concurrent action
       // (run/resume/status) may have just set one, and clobbering it would hide
@@ -169,8 +186,29 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
     [titleFor],
   );
 
+  // When the parent job finishes, refresh the durable batch state once AND tear
+  // down the live-job handle.
+  //
+  // The teardown is load-bearing, not tidiness. `batchSettled` alone does NOT
+  // cover the end of a run: the runner unwinds on the FIRST observed cancel /
+  // halt, recording the in-flight source `cancelled` and leaving every later
+  // source `queued` on disk. Those items are non-terminal forever, so a Cancel
+  // gated only on `liveJobId !== '' && !batchSettled` stayed ENABLED after the
+  // parent job was already terminal — and pressing it reached
+  // `JobRegistry.cancel` on a known-but-finished job, which returns True
+  // (`jobs.py:829-836`) and does nothing. `ok:true`, no notice, no state change:
+  // a dead click, on the surface this change exists to de-deaden.
+  //
+  // The event's `jobId` is the discriminator: a batch fans out per-source SUB-jobs
+  // that each emit their own `job.done`, and tearing down on one of those would
+  // hide Cancel while the parent is still working.
   useEffect(() => {
-    const off = onJobDone(() => {
+    const off = onJobDone((event) => {
+      if (parentJobIdRef.current !== '' && event.jobId === parentJobIdRef.current) {
+        parentJobIdRef.current = '';
+        setLiveJobId('');
+        setCancelling(false);
+      }
       if (batch) void refreshBatch(batch.id);
     });
     return off;
@@ -192,6 +230,7 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       // status-refresh skip below).
       parentJobIdRef.current = jobId;
       setLiveJobId(jobId);
+      setCancelling(false);
       setBatch({ ...created, status: 'running' });
       if (jobId !== '') {
         // pull the first authoritative status snapshot.
@@ -221,6 +260,7 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       // Drop any prior batch's jobId so its late progress can't apply mid-swap.
       parentJobIdRef.current = '';
       setLiveJobId('');
+      setCancelling(false);
       if (confirmCloudBudget) {
         // §9.1 budget gate ON: compute the pure run/skip consent surface WITHOUT
         // starting a job (zero provider calls, plan_consent directly) and render
@@ -279,6 +319,7 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
           // by the onProgress gate (batch.resume returns {jobId}).
           parentJobIdRef.current = jobId;
           setLiveJobId(jobId);
+          setCancelling(false);
         }
         await refreshBatch(id);
         await reload();
@@ -310,22 +351,31 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
 
   // Stop a batch that is mid-flight (W08). `batch.cancel` sets the parent job's
   // cooperative cancel flag; the runner observes it between sources and unwinds,
-  // recording the in-flight source as `cancelled`. It is NOT instant, so this does
-  // not fake a terminal state locally — it pulls the authoritative snapshot and
-  // lets the normal `onJobDone` refresh carry the rest.
+  // recording the in-flight source as `cancelled` and leaving every source it had
+  // not reached still `queued`. It is NOT instant, so this does not fake a terminal
+  // state locally — but it MUST still change something the user can see, or an
+  // accepted cancel is indistinguishable from a dead click. `cancelling` is that
+  // change: the control goes to a disabled "Cancelling…" immediately and stays
+  // there until the parent job's `job.done` arrives (see the teardown effect).
   //
   // `{ok: false}` is not a failure: it means THIS sidecar process tracks no parent
   // job for the batch (`_parent_jobs` is in-memory — a restart empties it) or the
-  // job was evicted, so there was nothing to signal. That announces politely.
+  // job was evicted, so there was nothing to signal. That announces politely, and
+  // the pending state is released because nothing is unwinding.
   const cancelBatch = useCallback(
     async (id: string) => {
       try {
         setError('');
         setNotice('');
+        setCancelling(true);
         const { ok } = await client.batch.cancel(id);
-        if (!ok) setNotice('That batch has no running job to cancel.');
+        if (!ok) {
+          setNotice('That batch has no running job to cancel.');
+          setCancelling(false);
+        }
         await refreshBatch(id);
       } catch (err) {
+        setCancelling(false);
         setError(err instanceof Error ? err.message : 'Cancel failed');
       }
     },
@@ -389,6 +439,38 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
                     Retry errors
                   </button>
                 ) : null}
+                <button
+                  type="button"
+                  aria-label={`Remove ${b.name}`}
+                  onClick={() => void removeBatch(b.id)}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {/* The ALL-ERROR surface (W09). A batch whose every source failed reports the
+          TERMINAL aggregate `error`, which `isIncomplete` excludes, so it never
+          appeared in "Incomplete batches" above — the canonical retry-the-failures
+          batch had no row, no control and no route back into the app at all. It
+          gets its own list rather than being folded into the one above because
+          "incomplete" also drives the tab badge and the launch toast, which
+          deep-link a PLAIN resume (a guaranteed no-op on an error item). */}
+      {retryable.length > 0 ? (
+        <div className="batch-queue__retry">
+          <h4>Batches with failed sources</h4>
+          <ul>
+            {retryable.map((b) => (
+              <li key={b.id} className="batch-queue__retry-row">
+                <span>
+                  {b.name} — {b.counts.error} of {b.counts.total} failed
+                </span>
+                <button type="button" onClick={() => void resume(b.id, true)}>
+                  Retry errors
+                </button>
                 <button
                   type="button"
                   aria-label={`Remove ${b.name}`}
@@ -479,19 +561,24 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
         <div className="batch-queue__live">
           <div className="batch-queue__live-head">
             <ProgressBar pct={batch.pct ?? 0} message={aggregate} />
-            {/* Two conditions, both necessary: a parent job must have been started
-                or resumed from THIS panel (see `liveJobId`), and the batch must
-                still have unfinished work. The second is gated on the ITEMS rather
-                than the aggregate status because `derive_status` reports `queued`
-                for the whole window between a start/resume and the pooled worker's
-                first `running` checkpoint — precisely when Cancel matters most. */}
+            {/* Two conditions, both necessary: a parent job must be tracked as LIVE
+                by this panel (`liveJobId`, cleared the moment that job's `job.done`
+                lands), and the batch must still have unfinished work. The second is
+                gated on the ITEMS rather than the aggregate status because
+                `derive_status` reports `queued` for the whole window between a
+                start/resume and the pooled worker's first `running` checkpoint —
+                precisely when Cancel matters most. Neither alone is sufficient: an
+                unwound run leaves un-reached sources `queued` forever, so
+                `batchSettled` never flips and only the `job.done` teardown retires
+                the control. */}
             {liveJobId === '' || batchSettled(batch) ? null : (
               <button
                 type="button"
                 className="batch-queue__cancel"
+                disabled={cancelling}
                 onClick={() => void cancelBatch(batch.id)}
               >
-                Cancel
+                {cancelling ? 'Cancelling…' : 'Cancel'}
               </button>
             )}
           </div>
