@@ -256,8 +256,19 @@ export function matchedSpeechKeywords(text: string): string[] {
  * spliced into a command line.
  *
  * Voice selection is by CULTURE (`en*`), not by name, so it works on any Windows
- * image; it FAILS LOUD (exit 3) when no enabled English voice exists rather than
- * silently producing a 0-byte file that would read as "transcription is broken".
+ * image; it FAILS LOUD when no enabled English voice exists rather than silently
+ * producing a 0-byte file that would read as "transcription is broken".
+ *
+ * MEASURED — the guard's exit code is 1, NOT the literal 3 in the script. Under
+ * `$ErrorActionPreference = 'Stop'` the `Write-Error` is TERMINATING, so it
+ * unwinds through `finally` and PowerShell exits 1 before `exit 3` is reached.
+ * The `exit 3` is therefore belt-and-braces, not the observed code, and this
+ * comment used to claim otherwise. Both states measured through the SAME
+ * `spawnSync` shape the caller below uses:
+ *   no en-* voice -> status=1, no file, stderr "no ENABLED … SAPI voice …"
+ *   en-* voice    -> status=0, file present, stdout "VOICE=…\nBYTES=…"
+ * which is why the caller's guard is `status !== 0 || !existsSync(...)`: the OR
+ * makes it fail closed regardless of which code PowerShell picks.
  */
 const SAPI_SCRIPT = [
   '[CmdletBinding()]',
