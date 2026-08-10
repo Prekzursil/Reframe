@@ -147,7 +147,7 @@ _BROLL_ASSET_KIND: dict[str, str] = {BROLL_IMAGE_KIND: "image", BROLL_CLIP_KIND:
 
 
 class BrollAssetError(RuntimeError):
-    """A b-roll asset cannot be registered: the file is missing, or is not b-roll."""
+    """A b-roll asset cannot be registered: the path is missing, is not a file, or is not b-roll."""
 
 
 def broll_asset_id(path: str) -> str:
@@ -177,6 +177,11 @@ def _broll_entity_kind(path: Path) -> str | None:
     importing this module stays stdlib-only and feature-free) rather than restated
     here: a second copy would drift, and then a file the folder scan happily
     indexes could be refused by ``add_broll`` — or, worse, the reverse.
+
+    Scoped to the EXTENSION gate, which is all this helper decides. ``scan_assets``
+    has a second gate — ``path.is_file()`` — and reproducing it is
+    :meth:`Library.add_broll`'s job (see its docstring); this function is not the
+    place, because a directory has a suffix like anything else.
     """
     from .features import broll_ops  # local import keeps this module import-light
 
@@ -511,12 +516,28 @@ class Library:
         :meth:`add`). The bytes are never copied and the file is never moved; the
         registry holds a path.
 
-        Raises :class:`BrollAssetError` for a file that does not exist, or whose
-        extension the b-roll folder scan would not pick up either.
+        CONTRACT-NOTE: on a re-register the supplied ``title`` is DISCARDED — the
+        early return below happens before any UPDATE, exactly as :meth:`add` does for
+        a source video. There is deliberately no rename door in BR1, so a caller that
+        wants a new title must ``remove_broll`` then ``add_broll``. Said explicitly
+        because the ``broll.addAsset`` param list makes ``title`` look mutable.
+
+        Raises :class:`BrollAssetError` when the path does not exist, is not a FILE,
+        or carries an extension the b-roll folder scan would not pick up either.
+        Those are the folder scan's own two gates — ``features.broll_ops.scan_assets``
+        skips a candidate unless ``path.is_file()`` AND its suffix is in
+        ``IMAGE_EXTS | VIDEO_EXTS`` — so the registry door admits exactly the same
+        class of path the bulk scan does. The ``is_file`` half is not decoration:
+        ``exists()`` alone is TRUE for a DIRECTORY, and a registered directory named
+        ``album.png`` survives the union lister's liveness filter (``os.stat`` of a
+        directory succeeds), reaches ``broll.index``' embed plan, and fails the whole
+        batched index job — measured, before this gate existed.
         """
         src = Path(path)
         if not src.exists():
             raise BrollAssetError(f"b-roll asset not found: {path}")
+        if not src.is_file():
+            raise BrollAssetError(f"not a file (a directory cannot be a b-roll asset): {path}")
         kind = _broll_entity_kind(src)
         if kind is None:
             raise BrollAssetError(f"not a b-roll image or clip: {path}")
