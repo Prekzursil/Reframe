@@ -6,29 +6,45 @@
 
 /* The overlay is also the QUERY CONTAINER the caption sizes itself against (W58).
  *
- * The two `cqw` sites below (:56, :74) had no container anywhere in the renderer
- * CSS, so per CSS Containment 3 §2.1 they fell back to the small viewport — the
- * caption tracked the APP WINDOW instead of the phone stage, which is
- * `.sm-phone { width: min(248px, 100%) }` (features/shortmaker.css:22).
+ * The two `cqw` sites below had no container anywhere in the renderer CSS, so per
+ * CSS Containment 3 §2.1 they fell back to the small viewport instead of the phone
+ * stage, which is `.sm-phone { width: min(248px, 100%) }`
+ * (features/shortmaker.css:22).
  *
  * Resolved at the REAL root font-size, which is 13px — `html { font-size:
  * var(--type-body-size) }` (components/shell.css) with `--type-body-size: 13px`
  * (styles/tokens.css:145), NOT the 16px UA default:
  *
- *   .caption-overlay__line  clamp(12.35px, 5cqw, 20.15px)
+ *   .caption-overlay__line  clamp(12.35px, <cqw>, 20.15px)
  *     viewport 1920px -> 96.00px -> clamped to MAX 20.15px
- *     248px stage     -> 12.40px -> SCALING term active, 12.40px
- *   .caption-overlay__hook  clamp(11.70px, 4.5cqw, 18.20px)
+ *     248px stage, 5cqw as first shipped -> 12.40px
+ *   .caption-overlay__hook  clamp(11.70px, <cqw>, ...)
  *     viewport 1920px -> 86.40px -> clamped to MAX 18.20px
- *     248px stage     -> 11.16px -> clamped to MIN 11.70px
+ *     248px stage, 4.5cqw as first shipped -> 11.16px -> clamped to MIN 11.70px
  *
- * So on every realistic window both sites sat pinned at their CEILING (the max is
- * reached at any container ≥ 403px for the line, ≥ 404px for the hook), roughly
- * 63% oversized, and resizing the app rescaled the caption while the stage it
- * floats on did not move.
+ * REFUTED, kept on the record rather than quietly deleted: this block used to end
+ * "...and resizing the app rescaled the caption while the stage it floats on did not
+ * move." False, and the arithmetic directly above it says so — the clamp max is
+ * reached at any container ≥ 403px and the window cannot be narrower than
+ * `minWidth: 940` (app/main/main.ts), so the value was PINNED at its ceiling at
+ * every attainable window size and never tracked the window at all. Correctly
+ * scoped: a FIXED over-size against the stage — 20.15px of caption on a 248x441
+ * stage — at every size the app can reach.
  *
- * The line's scaling band is active for a container of 247px..403px — and the stage
- * is 248px. The clamp was authored FOR this stage; only the container was missing.
+ * AND THE CONTAINER ALONE IS NOT THE FIX. With the container established, `5cqw`
+ * governs = 12.40px = 2.81% of the stage height, while the burn sizes captions at
+ * 4.5% of the frame height (sidecar/media_studio/features/caption.py:416) — a
+ * preview 37.5% SMALLER than the thing it previews, on the one surface whose job is
+ * to show how captions will look (features/CandidateReview.tsx:125-127). The old
+ * CEILING (20.15px = 4.57% of the stage height) was within 2% of the burn, which is
+ * why the pre-container render looked right and the post-container one looked small.
+ * So the `cqw` terms below are now DERIVED from the sidecar constants — 0.045 x 16/9
+ * = 8cqw for the line, 0.055 x 16/9 = 9.78cqw for the hook — and both boxes were
+ * given the burn's wrap width, without which the faithful size re-opens the
+ * hook/line overlap (measured: 280.5px tall, -174.2px clearance at the old 50% wrap;
+ * 128.1px and +89.6px at the burn's 92.6%).
+ * components/captionOverlay.conformance.test.ts reads those constants out of the
+ * sidecar and fails if either side drifts.
  *
  * Established HERE rather than on `.sm-phone`, for three reasons:
  *   1. `inset: 0` makes this element's inline size EQUAL to the stage's content
@@ -57,42 +73,73 @@
   z-index: 2;
 }
 
-/* the hook/title slot — pinned to the top of the stage */
+/* the hook/title slot — pinned to the top of the stage.
+ *
+ * `left`/`right` are the burn's MarginL/MarginR as a fraction of the frame width:
+ * 60/1080 = 5.56% (caption.py:359, the Alignment-8 hook style), so the headline
+ * wraps at the same 88.9% inline extent it will wrap at in the export. It used to be
+ * `left: 50%` + `translateX(-50%)`, which gives an absolutely-positioned box an
+ * AVAILABLE width of only 50% of the stage — `max-width: 90%` could never bind, so
+ * the hook wrapped at 124px and grew downward into the caption line. Both edges are
+ * anchored now, and `text-align: center` (not a translate) does the centring.
+ *
+ * `9.78cqw` is 5.5% of the frame HEIGHT (caption.py:351) expressed against the
+ * container's INLINE size, which is what `cqw` measures: 0.055 x 16/9 = 0.09778. The
+ * clamp bounds are legibility insurance only and must not bind at the real 248px
+ * stage — the conformance test asserts exactly that. */
 .caption-overlay__hook {
   position: absolute;
   top: 5%;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: 90%;
+  left: 5.56%;
+  right: 5.56%;
   text-align: center;
   font-weight: 800;
-  font-size: clamp(0.9rem, 4.5cqw, 1.4rem);
+  font-size: clamp(0.9rem, 9.78cqw, 1.9rem);
   line-height: 1.15;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
 }
 
-/* the active caption line — placement (top/bottom/center) comes from inline
-   style; this rules the inner layout of the word run */
+/* the active caption line — VERTICAL placement (top/bottom/center) comes from an
+   inline style (CaptionOverlay.tsx `positionStyle`); this rules the horizontal
+   extent, the size and the inner layout of the word run.
+
+   `left`/`right` are the burn's MarginL/MarginR over the frame width: 40/1080 =
+   3.7% (caption.py:427), so the line wraps at the export's 92.6% inline extent. The
+   old `left: 50%` + `transform: translateX(-50%)` left it shrink-to-fit inside a
+   124px available width — half the stage — so it wrapped about twice as often as the
+   burn and the block grew upward into the hook. `max-width: 92%` was the right
+   INTENT and could never bind. Measured at the export-faithful font size: 50% wrap
+   -> 280.5px tall, 174.2px of hook overlap; 92.6% wrap -> 128.1px tall, 89.6px of
+   clearance.
+
+   `8cqw` is 4.5% of the frame HEIGHT (caption.py:416) against the container's inline
+   size: 0.045 x 16/9 = 0.08, exactly. Faithful for `sizeScale: 1` only — the burn
+   multiplies by the template's size scale (caption.py:417) and this overlay does not
+   (see the conformance test's residuals case). */
 .caption-overlay__line {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: 92%;
+  left: 3.7%;
+  right: 3.7%;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 0.18em 0.3em;
   text-align: center;
   font-weight: 800;
-  font-size: clamp(0.95rem, 5cqw, 1.55rem);
+  font-size: clamp(0.95rem, 8cqw, 1.55rem);
   line-height: 1.1;
   padding: 0.12em 0.4em;
   border-radius: var(--radius-sm);
 }
 
-/* center placement combines the horizontal + vertical translate */
+/* Center placement: only the VERTICAL translate is needed now that both horizontal
+   edges are anchored. (The inline style from `positionStyle` already sets exactly
+   this and, being inline, wins — so this rule is the sheet agreeing with it rather
+   than fighting it. Before both edges were anchored, this rule's
+   `translate(-50%, -50%)` was silently overridden by that inline `translateY`, which
+   is why centred captions were never horizontally centred.) */
 .caption-overlay__line[data-position="center"] {
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
 }
 
 .caption-overlay__word {
