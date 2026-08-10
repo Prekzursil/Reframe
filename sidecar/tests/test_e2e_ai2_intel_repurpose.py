@@ -450,18 +450,40 @@ def test_intel_recommender_real_device_detect(tmp_path: Path) -> None:
     assert all("provider" in slot for slot in per_function.values()), f"routing slot missing provider: {per_function!r}"
     # W25 (REVIEWED CHANGE): this used to assert a non-empty asrEngine string
     # unconditionally. That only held because ``asr.engines`` hardcoded whisper
-    # ``installed: True``; with the flag now derived from the installed-weight
-    # probe, a runner with NO ASR weights on disk correctly recommends ``None``.
-    # Asserting "always a string" would re-pin the very defect W25 removed, so the
-    # check becomes a cross-RPC consistency one: the recommender must pick exactly
-    # the last INSTALLED engine ``asr.engines`` reports (``_pick_asr_engine``), and
-    # ``None`` only when nothing is installed. That still fails loudly if the
-    # recommender ever proposes an engine whose weights are absent.
-    engines = rpc.call("asr.engines", {})["engines"]
-    installed_ids = [e["id"] for e in engines if e["installed"]]
-    assert rec.get("asrEngine") == (installed_ids[-1] if installed_ids else None), (
-        f"asrEngine does not match the installed engines {engines!r}: {rec!r}"
+    # ``installed: True``; with the flag derived from a real weight probe, a
+    # runner with NO ASR weights on disk correctly recommends ``None``, so
+    # "always a string" would re-pin the very defect W25 removed.
+    #
+    # The first replacement compared the recommendation against ``asr.engines``
+    # — the SAME payload ``_pick_asr_engine`` consumed — i.e. a tautology that
+    # PASSED against the defective handler (reviewer-proven: `asrEngine`
+    # 'whisper' + an empty HF cache + `1 passed`). The oracle below is instead
+    # INDEPENDENT of the recommender's input: it asks the LOADERS whether the
+    # recommended engine's weights are actually on this disk. Verified RED
+    # against origin/main's hardcoded ``installed: True`` with an empty cache.
+    from media_studio.assets import manifest
+    from media_studio.assets.manager import AssetManager
+    from media_studio.features import parakeet_asr, transcribe
+
+    engine = rec.get("asrEngine")
+    settings = svc.settings.get()
+    whisper_model, _device, _compute = transcribe.resolve_transcribe_target(settings)
+    whisper_on_disk = transcribe.whisper_snapshot_dir(whisper_model) is not None
+    parakeet_entry = manifest.get_asset(parakeet_asr.ASSET_NAME)
+    parakeet_on_disk = (
+        parakeet_entry is not None
+        and AssetManager(root=svc.data_dir, settings_provider=lambda: settings).installed_path(parakeet_entry)
+        is not None
     )
+    if engine == "whisper":
+        assert whisper_on_disk, f"recommended whisper but its pinned snapshot is absent ({whisper_model!r}): {rec!r}"
+    elif engine == "parakeet":
+        assert parakeet_on_disk, f"recommended parakeet but its weights are absent: {rec!r}"
+    else:
+        assert engine is None and not whisper_on_disk and not parakeet_on_disk, (
+            f"asrEngine {engine!r} is neither a known engine nor a justified None "
+            f"(whisper_on_disk={whisper_on_disk}, parakeet_on_disk={parakeet_on_disk}): {rec!r}"
+        )
 
 
 # ========================================================================== #

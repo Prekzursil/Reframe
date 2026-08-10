@@ -252,11 +252,11 @@ def test_system_advisor_commercial_flag_drops_noncommercial(tmp_path: Path) -> N
 def _isolate_hf_cache(tmp_path: Path, monkeypatch: Any) -> Path:
     """Point the HF cache at an EMPTY tmp dir and return it.
 
-    ``whisper-large-v3-turbo`` is an ``installer="hf"`` asset, so its
-    installed-probe reads the REAL HF cache. Without this a dev box that already
-    has the snapshot cached reports it installed and the absent-weights arm below
-    becomes host-dependent (the same flake ``test_models_present_map_omits_missing
-    _and_fails_open`` isolates for smolvlm2).
+    Whisper's installed-probe (``transcribe.whisper_snapshot_dir``) reads the
+    REAL HF cache. Without this a dev box that already has the snapshot cached
+    reports it installed and the absent-weights arm below becomes host-dependent
+    (the same flake ``test_models_present_map_omits_missing_and_fails_open``
+    isolates for smolvlm2).
     """
     cache = tmp_path / "hf-cache"
     cache.mkdir()
@@ -266,18 +266,38 @@ def _isolate_hf_cache(tmp_path: Path, monkeypatch: Any) -> Path:
     return cache
 
 
+def _seed_whisper_snapshot(cache: Path, revision: str) -> Path:
+    """Create a non-empty snapshot dir for the whisper repo at ``revision``."""
+    from media_studio.assets import manifest as _manifest
+
+    snapshot = cache / ("models--" + _manifest.WHISPER_HF_REPO.replace("/", "--")) / "snapshots" / revision
+    snapshot.mkdir(parents=True)
+    (snapshot / "model.bin").write_bytes(b"weights")
+    return snapshot
+
+
+def _asr_flags(svc: Services) -> dict[str, bool]:
+    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
+    return {e["id"]: e["installed"] for e in svc.asr_engines({}, direct)["engines"]}
+
+
+#: pin the device so these stay hermetic (no torch/CUDA probe in ``detect_device``).
+_CPU: dict[str, Any] = {"transcribeDevice": "cpu"}
+
+
 def test_asr_engines_lists_whisper_and_parakeet(tmp_path: Path, monkeypatch: Any) -> None:
     """W25 (REVIEWED CHANGE): whisper's flag was pinned ``is True`` here.
 
     The old assertion asserted the DEFECT: ``asr_engines`` hardcoded
     ``installed: True`` for whisper while its weights were demonstrably absent
     from this tmp dir, so the ASR picker could never warn that the model the user
-    is about to need is missing. The flag now derives from the same
-    ``_models_present_map`` probe parakeet already used, so with no weights on
-    disk BOTH engines report ``False``.
+    is about to need is missing. The flag now comes from the loader's own
+    ``transcribe.whisper_snapshot_dir``, so with no weights on disk BOTH engines
+    report ``False``.
     """
     _isolate_hf_cache(tmp_path, monkeypatch)
     svc = _phase8_services(tmp_path)
+    svc.settings.set(_CPU)
     direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
     out = svc.asr_engines({}, direct)
     ids = {e["id"] for e in out["engines"]}
@@ -291,7 +311,7 @@ def test_asr_engines_lists_whisper_and_parakeet(tmp_path: Path, monkeypatch: Any
 def test_asr_engines_whisper_installed_true_when_the_pinned_snapshot_is_cached(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """The TRUE arm: a cached whisper snapshot flips the reported flag to True.
+    """The TRUE arm: a cached PINNED whisper snapshot flips the flag to True.
 
     Paired with the False arm above so a mutation that hardcodes EITHER constant
     goes red (a one-sided test would stay green against ``installed: False``).
@@ -299,47 +319,107 @@ def test_asr_engines_whisper_installed_true_when_the_pinned_snapshot_is_cached(
     from media_studio.assets import manifest as _manifest
 
     cache = _isolate_hf_cache(tmp_path, monkeypatch)
-    snapshot = (
-        cache
-        / ("models--" + _manifest.WHISPER_HF_REPO.replace("/", "--"))
-        / "snapshots"
-        / _manifest.WHISPER_HF_REVISION
-    )
-    snapshot.mkdir(parents=True)
-    (snapshot / "model.bin").write_bytes(b"weights")
+    _seed_whisper_snapshot(cache, _manifest.WHISPER_HF_REVISION)
     svc = _phase8_services(tmp_path)
-    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
-    out = svc.asr_engines({}, direct)
-    whisper = next(e for e in out["engines"] if e["id"] == "whisper")
-    assert whisper["installed"] is True
+    svc.settings.set({**_CPU, "transcribeModel": _manifest.WHISPER_MODEL_ID})
+    assert _asr_flags(svc)["whisper"] is True
+
+
+def test_asr_engines_whisper_installed_false_for_a_NON_pinned_cached_snapshot(tmp_path: Path, monkeypatch: Any) -> None:
+    """W25 REVIEW REGRESSION: a stale revision on disk must NOT read as installed.
+
+    The first cut of W25 read the flag from ``_models_present_map``, whose
+    ``AssetManager.installed_path`` -> ``hf_snapshot_present`` probe is true for
+    ANY non-empty snapshot of the repo. This test seeds exactly that state — a
+    snapshot under a DIFFERENT commit, which is what every existing install looks
+    like the moment ``WHISPER_HF_REVISION`` is bumped — and pins the honest
+    answer: the loader (``resolve_model_source`` -> ``whisper_snapshot_dir``)
+    finds no pinned dir, falls back to the bare id and raises
+    ``LocalEntryNotFoundError`` offline, so the picker must report NOT installed.
+
+    Both halves are asserted here so the test cannot silently degrade into
+    "nothing is cached": the asset-presence probe says True, the reported flag
+    says False. It is RED against the presence-map implementation.
+    """
+    from media_studio.assets import manifest as _manifest
+    from media_studio.assets.manager import AssetManager
+
+    cache = _isolate_hf_cache(tmp_path, monkeypatch)
+    stale = "0" * 40  # a valid-looking commit that is NOT the pin
+    assert stale != _manifest.WHISPER_HF_REVISION
+    _seed_whisper_snapshot(cache, stale)
+    svc = _phase8_services(tmp_path)
+    svc.settings.set({**_CPU, "transcribeModel": _manifest.WHISPER_MODEL_ID})
+
+    entry = _manifest.get_asset(_manifest.WHISPER_ASSET_NAME)
+    assert entry is not None
+    mgr = AssetManager(root=tmp_path / "data", settings_provider=dict)
+    assert mgr.installed_path(entry) is not None, "control: the weaker asset probe DOES see this snapshot"
+    assert _asr_flags(svc)["whisper"] is False
+
+
+def test_asr_engines_whisper_flag_follows_the_resolved_model_id(tmp_path: Path, monkeypatch: Any) -> None:
+    """The flag tracks the id ``transcribe`` would LOAD, not a fixed asset name.
+
+    With the default model's pinned snapshot cached, forcing ``transcribeModel``
+    to an id the manifest does not map to a registered pinned asset must report
+    NOT installed — that load would have to hit the network. A probe hardcoded to
+    the ``whisper-large-v3-turbo`` asset stays green here.
+    """
+    from media_studio.assets import manifest as _manifest
+
+    cache = _isolate_hf_cache(tmp_path, monkeypatch)
+    _seed_whisper_snapshot(cache, _manifest.WHISPER_HF_REVISION)
+    svc = _phase8_services(tmp_path)
+    svc.settings.set({**_CPU, "transcribeModel": _manifest.WHISPER_MODEL_ID})
+    assert _asr_flags(svc)["whisper"] is True  # control: the default id IS resolvable
+    svc.settings.set({**_CPU, "transcribeModel": "medium"})
+    assert _asr_flags(svc)["whisper"] is False
+
+
+def test_asr_engines_whisper_flag_fails_open_when_the_probe_raises(tmp_path: Path, monkeypatch: Any) -> None:
+    """A broken probe reports not-installed (a picker warning), never a 500."""
+    from media_studio.features import transcribe as _transcribe
+
+    def _boom(*_a: Any, **_k: Any) -> str | None:
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(_transcribe, "whisper_snapshot_dir", _boom)
+    svc = _phase8_services(tmp_path)
+    svc.settings.set(_CPU)
+    assert _asr_flags(svc)["whisper"] is False
 
 
 @pytest.mark.parametrize("flag", [True, False])
-def test_asr_engines_both_flags_track_the_presence_map(tmp_path: Path, flag: bool) -> None:
-    """Both engine rows are DERIVED from ``_models_present_map``, not hardcoded.
+def test_asr_engines_parakeet_flag_tracks_the_presence_map(tmp_path: Path, flag: bool) -> None:
+    """Parakeet's row is DERIVED from ``_models_present_map``, not hardcoded.
 
-    Overriding the seam (rather than the disk) pins the wiring itself: the handler
-    must read the map key it computed one line earlier. Parametrised over both
-    values so neither a hardcoded ``True`` nor a hardcoded ``False`` survives.
+    Its backend loads by manifest asset, so asset-presence IS its loader's
+    question (unlike whisper — see the non-pinned-snapshot test above).
+    Overriding the seam pins the wiring itself: the handler must read the map key
+    it computed one line earlier. Parametrised over both values so neither a
+    hardcoded ``True`` nor a hardcoded ``False`` survives.
     """
     svc = _phase8_services(tmp_path)
-    svc._models_present_map = lambda _s: {"whisper": flag, "parakeet": flag}  # type: ignore[method-assign]
-    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
-    out = svc.asr_engines({}, direct)
-    assert {e["id"]: e["installed"] for e in out["engines"]} == {"whisper": flag, "parakeet": flag}
+    svc.settings.set(_CPU)
+    svc._models_present_map = lambda _s: {"parakeet": flag}  # type: ignore[method-assign]
+    assert _asr_flags(svc)["parakeet"] is flag
 
 
-def test_component_assets_maps_whisper_to_the_registered_day1_asset(tmp_path: Path) -> None:
-    """The probe key ``asr.engines`` reads must name the asset the loader uses.
+def test_component_assets_holds_only_advisor_components() -> None:
+    """``_COMPONENT_ASSETS`` keys stay a subset of the advisor's component specs.
 
-    ``_models_present_map`` is keyed by ``_COMPONENT_ASSETS``; if whisper's entry
-    named a different (or de-registered) asset the flag would silently be absent
-    -> reported False forever. Reads BOTH ends rather than trusting the mapping.
+    W25's first cut added a probe-only ``whisper`` key here; the review reverted
+    it (an asset-presence probe is the wrong oracle for whisper). This pins the
+    invariant so it cannot drift back in silently, and checks the whisper asset
+    the LOADER uses is still registered + mapped from the default model id.
     """
     from media_studio.assets import manifest as _manifest
+    from media_studio.features import system_advisor as _sa
     from media_studio.handlers import _wire
 
-    assert _wire._COMPONENT_ASSETS["whisper"] == _manifest.WHISPER_ASSET_NAME
+    assert set(_wire._COMPONENT_ASSETS) <= {spec.name for spec in _sa.COMPONENTS}
+    assert "whisper" not in _wire._COMPONENT_ASSETS
     assert _manifest.get_asset(_manifest.WHISPER_ASSET_NAME) is not None
     assert _manifest.WHISPER_MODEL_ASSETS[_manifest.WHISPER_MODEL_ID] == _manifest.WHISPER_ASSET_NAME
 
