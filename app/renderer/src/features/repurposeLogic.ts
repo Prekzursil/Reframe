@@ -218,6 +218,69 @@ export function remainingCount(counts: BatchSummary['counts']): number {
   return counts.total - counts.done - counts.skipped;
 }
 
+/**
+ * Batches whose aggregate is TERMINAL but which still hold `error` sources — the
+ * ALL-ERROR case, which `incompleteBatches` structurally cannot surface.
+ *
+ * `isIncomplete` is `{queued, running, partial}`. By `derive_status` (`batch.py`)
+ * a batch whose every item is terminal with NO `done` reports the aggregate
+ * `error`, so a run where every source failed — the canonical retry-the-failures
+ * case — is filtered out of the resume surface entirely: no row, no Resume, no
+ * Retry-errors, no way to re-run the failures from the UI at all. This selector is
+ * the second, narrower surface for exactly those batches.
+ *
+ * DISJOINT from `incompleteBatches` by construction (the `!isIncomplete` arm), so
+ * a `partial` batch that also has errors keeps its single row there instead of
+ * appearing in both lists.
+ *
+ * Widening `isIncomplete` instead would have been WRONG, not merely different:
+ * that predicate also drives the tab badge and the launch toast (§7.2), and the
+ * toast deep-links a PLAIN `resume` — which never re-enqueues an `error` item
+ * (`resumable_video_ids`) — so an all-error batch promoted into that set would
+ * deep-link straight into a guaranteed no-op.
+ */
+export function retryableBatches(batches: readonly BatchSummary[]): BatchSummary[] {
+  return batches
+    .filter((b) => !isIncomplete(b.status) && b.counts.error > 0)
+    .slice()
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/** Aggregate statuses that mean a parent job can still be doing work RIGHT NOW. */
+const UNFINISHED: ReadonlySet<BatchStatus> = new Set(['queued', 'running']);
+
+/**
+ * The polite explanation for a `batch.resume` that started no job (W09).
+ *
+ * `BatchService.resume` (`batch.py`) reuses ONE `{jobId: null, status}` wire shape
+ * for two unrelated refusals, and only the returned aggregate `status` separates
+ * them:
+ *   * `queued`/`running` — the tracked parent job is still LIVE, so the resume was
+ *     refused to protect the running checkpoint (`_parent_job_is_live`);
+ *   * a TERMINAL aggregate (`done`/`partial`/`error`/`cancelled`) — `resume_batch`
+ *     found nothing resumable. By `derive_status`, a terminal aggregate means every
+ *     item is already terminal, and `resumable_video_ids` only re-enqueues
+ *     `queued`/`running` unless `retryErrors` is set — which is exactly why a
+ *     `partial` batch's plain Resume can never do anything.
+ *
+ * `retriedErrors` names which control the user pressed so the sentence matches it.
+ * A MISSING status proves nothing about liveness, so it takes the neutral branch
+ * rather than asserting a live run that may not exist.
+ *
+ * RESIDUAL (inline, not deferred): the discriminator is the aggregate status, not
+ * job liveness itself, so the narrow race where a live parent job has just written
+ * its last terminal item but has not returned yet reports the terminal wording.
+ * Liveness is not observable from the wire — `_parent_jobs` is sidecar-in-memory
+ * and deliberately not exposed. The settling experiment would be a distinct error
+ * code (or a `refused: "live"` field) on the live-refusal branch.
+ */
+export function resumeNoOpNotice(status: BatchStatus | undefined, retriedErrors: boolean): string {
+  if (status !== undefined && UNFINISHED.has(status)) return 'That batch is already running.';
+  return retriedErrors
+    ? 'Nothing left to retry in that batch.'
+    : 'Nothing left to resume in that batch.';
+}
+
 // ---- merged item view for the queue (store + nothing else) -----------------
 
 /** True when every item of a loaded `BatchState` is terminal (run is over). */

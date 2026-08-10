@@ -92,7 +92,8 @@ body,
  * glow while gaining a visible focus state. */
 .feature-panel button:focus-visible,
 .shortmaker button:focus-visible,
-.timeline__toolbar button:focus-visible {
+.timeline__toolbar button:focus-visible,
+.batch-queue button:focus-visible {
   box-shadow: var(--focus-ring);
 }
 
@@ -386,13 +387,18 @@ button {
 }
 
 /* RAISED voice (default): a real control — surface + hairline edge + a seated
-   drop shadow, so it reads as a physical, pressable object, not a flat tint. */
+   drop shadow, so it reads as a physical, pressable object, not a flat tint.
+   `.batch-queue` is listed explicitly (W05): views/Repurpose.tsx and
+   views/Deliver.tsx mount it with NO `.feature-panel` ancestor, so every one of
+   its controls fell through to raw platform chrome. Reusing this voice rather
+   than re-declaring it in features/batchQueue.css keeps ONE button language. */
 .library__add-btn,
 .library__remove-btn,
 .workspace__back,
 .feature-panel button,
 .shortmaker button,
-.timeline__toolbar button {
+.timeline__toolbar button,
+.batch-queue button {
   appearance: none;
   padding: var(--control-pad-btn);
   border: 1px solid var(--edge);
@@ -413,7 +419,8 @@ button {
 
 .feature-panel button:hover:not(:disabled),
 .shortmaker button:hover:not(:disabled),
-.timeline__toolbar button:hover:not(:disabled) {
+.timeline__toolbar button:hover:not(:disabled),
+.batch-queue button:hover:not(:disabled) {
   background: var(--surface-hover);
   border-color: var(--edge-strong);
   box-shadow: var(--elev-2);
@@ -424,7 +431,8 @@ button {
 .workspace__back:active,
 .feature-panel button:active:not(:disabled),
 .shortmaker button:active:not(:disabled),
-.timeline__toolbar button:active:not(:disabled) {
+.timeline__toolbar button:active:not(:disabled),
+.batch-queue button:active:not(:disabled) {
   transform: translateY(1px);
   box-shadow: var(--elev-1);
 }
@@ -447,7 +455,8 @@ button {
 
 .feature-panel button:disabled,
 .shortmaker button:disabled,
-.library__add-btn:disabled {
+.library__add-btn:disabled,
+.batch-queue button:disabled {
   opacity: 0.45;
   cursor: default;
 }

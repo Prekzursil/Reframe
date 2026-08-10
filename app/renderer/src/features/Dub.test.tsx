@@ -851,4 +851,77 @@ describe('<Dub />', () => {
       'unsupported sample format',
     );
   });
+
+  // ------------------------------------------------------------------------
+  // W21 — the AI-content disclosure surface (consent gate 3).
+  // docs/plans/v1.5/flagship-lip-sync-dub.md:165/188 — "AI-content label on the
+  // dub track + export-time C2PA + surface Chatterbox's Perth watermark".
+  // ------------------------------------------------------------------------
+  it('labels the dub row — and ONLY the dub row — with the AI-generated badge', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    // AUDIO_TRACKS = [a1 kind:'original', a2 kind:'dub'] -> exactly one badge.
+    expect(container.querySelectorAll('[data-testid="ai-audio-badge"]')).toHaveLength(1);
+    const dubRow = container.querySelector('[data-audio-track="a2"]');
+    const originalRow = container.querySelector('[data-audio-track="a1"]');
+    expect(dubRow?.querySelector('[data-testid="ai-audio-badge"]')).toBeTruthy();
+    expect(originalRow?.querySelector('[data-testid="ai-audio-badge"]')).toBeNull();
+    expect(dubRow?.textContent).toContain('AI-generated audio');
+  });
+
+  it('labels the finished dub result with the AI-generated badge', async () => {
+    const { api, doneCbs } = makeBridge({ 'tracks.audio.list': { audioTracks: [] } });
+    await mount(api);
+    pick('[data-picker="track"]', 't1');
+    await act(async () => {
+      (container.querySelector('[data-action="start-dub"]') as HTMLButtonElement).click();
+    });
+    await flush();
+    await act(async () => {
+      doneCbs.forEach((cb) =>
+        cb({
+          jobId: 'job-9',
+          result: {
+            audioTrack: {
+              id: 'a3',
+              lang: 'en',
+              name: 'Dub (kokoro, en)',
+              kind: 'dub',
+              voice: 'af_sarah',
+              path: 'C:/dubs/dub.m4a',
+            },
+            path: 'C:/dubs/dub.wav',
+          },
+        }),
+      );
+    });
+    await flush();
+    const result = container.querySelector('[data-testid="dub-result"]');
+    expect(result?.querySelector('[data-testid="ai-audio-badge"]')).toBeTruthy();
+  });
+
+  it('renders the disclosure block and surfaces Perth only for chatterbox', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    expect(container.querySelector('[data-testid="ai-disclosure"]')).toBeTruthy();
+    // kokoro (the default engine) does not watermark.
+    expect(container.querySelector('[data-testid="perth-note"]')).toBeNull();
+    pick('[data-picker="engine"]', 'chatterbox');
+    expect(container.querySelector('[data-testid="perth-note"]')?.textContent).toContain('Perth');
+  });
+
+  it('shows the labelling-direction caveat as visible panel text, not only as a tooltip', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    const note = container.querySelector('[data-testid="ai-disclosure-direction"]');
+    expect(note?.textContent).toContain('errs toward marking');
+  });
+
+  it('states the C2PA export gap instead of offering a toggle that signs nothing', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    const row = container.querySelector('[data-testid="c2pa-status"]');
+    expect(row?.textContent).toContain('Not available');
+    expect(row?.textContent).toContain('signing identity');
+  });
 });
