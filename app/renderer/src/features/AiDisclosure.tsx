@@ -7,15 +7,16 @@
 //
 // WHERE THE LABEL COMES FROM — the sidecar does NOT emit an `isAiGenerated`
 // field. Measured on this tree:
-//   * `sidecar/media_studio/features/tracks_audio.py:117-126` — `normalize_audio_track`
-//     builds exactly {id, lang, name, kind, path} (+ optional `voice`). No
-//     `isAiGenerated`.
+//   * `sidecar/media_studio/features/tracks_audio.py:105-126` —
+//     `normalize_audio_track` builds exactly {id, lang, name, kind, path} (+
+//     optional `voice`). No `isAiGenerated`, and no engine field either.
 //   * the only `isAiGenerated` occurrence in `sidecar/` is a *test fixture*
 //     (`sidecar/tests/test_tts_lipsync.py:46`), not produced data.
-// So the honest signal available to the renderer is `AudioTrack.kind === 'dub'`,
-// which the dub pipeline writes via `tracks_audio.mux_for_dub`
-// (`sidecar/media_studio/features/tts/dub.py:382`). See
-// `isAiGeneratedAudioTrack` for the direction of its error.
+// So the honest signal available to the renderer is the track's `kind`, which the
+// dub pipeline writes via `tracks_audio.mux_for_dub`
+// (`sidecar/media_studio/features/tracks_audio.py:591-601`, called from
+// `features/tts/dub.py:382`). See `isAiGeneratedAudioTrack` for the direction of
+// its error.
 import React from 'react';
 
 /** The subset of the A3 AudioTrack this module reads. */
@@ -23,30 +24,89 @@ export interface DisclosableAudioTrack {
   kind?: string;
 }
 
+/**
+ * The one A3 `kind` that means "the container's own, human-recorded audio"
+ * (`KIND_ORIGINAL`, `sidecar/media_studio/features/tracks_audio.py:67`). It is
+ * the ONLY value that suppresses the label.
+ */
+export const NON_AI_TRACK_KIND = 'original';
+
 /** The exact badge wording. */
 export const AI_AUDIO_BADGE_LABEL = 'AI-generated audio';
 
 /**
- * Tooltip for the badge — it discloses the predicate AND the direction in which
- * it is wrong, because a label whose basis is hidden invites over-trust.
+ * Tooltip for the badge. Plain shipped copy — it names no renderer identifier
+ * and no RPC method, because it is read by end users, not by maintainers. The
+ * same sentence is ALSO rendered as visible text by `AiDisclosurePanel`
+ * (`AI_LABEL_DIRECTION_NOTE`): a `title=` attribute is unreachable by keyboard,
+ * unreliable for screen readers and absent on touch, so the caveat cannot live
+ * only here.
  */
 export const AI_AUDIO_BADGE_TITLE =
-  'Derived from the sidecar AudioTrack.kind === "dub". A human-recorded file ' +
-  'registered through tracks.audio.mux with kind "dub" is labelled too, so this ' +
-  'can over-label; it never leaves a dub produced by this panel unlabelled.';
+  'Reframe errs toward marking: every audio track except the video’s own ' +
+  'recorded audio carries this mark, so an imported human recording added as a ' +
+  'dub is marked too.';
+
+/**
+ * The same caveat as `AI_AUDIO_BADGE_TITLE`, rendered as visible panel text.
+ */
+export const AI_LABEL_DIRECTION_NOTE =
+  'Reframe errs toward marking: every audio track except the video’s own ' +
+  'recorded audio carries the “' +
+  AI_AUDIO_BADGE_LABEL +
+  '” mark, so an imported human recording added as a dub is marked too. The ' +
+  'mark is withheld only for a track that is explicitly the original recording.';
 
 /**
  * True when the row should carry the AI-generated label.
  *
- * ERROR DIRECTION (deliberate): `tracks.audio.mux` defaults `kind` to `"dub"`
- * (`sidecar/media_studio/features/tracks_audio.py:498`), so a human-recorded
- * track imported that way is ALSO labelled. That is over-disclosure. For an
- * Article-50 transparency duty over-disclosure is the safe side and
- * under-disclosure is the harm, so the predicate is intentionally not narrowed.
+ * ERROR DIRECTION — the fallback points at LABELLING. Only an explicit
+ * `"original"` suppresses the badge; a missing or unrecognized `kind` is
+ * labelled. Two consequences, both deliberate:
+ *   * OVER-labelling: a human-recorded track registered through
+ *     `tracks.audio.mux` with kind `"dub"` (or with no kind at all — the sidecar
+ *     defaults it to `"dub"`, `tracks_audio.py:114`) is labelled as well.
+ *   * a future non-AI kind (say `"music"`) would be labelled until it is added
+ *     to the non-AI set. That is a real cost, stated here rather than hidden.
+ * For an Article-50 transparency duty over-disclosure is the recoverable side
+ * and under-disclosure is the harm.
+ *
+ * REVISED after adversarial review. The first version was `kind === 'dub'`,
+ * which failed the OTHER way: a row whose `kind` was absent or unrecognized
+ * rendered with NO label — under-disclosure — and it disagreed with the
+ * sidecar's own fallback, which defaults a missing `kind` to `"dub"`
+ * (`tracks_audio.py:114`). Both sides now fail in the same direction. The
+ * renderer's `AudioTrack.kind` is typed `'original' | 'dub'` and required
+ * (`lib/rpc/schemas.ts:409-414`), so on a well-typed payload the two predicates
+ * agree; the change only decides what happens when that contract is not held.
  */
 export function isAiGeneratedAudioTrack(track: DisclosableAudioTrack): boolean {
-  return track.kind === 'dub';
+  return track.kind !== NON_AI_TRACK_KIND;
 }
+
+/**
+ * The option text for an audio-track `<select>` — used by the ShortMaker export
+ * picker, which is where a dub is actually chosen to be muxed into an exported
+ * short. A `<select>` cannot host a badge element, so the disclosure has to be
+ * part of the label text.
+ */
+export function audioTrackPickerLabel(track: { name: string; lang: string; kind: string }): string {
+  const base = `${track.name} (${track.lang}, ${track.kind})`;
+  return isAiGeneratedAudioTrack(track) ? `${base} — ${AI_AUDIO_BADGE_LABEL}` : base;
+}
+
+/**
+ * Shown next to the export picker when the selected track is AI-generated. The
+ * marking is in-app only: `shortmaker.build_audio_mux_argv`
+ * (`sidecar/media_studio/features/shortmaker.py:512-539`) emits no `-metadata`
+ * of any kind, so nothing about the label reaches the exported container.
+ */
+export const AI_EXPORT_LABEL_NOTE =
+  'This short will be exported with an AI-generated audio track. The ' +
+  '“' +
+  AI_AUDIO_BADGE_LABEL +
+  '” marking is shown inside Reframe only — it is not written into the ' +
+  'exported file.';
 
 /**
  * Engines whose upstream model embeds Resemble AI's inaudible **Perth**
@@ -62,10 +122,23 @@ export function engineEmbedsPerthWatermark(engineId: string): boolean {
 }
 
 /**
- * The Perth disclosure copy. Deliberately does NOT promise the watermark
- * survives the pipeline: the dub is re-encoded to AAC
- * (`sidecar/media_studio/features/tts/dub.py:376`) and nothing in this repo
- * verifies that the watermark survives that encode.
+ * The Perth disclosure copy.
+ *
+ * FORWARD-LOOKING, and the copy now says so. The note is keyed to the engine
+ * PICKER, so it describes the dub the user is about to make. Read
+ * retrospectively it would assert that a dub already in the track list carries a
+ * Perth watermark, which it may not: an A3 AudioTrack has no engine FIELD
+ * (`normalize_audio_track` keeps only id/lang/name/kind/path/voice,
+ * `tracks_audio.py:117-126`). The engine does survive inside the display NAME the
+ * sidecar writes as `Dub (<engine>, <lang>)` (`features/tts/dub.py:386`). That is
+ * free text a user can rename and no other producer is obliged to follow, so the
+ * panel neither asserts provenance from it nor claims the engine is unknowable —
+ * the copy below says only that an existing track "may have been made with a
+ * different engine", which holds either way.
+ *
+ * It also deliberately does NOT promise the watermark survives the pipeline: the
+ * dub is re-encoded to AAC (`features/tts/dub.py:376`) and nothing in this repo
+ * verifies survival.
  *
  * UNVERIFIED — that chatterbox-tts 0.1.7 in fact applies the Perth watermarker,
  * and whether it survives the AAC encode. Settling experiment: run the
@@ -75,10 +148,13 @@ export function engineEmbedsPerthWatermark(engineId: string): boolean {
  * removal of its own — that part is measured, the upstream embed is not.
  */
 export const PERTH_WATERMARK_NOTE =
-  'Chatterbox embeds Resemble AI’s inaudible Perth watermark in the speech it ' +
-  'generates. Reframe never strips it deliberately — but the dub is re-encoded ' +
-  'to AAC before it becomes a track, and Reframe does not verify the watermark ' +
-  'survives that encode.';
+  'Chatterbox — the engine selected above — embeds Resemble AI’s inaudible ' +
+  'Perth watermark in the speech it generates. That describes the dub you are ' +
+  'about to make, not the tracks already listed below: those may have been made ' +
+  'with a different engine. Reframe never ' +
+  'strips the watermark deliberately, but the dub is re-encoded to AAC before ' +
+  'it becomes a track and Reframe does not verify the watermark survives that ' +
+  'encode.';
 
 /** Status of Content Credentials (C2PA) signing on export. */
 export interface C2paExportStatus {
@@ -120,8 +196,9 @@ export interface AiDisclosurePanelProps {
 }
 
 /**
- * The disclosure block for the Dub panel: what is labelled, what the label does
- * NOT cover, the engine-specific watermark note, and the C2PA export status.
+ * The disclosure block for the Dub panel: what is labelled, which way the
+ * labelling errs, what the label does NOT cover, the engine-specific watermark
+ * note, and the C2PA export status.
  */
 export function AiDisclosurePanel({
   engineId,
@@ -138,6 +215,9 @@ export function AiDisclosurePanel({
         Audio produced here is synthesized, and every dub track is marked
         {` “${AI_AUDIO_BADGE_LABEL}” `}
         in the track list below. That marking is in-app only: it is not embedded in exported files.
+      </p>
+      <p className="ai-disclosure-direction" data-testid="ai-disclosure-direction">
+        {AI_LABEL_DIRECTION_NOTE}
       </p>
       {engineEmbedsPerthWatermark(engineId) && (
         <p className="ai-disclosure-perth" data-testid="perth-note">

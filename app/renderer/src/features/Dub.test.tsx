@@ -910,6 +910,13 @@ describe('<Dub />', () => {
     expect(container.querySelector('[data-testid="perth-note"]')?.textContent).toContain('Perth');
   });
 
+  it('shows the labelling-direction caveat as visible panel text, not only as a tooltip', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    const note = container.querySelector('[data-testid="ai-disclosure-direction"]');
+    expect(note?.textContent).toContain('errs toward marking');
+  });
+
   it('states the C2PA export gap instead of offering a toggle that signs nothing', async () => {
     const { api } = makeBridge();
     await mount(api);

@@ -11,10 +11,14 @@ import { createRoot, type Root } from 'react-dom/client';
 
 import {
   AI_AUDIO_BADGE_LABEL,
+  AI_EXPORT_LABEL_NOTE,
+  AI_LABEL_DIRECTION_NOTE,
   AiAudioBadge,
   AiDisclosurePanel,
   C2PA_EXPORT_STATUS,
+  NON_AI_TRACK_KIND,
   PERTH_WATERMARK_ENGINES,
+  audioTrackPickerLabel,
   engineEmbedsPerthWatermark,
   isAiGeneratedAudioTrack,
 } from './AiDisclosure';
@@ -36,12 +40,44 @@ describe('isAiGeneratedAudioTrack', () => {
     expect(isAiGeneratedAudioTrack({ kind: 'dub' })).toBe(true);
   });
 
-  it('does NOT flag an original row', () => {
-    expect(isAiGeneratedAudioTrack({ kind: 'original' })).toBe(false);
+  it('does NOT flag the original recording, and that is the ONLY suppressing kind', () => {
+    expect(NON_AI_TRACK_KIND).toBe('original');
+    expect(isAiGeneratedAudioTrack({ kind: NON_AI_TRACK_KIND })).toBe(false);
   });
 
-  it('does NOT flag a row whose kind is absent', () => {
-    expect(isAiGeneratedAudioTrack({})).toBe(false);
+  // REVISED after adversarial review. These two cases previously asserted
+  // `false` (the absent-kind one existed; the unrecognized-kind one did not).
+  // Asserting `false` LOCKED IN the unsafe direction: a row whose `kind` never
+  // arrived, or arrived as something the renderer does not know, rendered with
+  // no label at all. That is UNDER-disclosure — the Article-50 harm direction —
+  // and it disagreed with the sidecar, whose `normalize_audio_track` defaults a
+  // missing `kind` to "dub" (sidecar/media_studio/features/tracks_audio.py:114).
+  it('FLAGS a row whose kind is absent — the fallback points at labelling', () => {
+    expect(isAiGeneratedAudioTrack({})).toBe(true);
+  });
+
+  it('FLAGS a row whose kind is unrecognized', () => {
+    expect(isAiGeneratedAudioTrack({ kind: 'music' })).toBe(true);
+  });
+});
+
+describe('audioTrackPickerLabel', () => {
+  it('appends the AI label to a dub option (a <select> cannot host a badge element)', () => {
+    expect(audioTrackPickerLabel({ name: 'Spanish dub', lang: 'es', kind: 'dub' })).toBe(
+      `Spanish dub (es, dub) — ${AI_AUDIO_BADGE_LABEL}`,
+    );
+  });
+
+  it('leaves an original option unlabelled', () => {
+    expect(audioTrackPickerLabel({ name: 'English', lang: 'en', kind: 'original' })).toBe(
+      'English (en, original)',
+    );
+  });
+});
+
+describe('AI_EXPORT_LABEL_NOTE', () => {
+  it('says the marking is in-app only, at the surface where a dub is exported', () => {
+    expect(AI_EXPORT_LABEL_NOTE).toContain('not written into the exported file');
   });
 });
 
@@ -88,15 +124,19 @@ describe('<AiAudioBadge />', () => {
     container.remove();
   });
 
-  it('renders the badge label and explains what the label is derived from', () => {
+  it('renders the badge label with a plain-language tooltip, free of internal API jargon', () => {
     act(() => {
       root = createRoot(container);
       root.render(<AiAudioBadge />);
     });
     const badge = container.querySelector('[data-testid="ai-audio-badge"]');
     expect(badge?.textContent).toBe(AI_AUDIO_BADGE_LABEL);
-    // The tooltip must disclose the over-labelling direction, not hide it.
-    expect(badge?.getAttribute('title')).toContain('over-label');
+    const title = badge?.getAttribute('title') ?? '';
+    // The tooltip must still disclose the direction of the error...
+    expect(title).toContain('errs toward marking');
+    // ...but in shipped copy, not in the renderer's internal identifiers.
+    expect(title).not.toContain('AudioTrack.kind');
+    expect(title).not.toContain('tracks.audio.mux');
   });
 });
 
@@ -128,9 +168,28 @@ describe('<AiDisclosurePanel />', () => {
     expect(panel?.textContent).toContain('not embedded in exported files');
   });
 
+  // The badge tooltip is unreachable by keyboard, unreliable for screen readers
+  // and absent on touch, so the direction caveat cannot live only there.
+  it('states the labelling direction as VISIBLE text, not only inside a tooltip', () => {
+    mount(<AiDisclosurePanel engineId="kokoro" />);
+    const note = container.querySelector('[data-testid="ai-disclosure-direction"]');
+    expect(note?.textContent).toBe(AI_LABEL_DIRECTION_NOTE);
+    expect(AI_LABEL_DIRECTION_NOTE).toContain('errs toward marking');
+  });
+
   it('surfaces the Perth watermark note for chatterbox only', () => {
     mount(<AiDisclosurePanel engineId="chatterbox" />);
     expect(container.querySelector('[data-testid="perth-note"]')?.textContent).toContain('Perth');
+  });
+
+  // The note is keyed to the engine PICKER, so it is a pre-generation notice.
+  // Read retrospectively it would tell a user that a dub already in the list is
+  // watermarked when it may have been produced by a different engine.
+  it('scopes the Perth note to the engine about to be used, not to existing tracks', () => {
+    mount(<AiDisclosurePanel engineId="chatterbox" />);
+    const note = container.querySelector('[data-testid="perth-note"]')?.textContent ?? '';
+    expect(note).toContain('about to make');
+    expect(note).toContain('not the tracks already listed');
   });
 
   it('omits the Perth watermark note for a non-watermarking engine', () => {
