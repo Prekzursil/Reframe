@@ -297,7 +297,7 @@
 }
 
 .verdict-badge.is-unavailable {
-  color: var(--status-error);
+  color: var(--status-error-text);
   background: var(--status-error-soft);
 }
 

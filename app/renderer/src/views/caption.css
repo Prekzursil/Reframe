@@ -48,7 +48,7 @@
   margin: 0;
   padding: var(--space-3) var(--space-4);
   font-size: var(--type-body-size);
-  color: var(--status-error);
+  color: var(--status-error-text);
   background: var(--status-error-soft);
   border-radius: var(--radius-sm);
 }
