@@ -15,6 +15,55 @@
 #                                        compile`. Scanned with --no-resolve so osv
 #                                        reads the flat pins directly. Re-generate
 #                                        on any sidecar dep change.)
+#   - sidecar/runtime_setup/requirements-sidecar.txt     (W23: the FIRST-RUN heavy
+#                                        sidecar env, installed by pip --target into
+#                                        %APPDATA%/media-studio/envs/sidecar)
+#   - sidecar/runtime_setup/requirements-chatterbox.txt  (W23: the ISOLATED py3.14
+#                                        voice-clone env. It pins its OWN +cu128
+#                                        torch build, which none of the lockfiles
+#                                        above can contain — sidecar/pyproject.toml
+#                                        forbids chatterbox-tts/torch in the main
+#                                        env — so before W23 THIS GATE saw none of
+#                                        it. Scoped correction, see below: it was
+#                                        never "unscanned by everything".)
+#
+# WHAT W23 ADDED, SCOPED. An earlier wording here said the chatterbox env "was
+# scanned by nothing at all" before W23. That is FALSE and was refuted by one API
+# call this file had not made: GitHub's dependency graph HAS ingested
+# sidecar/runtime_setup/requirements-chatterbox.txt and has raised EIGHT CVE alerts
+# against it (measured 2026-08-10, `gh api repos/Prekzursil/Reframe/dependabot/
+# alerts --paginate`: seven now `fixed`, plus GHSA-rrmf-rvhw-rf47 `dismissed`).
+# The correct claim — and the one that actually justifies the fix — is that the env
+# had NO coverage in the BLOCKING `deps` gate; only the advisory Dependabot rail
+# saw it, and an advisory rail cannot fail a PR. Worth stating the corroboration
+# the two rails do give: osv-scanner reports exactly the one advisory Dependabot
+# has non-fixed on that manifest, so the two independent rails AGREE on today's
+# state.
+#
+# The two runtime_setup files are read as FLAT pin lists under --no-resolve, so the
+# gate covers their DECLARED pins, not their transitive closure. That closure is
+# hash-pinned separately at F1 build-prep by runtime_setup/generate_hashed_lock.py,
+# whose output is generated rather than committed. Section 5 of
+# sidecar/tests/test_supply_chain_pins.py asserts that every DISCOVERED shipped
+# environment has an argument in the gate.
+#
+# SCOPE OF THAT INVARIANT — measured, not assumed, because an earlier wording here
+# claimed "a fourth one cannot be added unscanned" full stop and three reviewers
+# refuted it by executing the discovery against synthetic trees. Discovery is three
+# globs, and a new environment is caught ONLY if it arrives as one of these shapes:
+# app/package-lock.json · app/<immediate-subdir>/package-lock.json ·
+# sidecar/requirements*.txt · sidecar/runtime_setup/requirements*.txt. An
+# environment declared anywhere else is NOT discovered and therefore NOT demanded:
+# a repo-root lockfile, one two levels under app/, a sibling top-level tree (this
+# repo's own Dependabot history holds apps/web + apps/desktop lockfiles from an
+# earlier layout), a sidecar/envs/… tree, a pin list not named requirements*, or a
+# dependency set declared as a pyproject extra. That last one is live, not
+# hypothetical: sidecar/pyproject.toml's `reframe-gpu` extra is unscanned by this
+# gate today — see the CAVEAT on the torch ignore below.
+# Both directions are now asserted by
+# test_supply_chain_pins.py::TestDiscoveryScopeIsTheThreeGlobs (4 discovered shapes
+# as a detector control, 6 undiscovered shapes as the boundary), so this paragraph
+# and the code cannot drift apart silently.
 #
 # ---------------------------------------------------------------------------
 # 2026-06-16 SECURITY UPGRADE — the electron/vite/esbuild/vitest/ws ignores that
@@ -25,9 +74,15 @@
 #   - vitest 1.6.x -> 3.2.6        (clears the vitest UI-server file-read CVE)
 #   - esbuild pinned via overrides -> 0.28.1 (clears the dev-server + integrity CVEs)
 #   - ws (render-cli) via override -> 8.21.0  (clears the Remotion-transitive ws DoS)
-# osv-scanner now reports 0 issues across all three lockfiles with NO ignores, so
-# this file intentionally carries no IgnoredVulns. Add a dated, reasoned entry here
-# only for a future vuln that is genuinely unfixable or provably unreachable.
+# AS OF THAT DATE (2026-06-16) osv-scanner reported 0 issues across the three
+# lockfiles then scanned, with NO ignores, so this file carried no IgnoredVulns.
+# HISTORICAL — do not read this paragraph as the current state. It is kept as the
+# dated record of that upgrade; the live counts are the five lockfiles listed at the
+# top of this file and the TWO reasoned [[IgnoredVulns]] entries below. (Flagged by
+# a reviewer as a flat contradiction for anyone arriving here straight from the
+# lockfile list; it was already stale before W23 widened the scanned set.)
+# Add a dated, reasoned entry below only for a vuln that is genuinely unfixable or
+# provably unreachable.
 # ---------------------------------------------------------------------------
 # 2026-06-20 SECURITY UPGRADE — undici (dev/build transitive via node-gyp) bumped
 # 6.26.0 -> 6.27.0 to clear 4 new CVEs (GHSA-vxpw-j846-p89q HIGH, GHSA-p88m-4jfj-68fv,
@@ -62,6 +117,15 @@
 # Measured with the pinned osv-scanner 2.3.8 over blob-exact `git archive`
 # extracts: 18 vulnerabilities / 9 packages -> 2 / 2 (1 Critical -> 0 Critical).
 # The single remaining finding is the reasoned ignore below.
+# ---------------------------------------------------------------------------
+# 2026-08-10 COVERAGE FIX (W23) — the two sidecar/runtime_setup requirements files
+# joined the scanned set above. That did not change any dependency; it changed what
+# the gate can SEE. Measured with the pinned osv-scanner 2.3.8 in the worktree:
+# 3 lockfiles -> 495+209+76 = 780 packages, exit 0; 5 lockfiles -> +13+3 = 796
+# packages, exit 1 with exactly ONE new finding (torch 2.10.0+cu128 — the second
+# reasoned ignore below). The pre-existing "unused ignores: GHSA-mh99-v99m-4gvg"
+# notice appears in BOTH states, so it is not a consequence of this change and it
+# does not affect the exit code.
 # ---------------------------------------------------------------------------
 
 [[IgnoredVulns]]
@@ -115,5 +179,149 @@ RE-CHECK CONDITION — either one retires this entry outright:
       2.1.2 exists, then re-check that release against the advisory range.
 Re-review at ignoreUntil (2026-10-25) regardless. REMOVING the ignore is the
 default outcome; extending it requires re-measuring both paths above.
+"""
+
+[[IgnoredVulns]]
+id = "GHSA-rrmf-rvhw-rf47"
+ignoreUntil = 2026-11-10
+reason = """
+torch: memory corruption via `torch.jit.script` (aliases CVE-2025-3000,
+PYSEC-2025-194, BIT-pytorch-2025-3000). CVSS 5.3 Medium,
+AV:L/AC:L/PR:L/UI:N/S:U/C:L/I:L/A:L — a LOCAL, already-authenticated attacker
+only, no network vector. Surfaced IN THIS GATE on 2026-08-10, the moment the W23
+coverage fix added sidecar/runtime_setup/requirements-chatterbox.txt to the
+scanned set. It is NOT a new exposure: the pin did not change, only this gate's
+visibility did — and the advisory was already known and already accepted on the
+Dependabot rail (see PRIOR TRIAGE). Ignored per the POLICY at the top of this file
+as GENUINELY UNFIXABLE for THIS environment.
+
+PRIOR TRIAGE — this advisory was ALREADY triaged and accepted by the owner. This
+entry RECONCILES with that decision; it does not re-decide it. The first version
+of this entry found neither record and so shipped a second, differently-reasoned
+triage of one advisory — refuted, and corrected here.
+  * Measured 2026-08-10, `gh api repos/Prekzursil/Reframe/dependabot/alerts
+    --paginate`: alert #272, manifest
+    sidecar/runtime_setup/requirements-chatterbox.txt, package torch, state
+    `dismissed`, dismissed_reason `tolerable_risk`, dismissed_at
+    2026-07-18T00:30:05Z. The same eight torch advisories are also dismissed
+    `tolerable_risk` against sidecar/pyproject.toml.
+  * .github/dependabot.yml:19-26 records the standing rationale in prose and names
+    CVE-2025-3000 (this advisory) explicitly: the torch advisories are "all LOCAL
+    attack-vector (AV:L), low/medium, several with no fixed version, and are not
+    reachable in a local desktop app processing the user's own media. Triaged +
+    alerts dismissed 2026-06-29".
+That is the OWNER'S threat-model risk acceptance, and it is cited as
+corroboration — NOT restated here as the ignore's ground. The POLICY above
+reserves the "provably not reachable" arm for a proof, and the owner's note is a
+threat-model judgement about attack VECTOR, not a call-graph analysis (see NOT
+ASSESSED below, which is a strictly narrower question and remains open). So this
+ignore rests on the unfixability measurement below, with the standing acceptance
+as evidence that the residual risk is understood rather than newly introduced.
+
+WHY UNFIXABLE — measured 2026-08-10 by execution. The FIRST version of this entry
+claimed "there is no fixed +cu128 wheel to upgrade to at all, so the 'upgrade
+first' arm of the policy has nothing to resolve to", and framed the only
+alternative as "abandoning the cu128 per-index exception". Both were REFUTED: that
+reasoning generalised a probe of ONE index to the whole per-index family. Recorded
+rather than deleted, so the next reader knows the premise was wrong. The corrected
+picture, each item measured:
+  1. OSV record (api.osv.dev/v1/vulns/GHSA-rrmf-rvhw-rf47): the ECOSYSTEM range is
+     introduced 0 -> fixed 2.13.0, and database_specific
+     .last_known_affected_version_range is "<= 2.12.1". Every torch release up to
+     2.12.1 is affected; only 2.13.0 clears it. Counter-intuitive corollary,
+     recorded so it is not re-derived: bumping to the torch 2.11.0 an earlier
+     sweep proposed would NOT clear this advisory — 2.11.0 is inside the range.
+  2. A FIXED CUDA WHEEL DOES EXIST for this interpreter. cp314 wheel listings,
+     measured the same day across the per-index family: cu128 (the index this env
+     names) tops out at torch 2.11.0 — 2.9.0 / 2.9.1 / 2.10.0 / 2.11.0 only, which
+     is exactly why a one-index probe read as "no fix anywhere" — but cu126, cu129
+     and cu130 all publish 2.13.0, and cu126 + cu130 publish it for cp314
+     win_amd64 (exact wheel: torch-2.13.0+cu130-cp314-cp314-win_amd64.whl; cu129
+     has 2.13.0 for manylinux only). Plain torch 2.13.0 is on PyPI too
+     (pypi.org/pypi/torch/json info.version == 2.13.0). So switching
+     --extra-index-url cu128 -> cu130 would reach a FIXED torch while KEEPING the
+     still-hashed per-index architecture, not abandoning it.
+  3. THE ACTUAL BLOCKER IS torchaudio — not torch, and not the index choice.
+     requirements-chatterbox.txt:36-37 pins torch and torchaudio in lockstep at
+     the same version (2.10.0+cu128), and that lockstep is enforced upstream, not
+     merely by convention: torchaudio==2.10.0's own metadata hard-pins
+     `torch==2.10.0` (measured: pypi.org/pypi/torchaudio/2.10.0/json requires_dist
+     == ['torch==2.10.0']). And torchaudio has no release above 2.11.0 on any
+     index probed — PyPI info.version == 2.11.0, and the cp314 listings on ALL
+     SEVEN download.pytorch.org indexes checked (cu126, cu128, cu129, cu130, cpu,
+     rocm7.0, xpu) top out at torchaudio 2.11.0. Scope of that stated exactly,
+     because over-generalising a wheel-index probe is the mistake this entry is
+     correcting: seven indexes plus PyPI were measured, not every index that
+     exists (the nightly channel was not probed and is not shippable anyway).
+     There is therefore no version of the pinned pair, on any index this env could
+     use, in which torch is >= 2.13.0 and torchaudio is a released,
+     index-published build.
+     Adopting a fixed torch means either pairing torch 2.13.0 with torchaudio
+     2.11.0 — a combination upstream has never shipped; pip would not refuse it on
+     metadata grounds, because torchaudio 2.11.0 declares no requires_dist at all
+     (measured: null), but the ABI pairing is UNVERIFIED — or dropping torchaudio
+     outright. Either is an environment-architecture change that
+     requirements-chatterbox.txt:27-29 requires a human to verify on a real GPU
+     install, and is deliberately NOT made by a coverage fix that merely revealed
+     the finding.
+     For completeness: chatterbox-tts 0.1.7 itself does NOT block the upgrade.
+     Measured, its py>=3.14 constraints are torch>=2.9.0 and torchaudio>=2.9.0.
+
+SCOPE: the isolated voice-clone env only. Reconciling two statements that a
+reviewer read as contradictory ("that environment ships" in quality.yml vs "never
+ships inside the installer" here) — both are true of DIFFERENT parts of it, so
+state the split explicitly: the dedicated py3.14 embeddable INTERPRETER does ship
+(build/make-portable.ps1:8 — the unpacked tree carries two embeddable CPythons,
+3.12 sidecar + 3.14 chatterbox), while torch and the model weights NEVER ship
+(build/make-portable.ps1:45-48 fails the build if a torch package dir is inside
+the artifact) and are downloaded on FIRST RUN into
+%APPDATA%/media-studio/envs/chatterbox, which the sidecar then drives as a child
+process. Interpreter ships; wheels are fetched on first run.
+NOT ASSESSED, and deliberately not claimed in either direction: whether
+chatterbox-tts 0.1.7 or its transitive closure ever reaches `torch.jit.script`.
+SETTLING EXPERIMENT: unpack the chatterbox-tts 0.1.7 wheel plus its closure and
+search the call graph for jit.script / jit.trace. If it provably never does,
+re-scope this entry from unfixable to unreachable — and the expiry can then go,
+because "provably unreachable" does not decay the way "no fixed release yet" does.
+
+CAVEAT — READ THIS BEFORE TRUSTING THIS ENTRY. An osv-scanner ignore is keyed by
+VULNERABILITY ID, not by package or version, so it suppresses this advisory
+everywhere in the scanned set. Measured blast radius INSIDE the scanned set today:
+nothing else — torch appears in no other scanned manifest
+(sidecar/requirements.lock.txt and runtime_setup/requirements-sidecar.txt both
+carry zero torch* pins, asserted by
+test_supply_chain_pins.py::TestDiscoveryScopeIsTheThreeGlobs).
+OUTSIDE the scanned set: sidecar/pyproject.toml's `reframe-gpu` extra pins
+torch==2.6.0, likewise inside the affected range, and the SHIPPED sidecar tells
+the user to install that extra at runtime
+(media_studio/features/diarize_backend.py:211-214 raises
+DiarizeBackendUnavailableError naming `pip install
+"media-studio-sidecar[reframe-gpu]"`). So the natural next step — adding
+sidecar/pyproject.toml to satisfy a wider reading of gate 6 — would SILENTLY PASS
+that torch instead of reporting it. Do not do that without assessing that env on
+its own terms; note its coverage today is the Dependabot rail, where its own eight
+torch alerts are dismissed `tolerable_risk`.
+
+RE-CHECK CONDITION — watch torchaudio, NOT the cu128 torch listing. The first
+version of this entry sent the reviewer to
+`curl https://download.pytorch.org/whl/cu128/torch/ | grep cp314` and to plain
+PyPI torch; both are the WRONG probe and were refuted — the cu128 torch listing is
+structurally blind to the cu126/cu130 fix path, and a fixed torch is not adoptable
+while torchaudio is the gating package. Either of these retires this entry:
+  (a) torchaudio publishes a release >= 2.12 for cp314 — verify with
+      `curl -sSL https://download.pytorch.org/whl/cu130/torchaudio/` (plus the
+      cu126 / cu129 siblings) and `pypi.org/pypi/torchaudio/json` info.version;
+      then move the env to a matching fixed torch on that index and human-verify
+      the trio on a real GPU install per requirements-chatterbox.txt:27-29; or
+  (b) the SETTLING EXPERIMENT above proves `torch.jit.script` unreachable, which
+      re-grounds this entry on the POLICY's "provably not reachable" arm.
+NOTHING WILL PROPOSE (a) AUTOMATICALLY, and that is deliberate:
+.github/dependabot.yml:27-29 ignores dependency-name torch / torchvision /
+torchaudio outright, because GPU-validated CUDA-wheel pins must never move via an
+unattended PR. The ignoreUntil date is therefore the ONLY scheduled prompt to
+re-run these probes — which is why it is KEPT rather than dropped in favour of the
+owner's standing acceptance. Re-review at ignoreUntil (2026-11-10) regardless.
+REMOVING the ignore is the default outcome; extending it requires re-measuring
+both probes above.
 """
 
