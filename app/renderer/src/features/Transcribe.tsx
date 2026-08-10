@@ -18,11 +18,35 @@ import { AUTO_DETECT, toWireLanguage } from '../lib/languages';
 
 export interface TranscribeProps {
   videoId: string;
-  /** Optional callback fired with the finished transcript. */
+  /**
+   * Optional callback fired with the transcript produced by a RUN in this panel.
+   *
+   * W11 SCOPED DECISION: the mount-time re-hydrate below deliberately does NOT
+   * fire this. The persisted transcript comes from `project.open`, which the
+   * Workspace parent already calls for itself (Workspace.tsx:197-209), so
+   * echoing it back would hand a parent its own data as if this panel had just
+   * produced it. Same reasoning as Subtitles.tsx:126-128 (hydrate with
+   * `setTrack`, never `applyTrack`). Consumers that need "does a transcript
+   * exist" read `video.hasTranscript` / `project.transcript`, not this callback.
+   */
   onTranscript?: (transcript: Transcript) => void;
 }
 
 type Phase = 'idle' | 'running' | 'done' | 'error';
+
+/**
+ * W11 mount-time read of the PERSISTED transcript:
+ *   'loading' — `project.open` is in flight; we do not yet know either way;
+ *   'ready'   — the read landed (with or without a transcript);
+ *   'error'   — the read failed; the panel still works, it just cannot show a
+ *               previously-saved transcript.
+ */
+type LoadState = 'loading' | 'ready' | 'error';
+
+/** The `project.open` reply shape this panel reads (CONTRACTS.md §2/§3). */
+interface ProjectOpenResult {
+  project?: { transcript?: Transcript };
+}
 
 export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.ReactElement {
   const [language, setLanguage] = useState<string>(AUTO_DETECT);
@@ -32,6 +56,55 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
   const [message, setMessage] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [transcript, setTranscript] = useState<Transcript | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>(videoId ? 'loading' : 'ready');
+  const [loadError, setLoadError] = useState<string>('');
+
+  // W11: RE-HYDRATE the persisted transcript at mount (and on a videoId change).
+  //
+  // `transcribe.start` persists its result onto the video's project manifest and
+  // flips the library `hasTranscript` flag (sidecar
+  // handlers/media_ops.py:480-488 `_transcribe_and_persist`), and
+  // `project.open({id})` hands it back as `{project:{transcript}}`
+  // (handlers/library_ops.py:328-337). Before this effect the ONLY writer of
+  // `transcript` was the run below, so re-entering the tab after a finished run
+  // showed the blank state and offered an accent primary action to re-run a
+  // multi-minute GPU job — while the Library card next to it said "Transcript".
+  // Same mount-time-read shape as Tracks.tsx:51-53 (`tracks.list`).
+  useEffect(() => {
+    if (!videoId) {
+      setLoadState('ready');
+      setLoadError('');
+      setTranscript(null);
+      return;
+    }
+    // Guards the STALE reply: switching video mid-read must not let the previous
+    // video's transcript land on the new one (it would look re-hydrated and let
+    // the user skip a transcription that never happened for this video).
+    //
+    // It MUST be a per-effect-run closure flag, not a component-lifetime ref:
+    // `main.tsx:19` runs the app under <React.StrictMode>, whose setup -> cleanup
+    // -> setup would leave a surviving flag latched `true` and discard BOTH reads,
+    // stranding the panel on "Loading saved transcript…" forever in dev.
+    let stale = false;
+    setLoadState('loading');
+    setLoadError('');
+    setTranscript(null);
+    void (async () => {
+      try {
+        const res = await getApi().rpc<ProjectOpenResult | null>('project.open', { id: videoId });
+        if (stale) return;
+        setTranscript(res?.project?.transcript ?? null);
+        setLoadState('ready');
+      } catch (err) {
+        if (stale) return;
+        setLoadError(err instanceof Error ? err.message : String(err));
+        setLoadState('error');
+      }
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [videoId]);
 
   // F2: aborts the in-flight job.done wait on cancel/unmount so the wait rejects
   // (JobAbortedError) and its subscription/timer tear down instead of leaking —
@@ -163,8 +236,18 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
       </div>
 
       <div className="actions">
-        <button type="button" onClick={start} disabled={running || !videoId}>
-          {running ? 'Transcribing…' : 'Start transcription'}
+        {/* W11: with a transcript already on disk, re-running is a MULTI-MINUTE
+            GPU job the user has already paid for — so the action drops out of
+            the accent primary slot and says what it actually does. It stays
+            enabled (a re-run is legitimate: a different language, a fixed
+            audio track, a new ASR engine), just no longer invited. */}
+        <button
+          type="button"
+          onClick={start}
+          className={transcript ? 'secondary' : undefined}
+          disabled={running || !videoId || loadState === 'loading'}
+        >
+          {running ? 'Transcribing…' : transcript ? 'Re-run transcription' : 'Start transcription'}
         </button>
         {running && jobId && (
           <button type="button" onClick={cancel} className="secondary">
@@ -172,6 +255,28 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
           </button>
         )}
       </div>
+
+      {loadState === 'loading' && (
+        <p className="status" data-state="loading" aria-live="polite">
+          Loading saved transcript…
+        </p>
+      )}
+
+      {/* A failed READ is not a failed RUN: it is shown in the error voice (the
+          saved transcript is genuinely unavailable) but carries no role="alert"
+          — it is present at first paint, not a response to a user action — and
+          it never disables Start. */}
+      {loadState === 'error' && (
+        <p className="error" data-state="load-error">
+          Could not load the saved transcript: {loadError}
+        </p>
+      )}
+
+      {loadState === 'ready' && !transcript && !running && (
+        <p className="empty" data-state="empty">
+          No transcript yet — run a transcription to create one.
+        </p>
+      )}
 
       {(running || phase === 'done') && (
         <div className="progress" aria-live="polite">
