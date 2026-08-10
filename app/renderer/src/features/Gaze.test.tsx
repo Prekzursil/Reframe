@@ -469,6 +469,49 @@ describe('<Gaze />', () => {
     expect(box.checked).toBe(true);
   });
 
+  // ─── the SECOND half of "one tick, one subject" (W02 class) ────────────────
+  // REFUTED IN REVIEW, and the refutation was correct: the first draft invalidated
+  // the tick ONLY on a successful run, so a tick made while the field read 'Ana'
+  // still satisfied `canRun` after the field was changed to 'Bogdan' — and
+  // `likeness.py:156-157` stamps whatever subject arrives into the job's audit
+  // trail, so the record would assert Bogdan was attested when the user never read
+  // the sentence against Bogdan. The panel's own hint claims the tick "can never
+  // authorise … a different person"; these three tests are what make that true.
+  const attestBox = (): HTMLInputElement =>
+    container.querySelector('[data-input="likeness-attest"]') as HTMLInputElement;
+
+  it('CLEARS the attestation when the subject is RENAMED — one tick never covers a second person', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillAttested('Ana');
+    expect(runButton().disabled).toBe(false);
+    pick('[data-input="likeness-subject"]', 'Bogdan');
+    expect(attestBox().checked).toBe(false);
+    expect(runButton().disabled).toBe(true);
+  });
+
+  it('clears it on a rename AFTER a failed run too — the retry path keeps the tick only for the SAME person', async () => {
+    const fake = makeFakeApi({ runError: new Error('ffmpeg exploded') });
+    await mount(fake.api);
+    fillAttested('Ana');
+    await clickRun();
+    expect(attestBox().checked).toBe(true); // same person, retry is fine
+    pick('[data-input="likeness-subject"]', 'Bogdan');
+    expect(attestBox().checked).toBe(false); // different person, re-attest
+    expect(runButton().disabled).toBe(true);
+  });
+
+  it('a whitespace-only edit is NOT a new subject, so the tick survives', async () => {
+    // `buildGazeParams` trims, so 'Ana' -> 'Ana ' sends the IDENTICAL subject.
+    // Clearing there would be consent theatre — a re-tick that changes nothing.
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    fillAttested('Ana');
+    pick('[data-input="likeness-subject"]', 'Ana ');
+    expect(attestBox().checked).toBe(true);
+    expect(runButton().disabled).toBe(false);
+  });
+
   it('cancels the in-flight job via job.cancel', async () => {
     const fake = makeFakeApi();
     await mount(fake.api);

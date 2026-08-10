@@ -238,6 +238,30 @@ export function Gaze({ videoId, api }: GazeProps): React.ReactElement {
 
   const canRun = available === true && attested && subject.trim().length > 0;
 
+  /**
+   * Renaming the subject INVALIDATES the tick.
+   *
+   * REFUTED IN REVIEW and fixed here: `attested` used to be cleared only on a
+   * successful run, so a tick made while the field read 'Ana' still satisfied
+   * `canRun` after the field was changed to 'Bogdan'. That is the W02 class — the
+   * code satisfying a consent question on the user's behalf from data it already
+   * held — and it is not cosmetic: `likeness.py:156-157` stamps whichever subject
+   * arrives into `Attestation(subject=…)`, which `gaze.py:668-672` writes into the
+   * job's audit trail, so the record would assert a person the user never attested
+   * for. A new name is a NEW question, so the answer is discarded.
+   *
+   * TRIMMED comparison, deliberately: `buildGazeParams` trims the subject, so
+   * 'Ana' -> 'Ana ' sends the IDENTICAL payload. Re-asking there would be consent
+   * theatre — a second tick that changes nothing about who was attested.
+   */
+  const changeSubject = useCallback(
+    (next: string): void => {
+      setSubject(next);
+      if (next.trim() !== subject.trim()) setAttested(false);
+    },
+    [subject],
+  );
+
   const run = useCallback(async (): Promise<void> => {
     // Defensive: the button is disabled unless `canRun` and not already running.
     /* v8 ignore next */
@@ -267,10 +291,13 @@ export function Gaze({ videoId, api }: GazeProps): React.ReactElement {
         setOutcome(next);
         setPct(100);
         setMessage('Done');
-        // A fresh attestation per run: one tick must never carry over to a second
-        // run, or to a different subject. Mirrors the proven WU-A2 behaviour in
-        // `Dub.tsx` (`addSample`), including keeping the tick on FAILURE so a
-        // retry after an unrelated error does not force a re-attestation.
+        // A fresh attestation per run. This is the RUN half of "one tick, one
+        // subject"; the SUBJECT half is `changeSubject` above (a rename clears the
+        // tick), and it was missing in the first draft — an adversarial probe
+        // showed a tick made for 'Ana' still authorising a run against 'Bogdan'.
+        // Mirrors the proven WU-A2 behaviour in `Dub.tsx` (`addSample`), including
+        // keeping the tick on FAILURE so a retry for the SAME person after an
+        // unrelated error does not force a re-attestation.
         setAttested(false);
       }
     } catch (err) {
@@ -322,7 +349,7 @@ export function Gaze({ videoId, api }: GazeProps): React.ReactElement {
             type="text"
             placeholder="e.g. Marius (self), or the speaker's name"
             value={subject}
-            onChange={(e) => setSubject(e.target.value)}
+            onChange={(e) => changeSubject(e.target.value)}
             disabled={running}
           />
         </label>
@@ -337,9 +364,10 @@ export function Gaze({ videoId, api }: GazeProps): React.ReactElement {
           {LIKENESS_ATTESTATION_TEXT}
         </label>
         <p className="gaze-consent-hint">
-          This attestation applies to THIS run only — it is not saved, so it can never authorise a
-          later run or a different person. It is recorded in the finished job&apos;s audit trail
-          (shown below); nothing about the edit is written into the output file itself.
+          This attestation applies to THIS run only — it is not saved, and it is cleared both after
+          a finished run and whenever you change the name above, so it can never authorise a later
+          run or a different person. It is recorded in the finished job&apos;s audit trail (shown
+          below); nothing about the edit is written into the output file itself.
         </p>
       </fieldset>
 
