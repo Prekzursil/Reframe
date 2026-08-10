@@ -143,6 +143,44 @@ describe('useFocusTrap', () => {
     });
   });
 
+  describe('trapTab: false (non-modal surface)', () => {
+    // A card with no scrim over the page must not cage the keyboard: a Tab trap
+    // there strands a keyboard user inside a dialog a mouse user can click past.
+    // The hook keeps its other three jobs.
+    it('lets Tab OUT from the last element instead of wrapping', () => {
+      mount({ options: { trapTab: false } });
+      const btns = buttons();
+      act(() => btns[2].focus());
+      const ev = press(btns[2], 'Tab');
+      expect(document.activeElement).toBe(btns[2]);
+      // Not prevented => the browser performs its own sequential navigation.
+      expect(ev.defaultPrevented).toBe(false);
+    });
+
+    it('lets Shift+Tab OUT from the first element instead of wrapping', () => {
+      mount({ options: { trapTab: false } });
+      const btns = buttons();
+      act(() => btns[0].focus());
+      const ev = press(btns[0], 'Tab', { shiftKey: true });
+      expect(document.activeElement).toBe(btns[0]);
+      expect(ev.defaultPrevented).toBe(false);
+    });
+
+    it('does NOT swallow Tab in an empty container', () => {
+      mount({ options: { trapTab: false }, count: 0, containerTabIndex: -1 });
+      const ev = press(trapEl(), 'Tab');
+      expect(ev.defaultPrevented).toBe(false);
+    });
+
+    it('still moves initial focus and still routes Escape', () => {
+      const onEscape = vi.fn();
+      mount({ options: { trapTab: false, onEscape, initialFocus: '[data-idx="1"]' } });
+      expect(document.activeElement).toBe(buttons()[1]);
+      press(trapEl(), 'Escape');
+      expect(onEscape).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('Escape + other keys', () => {
     it('calls onEscape when Escape is pressed', () => {
       const onEscape = vi.fn();

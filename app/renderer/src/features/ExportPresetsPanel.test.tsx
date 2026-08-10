@@ -103,6 +103,35 @@ function blur(label: string): void {
   act(() => el.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
 }
 
+// W04 — REVIEWED TEST CHANGE (not a weakening). Delete and Reset used to be
+// gated by a `window.confirm` stub. That stub cannot distinguish the native OS
+// confirm from a themed dialog, so it passed in both states and could not have
+// caught W04 (native confirm is unthemeable, has no author-controlled accessible
+// name/description, and blocks the Electron renderer). The tests now drive the
+// themed gate; `expect(confirmSpy).toHaveBeenCalledTimes(1)` is replaced by "the
+// gate is open" (answerGate throws otherwise) plus "the RPC did not fire".
+async function answerGate(approve: boolean): Promise<void> {
+  const gate = container.querySelector('.confirm-dialog');
+  if (!gate) throw new Error('themed confirm gate is not open');
+  const sel = approve ? '.confirm-dialog-approve' : '.confirm-dialog-cancel';
+  await act(async () => {
+    gate.querySelector<HTMLButtonElement>(sel)?.click();
+    await Promise.resolve();
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+/** Click a destructive control and approve the themed gate it raises. */
+async function clickAndApprove(text: string): Promise<void> {
+  await act(async () => {
+    clickText(text);
+    await Promise.resolve();
+  });
+  await answerGate(true);
+}
+
 describe('ExportPresetsPanel', () => {
   it('loads and renders the preset rows', async () => {
     await render();
@@ -302,14 +331,19 @@ describe('ExportPresetsPanel', () => {
     expect(field('Preset label').value).toBe('TikTok');
   });
 
-  it('deletes a preset', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  it('deletes a preset through the THEMED gate', async () => {
+    const native = vi.spyOn(window, 'confirm');
     await render();
     await act(async () => {
       clickText('Delete');
       await Promise.resolve();
     });
+    // The gate names the preset and nothing is deleted while it is open.
+    expect(container.querySelector('.confirm-dialog-title')?.textContent).toContain('tiktok');
+    expect(deleteMock).not.toHaveBeenCalled();
+    await answerGate(true);
     expect(deleteMock).toHaveBeenCalledWith('tiktok');
+    expect(native).not.toHaveBeenCalled();
   });
 
   it('adds a new preset via save with an empty id', async () => {
@@ -321,40 +355,50 @@ describe('ExportPresetsPanel', () => {
     expect(saveMock).toHaveBeenCalledWith(expect.objectContaining({ id: '', label: 'New preset' }));
   });
 
-  it('resets to defaults', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  it('resets to defaults through the THEMED gate', async () => {
+    const native = vi.spyOn(window, 'confirm');
     await render();
     await act(async () => {
       clickText('Reset to defaults');
       await Promise.resolve();
     });
+    expect(container.querySelector('.confirm-dialog-blurb')?.textContent).toContain(
+      'discards every custom preset',
+    );
+    expect(resetMock).not.toHaveBeenCalled();
+    await answerGate(true);
     expect(resetMock).toHaveBeenCalledTimes(1);
+    expect(native).not.toHaveBeenCalled();
   });
 
   // F13 — Reset overwrites the whole catalog (`PresetStore.reset` re-seeds and
   // `_write` keeps no prior copy, so there is no restore path) and per-row Delete
   // is equally final. Both were one-click, against the project's own standard
   // ("never a silent one-click destructive action", KeepCopyControl.tsx:21).
-  it('does not reset when the confirm is declined', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  it('does not reset when the themed gate is declined', async () => {
+    const native = vi.spyOn(window, 'confirm');
     await render();
     await act(async () => {
       clickText('Reset to defaults');
       await Promise.resolve();
     });
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await answerGate(false);
     expect(resetMock).not.toHaveBeenCalled();
+    expect(container.querySelector('.confirm-dialog')).toBeNull();
+    expect(native).not.toHaveBeenCalled();
   });
 
-  it('does not delete when the confirm is declined', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  it('does not delete when the themed gate is declined', async () => {
+    const native = vi.spyOn(window, 'confirm');
     await render();
     await act(async () => {
       clickText('Delete');
       await Promise.resolve();
     });
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await answerGate(false);
     expect(deleteMock).not.toHaveBeenCalled();
+    expect(container.querySelector('.confirm-dialog')).toBeNull();
+    expect(native).not.toHaveBeenCalled();
   });
 
   it('shows an error when load fails', async () => {
@@ -372,7 +416,6 @@ describe('ExportPresetsPanel', () => {
   });
 
   it('surfaces save / delete / reset failures', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await render();
     saveMock.mockRejectedValueOnce('x');
     await act(async () => {
@@ -382,22 +425,15 @@ describe('ExportPresetsPanel', () => {
     expect(container.querySelector('.export-presets__error')?.textContent).toBe('Save failed');
 
     deleteMock.mockRejectedValueOnce('x');
-    await act(async () => {
-      clickText('Delete');
-      await Promise.resolve();
-    });
+    await clickAndApprove('Delete');
     expect(container.querySelector('.export-presets__error')?.textContent).toBe('Delete failed');
 
     resetMock.mockRejectedValueOnce('x');
-    await act(async () => {
-      clickText('Reset to defaults');
-      await Promise.resolve();
-    });
+    await clickAndApprove('Reset to defaults');
     expect(container.querySelector('.export-presets__error')?.textContent).toBe('Reset failed');
   });
 
   it('surfaces Error-typed save/delete/reset messages (instanceof arm)', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await render();
     saveMock.mockRejectedValueOnce(new Error('save-e'));
     await act(async () => {
@@ -407,35 +443,22 @@ describe('ExportPresetsPanel', () => {
     expect(container.querySelector('.export-presets__error')?.textContent).toBe('save-e');
 
     deleteMock.mockRejectedValueOnce(new Error('del-e'));
-    await act(async () => {
-      clickText('Delete');
-      await Promise.resolve();
-    });
+    await clickAndApprove('Delete');
     expect(container.querySelector('.export-presets__error')?.textContent).toBe('del-e');
 
     resetMock.mockRejectedValueOnce(new Error('reset-e'));
-    await act(async () => {
-      clickText('Reset to defaults');
-      await Promise.resolve();
-    });
+    await clickAndApprove('Reset to defaults');
     expect(container.querySelector('.export-presets__error')?.textContent).toBe('reset-e');
   });
 
   it('notifies onChanged after a successful save / delete / reset', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await render();
     await act(async () => {
       clickText('Save');
       await Promise.resolve();
     });
-    await act(async () => {
-      clickText('Delete');
-      await Promise.resolve();
-    });
-    await act(async () => {
-      clickText('Reset to defaults');
-      await Promise.resolve();
-    });
+    await clickAndApprove('Delete');
+    await clickAndApprove('Reset to defaults');
     expect(onChangedSpy).toHaveBeenCalledTimes(3);
   });
 });
