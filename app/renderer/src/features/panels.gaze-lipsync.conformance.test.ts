@@ -89,21 +89,56 @@ function classNamesOf(tsx: string): readonly string[] {
   return [...out];
 }
 
-/** Every class name that any SELECTOR in a stylesheet targets. */
-function styledClasses(css: string): readonly string[] {
+/**
+ * Every class that is the SUBJECT of a rule — the right-most compound selector, the
+ * element the declarations actually apply to.
+ *
+ * REFUTED, and this is the correction: the first version of this helper harvested
+ * EVERY `.class` token anywhere in the selector, so a class counted as "styled"
+ * merely by appearing as an ANCESTOR in someone else's selector. Measured on the live
+ * tree, two of the 23 rendered classes — `gaze-panel` and `gaze-strength` — are the
+ * subject of NO rule anywhere and passed only through the `.gaze-panel .gaze-…` /
+ * `.gaze-strength .gaze-strength-hint` prefixes. Harmless today (they inherit
+ * `.feature-panel` / `.field`), but it means a future `gaze-foo` could satisfy the
+ * completeness guard by being used as a prefix and nothing else — the exact
+ * omission-by-default hole this file exists to close.
+ *
+ * Functional-pseudo ARGUMENTS are stripped first: in `.a:has(.b)` the subject is `.a`
+ * — `.b` is a condition, not a target — so `:has()`/`:is()`/`:where()`/`:not()`
+ * contents must not be read as subjects.
+ *
+ * The same harvesting shape lives in `batchQueue.conformance.test.ts:87` and has the
+ * same property; it is NOT changed here — a different WU owns that file.
+ */
+function subjectClasses(css: string): readonly string[] {
   const out: string[] = [];
-  const rule = /([^{}]+)\{[^{}]*\}/g;
-  for (let m = rule.exec(stripComments(css)); m !== null; m = rule.exec(stripComments(css))) {
-    for (const c of m[1].matchAll(/\.([A-Za-z0-9_-]+)/g)) out.push(c[1]);
+  for (const m of stripComments(css).matchAll(/([^{}]+)\{[^{}]*\}/g)) {
+    for (const entry of m[1].split(',')) {
+      const flat = entry.replace(/:(?:has|is|where|not)\([^)]*\)/g, '').trim();
+      const compounds = flat.split(/\s*[>+~]\s*|\s+/).filter((s) => s !== '');
+      const subject = compounds.at(-1) ?? '';
+      for (const c of subject.matchAll(/\.([A-Za-z0-9_-]+)/g)) out.push(c[1]);
+    }
   }
   return out;
 }
 
-/** The union of every class styled anywhere in the renderer CSS. */
+/**
+ * Classes that are deliberately styled ONLY through inheritance plus their
+ * descendants' selectors, never as a rule subject.
+ *
+ * Both are containers whose own appearance comes from a shared shell — `.gaze-panel`
+ * from `.feature-panel`, `.gaze-strength` from `.field` — so a rule of their own
+ * would be an empty one. Enumerated rather than tolerated by the matcher, so adding a
+ * member is a deliberate act a reviewer can see.
+ */
+const ANCESTOR_ONLY = new Set(['gaze-panel', 'gaze-strength']);
+
+/** The union of every class that is the SUBJECT of a rule in the renderer CSS. */
 function allStyledClasses(): ReadonlySet<string> {
   const styled = new Set<string>();
   for (const file of collectCssFiles(RENDERER_SRC)) {
-    for (const name of styledClasses(readFileSync(file, 'utf8'))) styled.add(name);
+    for (const name of subjectClasses(readFileSync(file, 'utf8'))) styled.add(name);
   }
   return styled;
 }
@@ -143,6 +178,26 @@ describe('the Eye-contact and Lip-sync panels are styled (W19 / W20)', () => {
     expect(styled.has('definitely-not-a-real-class-xyz')).toBe(false);
   });
 
+  it('the detector reads the rule SUBJECT, not every class in the selector', () => {
+    // The distinguishing case, fed as a fixture: an ancestor is NOT a subject. Without
+    // this the completeness test can be satisfied by using a class as a prefix.
+    expect(subjectClasses('.a .b { color: red; }')).toEqual(['b']);
+    expect(subjectClasses('.a > .b, .c ~ .d { color: red; }')).toEqual(['b', 'd']);
+    // A functional pseudo's argument is a condition, not a target.
+    expect(subjectClasses('.a:has(.b) { color: red; }')).toEqual(['a']);
+    // A compound subject contributes both of its classes.
+    expect(subjectClasses('.a .b.c { color: red; }')).toEqual(['b', 'c']);
+    // …and on the LIVE tree the two allowlisted containers really are ancestor-only.
+    // If this fails because one of them gained a rule of its own, delete it from
+    // ANCESTOR_ONLY — the allowlist entry is then dead weight, not a finding.
+    const styled = allStyledClasses();
+    for (const name of ANCESTOR_ONLY) {
+      expect(styled.has(name), `${name} is now a rule subject — drop it from ANCESTOR_ONLY`).toBe(
+        false,
+      );
+    }
+  });
+
   it('ruleBody finds a COMMA-GROUPED selector, and misses nothing real', () => {
     // Control for the instrument the two semantic tests below depend on. A
     // `<selector>\s*\{` regex reports a grouped entry as ABSENT, which would have
@@ -172,7 +227,11 @@ describe('the Eye-contact and Lip-sync panels are styled (W19 / W20)', () => {
     expect(lipsync).toContain('lipsync-confidence');
   });
 
-  it('styles EVERY gaze-/lipsync- class the two components render', () => {
+  it('every gaze-/lipsync- class the components render is a rule SUBJECT', () => {
+    // Scoped exactly to what is measured: each rendered class is the subject of some
+    // rule, or is one of the two enumerated containers that are styled purely by
+    // inheritance. Appearing as an ancestor in another rule's selector does NOT count
+    // — see `subjectClasses`.
     const styled = allStyledClasses();
     const rendered = [
       ...classNamesOf(readFileSync(GAZE_TSX, 'utf8')),
@@ -180,13 +239,14 @@ describe('the Eye-contact and Lip-sync panels are styled (W19 / W20)', () => {
     ];
     const unstyled = rendered
       .filter(isPanelClass)
-      .filter((n) => !styled.has(n))
+      .filter((n) => !styled.has(n) && !ANCESTOR_ONLY.has(n))
       .sort();
     expect(
       unstyled,
-      'These Eye-contact / Lip-sync classes render with no stylesheet rule at all, ' +
-        'so those surfaces fall back to unstyled flow content. Add a rule in ' +
-        'features/panels.css (tokens only).',
+      'These Eye-contact / Lip-sync classes are the subject of NO rule anywhere, so ' +
+        'those surfaces fall back to unstyled flow content. Add a rule in ' +
+        'features/panels.css (tokens only) — or, if the surface is deliberately styled ' +
+        'only by inheritance, add it to ANCESTOR_ONLY with the reason.',
     ).toEqual([]);
   });
 

@@ -58,8 +58,14 @@ function colorToken(body: string | null): string | null {
  * DETECTOR LIMIT (stated, not hidden): this reads the single-line
  * `status: 'a' | 'b';` form that `JobInfo` uses today. A union reformatted across
  * lines, or aliased to a named type, would return an empty list — which is why
- * the control test below asserts a member COUNT and two specific members rather
+ * the control test below asserts a member FLOOR and two specific members rather
  * than trusting the parse.
+ *
+ * COUPLING, disclosed: this test READS `lib/rpc/schemas.ts`, a file it does not own,
+ * so a lane that adds a status there also owns the matching colour rule here. That
+ * is the guard working (it is the defect class), but the count is a FLOOR rather
+ * than an arity precisely so a correctly-styled seventh status does not turn this
+ * file red in whichever lane touches the schema.
  */
 /**
  * Status pairs that resolve to the SAME `color` token, as `"--token: a + b"`.
@@ -81,8 +87,7 @@ function colourCollisions(css: string, statuses: readonly string[]): readonly st
     .sort();
 }
 
-function wireStatuses(): readonly string[] {
-  const src = readFileSync(SCHEMAS_TS, 'utf8');
+function wireStatuses(src: string = readFileSync(SCHEMAS_TS, 'utf8')): readonly string[] {
   const decl = /\bstatus:\s*((?:'[a-z-]+'\s*\|\s*)+'[a-z-]+')\s*;/.exec(src);
   if (decl === null) return [];
   return [...decl[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
@@ -95,12 +100,22 @@ describe('jobqueue status pills (W13 / audit H4b-c / W45)', () => {
     // Control the instrument BEFORE trusting the completeness test below: a regex
     // that silently stopped matching would return [] and make that test vacuous.
     const statuses = wireStatuses();
-    expect(statuses).toHaveLength(6);
+    // A FLOOR, not the arity. The first version asserted `toHaveLength(6)`, which
+    // fails on a SEVENTH status even when it is correctly styled — in whichever lane
+    // edits lib/rpc/schemas.ts, a file this guard reads but does not own. The floor
+    // plus the spot-anchors below keeps the vacuity control (a broken regex yields
+    // [] and fails here) without forbidding a legitimate extension.
+    expect(statuses.length).toBeGreaterThanOrEqual(6);
     // Spot-anchor both ends of the union so a partial match cannot pass on count.
     expect(statuses).toContain('queued');
     expect(statuses).toContain('interrupted');
     // …and prove it is not just echoing anything asked of it.
     expect(statuses).not.toContain('definitely-not-a-status');
+    // Both-states control on the seam, so relaxing the count cannot hide a broken
+    // parse: a union of seven parses to seven, and a reformatted/absent one to [].
+    expect(wireStatuses("  status: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g';")).toHaveLength(7);
+    expect(wireStatuses('  status: string;')).toEqual([]);
+    expect(wireStatuses("  status:\n    | 'a'\n    | 'b';")).toEqual([]);
   });
 
   it('every wire status has its OWN colour rule — all six, none by omission', () => {
@@ -150,12 +165,20 @@ describe('jobqueue status pills (W13 / audit H4b-c / W45)', () => {
     expect(colourCollisions(distinct, ['queued', 'cancelled'])).toEqual([]);
   });
 
-  it('no two wire statuses share a colour token (W45 — the H4c defect, generalised)', () => {
+  it('no two wire statuses share a colour TOKEN (name identity, not contrast)', () => {
     // H4c was reported as one pair (`cancelled` reading identically to `queued`).
     // The requirement it implies is pairwise: any two statuses that resolve to the
     // same token are indistinguishable at a glance, whichever pair they are. Every
     // member now carries its own rule, so this is checkable across the whole union
     // instead of for the one pair that happened to be noticed.
+    //
+    // SCOPE, stated so the title cannot be read as more: this compares token NAMES.
+    // It proves no two statuses are byte-identical; it does NOT prove any pair is
+    // DISTINGUISHABLE. `--text-faint` #a6aebd and `--text-muted` #adb4c2
+    // (styles/tokens.css:51,58) are adjacent steps 7/255 per channel apart — a delta
+    // this test would happily accept. The non-colour channel asserted in the next
+    // case is what actually carries `cancelled`. A real legibility gate would need a
+    // contrast computation over resolved token values, which is not this file.
     expect(
       colourCollisions(CSS, wireStatuses()),
       'Two or more job statuses resolve to the SAME colour token, so a user cannot ' +
