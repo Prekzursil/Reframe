@@ -98,6 +98,11 @@ vi.mock('../features/ReframeCorrect', () => stubPanel('ReframeCorrect'));
 // ("Workspace ↔ Gaze seam"), which drains macrotasks and renders the REAL panel;
 // that case goes red if `case 'gaze'` is removed from `renderPanel` (measured).
 vi.mock('../features/Gaze', () => stubPanel('Gaze'));
+// W16-UI: auto-b-roll. Same STUB caveat as `Gaze` above — this file proves the
+// TabBar + `renderPanel()` switch and the props handed down, NOT that
+// `lazy(() => import('../features/BrollPanel'))` resolves. The real lazy mount is
+// asserted in `Workspace.seam.test.tsx` ("Workspace ↔ BrollPanel seam").
+vi.mock('../features/BrollPanel', () => stubPanel('BrollPanel'));
 
 import {
   Workspace,
@@ -195,9 +200,15 @@ describe('Workspace', () => {
   // for "polish the footage" ops in the Frame & Cut cluster. WIDENED by exactly
   // one entry, never weakened.
   //
-  // The assertion remains exact and order-sensitive, six elements longer than
+  // SCOPE CHANGE #6 (W16-UI auto-b-roll): the list gains 'Auto B-roll', placed
+  // immediately after 'Video timeline' because it is the same KIND of operation —
+  // it puts additional footage INTO the timeline for chosen windows. Before it, the
+  // seven `broll.*` RPCs (~58 KB of engine) had zero callers anywhere under `app/`.
+  // WIDENED by exactly one entry, never weakened.
+  //
+  // The assertion remains exact and order-sensitive, seven elements longer than
   // the pre-v1.5 list and with two labels corrected. Nothing was weakened.
-  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize; speed: +Speed; audiomix-ui: +Audio mix; W17/W18: +Fix framing/Video timeline; W19: +Eye contact)', () => {
+  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize; speed: +Speed; audiomix-ui: +Audio mix; W17/W18: +Fix framing/Video timeline; W19: +Eye contact; W16-UI: +Auto B-roll)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Search',
@@ -211,6 +222,10 @@ describe('Workspace', () => {
       'Fix framing',
       'Subtitle timeline',
       'Video timeline',
+      // W16-UI: auto-b-roll. Before it, `broll.assets/addAsset/removeAsset/status/
+      // index/suggest/apply` had no caller anywhere in the renderer, so the whole
+      // flagship — engine, registry door and all — was user-unreachable.
+      'Auto B-roll',
       'Stabilize',
       // W19: eye-contact correction. Before it, gaze.probe/gaze.run had no caller
       // anywhere in the renderer, so the whole feature was user-unreachable.
@@ -302,6 +317,52 @@ describe('Workspace', () => {
         .querySelector('[role="tab"][data-tab-id="tracks"]')
         ?.closest('.tabbar__advanced-panel'),
     ).not.toBeNull();
+  });
+
+  // W16-UI. Auto-b-roll must be in a VISIBLE cluster, and for a reason specific to
+  // it rather than by analogy: the panel is where the UNCALIBRATED match threshold
+  // and the NO-UNDO apply disclosure live. Parking it behind the Advanced
+  // disclosure would hide the two honesty surfaces the feature ships with, which is
+  // the opposite of the point. It is also the only door to the seven `broll.*`
+  // methods, so a hidden tab is a hidden flagship.
+  it('puts Auto B-roll in the VISIBLE "Frame & Cut" cluster, not behind Advanced', async () => {
+    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
+    expect(frame?.tabIds).toContain('broll');
+    expect(frame?.advanced).not.toBe(true);
+    // exactly-once membership across the strip
+    expect(WORKSPACE_TAB_GROUPS.filter((g) => g.tabIds.includes('broll'))).toHaveLength(1);
+
+    // A SECOND, mechanically different signal: the array above states intent, this
+    // reads the rendered DOM. jsdom computes no visibility, so DOM POSITION
+    // (outside the container the disclosure hides) is the strongest check here; the
+    // pixel check is `.tab:visible` in the nightly `app/e2e/preview.spec.ts`.
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+    const tab = container.querySelector('[role="tab"][data-tab-id="broll"]');
+    expect(tab).not.toBeNull();
+    expect(tab?.closest('.tabbar__advanced-panel')).toBeNull();
+    // Control for that assertion: a tab that IS behind the disclosure must be found
+    // INSIDE it, or the `.closest()` selector could be silently wrong and the check
+    // above would pass for every tab in the strip.
+    expect(
+      container
+        .querySelector('[role="tab"][data-tab-id="tracks"]')
+        ?.closest('.tabbar__advanced-panel'),
+    ).not.toBeNull();
+  });
+
+  it('mounts the b-roll panel on its tab, threaded with the videoId it needs', async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="broll" />);
+    });
+    await flush();
+    const panel = container.querySelector('[data-panel="BrollPanel"]');
+    expect(panel).not.toBeNull();
+    // `broll.suggest` and `broll.apply` are both videoId-scoped; without it the
+    // panel could list and index a library but never match or render anything.
+    expect(panel?.getAttribute('data-videoid')).toBe('v1');
   });
 
   it('puts Speed in the Frame & Cut group and selects it from a deep-link', async () => {
@@ -810,15 +871,30 @@ describe('Workspace tab clusters (WU-3a2)', () => {
   // in the SAME commit — that file is owned by another live lane this wave, so the
   // edit there is confined to the two count literals and the sentences that state
   // them, nothing else.
+  //
+  // W16-UI UPDATE: 20 -> 21 and 15 -> 16. The new `broll` tab joins the VISIBLE
+  // "Frame & Cut" cluster (see its own test below for why it must not sit behind
+  // the Advanced disclosure), so BOTH counts move by one and the hidden count is
+  // unchanged at 5. Numbers RE-DERIVED from the source in this commit, not read off
+  // a failing run: WORKSPACE_TABS has 21 entries, and the four groups hold
+  // 6 (speech) + 8 (frame) + 2 (audio) + 5 (deliver, `advanced`) = 21, so 16 paint
+  // while Deliver is collapsed. `app/e2e/preview.spec.ts` was updated in the SAME
+  // commit; that is the whole point of this test existing.
   it('pins the strip counts that the nightly e2e spec hardcodes', () => {
-    expect(WORKSPACE_TABS).toHaveLength(20);
+    expect(WORKSPACE_TABS).toHaveLength(21);
     const hiddenWhenCollapsed = WORKSPACE_TAB_GROUPS.filter((g) => g.advanced).reduce(
       (n, g) => n + g.tabIds.length,
       0,
     );
     expect(hiddenWhenCollapsed).toBe(5);
     // What actually paints while the Advanced cluster is collapsed.
-    expect(WORKSPACE_TABS.length - hiddenWhenCollapsed).toBe(15);
+    expect(WORKSPACE_TABS.length - hiddenWhenCollapsed).toBe(16);
+    // Every tab belongs to EXACTLY ONE group, so the two numbers above are a
+    // partition of the strip rather than two independent counts that could drift
+    // apart (an id in no group would not paint at all).
+    const grouped = WORKSPACE_TAB_GROUPS.flatMap((g) => g.tabIds);
+    expect(grouped).toHaveLength(WORKSPACE_TABS.length);
+    expect([...new Set(grouped)].sort()).toEqual(WORKSPACE_TABS.map((t) => t.id).sort());
   });
 
   it('collapses the Deliver cluster behind Advanced by default and toggles it open/closed', async () => {

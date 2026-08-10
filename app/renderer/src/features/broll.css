@@ -1,0 +1,310 @@
+/* broll.css — the Auto B-roll panel (W16-UI).
+   Deepens the shared panel voice in panels.css rather than restating it: quiet
+   tracked-caps labels, mono for every path and number, status colours only where
+   something IS a status. Kept in its own file because the panel introduces two
+   shapes panels.css has no vocabulary for — an asset TILE GRID whose primary cell
+   is deliberately EMPTY (there is no b-roll poster extractor, so the placeholder
+   is the normal state, not a fallback), and a REVIEW row that has to put a score,
+   a quoted reason and a timecode window on one line without any of the three
+   winning. Class names are asserted by BrollPanel.test.tsx; restyle only. */
+
+.broll-panel .broll-limits,
+.broll-panel .broll-threshold-copy,
+.broll-panel .broll-add-hint {
+  margin: 0 0 var(--space-4);
+  max-width: 72ch;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-body-leading);
+}
+
+/* The privacy badge is the ONE piece of good news worth a colour, and it is
+   driven off the wire (`willEgress`) rather than a hardcoded promise. */
+.broll-panel .broll-local {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--status-success);
+  border-radius: var(--radius-sm);
+  background: var(--status-success-soft);
+  color: var(--status-success);
+  font-size: var(--type-caption-size);
+}
+
+/* …and its inverse. If the sidecar ever reports egress on this path something is
+   wrong with the build, so it takes the error rail, not the warn rail. */
+.broll-panel .broll-egress {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--status-error);
+  border-radius: var(--radius-sm);
+  background: var(--status-error-soft);
+  color: var(--status-error-text);
+  font-size: var(--type-caption-size);
+}
+
+/* ---- freshness snapshot ------------------------------------------------------ */
+
+.broll-panel .broll-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+}
+
+.broll-panel .broll-status dt {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.broll-panel .broll-status dd {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* ---- the add-by-path row ----------------------------------------------------- */
+
+.broll-panel .broll-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.broll-panel .broll-add > label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.broll-panel .broll-add input[type="text"] {
+  min-width: 26ch;
+}
+
+.broll-panel .broll-add-hint {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* ---- the asset grid ---------------------------------------------------------- */
+
+.broll-panel .broll-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+  padding: 0;
+  list-style: none;
+}
+
+.broll-panel .broll-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.broll-panel .broll-tile:hover {
+  background: var(--surface-hover);
+}
+
+.broll-panel .broll-poster {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  object-fit: cover;
+}
+
+/* The EMPTY state of that cell is the normal one: no b-roll poster extractor
+   exists, so this is a labelled well rather than a broken-image slot. */
+.broll-panel .broll-poster--none {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.broll-panel .broll-tile-name {
+  font-size: var(--type-card-title-size);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.broll-panel .broll-tile-meta {
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+.broll-panel .broll-tile-path {
+  overflow-wrap: anywhere;
+}
+
+.broll-panel .broll-tile button {
+  align-self: flex-start;
+}
+
+/* ---- missing files ----------------------------------------------------------- */
+
+/* Reported, never silently dropped — a vanished registration is excluded from
+   indexing, so this section is the only place it can still be seen. WARN, not
+   error: nothing failed, the user just moved a file. */
+.broll-panel .broll-missing {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius-sm);
+  background: var(--status-warn-soft);
+}
+
+.broll-panel .broll-missing h3 {
+  margin-top: 0;
+  color: var(--status-warn);
+}
+
+.broll-panel .broll-missing p {
+  margin: 0 0 var(--space-3);
+  max-width: 72ch;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+}
+
+.broll-panel .broll-missing ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.broll-panel .broll-missing li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.broll-panel .broll-missing-name {
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+/* ---- matching controls ------------------------------------------------------- */
+
+.broll-panel .broll-index-actions {
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.broll-panel .broll-force,
+.broll-panel .broll-match > label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--type-control-size);
+}
+
+.broll-panel .broll-match {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+}
+
+.broll-panel .broll-threshold-value {
+  min-width: 4ch;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.broll-panel .broll-match input[type="number"] {
+  width: 8ch;
+}
+
+/* ---- the review list -------------------------------------------------------- */
+
+/* "Nothing cleared the threshold" is a RESULT. It reads as a neutral status with
+   the dial immediately above it, never as an error. */
+.broll-panel .broll-no-match {
+  margin: var(--space-4) 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--edge-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  max-width: 72ch;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+}
+
+.broll-panel .broll-review ul {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.broll-panel .broll-review-row {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) 6ch minmax(160px, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--edge);
+}
+
+.broll-panel .broll-review-row:hover {
+  background: var(--surface-hover);
+}
+
+.broll-panel .broll-review-row > label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* The score is the one number a reviewer scans down the column, so it is mono and
+   right-aligned; it is NOT colour-coded, because the threshold that decides
+   good-enough is itself uncalibrated and a green dot would overstate it. */
+.broll-panel .broll-review-score {
+  font-family: var(--font-mono);
+  text-align: right;
+  color: var(--text-primary);
+}
+
+.broll-panel .broll-review-reason {
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+}
+
+.broll-panel .broll-review-row code {
+  grid-column: 1 / -1;
+}
+
+/* The no-undo disclosure sits between the list and the Apply button, so it cannot
+   be scrolled past on the way to clicking. */
+.broll-panel .broll-one-way {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius-sm);
+  background: var(--status-warn-soft);
+  max-width: 72ch;
+  color: var(--status-warn);
+  font-size: var(--type-caption-size);
+}

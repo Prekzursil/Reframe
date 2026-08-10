@@ -211,28 +211,29 @@ test('Advanced disclosure actually COLLAPSES the Deliver cluster (F17)', async (
   // ...so the cluster it owns must not paint. It does today: the author-origin
   // `display: flex` on `.tabbar--grouped .tabbar__advanced-panel` outranks the
   // UA `[hidden] { display: none }`, and no `[hidden]` selector anywhere under
-  // app/ restores it — so all 20 tabs paint instead of 15 and `aria-expanded`
+  // app/ restores it — so all 21 tabs paint instead of 16 and `aria-expanded`
   // lies about what is on screen.
   await expect(panel).toBeHidden();
   await expect(deliverTab).toBeHidden();
-  // The user-visible consequence: the default view paints the 15 primary tabs,
-  // not all 20. (`.tab` is exclusive to this strip.)
+  // The user-visible consequence: the default view paints the 16 primary tabs,
+  // not all 21. (`.tab` is exclusive to this strip.)
   //
   // These two numbers are DERIVED, not observed — they are `WORKSPACE_TABS.length`
   // and that minus the `advanced: true` group's `tabIds.length`
-  // (`Workspace.tsx`): 20 tabs total; Deliver holds 5 (convert, nle, recipes,
-  // assets, tracks), so 15 paint while it is collapsed. They were 13/8 until the
+  // (`Workspace.tsx`): 21 tabs total; Deliver holds 5 (convert, nle, recipes,
+  // assets, tracks), so 16 paint while it is collapsed. They were 13/8 until the
   // v1.5 wave added `transcriptEdit`, `timeline`, `speed` and `audiomix`; e2e is
   // opt-in and nightly, so it never gated those PRs and the stale pair merged
   // four times over. It went 17/12 -> 19/14 when W17/W18 mounted `reframeFix`
   // and `videoTimeline` into the visible "Frame & Cut" cluster, updated here in
   // the SAME commit as `Workspace.test.tsx`'s "pins the strip counts" test —
   // that PR-gating test is the only reason this nightly pair is not stale again.
-  // W19 took it 19/14 -> 20/15 by mounting `gaze` into that same visible cluster.
+  // W19 took it 19/14 -> 20/15 by mounting `gaze` into that same visible cluster,
+  // and W16-UI took it 20/15 -> 21/16 by mounting `broll` into it as well.
   // Re-derive from the source when the tab list changes — do NOT read a number
   // off a failing run and paste it back.
-  await expect(win.locator('.tab')).toHaveCount(20);
-  await expect(win.locator('.tab:visible')).toHaveCount(15);
+  await expect(win.locator('.tab')).toHaveCount(21);
+  await expect(win.locator('.tab:visible')).toHaveCount(16);
   // ...and the disclosure's own toggle is reachable WITHOUT horizontally
   // scrolling `.workspace .tabbar` (workspace.css `overflow-x: auto`). With the
   // cluster always painted the strip overflowed its 1064px track by 587px and

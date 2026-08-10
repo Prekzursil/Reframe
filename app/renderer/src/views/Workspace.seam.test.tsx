@@ -236,6 +236,43 @@ describe('Workspace ↔ Dub/LipSync seam (W20)', () => {
   });
 });
 
+// W16-UI. Same reason the Gaze block above exists, and the reachability claim here
+// is the whole point of the lane: `Workspace.test.tsx` mocks
+// `../features/BrollPanel` to a marker div, so it proves the TabBar + the
+// `renderPanel()` switch and nothing about whether
+// `lazy(() => import('../features/BrollPanel'))` resolves. Only a REAL mount can
+// show that a user clicking "Auto B-roll" actually reaches the seven `broll.*`
+// RPCs — the claim this lane is making — so it is asserted here, executably,
+// rather than narrowed away or rested on `tsc --noEmit`.
+describe('Workspace ↔ BrollPanel seam (W16-UI)', () => {
+  it('mounts the REAL b-roll panel on its tab, with its honesty surfaces present', async () => {
+    await import('../features/BrollPanel'); // warm the lazy chunk (same idiom as above)
+    rpcMock.mockResolvedValue({ project });
+
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="broll" />);
+    });
+    await flush();
+
+    // The real panel, not the Suspense fallback and not a marker div: its own
+    // section class plus the two disclosures only the real component renders.
+    expect(container.querySelector('.broll-panel')).not.toBeNull();
+    expect(container.querySelector('[data-section="threshold-disclosure"]')?.textContent).toContain(
+      'UNCALIBRATED',
+    );
+    expect(container.querySelector('[data-section="limits"]')).not.toBeNull();
+    // The threshold really is a control the user can move, not a fixed constant.
+    expect(container.querySelector('[data-input="threshold"]')).not.toBeNull();
+    // Fail-closed on this scaffold: the fake bridge answers `broll.assets` with
+    // `{}`, so the library reads EMPTY and the register control stays shut until a
+    // path is typed. That IS the shipped first-run behaviour.
+    expect(container.querySelector('[data-section="grid"]')).toBeNull();
+    expect((container.querySelector('[data-action="add"]') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+});
+
 describe('Workspace ↔ Speed seam', () => {
   it('mounts the REAL Speed panel on the speed tab, threaded with the video duration', async () => {
     // The point of this test: before v1.5 the re-time engine had no control in

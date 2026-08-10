@@ -70,6 +70,13 @@ const ReframeCorrect = lazy(() => import('../features/ReframeCorrect'));
 // ZERO times, case-insensitively, anywhere under `app/renderer` — so the entire
 // feature, ethics gate included, was unreachable by any user. This mounts it.
 const Gaze = lazy(() => import('../features/Gaze'));
+// W16-UI: auto-b-roll — the last v1.5 flagship with no user surface. The sidecar
+// ships ~58 KB of engine (features/broll_ops.py, broll_plan.py, broll_index.py,
+// broll_compose.py) behind SEVEN registered RPCs, and `broll` matched ZERO files
+// under `app/` while matching 15 under `sidecar/` (detector controlled both ways).
+// BR1 (#393) added the registration door, so the library can now be filled from the
+// app; this mounts the surface that fills and uses it.
+const BrollPanel = lazy(() => import('../features/BrollPanel'));
 
 /**
  * v1.5 timeline-naming — two LABELS name their real subject. Ids are untouched
@@ -112,6 +119,12 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'timeline', label: 'Subtitle timeline' },
   // W18: the real video timeline (see the reconciliation note above).
   { id: 'videoTimeline', label: 'Video timeline' },
+  // W16-UI: auto-b-roll sits next to the video timeline because it is the same KIND
+  // of operation — it puts additional footage INTO the timeline for chosen windows.
+  // It is NOT filed under "Advanced": the panel carries the feature's two honesty
+  // surfaces (an UNCALIBRATED match threshold, and an apply with no undo), and
+  // hiding those behind a disclosure toggle would defeat the point of shipping them.
+  { id: 'broll', label: 'Auto B-roll' },
   { id: 'stabilize', label: 'Stabilize' },
   // W19: eye-contact correction sits next to Stabilize because it is the same KIND
   // of operation — a whole-clip, token-free, fully local image correction that
@@ -155,7 +168,21 @@ export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
     // W19: 'gaze' joins the same VISIBLE cluster, taking the painted strip to 15
     // for the same reason — plus one specific to it: the panel IS the likeness
     // consent gate, so it must be findable, not filed under Advanced.
-    tabIds: ['shortmaker', 'reframeFix', 'timeline', 'videoTimeline', 'stabilize', 'gaze', 'speed'],
+    //
+    // W16-UI: 'broll' joins it too, taking the painted strip to 16. Same shape of
+    // argument, different surfaces: the b-roll panel is where the uncalibrated match
+    // threshold is presented as a dial and where "apply cannot be undone" is stated
+    // before the click. Both belong in front of the user, not behind a toggle.
+    tabIds: [
+      'shortmaker',
+      'reframeFix',
+      'timeline',
+      'videoTimeline',
+      'broll',
+      'stabilize',
+      'gaze',
+      'speed',
+    ],
   },
   { id: 'audio', label: 'Audio', tabIds: ['dub', 'audiomix'] },
   {
@@ -383,6 +410,12 @@ export function Workspace({
             sourceDurationSec={video.durationSec}
           />
         );
+      case 'broll':
+        // No extra props: every `broll.*` method takes either nothing or
+        // `{videoId, …}` — the library half is per MACHINE (a `brollDir` scan plus
+        // the BR1 registry), so passing this video's path or duration would imply
+        // per-video inputs the RPCs do not accept.
+        return <BrollPanel videoId={video.id} />;
       case 'stabilize':
         return <Stabilize videoId={video.id} />;
       case 'gaze':
