@@ -2,8 +2,9 @@
 // container (W58).
 //
 // The pain this pins: `components/captionOverlay.css` sizes the caption in `cqw`
-// (container query width) at two sites — the hook slot (:25) and the active
-// caption line (:43) — but NOT ONE `container-type` / `container-name`
+// (container query width) at two sites — the hook slot and the active caption line
+// (:25 and :43 as measured at db61ea6e, before the fix comment shifted them) — but
+// NOT ONE `container-type` / `container-name`
 // declaration existed anywhere in the renderer CSS. Per CSS Containment 3 §2.1, a
 // `cq*` unit with no ancestor container falls back to the SMALL VIEWPORT, so the
 // caption sized itself against the application window instead of the phone stage
@@ -11,15 +12,28 @@
 //
 // That is not a cosmetic drift, because the stage is nearly fixed-width:
 // `features/shortmaker.css:22` sets `.sm-phone { width: min(248px, 100%) }`.
-// Resolving `font-size: clamp(0.95rem, 5cqw, 1.55rem)` (:43) both ways, at a 16px
-// root:
-//   * against the viewport at 1920px wide → 5cqw = 96px → clamped to the MAX, 24.8px
-//   * against the 248px stage           → 5cqw = 12.4px → clamped to the MIN, 15.2px
-// The two land on OPPOSITE ends of the clamp, and the middle (scaling) term is
-// unreachable against the viewport at any window ≥ 496px — so the caption sat
-// pinned at its ceiling on every realistic window size and the "scale with the
-// stage" intent was entirely dead. It also meant resizing the app window changed
-// the caption size while the stage it floats on did not move.
+//
+// CORRECTED ARITHMETIC — the first version of this block resolved the `rem` terms
+// against a 16px root and reported "24.8px → 15.2px" and "unreachable above 496px".
+// Both figures were WRONG: the root font-size in this app is 13px, because
+// `components/shell.css` sets `html { font-size: var(--type-body-size) }` and
+// `styles/tokens.css:145` defines `--type-body-size: 13px`. The UA default never
+// applies. Re-resolved at 13px:
+//
+//   .caption-overlay__line  clamp(12.35px, 5cqw, 20.15px)
+//     viewport 1920px → 96.00px → clamped to MAX      20.15px
+//     248px stage     → 12.40px → SCALING term active 12.40px
+//   .caption-overlay__hook  clamp(11.70px, 4.5cqw, 18.20px)
+//     viewport 1920px → 86.40px → clamped to MAX      18.20px
+//     248px stage     → 11.16px → clamped to MIN      11.70px
+//
+// So both sites sat pinned at their CEILING on every realistic window — the max is
+// reached at any container ≥ 403px (line) / ≥ 404px (hook) — roughly 63% oversized
+// for the stage, and resizing the app rescaled the caption while the stage it floats
+// on did not move. Only the HOOK lands on the opposite clamp end at stage width; the
+// LINE lands in its scaling band, which is the stronger evidence: that band is active
+// for a container of 247px..403px and the stage is 248px, so the clamp was authored
+// FOR this stage and only the container was missing.
 //
 // This file imports no TS source; it is a pure style-file conformance check,
 // following `styles/tokens.conformance.test.ts` and
@@ -102,6 +116,29 @@ describe('container-query units have a container (W58)', () => {
     // `container-type` is the property; `contain` is a DIFFERENT property that does
     // NOT establish a query container, so it must not be mistaken for one.
     expect(CONTAINER_DECL.test('.x { contain: layout style; }')).toBe(false);
+  });
+
+  it('pins the 13px root the clamp arithmetic above depends on', () => {
+    // The px figures in this file's header are only true at a 13px root, and the
+    // first version of them was wrong precisely because it assumed the 16px UA
+    // default. This makes the assumption CHECKED rather than asserted in prose: if a
+    // later lane retunes the body size or stops feeding it to `html`, this fails and
+    // the numbers get re-derived instead of silently rotting.
+    const tokens = stripComments(readFileSync(resolve(HERE, '..', 'styles', 'tokens.css'), 'utf8'));
+    expect(/--type-body-size:\s*13px/.test(tokens)).toBe(true);
+    // The rule is a GROUPED selector — `html, body, #root { … }` — so this looks for
+    // `html` as a whole ENTRY of the selector list. A `html\s*\{` regex reports it
+    // absent, which is what the first version of this test did. Only the root element
+    // matters for `rem`; body/#root sharing the declaration is incidental.
+    const shell = stripComments(readFileSync(resolve(HERE, 'shell.css'), 'utf8'));
+    const rootRule = [...shell.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find((m) =>
+      m[1]
+        .split(',')
+        .map((s) => s.trim())
+        .includes('html'),
+    );
+    expect(rootRule, 'components/shell.css must still carry a rule for `html`').not.toBeUndefined();
+    expect(rootRule?.[2]).toMatch(/font-size:\s*var\(--type-body-size\)/);
   });
 
   it('.caption-overlay establishes an inline-size query container', () => {
