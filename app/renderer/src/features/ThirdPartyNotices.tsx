@@ -320,11 +320,21 @@ export const OPT_IN_MODEL_NOTICES: readonly OptInModelNotice[] = [
     useRestricted: true,
     attribution: '© Tencent Music Entertainment Lyra Lab (TMElyralab/MuseTalk)',
     source: 'https://huggingface.co/TMElyralab/MuseTalk',
+    // REFUTED IN REVIEW (W20): this sentence used to read "Reframe drives this
+    // engine with its own MIT YuNet face boxes", asserting a wiring that does not
+    // exist yet — `handlers/composition.py:327-336` passes no
+    // `lipsync_face_boxes_probe`, so nothing drives the engine at all today. The
+    // COMPLIANCE claim survives (in fact more strongly: the run refuses outright),
+    // but the mechanism claim was wider than the evidence, and it contradicted the
+    // lip-sync panel's own copy. Reworded to state the RULE, which is true in both
+    // wiring states: `require_face_boxes` (`lipsync.py:239-254`) either gets boxes
+    // from the vendored MIT YuNet detector or REFUSES — it never falls back.
     note:
       'Commercial use IS permitted under CreativeML OpenRAIL-M, subject to the same ' +
-      'Attachment A prohibited-use list and the same pass-through obligation. Reframe drives ' +
-      'this engine with its own MIT YuNet face boxes so the unlicensed S3FD detector bundled ' +
-      'with the upstream pipeline is never fetched or used.',
+      'Attachment A prohibited-use list and the same pass-through obligation. Reframe never lets ' +
+      'this engine find faces itself: it requires face boxes from its own MIT YuNet detector and ' +
+      'refuses the run outright when no provider is wired, so the unlicensed S3FD detector ' +
+      'bundled with the upstream pipeline is never fetched or used.',
   },
 ];
 
