@@ -37,14 +37,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import LipSync, {
   buildLipsyncParams,
   dubAudioTracks,
+  isFaceBoxRefusal,
   lipSyncEnabledFrom,
   lipsyncOutcome,
   DEFAULT_LIPSYNC_ENGINE,
   DEFAULT_LIPSYNC_QUALITY,
   LIPSYNC_ENGINES,
+  LIPSYNC_FACE_BOX_MARKER,
+  LIPSYNC_NO_IN_APP_SETTER,
+  LIPSYNC_DISABLED_REASON,
 } from './LipSync';
 import type { AudioTrack } from './Dub';
 import type { DoneEvent, MediaStudioApi, ProgressEvent } from './_api';
@@ -132,6 +139,86 @@ describe('lipSyncEnabledFrom', () => {
     expect(lipSyncEnabledFrom({})).toBe(false);
     expect(lipSyncEnabledFrom(null)).toBe(false);
     expect(lipSyncEnabledFrom('nope')).toBe(false);
+  });
+});
+
+describe('isFaceBoxRefusal', () => {
+  it('recognises the sidecar own unwired-probe refusal', () => {
+    // The real message, `require_face_boxes` (`lipsync.py:249-254`). A sidecar test
+    // asserts LIPSYNC_FACE_BOX_MARKER is still a substring of it, so this pair
+    // cannot drift apart silently.
+    expect(
+      isFaceBoxRefusal(
+        'no face-box provider is wired: lip-sync must be driven with boxes from ' +
+          'the vendored MIT YuNet detector, because letting the engine detect faces ' +
+          'itself pulls the unlicensed S3FD weight. Inject a face_boxes_probe',
+      ),
+    ).toBe(true);
+  });
+
+  it('is FALSE for every other failure — a transient error must not disable the control', () => {
+    expect(isFaceBoxRefusal('ffmpeg exploded')).toBe(false);
+    expect(isFaceBoxRefusal('')).toBe(false);
+    // Near-misses matter: the detector keys off the sidecar's exact phrase, not the
+    // word "face", so an unrelated detector error is not mistaken for the wiring gap.
+    expect(isFaceBoxRefusal('the face detector found no faces in /m/clip.mp4')).toBe(false);
+  });
+});
+
+// ─── the claim the DISABLED copy makes about `app/`, held by a test ──────────
+// REFUTED IN REVIEW: the first wording said "set the lipSyncEnabled setting to
+// true", naming a setting the user cannot reach — there is no settings UI for it.
+// The copy now says so outright, and this scan is what keeps that honest: if a
+// setter ever lands, this goes red and the sentence must be rewritten rather than
+// quietly becoming a lie. Scanning the SOURCE is the only way to check it; the
+// running renderer cannot see its own tree.
+describe('LIPSYNC_DISABLED_REASON is honest about there being no in-app setter', () => {
+  // `process.cwd()` is the vitest root (`app/`, see vitest.config.ts). NOT
+  // `import.meta.url`: under the vite-node runner it is not a file: URL and
+  // `fileURLToPath` throws "The URL must be of scheme file" — measured here.
+  // The walk finding THIS file is the control that the root resolved correctly.
+  const SRC_ROOT = join(process.cwd(), 'renderer', 'src');
+
+  function walk(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) return entry.name === 'generated' ? [] : walk(full);
+      if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) return [];
+      return [full];
+    });
+  }
+
+  const sources = walk(SRC_ROOT).map((path) => ({ path, text: readFileSync(path, 'utf8') }));
+
+  /** Files that pass `key` INTO a settings.set call (a write, not a mention). */
+  const writersOf = (key: string): string[] =>
+    sources
+      .filter(({ text }) => new RegExp(`settings\\.set[\\s\\S]{0,120}?${key}`).test(text))
+      .map(({ path }) => path);
+
+  it('finds a REAL settings.set write for a user-settable key (detector control)', () => {
+    // Without this control an empty result below would be indistinguishable from a
+    // broken walk or a regex that matches nothing at all.
+    expect(sources.length).toBeGreaterThan(50);
+    expect(sources.some(({ path }) => path.endsWith(join('features', 'LipSync.tsx')))).toBe(true);
+    expect(writersOf('useCloud').some((p) => p.endsWith('App.tsx'))).toBe(true);
+    expect(writersOf('directorOnboardingSeen').length).toBeGreaterThan(0);
+  });
+
+  it('finds NO write of lipSyncEnabled anywhere in the renderer', () => {
+    expect(writersOf('lipSyncEnabled')).toEqual([]);
+    // Stronger, and the part that will actually fire: only these two files may
+    // even MENTION the flag. A new toggle in Settings.tsx trips this immediately.
+    const mentions = sources
+      .filter(({ text }) => text.includes('lipSyncEnabled'))
+      .map(({ path }) => path.replace(SRC_ROOT, '').replace(/\\/g, '/').replace(/^\//, ''));
+    expect(mentions.sort()).toEqual(['features/LipSync.tsx', 'features/ThirdPartyNotices.tsx']);
+  });
+
+  it('states that in the copy the user actually reads, and names where the flag lives', () => {
+    expect(LIPSYNC_DISABLED_REASON).toContain(LIPSYNC_NO_IN_APP_SETTER);
+    expect(LIPSYNC_DISABLED_REASON).toContain('lipSyncEnabled');
+    expect(LIPSYNC_DISABLED_REASON).toContain('settings.json');
   });
 });
 
@@ -300,8 +387,11 @@ describe('<LipSync />', () => {
     fillReady();
     expect(startButton().disabled).toBe(true);
     const reason = container.querySelector('[data-section="disabled"]');
-    // Names the SETTING, so the disabled state is actionable rather than mysterious.
+    // Names the SETTING, so the disabled state is searchable rather than mysterious…
     expect(reason?.textContent).toContain('lipSyncEnabled');
+    // …and says plainly that this app has no switch for it, instead of sending the
+    // user hunting for a preference that does not exist (refuted in review).
+    expect(reason?.textContent).toContain(LIPSYNC_NO_IN_APP_SETTER);
   });
 
   it('fails CLOSED when settings.get itself throws', async () => {
@@ -350,13 +440,21 @@ describe('<LipSync />', () => {
     expect(licence()).toContain('creativeml-openrail-m');
   });
 
-  // The pre-click disclosure of the UNWIRED face-box provider. This is the
-  // difference between "disabled with a reason" and "silently broken": the user is
-  // told before clicking that a run will refuse, and why that refusal is correct.
-  it('discloses the missing face-box provider in BOTH flag states, before any click', async () => {
+  // The pre-click disclosure. This is the difference between "disabled with a
+  // reason" and "silently broken": the user is told before clicking that a build
+  // without a face-box provider refuses, and why that refusal is correct.
+  //
+  // It states the RULE, not a verdict about THIS build — see the next test. The
+  // first version asserted the verdict as present-tense fact, which an adversarial
+  // review correctly refuted: the renderer cannot observe `composition.py`, and the
+  // sentence would invert into "a working feature is broken" the moment the sibling
+  // lane wires the probe.
+  it('discloses the face-box rule in BOTH flag states, before any click', async () => {
     const on = makeFakeApi();
     await mount(on.api);
     expect(container.querySelector('[data-section="unwired"]')?.textContent).toContain('S3FD');
+    // ...and claims NOTHING about this build until something is measured.
+    expect(container.querySelector('[data-section="face-box-refused"]')).toBeNull();
     await act(async () => {
       root.unmount();
     });
@@ -364,6 +462,44 @@ describe('<LipSync />', () => {
     const off = makeFakeApi({ settings: { lipSyncEnabled: false } });
     await mount(off.api);
     expect(container.querySelector('[data-section="unwired"]')?.textContent).toContain('S3FD');
+    expect(container.querySelector('[data-section="face-box-refused"]')).toBeNull();
+  });
+
+  it('after an OBSERVED face-box refusal it disables the control and quotes the sidecar', async () => {
+    // This is the shape the brief asked for — disabled WITH A REASON — reached the
+    // only honest way: from a refusal the sidecar actually returned. `probe is None`
+    // cannot fix itself mid-session, so a second identical click is a guaranteed
+    // failure and must not be offered.
+    const refusal = new Error(
+      `${LIPSYNC_FACE_BOX_MARKER}: lip-sync must be driven with boxes from the ` +
+        'vendored MIT YuNet detector. Inject a face_boxes_probe',
+    );
+    const fake = makeFakeApi({ startError: refusal });
+    await mount(fake.api);
+    fillReady();
+    expect(startButton().disabled).toBe(false); // enabled BEFORE the click
+    await clickStart();
+    const observed = container.querySelector('[data-section="face-box-refused"]');
+    expect(observed?.textContent).toContain(LIPSYNC_FACE_BOX_MARKER);
+    expect(observed?.textContent).toContain('Measured on this build');
+    // and the control is now shut, with the failure also surfaced as an alert
+    expect(startButton().disabled).toBe(true);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      LIPSYNC_FACE_BOX_MARKER,
+    );
+  });
+
+  it('a DIFFERENT failure leaves the control usable — one bad run is not a verdict', async () => {
+    // The both-states half of the test above: without this, "disabled after a
+    // refusal" could just be "disabled after any error", which would strand the
+    // user on a transient ffmpeg failure.
+    const fake = makeFakeApi({ startError: new Error('ffmpeg exploded') });
+    await mount(fake.api);
+    fillReady();
+    await clickStart();
+    expect(container.querySelector('[data-section="face-box-refused"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('ffmpeg exploded');
+    expect(startButton().disabled).toBe(false);
   });
 
   it('discloses that the output is synthetic video and carries no embedded provenance', async () => {

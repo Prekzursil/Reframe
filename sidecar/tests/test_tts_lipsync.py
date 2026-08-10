@@ -947,6 +947,21 @@ class TestLicenceDriftGuard:
         # sidecar module exists to correct.
         assert "Commercial use IS permitted" in source
 
+    def test_the_panel_face_box_marker_matches_the_sidecar_refusal(self):
+        """The renderer DISABLES its control on this marker; both sides must agree.
+
+        `features/LipSync.tsx` reflects an OBSERVED refusal — once the sidecar has
+        said "no face-box provider is wired" it stops offering the click. That is
+        the only honest way for the renderer to know this build's wiring, and it
+        keys off the sidecar's own message text, so a reword on either side would
+        silently stop the detection. Pin both directions.
+        """
+        with pytest.raises(ls.LipSyncError) as excinfo:
+            ls.require_face_boxes(None, "clip.mp4")
+        marker = "no face-box provider is wired"
+        assert marker in str(excinfo.value)
+        assert f"LIPSYNC_FACE_BOX_MARKER = '{marker}'" in _PANEL_TSX.read_text(encoding="utf-8")
+
     def test_the_prose_normaliser_can_find_a_known_present_clause(self):
         # DETECTOR CONTROL for the test above. `_tsx_prose` exists because a
         # user-facing sentence in a .tsx file is written as several string literals
