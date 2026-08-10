@@ -45,20 +45,25 @@ import { createRoot, type Root } from 'react-dom/client';
 import BrollPanel, {
   APPLY_IS_ONE_WAY,
   BROLL_LAYOUTS,
+  BROLL_NEEDS_TRANSCRIPT,
   BROLL_REASON_NO_MATCH,
+  DEFAULT_BROLL_COOLDOWN_SEC,
   DEFAULT_BROLL_MAX_COVERAGE_PCT,
+  DEFAULT_BROLL_MIN_DURATION_SEC,
   DEFAULT_BROLL_THRESHOLD,
   NO_POSTER_LABEL,
   THRESHOLD_IS_UNCALIBRATED,
   assetDurationLabel,
   assetLabel,
+  emptyPlanExplanation,
   insertionWindowLabel,
+  isCoverageUsable,
   posterSrc,
   readBrollAssets,
   readBrollPlan,
   readBrollStatus,
 } from './BrollPanel';
-import type { BrollAsset } from '../lib/rpc';
+import { BROLL_METHODS, type BrollAsset } from '../lib/rpc';
 import type { DoneEvent, MediaStudioApi, ProgressEvent } from './_api';
 
 // --- fixtures --------------------------------------------------------------
@@ -248,8 +253,21 @@ describe('readBrollStatus', () => {
     expect(readBrollStatus('nope')).toBeNull();
   });
 
-  it('coerces absent fields to explicit zeros/falses, never invented numbers', () => {
-    expect(readBrollStatus({})).toEqual({
+  // REFUTED, and this is the red-proof. The first draft only rejected NON-objects,
+  // so `{}` — the canonical shapeless payload, and exactly what the lane's own
+  // real-mount seam test feeds every rpc — fell through and returned a full
+  // snapshot of zeros. Rendered, that reads "In library 0", a hard number the
+  // panel never measured, from a docstring promising the opposite.
+  it('returns null for an OBJECT carrying none of the snapshot fields ({} is not a snapshot)', () => {
+    expect(readBrollStatus({})).toBeNull();
+    expect(readBrollStatus({ somethingElse: 1 })).toBeNull();
+  });
+
+  // The coercion half was always right and is UNCHANGED: once a payload proves it
+  // is a snapshot by carrying at least one known field, its absent siblings become
+  // explicit zeros rather than `undefined` leaking into the DOM.
+  it('coerces the ABSENT siblings of a partial payload to explicit zeros/falses', () => {
+    expect(readBrollStatus({ indexed: false })).toEqual({
       indexed: false,
       assetCount: 0,
       libraryCount: 0,
@@ -259,6 +277,58 @@ describe('readBrollStatus', () => {
       staleCount: 0,
       willEgress: false,
     });
+    // …and the detector fires on EVERY one of the eight, not just the first.
+    expect(readBrollStatus({ willEgress: true })?.willEgress).toBe(true);
+    expect(readBrollStatus({ libraryCount: 3 })?.libraryCount).toBe(3);
+  });
+});
+
+describe('isCoverageUsable (the emptied-number-input trap)', () => {
+  // `Number('')` is 0, not NaN, and the sidecar's `_opt_float` passes 0 straight
+  // through — `float(0)` is valid, so the DEFAULT never kicks in — leaving
+  // `budget_sec = total_sec * 0 / 100 = 0`, which rejects every candidate.
+  it('rejects the value an emptied number input actually produces', () => {
+    expect(isCoverageUsable(Number(''))).toBe(false);
+    expect(isCoverageUsable(0)).toBe(false);
+  });
+
+  it('rejects a non-finite or out-of-range cap', () => {
+    expect(isCoverageUsable(Number.NaN)).toBe(false);
+    expect(isCoverageUsable(-5)).toBe(false);
+    expect(isCoverageUsable(101)).toBe(false);
+  });
+
+  it('accepts the inclusive 1..100 range the input advertises', () => {
+    expect(isCoverageUsable(1)).toBe(true);
+    expect(isCoverageUsable(DEFAULT_BROLL_MAX_COVERAGE_PCT)).toBe(true);
+    expect(isCoverageUsable(100)).toBe(true);
+  });
+});
+
+// REFUTED COPY. The old sentence — "nothing in your library scored at or above
+// {threshold} for any segment" — is a measurement the panel cannot make:
+// `broll_ops.py:425` emits the same reason for ANY empty plan, and `place` drops
+// candidates for min-duration, coverage budget, min-gap and per-asset cooldown,
+// none of which are the score. Executed against the real planner with identical
+// unit vectors (cosine 1.00 vs a 0.22 gate): default coverage -> 1 insertion,
+// `maxCoveragePct=1` -> 0, a 1.0s segment -> 0.
+describe('emptyPlanExplanation', () => {
+  it('never asserts the threshold as the cause, and names the causes that are not', () => {
+    const copy = emptyPlanExplanation(0.22, 40);
+    expect(copy).not.toContain('scored at or above');
+    expect(copy).toContain('SAME reason string');
+    expect(copy).toContain(`shorter than ${DEFAULT_BROLL_MIN_DURATION_SEC}s`);
+    expect(copy).toContain(`within ${DEFAULT_BROLL_COOLDOWN_SEC}s`);
+    expect(copy).toContain('too close to another insert');
+  });
+
+  it('quotes the dials the user actually set, including the coverage cap', () => {
+    const copy = emptyPlanExplanation(0.45, 25);
+    expect(copy).toContain('0.45');
+    expect(copy).toContain('coverage cap of 25%');
+    // The old copy pointed only at the threshold — which for a coverage-caused
+    // empty plan is the one control that provably cannot help.
+    expect(copy).toContain('RAISE the coverage cap');
   });
 });
 
@@ -321,8 +391,18 @@ describe('posterSrc (fact 2: a registered asset has no poster)', () => {
     expect(posterSrc(SCANNED)).toBeNull();
   });
 
-  it('a real poster path is used when one ever exists', () => {
-    expect(posterSrc({ ...REGISTERED, thumbnailPath: 'D:/th/dog.jpg' })).toBe('D:/th/dog.jpg');
+  // REFUTED PIN. This case used to assert the RAW path was the right answer,
+  // endorsing a value the renderer cannot load at all: the CSP is
+  // `img-src 'self' data: blob: mstream:` (app/main/security.ts:81, mirrored in
+  // app/renderer/index.html:17), so a filesystem path never resolves. The whole
+  // app routes posters through the traversal-guarded `thumb:` mstream resolver
+  // (components/useVideoThumbnail.ts:33, views/LibraryCard.tsx); this now does too.
+  it('a real poster is served as the thumb: mstream URL, never as a raw fs path', () => {
+    const url = posterSrc({ ...REGISTERED, thumbnailPath: 'D:/th/dog.jpg' });
+    expect(url).toBe(`mstream://media/${encodeURIComponent('thumb:D:/th/dog.jpg')}`);
+    // one path segment, and a scheme the CSP actually permits
+    expect(url?.startsWith('mstream://media/thumb%3A')).toBe(true);
+    expect(url).not.toContain('D:/th/dog.jpg');
   });
 });
 
@@ -450,6 +530,55 @@ describe('<BrollPanel />', () => {
     // `library.list` is the SOURCE-video lister; reading it here would show a
     // second, different library from the one broll.index actually embeds.
     expect(methods).not.toContain('library.list');
+  });
+
+  // THE SHIPPED WIRE STRINGS. A reviewer proved the gap executably: with the seven
+  // method names hand-written in this panel, renaming one to a method the sidecar
+  // does not register left `brollClient.conformance.test.ts` GREEN at 16/16 and
+  // `tsc --noEmit` at exit 0, because that suite only ever saw `client.broll.*` —
+  // a wrapper with no production caller. Both now read `BROLL_METHODS`; conformance
+  // pins that map against three readings of the sidecar source, and THIS case pins
+  // the other end of the chain: what the mounted panel actually emits.
+  it('puts ONLY the pinned BROLL_METHODS strings on the wire — never a hand-written literal', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api); // assets + status
+    pick('[data-input="add-path"]', 'D:/pictures/hero dog.png');
+    await click('add'); // addAsset
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-asset-id="${REGISTERED.assetId}"] [data-action="unregister"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await flush(); // removeAsset
+    await act(async () => {
+      btn('index').click();
+    });
+    await flush();
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-b', result: { assetCount: 1, embedded: 1 } });
+      await Promise.resolve();
+    });
+    await flush(); // index
+    await suggestWith(fake, { insertions: [INSERTION_A], reason: 'matched' }); // suggest
+    await act(async () => {
+      btn('apply').click();
+    });
+    await flush();
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-b', result: { path: 'C:/out/talk.broll.mp4', inserted: 1 } });
+      await Promise.resolve();
+    });
+    await flush(); // apply
+
+    const sent = [
+      ...new Set(fake.calls.map((c) => c.method).filter((m) => m.startsWith('broll.'))),
+    ].sort();
+    // EXACTLY the seven — equality, not containment, so an eighth invented string
+    // fails here just as loudly as a renamed one.
+    expect(sent).toEqual(Object.values(BROLL_METHODS).slice().sort());
   });
 
   it('renders the freshness snapshot including libraryCount and staleCount', async () => {
@@ -674,7 +803,12 @@ describe('<BrollPanel />', () => {
     await mount(makeFakeApi().api);
     const copy = q('[data-section="threshold-disclosure"]')?.textContent ?? '';
     expect(copy).toBe(THRESHOLD_IS_UNCALIBRATED);
-    expect(copy).toContain('0.22');
+    // REFUTED: this line used to read `toContain('0.22')` — a hardcoded literal
+    // checking a hardcoded literal, which stale copy satisfies. It now checks the
+    // copy against the CONSTANT, and `brollClient.conformance.test.ts` checks the
+    // copy against the sidecar's own value, so the §11.2 calibration cannot leave
+    // the panel telling the user a number it no longer seeds.
+    expect(copy).toContain(String(DEFAULT_BROLL_THRESHOLD));
     // The FULL relative path, not a bare basename: the disclosure sends a user to
     // the calibration experiment, and a bare filename is not a place they can go.
     expect(copy).toContain('docs/plans/v1.5/flagship-auto-broll.md');
@@ -704,6 +838,21 @@ describe('<BrollPanel />', () => {
     expect(q('[data-section="no-match"]')).not.toBeNull();
     expect(q('.error')).toBeNull();
     expect(container.querySelectorAll('[data-insertion]')).toHaveLength(0);
+  });
+
+  // The rendered half of the refuted-copy fix. `emptyPlanExplanation` is unit-tested
+  // above; this pins that the PANEL shows it, with the user's own dials in it, and
+  // still quotes the engine's reason verbatim rather than paraphrasing it.
+  it('the empty-plan copy blames no single cause and carries the coverage cap the user set', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    pick('[data-input="coverage"]', '25');
+    await suggestWith(fake, { insertions: [], reason: BROLL_REASON_NO_MATCH });
+    const copy = q('[data-section="no-match"]')?.textContent ?? '';
+    expect(copy).not.toContain('scored at or above');
+    expect(copy).toContain(emptyPlanExplanation(DEFAULT_BROLL_THRESHOLD, 25));
+    expect(copy).toContain('coverage cap of 25%');
+    expect(copy).toContain(BROLL_REASON_NO_MATCH);
   });
 
   it('a suggest answer with no jobId leaves an honest empty plan', async () => {
@@ -835,6 +984,46 @@ describe('<BrollPanel />', () => {
     expect(container.querySelectorAll('[data-insertion]')).toHaveLength(0);
   });
 
+  // THE PREREQUISITES. `broll_ops.suggest`'s job body runs `require_model` first
+  // (broll_ops.py:403) and then raises "<id> has no transcript yet; run
+  // transcribe.start first" (:408), so on a freshly imported video the advertised
+  // click path ends in an ERROR, discovered one failed click at a time. The panel's
+  // only previous mention of a transcript was inside the EGRESS badge, which is a
+  // different statement. Diarize.tsx:138, caption/CaptionInspector.tsx:47 and
+  // TranscriptEditor.tsx:221 all say it up front; so does this now.
+  it('states BOTH prerequisites BEFORE the button that hits them', async () => {
+    await mount(makeFakeApi().api);
+    const prereq = q('[data-section="prerequisites"]');
+    expect(prereq?.textContent).toBe(BROLL_NEEDS_TRANSCRIPT);
+    expect(prereq?.textContent).toContain('transcribe');
+    expect(prereq?.textContent).toContain('index your library');
+    // BEFORE, not after: document order decides whether it is a warning or a
+    // post-mortem. (`compareDocumentPosition` is the same check the one-way
+    // disclosure uses against Apply.)
+    expect(prereq?.compareDocumentPosition(btn('suggest'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  // `min`/`max` on a number input constrain VALIDITY, not the value React reads:
+  // an emptied field reports '', `Number('')` is 0, and the sidecar's `_opt_float`
+  // passes 0 through, so `budget_sec` becomes 0 and `place` rejects every candidate
+  // — the feature dies silently while the panel blames the threshold.
+  it('refuses to send an unusable coverage cap rather than silently sending 0', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    expect(btn('suggest').disabled).toBe(false);
+    expect(q('[data-section="coverage-invalid"]')).toBeNull();
+
+    pick('[data-input="coverage"]', '');
+    expect(btn('suggest').disabled).toBe(true);
+    expect(q('[data-section="coverage-invalid"]')?.textContent).toContain('between 1 and 100');
+    // and the wire stayed clean — no `maxCoveragePct: 0` was ever sent
+    expect(fake.calls.filter((c) => c.method === BROLL_METHODS.suggest)).toHaveLength(0);
+
+    pick('[data-input="coverage"]', '25');
+    expect(btn('suggest').disabled).toBe(false);
+    expect(q('[data-section="coverage-invalid"]')).toBeNull();
+  });
+
   it('names what is still missing so the copy cannot imply BR2 or posters shipped', async () => {
     await mount(makeFakeApi().api);
     const limits = q('[data-section="limits"]')?.textContent ?? '';
@@ -846,17 +1035,50 @@ describe('<BrollPanel />', () => {
     const withPoster: BrollAsset = { ...REGISTERED, thumbnailPath: 'D:/th/dog.jpg' };
     await mount(makeFakeApi({ assets: { assets: [withPoster], missing: [] } }).api);
     const row = q(`[data-asset-id="${REGISTERED.assetId}"]`);
-    expect(row?.querySelector('img')?.getAttribute('src')).toBe('D:/th/dog.jpg');
+    // The mstream URL, not the raw path — the CSP forbids the latter outright.
+    expect(row?.querySelector('img')?.getAttribute('src')).toBe(
+      `mstream://media/${encodeURIComponent('thumb:D:/th/dog.jpg')}`,
+    );
     expect(row?.querySelector('[data-poster="none"]')).toBeNull();
+  });
+
+  // …and the day a poster path does NOT resolve (main.ts:1465 serves `thumb:` ids
+  // ONLY from DATA_ROOT/thumbnails, and no b-roll poster writer exists yet to put
+  // them there), the tile must degrade to the readable placeholder rather than a
+  // permanently broken image icon. The `views/LibraryCard.tsx` pattern.
+  it('falls back to the placeholder when a poster fails to load', async () => {
+    const withPoster: BrollAsset = { ...REGISTERED, thumbnailPath: 'D:/th/dog.jpg' };
+    await mount(makeFakeApi({ assets: { assets: [withPoster], missing: [] } }).api);
+    const img = q(`[data-asset-id="${REGISTERED.assetId}"] img`) as HTMLImageElement;
+    expect(img).not.toBeNull();
+    await act(async () => {
+      img.dispatchEvent(new Event('error'));
+    });
+    expect(q(`[data-asset-id="${REGISTERED.assetId}"] img`)).toBeNull();
+    expect(
+      q(`[data-asset-id="${REGISTERED.assetId}"] [data-poster="none"]`)?.textContent,
+    ).toContain(NO_POSTER_LABEL);
   });
 
   // The un-indexed first-run state: every number the snapshot shows is ABSENT, and
   // the panel must say so rather than print zeros that look like measurements.
   it('reads a bare status payload as "not indexed yet", never as zeros', async () => {
-    await mount(makeFakeApi({ status: {} }).api);
+    await mount(makeFakeApi({ status: { indexed: false } }).api);
     expect(q('[data-field="indexed"]')?.textContent).toBe('not yet');
     expect(q('[data-field="stale"]')?.textContent).toBe('none');
     expect(q('[data-field="model"]')?.textContent).toBe('none');
+  });
+
+  // …but a payload carrying NOTHING is not a snapshot at all, and printing
+  // "In library 0" off it would be a measurement the panel never made. REFUTED
+  // behaviour, now pinned at the rendered layer as well as the parser.
+  it('renders NO status block at all for a `{}` payload — no invented zeros', async () => {
+    await mount(makeFakeApi({ status: {} }).api);
+    expect(q('[data-section="status"]')).toBeNull();
+    expect(q('[data-field="libraryCount"]')).toBeNull();
+    // control: the same mount DOES paint the rest of the panel, so the null above
+    // is the status guard firing and not a failed render.
+    expect(q('[data-section="threshold-disclosure"]')).not.toBeNull();
   });
 
   it('treats a job.done with NO result as the honest empty plan', async () => {

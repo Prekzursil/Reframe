@@ -49,8 +49,27 @@
 //   * B-roll POSTER extraction does not exist. `thumbnailPath` is
 //     unconditionally `""`; the only writer, `Library.set_thumbnail`, is
 //     `role='source'`-scoped, and `set_thumbnail(<brollAssetId>, …)` was measured
-//     to return `None` and change nothing. So the grid is designed for the ABSENT
-//     case and renders a labelled placeholder, never an <img> that would 404.
+//     to return `None` and change nothing. So the ABSENT case is the normal one,
+//     and the grid renders a labelled placeholder for it.
+//     REFUTED — an earlier draft of this line claimed the grid renders "never an
+//     <img> that would 404". BOTH halves were wrong. There IS a present-case
+//     <img> branch (whenever `posterSrc` is non-null), and it would not 404: it
+//     would never resolve at all, because the renderer CSP is
+//     `img-src 'self' data: blob: mstream:` (`app/main/security.ts:81`, mirrored
+//     in `app/renderer/index.html:17`) and a raw filesystem path is not a loadable
+//     source under it. The branch is latent today only because `add_broll` writes
+//     `""` — so the bug would have shipped, green, on the day a poster writer
+//     landed. It is now correct in advance: `posterSrc` returns the `thumb:`
+//     mstream URL through `components/Player.thumbMediaUrl` (the same
+//     traversal-guarded resolver `components/useVideoThumbnail.ts:33` uses for
+//     source posters), and the <img> carries an `onError` fallback to the
+//     placeholder, the `views/LibraryCard.tsx` pattern.
+//     STILL UNVERIFIED, inline where it belongs: nothing here proves a b-roll
+//     poster will LOAD, because no writer exists to produce one. `main.ts:1465`
+//     resolves a `thumb:` id ONLY inside `DATA_ROOT/thumbnails`, so a future
+//     writer that puts b-roll posters anywhere else stays unrenderable. The
+//     settling experiment is the poster writer itself: register an asset, have it
+//     emit `<DATA_ROOT>/thumbnails/<assetId>.jpg`, and assert the tile paints.
 //   * BR6 REVERSIBILITY is design-only. `broll.apply` renders a flat
 //     `{stem}.broll.mp4` (`broll_ops.py:450`) — there is no inverse op and no
 //     overlay track, so a user who dislikes the result has no undo beyond
@@ -59,6 +78,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import './panels.css';
 import './broll.css';
 import { extractJobId, getApi, pickField, waitForJobDone, type MediaStudioApi } from './_api';
+import { thumbMediaUrl } from '../components/Player';
+import { BROLL_METHODS } from '../lib/rpc';
 import type { BrollAsset, BrollAssetsResult, BrollInsertion, BrollStatus } from '../lib/rpc';
 
 /**
@@ -70,6 +91,21 @@ export const DEFAULT_BROLL_THRESHOLD = 0.22;
 
 /** Mirror of `broll_plan.DEFAULT_MAX_COVERAGE_PCT` (also conformance-pinned). */
 export const DEFAULT_BROLL_MAX_COVERAGE_PCT = 40;
+
+/**
+ * Mirror of `broll_plan.DEFAULT_MIN_DURATION_SEC` — a candidate window shorter
+ * than this is DROPPED by `place` (`broll_plan.py:339`), not stretched. Named in
+ * the empty-plan copy because it is one of the causes of an empty plan that has
+ * nothing to do with the match threshold. Conformance-pinned.
+ */
+export const DEFAULT_BROLL_MIN_DURATION_SEC = 1.5;
+
+/**
+ * Mirror of `broll_plan.DEFAULT_COOLDOWN_SEC` — the same asset may not reappear
+ * within this many seconds (`broll_plan.py:299`). Also an empty-plan cause.
+ * Conformance-pinned.
+ */
+export const DEFAULT_BROLL_COOLDOWN_SEC = 30;
 
 /** Mirror of `broll_plan.LAYOUTS`; `[0]` is `DEFAULT_LAYOUT`. */
 export const BROLL_LAYOUTS = ['cutaway', 'pip'] as const;
@@ -87,15 +123,44 @@ export const NO_POSTER_LABEL = 'No preview';
  * The threshold disclosure. Names the number, that it is UNCALIBRATED, that it is
  * per-backbone, and the experiment that would settle it — so the slider reads as
  * adjustable rather than authoritative.
+ *
+ * THE NUMBER IS INTERPOLATED, NOT TYPED. REFUTED first draft: it carried the
+ * literal `'0.22'` and its only test was `toContain('0.22')` — a second literal,
+ * which stale copy satisfies. The seed pin in `brollClient.conformance.test.ts`
+ * would then have caught the §11.2 calibration, a dev would have bumped
+ * {@link DEFAULT_BROLL_THRESHOLD} alone, and the panel would have shipped seeding
+ * (say) 0.31 while telling the user in plain English that the starting value is
+ * 0.22 AND that it has never been measured — a tuned value presented as untuned,
+ * with the wrong number. Interpolating closes it, and the conformance test now
+ * asserts this COPY contains the sidecar's own value.
  */
 export const THRESHOLD_IS_UNCALIBRATED =
   'Match threshold: a suggestion is only offered when the cosine similarity between ' +
-  'the spoken segment and the asset reaches this value. The starting value of 0.22 is ' +
+  `the spoken segment and the asset reaches this value. The starting value of ${String(DEFAULT_BROLL_THRESHOLD)} is ` +
   'an UNCALIBRATED placeholder, not a tuned number — no labelled probe set has been ' +
   'measured yet, and the right value is specific to the matching backbone, so a ' +
   'different backbone needs its own. Treat it as a dial, not an answer: raise it if ' +
   'you are offered junk, lower it if you are offered nothing. The calibration that ' +
   'would replace it is described in docs/plans/v1.5/flagship-auto-broll.md section 11.2.';
+
+/**
+ * The two PREREQUISITES, stated up front rather than discovered by clicking.
+ *
+ * `broll_ops.suggest`'s job body enforces them in this order: `require_model`
+ * against the index (`broll_ops.py:403`), then
+ * `raise _invalid(f"{video_id} has no transcript yet; run transcribe.start
+ * first")` (`:408`). So a user on a freshly imported video reaches an ERROR, not
+ * a suggestion, and discovers the two serially. The repo's own convention is to
+ * say so first — `Diarize.tsx:138` ("Needs a transcript first"),
+ * `caption/CaptionInspector.tsx:47`, `TranscriptEditor.tsx:221` all do. This
+ * panel previously mentioned a transcript exactly once, inside
+ * {@link BROLL_LOCAL_ONLY}, which is an EGRESS statement and not a prerequisite.
+ */
+export const BROLL_NEEDS_TRANSCRIPT =
+  'Before this can match anything: index your library above (a matcher must be ' +
+  'loaded), and transcribe THIS video first — matching compares what you say ' +
+  'against your clips, so with no transcript there is nothing to compare and ' +
+  'Suggest fails with "has no transcript yet".';
 
 /**
  * The BR6 disclosure, rendered directly ABOVE the Apply control. A user must know
@@ -169,13 +234,37 @@ export function readBrollAssets(result: unknown): BrollAssetsResult {
   return { assets: pickList(rec.assets), missing: pickList(rec.missing) };
 }
 
+/** The eight fields `broll.status` returns. A payload with NONE of them is not a snapshot. */
+const BROLL_STATUS_FIELDS = [
+  'indexed',
+  'assetCount',
+  'libraryCount',
+  'model',
+  'dim',
+  'stale',
+  'staleCount',
+  'willEgress',
+] as const;
+
 /**
  * Read `broll.status`. `null` for a shapeless payload so the panel renders nothing
  * instead of a snapshot of invented zeros presented as measurements.
+ *
+ * REFUTED first draft: the guard was `typeof result !== 'object'`, which lets `{}`
+ * — the canonical shapeless payload — straight through and returns exactly the
+ * snapshot of invented zeros the sentence above says it prevents. That rendered as
+ * the user-visible "In library 0 · Indexed not yet · Needs embedding none ·
+ * Matcher none", i.e. a hard `0` the panel never measured. Not hypothetical: the
+ * lane's own real-mount reachability test answers every rpc with `{}`, so the test
+ * offered as proof of reachability was itself painting a fabricated measurement.
+ * The guard now requires at least ONE recognised field, which is what makes the
+ * docstring true. A payload that DOES carry a field still has its absent siblings
+ * coerced to explicit zeros — that half was always correct and is unchanged.
  */
 export function readBrollStatus(result: unknown): BrollStatus | null {
   if (typeof result !== 'object' || result === null) return null;
   const rec = result as Record<string, unknown>;
+  if (!BROLL_STATUS_FIELDS.some((field) => field in rec)) return null;
   return {
     indexed: rec.indexed === true,
     assetCount: num(rec.assetCount),
@@ -230,13 +319,74 @@ export function assetDurationLabel(asset: BrollAsset): string {
 }
 
 /**
- * The poster source, or `null` when there is none. FACT: `add_broll` writes `""`
- * and no b-roll poster extractor exists, so `null` is the NORMAL answer and the
- * grid must render a placeholder rather than an <img> with an empty `src`.
+ * The poster `<img src>`, or `null` when there is none. FACT: `add_broll` writes
+ * `""` and no b-roll poster extractor exists, so `null` is the NORMAL answer and
+ * the grid must render a placeholder rather than an <img> with an empty `src`.
+ *
+ * The non-null answer is the `thumb:` MSTREAM URL, never the raw filesystem path.
+ * REFUTED first draft: it returned `asset.thumbnailPath` verbatim and a test
+ * pinned that as correct (`toBe('D:/th/dog.jpg')`) — endorsing a value the
+ * renderer cannot load at all, since the CSP is
+ * `img-src 'self' data: blob: mstream:`. Every other poster surface in the app
+ * wraps (`components/useVideoThumbnail.ts:33`, `views/LibraryCard.tsx`); this one
+ * did not, so the first poster writer to land would have turned every tile into a
+ * permanently broken image with a green suite.
  */
 export function posterSrc(asset: BrollAsset): string | null {
   const path = str(asset.thumbnailPath);
-  return path.length > 0 ? path : null;
+  return path.length > 0 ? thumbMediaUrl(path) : null;
+}
+
+/**
+ * Whether the typed coverage cap is a value the planner can act on.
+ *
+ * `<input type="number" min={1} max={100}>` constrains VALIDITY, not the value
+ * React reads: an emptied field reports `''` (the DOM also sanitises non-numeric
+ * text to `''`), so `Number('')` lands `0` in state and would be sent verbatim as
+ * `maxCoveragePct: 0`. The sidecar's `_opt_float` passes `0` through — `float(0)`
+ * is valid, so the default never kicks in — and `place` then computes
+ * `budget_sec = total_sec * 0 / 100 = 0`, which makes
+ * `used_sec + duration > budget_sec` reject EVERY candidate unconditionally
+ * (`broll_plan.py:333,362`). The feature would be silently and permanently dead
+ * until the user retyped a number, while the panel blamed the match threshold.
+ * So the panel REFUSES to send it — the same shape as the Register button, which
+ * stays shut until a non-blank path exists — rather than silently clamping a
+ * number the user did not choose.
+ */
+export function isCoverageUsable(pct: number): boolean {
+  return Number.isFinite(pct) && pct >= 1 && pct <= 100;
+}
+
+/**
+ * What an empty plan actually tells you — and, just as importantly, what it does
+ * NOT.
+ *
+ * REFUTED first draft: "No confident match: nothing in your library scored at or
+ * above {threshold} for any segment, so nothing is offered. Lower the threshold…".
+ * That is a specific measurement the panel cannot make. `broll_ops.py:425` emits
+ * `NO_CONFIDENT_MATCH` whenever `insertions` is empty for ANY reason, and
+ * `plan()` runs `suggest` (the threshold gate) THEN `diversify` THEN `place`,
+ * and `place` drops candidates for four reasons unrelated to score:
+ * `duration < min_duration_sec` (`:339`), `used_sec + duration > budget_sec`
+ * (`:333,362`), `min_gap_sec`, and the per-asset `cooldown_sec` (`:299`).
+ * Executed against the real planner with IDENTICAL unit vectors (cosine 1.00,
+ * 4.5x the gate): default coverage -> 1 insertion; `maxCoveragePct=1` -> 0; a
+ * 1.0 s segment -> 0. In both zero cases the old copy told the user, as fact,
+ * that nothing scored >= the threshold and pointed them at the one control that
+ * provably could not help — and for the coverage case the fix is to RAISE the
+ * cap, which it never mentioned.
+ */
+export function emptyPlanExplanation(threshold: number, coveragePct: number): string {
+  return (
+    'Nothing was offered for this video. The engine returns the SAME reason string for every ' +
+    'empty plan, so it does not say which rule stopped it and this panel will not guess. Any of ' +
+    `these produces one: no segment's best asset reached the match threshold ` +
+    `(${threshold.toFixed(2)}); or a match was found and then dropped because its window came ` +
+    `out shorter than ${DEFAULT_BROLL_MIN_DURATION_SEC}s, because it reused an asset within ` +
+    `${DEFAULT_BROLL_COOLDOWN_SEC}s, because it sat too close to another insert, or because it ` +
+    `did not fit your coverage cap of ${coveragePct}% of the video. Worth trying: lower the ` +
+    'threshold, RAISE the coverage cap, or add assets that match what you talk about.'
+  );
 }
 
 /** The timeline window a suggestion would occupy, in the source's own seconds. */
@@ -245,6 +395,26 @@ export function insertionWindowLabel(insertion: BrollInsertion): string {
 }
 
 // --- component -------------------------------------------------------------
+
+/**
+ * One grid tile's poster: the `thumb:` <img> when the asset has one, the labelled
+ * placeholder otherwise — and the placeholder again if the <img> fails to load.
+ * The `onError` swap is the `views/LibraryCard.tsx` pattern; without it a poster
+ * path that does not resolve (see the header's UNVERIFIED note on the thumbnails
+ * root) leaves a permanently broken image icon with no readable fallback.
+ */
+function BrollPoster({ asset }: { asset: BrollAsset }): React.ReactElement {
+  const poster = posterSrc(asset);
+  const [failed, setFailed] = useState<boolean>(false);
+  if (poster === null || failed) {
+    return (
+      <span className="broll-poster broll-poster--none" data-poster="none">
+        {NO_POSTER_LABEL}
+      </span>
+    );
+  }
+  return <img className="broll-poster" src={poster} alt="" onError={() => setFailed(true)} />;
+}
 
 export interface BrollPanelProps {
   videoId: string;
@@ -281,8 +451,8 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
 
   const loadLibrary = useCallback(async (): Promise<void> => {
     const [assetsRes, statusRes] = await Promise.all([
-      bridge.rpc<unknown>('broll.assets'),
-      bridge.rpc<unknown>('broll.status'),
+      bridge.rpc<unknown>(BROLL_METHODS.assets),
+      bridge.rpc<unknown>(BROLL_METHODS.status),
     ]);
     const parsed = readBrollAssets(assetsRes);
     setAssets(parsed.assets);
@@ -415,7 +585,7 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
     (): Promise<void> =>
       withBusy('add', async () => {
         const title = addTitle.trim();
-        await bridge.rpc('broll.addAsset', {
+        await bridge.rpc(BROLL_METHODS.addAsset, {
           path: addPath.trim(),
           // A blank field means "no title", which is the ABSENT param — not an
           // empty-string title. `add_broll` falls back to the file stem itself.
@@ -435,12 +605,13 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
   );
 
   const removeAsset = useCallback(
-    (id: string): Promise<void> => refresh('remove', () => bridge.rpc('broll.removeAsset', { id })),
+    (id: string): Promise<void> =>
+      refresh('remove', () => bridge.rpc(BROLL_METHODS.removeAsset, { id })),
     [bridge, refresh],
   );
 
   const runIndex = useCallback(
-    (): Promise<void> => refresh('index', () => runJob('broll.index', { force })),
+    (): Promise<void> => refresh('index', () => runJob(BROLL_METHODS.index, { force })),
     [force, refresh, runJob],
   );
 
@@ -448,7 +619,7 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
     (): Promise<void> =>
       withBusy('suggest', () =>
         runVideoJob(
-          'broll.suggest',
+          BROLL_METHODS.suggest,
           // Sent EXPLICITLY, always: an omitted threshold would make the sidecar's
           // uncalibrated 0.22 the silent authority and the slider a decoration.
           { threshold, maxCoveragePct: coverage, layout },
@@ -470,7 +641,7 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
   const apply = useCallback(
     (): Promise<void> =>
       withBusy('apply', () =>
-        runVideoJob('broll.apply', { insertions: approved }, (result) => {
+        runVideoJob(BROLL_METHODS.apply, { insertions: approved }, (result) => {
           setAppliedPath(str(pickField<string>(result, 'path')));
         }),
       ),
@@ -584,16 +755,9 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
       {assets.length > 0 && (
         <ul className="broll-grid" data-section="grid">
           {assets.map((asset) => {
-            const poster = posterSrc(asset);
             return (
               <li key={asset.assetId} data-asset-id={asset.assetId} className="broll-tile">
-                {poster ? (
-                  <img className="broll-poster" src={poster} alt="" />
-                ) : (
-                  <span className="broll-poster broll-poster--none" data-poster="none">
-                    {NO_POSTER_LABEL}
-                  </span>
-                )}
+                <BrollPoster asset={asset} />
                 <span className="broll-tile-name">{assetLabel(asset)}</span>
                 <span className="broll-tile-meta">
                   <span data-field="kind">{asset.kind}</span>
@@ -672,6 +836,13 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
       </div>
 
       <h3>Matching</h3>
+      {/* The two prerequisites, BEFORE the button that hits them (the repo
+          convention: Diarize.tsx:138, caption/CaptionInspector.tsx:47,
+          TranscriptEditor.tsx:221). The sidecar enforces them serially, so a user
+          told nothing discovers them one failed click at a time. */}
+      <p className="broll-prereq" data-section="prerequisites" role="status">
+        {BROLL_NEEDS_TRANSCRIPT}
+      </p>
       <p className="broll-threshold-copy" data-section="threshold-disclosure">
         {THRESHOLD_IS_UNCALIBRATED}
       </p>
@@ -702,6 +873,13 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
             disabled={working}
           />
         </label>
+        {!isCoverageUsable(coverage) && (
+          <span className="broll-coverage-invalid" data-section="coverage-invalid" role="alert">
+            Coverage must be between 1 and 100. An empty or zero cap leaves the planner no room at
+            all, so every match would be dropped and the result would look like "nothing matched" —
+            Suggest stays shut until this is a usable number.
+          </span>
+        )}
         <label>
           Style{' '}
           <select
@@ -724,7 +902,7 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
           type="button"
           data-action="suggest"
           onClick={() => void suggest()}
-          disabled={working}
+          disabled={working || !isCoverageUsable(coverage)}
         >
           {busy === 'suggest' ? 'Matching…' : 'Suggest b-roll'}
         </button>
@@ -754,14 +932,14 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
         </p>
       )}
 
-      {/* "Nothing cleared the threshold" is a RESULT, not a failure. Saying so
-          plainly — with the dial to change it right above — is the honest answer;
-          inserting something anyway is the competitor behaviour being avoided. */}
+      {/* An empty plan is a RESULT, not a failure — saying so plainly, with the
+          dials to change it right above, is the honest answer, and inserting
+          something anyway is the competitor behaviour being avoided. What it is
+          NOT is a measurement: see `emptyPlanExplanation` for the executed proof
+          that the engine's single reason string covers five different causes. */}
       {planned && insertions.length === 0 && (
         <p className="broll-no-match" data-section="no-match" role="status">
-          No confident match: nothing in your library scored at or above {threshold.toFixed(2)} for
-          any segment, so nothing is offered. Lower the threshold, or add assets that match what you
-          talk about, and try again. Reason from the engine: {reason}
+          {emptyPlanExplanation(threshold, coverage)} Reason from the engine: {reason}
         </p>
       )}
 

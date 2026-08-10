@@ -18,6 +18,21 @@
   line-height: var(--type-body-leading);
 }
 
+/* The two PREREQUISITES (an indexed library, a transcript for this video). Not an
+   error and not a warning — it is the instruction that comes first, so it takes
+   the neutral info rail and sits above the threshold copy. */
+.broll-panel .broll-prereq {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--edge-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  max-width: 72ch;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-body-leading);
+}
+
 /* The privacy badge is the ONE piece of good news worth a colour, and it is
    driven off the wire (`willEgress`) rather than a hardcoded promise. */
 .broll-panel .broll-local {
@@ -234,6 +249,18 @@
 
 .broll-panel .broll-match input[type="number"] {
   width: 8ch;
+}
+
+/* An emptied number input reads back as 0, which the planner turns into a zero
+   coverage budget that silently rejects every candidate. The panel refuses to
+   send it, so this line has to say WHY the Suggest button went quiet — a disabled
+   control with no explanation is just a dead button. */
+.broll-panel .broll-coverage-invalid {
+  flex-basis: 100%;
+  max-width: 72ch;
+  color: var(--status-error-text);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-body-leading);
 }
 
 /* ---- the review list -------------------------------------------------------- */

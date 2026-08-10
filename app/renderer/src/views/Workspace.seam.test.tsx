@@ -270,6 +270,17 @@ describe('Workspace ↔ BrollPanel seam (W16-UI)', () => {
     expect((container.querySelector('[data-action="add"]') as HTMLButtonElement).disabled).toBe(
       true,
     );
+    // …and the same `{}` must NOT paint a freshness snapshot. A reviewer caught
+    // this scaffold doing exactly that: `readBrollStatus` only rejected NON-objects,
+    // so `{}` returned a full row of zeros and THIS test — the one offered as proof
+    // of reachability — rendered "In library 0" as though it were a measurement.
+    // Fixed in the panel; pinned here so the scaffold can never fabricate again.
+    expect(container.querySelector('[data-section="status"]')).toBeNull();
+    // The prerequisites are the first thing a user on a fresh video needs, so they
+    // must survive the real lazy mount, not just the unit harness.
+    expect(container.querySelector('[data-section="prerequisites"]')?.textContent).toContain(
+      'transcribe THIS video first',
+    );
   });
 });
 

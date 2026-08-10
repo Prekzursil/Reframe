@@ -231,6 +231,34 @@ export interface BrollInsertion {
   layout: string;
 }
 
+/**
+ * The seven `broll.*` method strings, in ONE place — the auto-b-roll wire
+ * vocabulary shared by the typed wrappers in {@link client} and by the SHIPPED
+ * caller, `features/BrollPanel.tsx`.
+ *
+ * WHY A MAP AND NOT LITERALS AT THE CALL SITES. The first draft of the W16-UI
+ * lane wrote the strings twice: once in the wrappers below, once by hand in the
+ * panel. A reviewer proved the gap executably — renaming the PANEL's
+ * `'broll.removeAsset'` to `'broll.remove'` (a method the sidecar does not
+ * register) left `features/brollClient.conformance.test.ts` fully GREEN at 16/16
+ * and `tsc --noEmit` at exit 0, because the sidecar-anchored check only ever saw
+ * the wrappers, which no user path executes. Only `BrollPanel.test.tsx` reddened.
+ *
+ * With one map, a call site cannot invent a string — `BROLL_METHODS.remove` is a
+ * type error — and `brollClient.conformance.test.ts` pins these seven VALUES
+ * against three independent readings of the sidecar source, so a rename there
+ * reddens the build for the strings that actually go on the wire.
+ */
+export const BROLL_METHODS = {
+  status: 'broll.status',
+  assets: 'broll.assets',
+  addAsset: 'broll.addAsset',
+  removeAsset: 'broll.removeAsset',
+  index: 'broll.index',
+  suggest: 'broll.suggest',
+  apply: 'broll.apply',
+} as const;
+
 // ---- Method-typed convenience surface (the canonical client) -------------
 //
 // Thin, named wrappers around `rpc(...)` for the §2 method registry. New code
@@ -1081,6 +1109,18 @@ export const client = {
    * `sidecar/` — the detector was controlled both ways, so the whole flagship was
    * genuinely user-unreachable.
    *
+   * NO PRODUCTION CALLER YET, and that is disclosed rather than implied away.
+   * `features/BrollPanel.tsx` is the shipped door and it reaches the sidecar
+   * through the injectable `api` bridge (`features/_api.ts`), the same as
+   * Stabilize / Gaze / AudioMix / Speed — measured on this branch,
+   * `client.stabilize`, `client.gaze`, `client.audiomix` and `client.speed` also
+   * appear only in `lib/rpc/*.test.ts`. What these wrappers DO carry is the typed
+   * param shapes, and — since the panel and the wrappers now share
+   * {@link BROLL_METHODS} — the sidecar pin on the strings the panel puts on the
+   * wire. An earlier draft of the conformance test called this "the renderer's
+   * only typed door"; that was REFUTED by a surviving mutant and is corrected
+   * there.
+   *
    * `status` / `assets` / `addAsset` / `removeAsset` are DIRECT-return.
    * `index` / `suggest` / `apply` are deferred JOBS: they resolve `{jobId}` only
    * and the typed payload arrives on the later `job.done`.
@@ -1097,9 +1137,9 @@ export const client = {
    */
   broll: {
     /** `broll.status()` -> the index freshness snapshot. */
-    status: (): Promise<BrollStatus> => rpc('broll.status'),
+    status: (): Promise<BrollStatus> => rpc(BROLL_METHODS.status),
     /** `broll.assets()` -> the ONE merged library + the vanished registry rows. */
-    assets: (): Promise<BrollAssetsResult> => rpc('broll.assets'),
+    assets: (): Promise<BrollAssetsResult> => rpc(BROLL_METHODS.assets),
     /**
      * `broll.addAsset({path, title?})` -> `{asset}`. Registers a file BY PATH (no
      * copy, no move). `title` applies on FIRST registration only — re-posting the
@@ -1107,16 +1147,16 @@ export const client = {
      * so a rename is `removeAsset` + `addAsset`.
      */
     addAsset: (path: string, title?: string): Promise<{ asset: BrollAsset }> =>
-      rpc('broll.addAsset', title === undefined ? { path } : { path, title }),
+      rpc(BROLL_METHODS.addAsset, title === undefined ? { path } : { path, title }),
     /** `broll.removeAsset({id})` -> `{ok}`. UNREGISTERS; the user's file is never deleted. */
-    removeAsset: (id: string): Promise<{ ok: boolean }> => rpc('broll.removeAsset', { id }),
+    removeAsset: (id: string): Promise<{ ok: boolean }> => rpc(BROLL_METHODS.removeAsset, { id }),
     /** `broll.index({force})` -> `{jobId}`. Embeds only the stale subset unless forced. */
-    index: (force = false): Promise<JobHandle> => rpc('broll.index', { force }),
+    index: (force = false): Promise<JobHandle> => rpc(BROLL_METHODS.index, { force }),
     /** `broll.suggest({videoId, ...})` -> `{jobId}` -> `{insertions, reason}`. */
     suggest: (
       videoId: string,
       opts?: { threshold?: number; maxCoveragePct?: number; layout?: BrollLayout },
-    ): Promise<JobHandle> => rpc('broll.suggest', { videoId, ...(opts ?? {}) }),
+    ): Promise<JobHandle> => rpc(BROLL_METHODS.suggest, { videoId, ...(opts ?? {}) }),
     /**
      * `broll.apply({videoId, insertions})` -> `{jobId}` -> `{path, inserted}`.
      *
@@ -1126,7 +1166,7 @@ export const client = {
      * a caller must say so before the user clicks.
      */
     apply: (videoId: string, insertions: readonly BrollInsertion[]): Promise<JobHandle> =>
-      rpc('broll.apply', { videoId, insertions }),
+      rpc(BROLL_METHODS.apply, { videoId, insertions }),
   },
 } as const;
 
