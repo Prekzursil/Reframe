@@ -111,13 +111,29 @@ describe('<ShortMakerControls />', () => {
     });
   }
 
+  // STRENGTHENED (not weakened) after adversarial review: this is the surface
+  // where a dub is actually chosen to be muxed into an exported short, so the
+  // dub option must carry the Article-50 wording and not only the raw kind.
   it('renders the audio-track picker with Original plus every track option', () => {
     mount();
     const select = byLabel('Audio track') as HTMLSelectElement;
     const opts = [...select.options].map((o) => `${o.value}:${o.textContent}`);
     expect(opts[0]).toBe(':Original');
     expect(opts[1]).toBe('t-en:English (en, original)');
-    expect(opts[2]).toBe('t-es:Spanish dub (es, dub)');
+    expect(opts[2]).toBe('t-es:Spanish dub (es, dub) — AI-generated audio');
+  });
+
+  it('warns that the AI marking is in-app only when an AI track is selected for export', () => {
+    mount({ audioTrackId: 't-es' });
+    const note = container.querySelector('[data-testid="sm-ai-audio-note"]');
+    expect(note?.textContent).toContain('not written into the exported file');
+  });
+
+  it('shows no AI export note for the original track or for no selection', () => {
+    mount({ audioTrackId: 't-en' });
+    expect(container.querySelector('[data-testid="sm-ai-audio-note"]')).toBeNull();
+    mount({ audioTrackId: '' });
+    expect(container.querySelector('[data-testid="sm-ai-audio-note"]')).toBeNull();
   });
 
   it('forwards prompt edits to setPrompt', () => {
