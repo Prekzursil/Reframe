@@ -264,13 +264,35 @@ describe('Workspace', () => {
   // correction is a normal editing op, not an advanced/deliver one, so it must be
   // in a VISIBLE cluster: burying an ethics-gated control makes the gate harder to
   // find, which is the opposite of the point.
-  it('puts Eye contact in the VISIBLE "Frame & Cut" cluster, not behind Advanced', () => {
+  it('puts Eye contact in the VISIBLE "Frame & Cut" cluster, not behind Advanced', async () => {
     const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
     expect(frame?.tabIds).toContain('gaze');
     expect(frame?.advanced).not.toBe(true);
     // and in no other cluster (exactly-once membership across the strip)
     const owners = WORKSPACE_TAB_GROUPS.filter((g) => g.tabIds.includes('gaze'));
     expect(owners).toHaveLength(1);
+
+    // A SECOND, mechanically different signal: the config array above is a claim
+    // about intent; this reads the rendered DOM. The `gaze` tab must sit OUTSIDE
+    // `.tabbar__advanced-panel` (the container the disclosure hides), which is what
+    // "painted by default" actually means. jsdom does not compute visibility, so DOM
+    // POSITION is the strongest check available at this level — the true pixel check
+    // is `.tab:visible` in the nightly `app/e2e/preview.spec.ts`.
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+    const gazeTab = container.querySelector('[role="tab"][data-tab-id="gaze"]');
+    expect(gazeTab).not.toBeNull();
+    expect(gazeTab?.closest('.tabbar__advanced-panel')).toBeNull();
+    // Control for that assertion: a tab that IS behind the disclosure must be found
+    // inside it, otherwise the `.closest()` selector could be silently wrong and the
+    // check above would pass for every tab.
+    expect(
+      container
+        .querySelector('[role="tab"][data-tab-id="tracks"]')
+        ?.closest('.tabbar__advanced-panel'),
+    ).not.toBeNull();
   });
 
   it('puts Speed in the Frame & Cut group and selects it from a deep-link', async () => {
