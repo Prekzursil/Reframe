@@ -237,37 +237,65 @@
   color: var(--accent);
 }
 
-/* W59 — this ring must be painted INWARD, and that is the whole point.
+/* W59 — the play-preview button's focus ring, painted on its PARENT because the
+ * button itself has NOWHERE to paint one.
  *
- * The button is `width: 100%; height: 100%` inside `.shorts__thumb`, which sets
- * `overflow: hidden` (:216) — so its border box COINCIDES with the clip rectangle.
- * Ancestor overflow clipping applies to a descendant's outline and box-shadow, not
- * just its content, so anything drawn outside the border box is removed. With no
- * rule here the button fell through to the global `:focus-visible` at
- * components/shell.css:75-83, whose outline is deliberately TRANSPARENT (a
- * forced-colors carrier) and whose only visible ring is `box-shadow:
- * var(--focus-ring)` — `0 0 0 2px …, 0 0 0 4px …`, entirely OUTSET. Computed, then
- * clipped: a keyboard user got no focus indication at all on the primary control of
- * every gallery card (WCAG 2.4.7). A presence check could never have caught it,
- * because the ring was never missing.
+ * TWO things eat a ring here, and the first fix only addressed one.
+ *   1. THE CLIP. The button is `width/height: 100%` inside `.shorts__thumb`, which
+ *      sets `overflow: hidden` (:216), so its border box COINCIDES with the clip
+ *      rectangle. Ancestor overflow clipping applies to a descendant's outline and
+ *      box-shadow, not just its content, so the global `:focus-visible` ring
+ *      (components/shell.css:75-83 → `box-shadow: var(--focus-ring)`, entirely
+ *      OUTSET) is computed and then removed. WCAG 2.4.7, and invisible to a
+ *      presence check because the ring was never missing.
+ *   2. THE OCCLUDER. `.shorts__thumb-img` (:273-279) is an absolutely-positioned
+ *      CHILD of the button that covers its whole border box. A positioned
+ *      descendant paints in step 6 of CSS 2.1 Appendix E — after the element's own
+ *      background, inset shadows AND (in Chromium) its outline. So anything painted
+ *      INSIDE the button's box is hidden by the poster.
  *
- * Two channels, mirroring the structure of --focus-ring but reflected inward:
- *   * `inset` box-shadow, 0-2px — the dark canvas gap that separates the ring from
- *     arbitrary thumbnail pixels underneath;
- *   * a REAL outline at `outline-offset: -2px`, so it spans 2-4px inward and sits
- *     just inside that gap. Visible (not transparent) to match this sheet's own
- *     convention at `.shorts__reload:focus-visible` (:418-421), and a real outline
- *     because Chromium force-clears box-shadow under `forced-colors: active` while
- *     preserving outline width/style with a substituted system colour. The NEGATIVE
- *     offset is what makes that survive here — a positive one would land outside the
- *     clip exactly as the shadow did.
+ * REFUTED, recorded so the next reader does not re-derive it: the first fix here
+ * was `box-shadow: inset 0 0 0 2px var(--surface-bg)` + `outline-offset: -2px`, and
+ * its comment claimed the shadow was "the dark canvas gap" at 0-2px with the
+ * outline "2-4px inward, just inside that gap". Both halves were wrong, measured in
+ * headless Chromium on that exact CSS. (a) `outline-offset: -2px` with
+ * `outline-width: 2px` puts the outline at 0-2px — the SAME band as the inset
+ * shadow, painted over it; the strip read `130.93.46` (= 50%-alpha `--accent-edge`
+ * over `--surface-bg`) at 0-2px and `--surface-bg` #121620 appeared nowhere, so
+ * there was no gap and no 2-4px ring. (b) With a poster present the focused strip
+ * was BYTE-IDENTICAL to the resting one — 0 of 24 pixels changed — because of (2).
+ * The poster is the normal state (useShortThumbnail generates one on demand; the ▶
+ * glyph is the fallback), so the ring only ever appeared in the fallback.
  *
- * (0,2,0) on a class selector, so it beats the global `:where(…)` rule at (0,1,0)
- * for `outline`, `outline-offset` and `box-shadow` alike. */
-.shorts__thumb-btn:focus-visible {
-  outline: 2px solid var(--accent-edge);
-  outline-offset: -2px;
-  box-shadow: inset 0 0 0 2px var(--surface-bg);
+ * THE FIX. Move the ring to the parent and keep it OUTSET. An element's own box
+ * decorations are never clipped by its OWN `overflow`, and an outset shadow lands
+ * outside its border box — where no descendant of it can be painted, so neither
+ * hazard can reach it. `.shorts__card` does not clip (`.shorts__grid` is
+ * `overflow: auto` and clips only at the scroll boundary; the ring sits 4px in from
+ * the card's edge, inside its padding). That also means `--focus-ring` is reused
+ * VERBATIM — the same double ring as every other control, never composited over
+ * arbitrary thumbnail pixels, so its 50%-alpha outer layer has a known backdrop
+ * (measured `134.98.53` over `--surface-raised`, 3.30:1 against its own
+ * `--surface-bg` gap at `18.22.32`).
+ *
+ * The transparent outline is this sheet's `forced-colors` carrier, exactly as
+ * shell.css:76-81 explains: Chromium force-clears box-shadow under
+ * `forced-colors: active` but keeps outline width/style and substitutes a system
+ * colour. Measured under `forced-colors: active`: 2px of `0.0.0` appear on focus.
+ *
+ * Specificity (0,3,0) — `:has()` takes its most specific argument — and nothing
+ * else sets `box-shadow` on `.shorts__thumb`, so it is uncontested. `:has()`
+ * precedent in this tree: components/library-cards.css:164,
+ * components/shell.css:357-358, features/panels.css:927.
+ *
+ * Guarded by views/shorts.conformance.test.ts, which derives paint order from this
+ * sheet plus the JSX nesting in Shorts.tsx. That gate is a static parse and cannot
+ * observe pixels; the executed focused-vs-resting diff quoted above is the settling
+ * experiment and is NOT in CI. */
+.shorts__thumb:has(.shorts__thumb-btn:focus-visible) {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .shorts__thumb-img {
