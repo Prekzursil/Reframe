@@ -25,12 +25,20 @@
 //  4. ENGINE. `wav2lip` is in DENIED_ENGINES permanently (genuinely
 //     non-commercial, `lipsync.py:120-126`), so it is not offerable at all.
 //
-// AND ONE DISCLOSED RESIDUAL THAT IS NOT MINE TO FIX (sidecar is out of scope for
-// this lane): `_tts.register(...)` at `handlers/composition.py:327-336` passes NO
-// `lipsync_face_boxes_probe`, so `face_boxes_probe` is `None` in the real app and
-// `require_face_boxes` (`lipsync.py:239-254`, called at `:699`) raises INSIDE the
-// job. A run therefore refuses at job time today. The panel says so up front
-// rather than letting the user discover it by clicking — see the notice test.
+// AND ONE DISCLOSED RESIDUAL THAT IS NOT MINE TO FIX (`handlers/composition.py`
+// belongs to another live lane): `_tts.register(...)` at `composition.py:327-336`
+// passes NO `lipsync_face_boxes_probe`, so `face_boxes_probe` is `None` in the real
+// app and `require_face_boxes` (`lipsync.py:239-254`, called at `:699`) raises
+// INSIDE the job. A run therefore refuses at job time today.
+//
+// How that is tested, after review narrowed the claim: the panel states the RULE up
+// front (true of every build — "discloses the face-box rule in BOTH flag states"),
+// asserts NOTHING about this build's wiring before a click, and after an OBSERVED
+// refusal disables the control quoting the sidecar ("after an OBSERVED face-box
+// refusal…"), while a DIFFERENT failure leaves it usable. So this file no longer
+// pins a sentence that would become false the moment the sibling lane wires the
+// probe — the previous version did, and a green test pinning it would have forced
+// that lane to delete a passing test.
 
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -392,6 +400,28 @@ describe('<LipSync />', () => {
     // …and says plainly that this app has no switch for it, instead of sending the
     // user hunting for a preference that does not exist (refuted in review).
     expect(reason?.textContent).toContain(LIPSYNC_NO_IN_APP_SETTER);
+  });
+
+  // MUTATION-DRIVEN (this one SURVIVED an adversarial mutation run): `enabled ===
+  // true` -> `enabled !== false` left all 36 tests green, because nothing exercised
+  // the NULL window — `settings.get` in flight. That window is the file's own
+  // fail-closed claim ("null while settings.get is in flight — the control is
+  // disabled until it answers"), so it needs a test, not a comment.
+  it('fails CLOSED while settings.get is still in flight (the null window)', async () => {
+    const api: MediaStudioApi = {
+      // Never resolves: the panel stays in `enabled === null` for the whole test.
+      rpc: vi.fn((method: string) =>
+        method === 'settings.get' ? new Promise(() => {}) : Promise.resolve({ jobId: 'job-l' }),
+      ) as unknown as MediaStudioApi['rpc'],
+      onProgress: () => () => {},
+      onJobDone: () => () => {},
+    };
+    await mount(api);
+    fillReady(); // everything else satisfied, so the flag is the only gate left
+    expect(startButton().disabled).toBe(true);
+    // ...and it is the IN-FLIGHT state, not the answered-false one: no disabled
+    // reason is rendered yet, so this is distinguishable from `lipSyncEnabled:false`.
+    expect(container.querySelector('[data-section="disabled"]')).toBeNull();
   });
 
   it('fails CLOSED when settings.get itself throws', async () => {

@@ -357,6 +357,9 @@ export function LipSync({
   const bridge = useMemo<MediaStudioApi>(() => api ?? getApi(), [api]);
 
   // null while settings.get is in flight — the control is disabled until it answers.
+  // `canStart` therefore tests `enabled === true`, never `!== false`. That mutation
+  // SURVIVED an adversarial run (all 36 tests stayed green because nothing exercised
+  // the null window); "fails CLOSED while settings.get is still in flight" now kills it.
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [trackId, setTrackId] = useState<string>('');
   const [engine, setEngine] = useState<string>(DEFAULT_LIPSYNC_ENGINE);
@@ -572,6 +575,13 @@ export function LipSync({
           />{' '}
           {LIPSYNC_CONSENT_TEXT}
         </label>
+        {/* No subject-rename invalidation here, unlike `Gaze.tsx`: that panel has a
+            free-text subject LABEL the user can change under a ticked box, which is
+            how a tick for 'Ana' could authorise a run against 'Bogdan'. This section
+            has no such field — the subject is whoever is on screen in `videoId`, the
+            component is bound to that one video, and changing the dub TRACK does not
+            change the person whose face is altered. The tick is still cleared after
+            every success, so it never covers a second run. */}
         <p className="dub-consent-hint">
           This attestation applies to THIS run only — it is not saved, so it can never authorise a
           later run. A dub voiced by a stored voice CLONE needs that sample&apos;s own consent
