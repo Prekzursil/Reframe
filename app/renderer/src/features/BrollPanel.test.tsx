@@ -655,7 +655,9 @@ describe('<BrollPanel />', () => {
     const copy = q('[data-section="threshold-disclosure"]')?.textContent ?? '';
     expect(copy).toBe(THRESHOLD_IS_UNCALIBRATED);
     expect(copy).toContain('0.22');
-    expect(copy).toContain('flagship-auto-broll.md');
+    // The FULL relative path, not a bare basename: the disclosure sends a user to
+    // the calibration experiment, and a bare filename is not a place they can go.
+    expect(copy).toContain('docs/plans/v1.5/flagship-auto-broll.md');
     // per-MODEL, the second warning in the sidecar docstring
     expect(copy).toContain('backbone');
   });

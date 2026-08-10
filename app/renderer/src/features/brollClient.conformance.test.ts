@@ -51,6 +51,23 @@ const BROLL_OPS = resolve(SIDECAR, 'media_studio', 'features', 'broll_ops.py');
 const COMPOSITION = resolve(SIDECAR, 'media_studio', 'handlers', 'composition.py');
 const FROZEN_SURFACE = resolve(SIDECAR, 'tests', 'test_handlers_rpc_surface.py');
 
+/**
+ * The `.py` source, read verbatim.
+ *
+ * LINE ENDINGS ARE NOT A HAZARD HERE, and that is MEASURED, not assumed — the
+ * usual worry is that the `pyNumber` / `pyString` patterns below anchor with `$`
+ * straight after the value, which would fail on a CRLF checkout. It does not:
+ * ECMAScript counts `\r` itself as a LineTerminator, so in multiline mode `$`
+ * matches before `\r\n` exactly as it does before `\n`.
+ *
+ * PROBED BOTH WAYS rather than reasoned about: the four parsed `.py` files were
+ * rewritten to CRLF and this suite stayed 16/16 green. A first draft of this
+ * helper added a `.replace(/\r\n/g, '\n')` on the stated premise that the parse
+ * "would fail to match" on CRLF — that premise was REFUTED by the probe above, so
+ * the line was removed rather than kept with a false rationale attached to it.
+ * (For the record the tree is LF anyway: `.gitattributes` carries
+ * `* text=auto eol=lf` and all four files measure 0 CRLF, on this box and on CI.)
+ */
 function source(path: string): string {
   return readFileSync(path, 'utf8');
 }
@@ -102,10 +119,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// rules/common/single-signal-verification.md §3: prove each parser can FIND a
-// known-present item, and FAIL on an absent one, before any assertion is built on
-// its output. A silently-empty parse would make every check below vacuously pass —
-// `expect([]).toEqual([])` is green and measures nothing.
+// DETECTOR CONTROL, the single-signal-verification discipline: prove each parser
+// can FIND a known-present item, and FAIL on an absent one, before any assertion
+// is built on its output. A silently-empty parse would make every check below
+// vacuously pass — `expect([]).toEqual([])` is green and measures nothing.
 describe('sidecar parse helpers (detector control)', () => {
   it('finds a known-present number, string and tuple', () => {
     expect(pyNumber(BROLL_PLAN, 'DEFAULT_TOP_K')).toBe(5);
