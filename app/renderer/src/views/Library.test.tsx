@@ -1213,6 +1213,20 @@ describe('Library first-run honesty + control gating (W53/W54)', () => {
     expect(container.querySelector('.library-toolbar__search')).not.toBeNull();
     expect(container.querySelector('.library-toolbar__sort-select')).not.toBeNull();
   });
+
+  // A SECOND consequence of keying the gate on `videos.length`, pinned here so it
+  // is an intended behaviour rather than an incidental one: while the first
+  // `library.list` is still in flight the list is empty, so the toolbar is absent
+  // over the skeleton rows too. That is the point — there is nothing to search or
+  // sort yet either. The controls appear with the content.
+  it('shows no toolbar while the first listing is still in flight', async () => {
+    rpcMock.mockReturnValueOnce(new Promise(() => {})); // library.list never settles
+    await act(async () => {
+      root.render(<Library onOpen={() => {}} />);
+    });
+    expect(container.querySelector('.library__loading')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar')).toBeNull();
+  });
 });
 
 describe('Library multi-select + batch actions (v1.5 §4)', () => {
