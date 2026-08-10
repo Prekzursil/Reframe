@@ -873,10 +873,18 @@ export const client = {
   },
 
   /**
-   * `reframe.*` (V1.1 Lane R) — the manual per-shot correction surface. Both are a
+   * `reframe.*` (V1.1 Lane R) — the manual per-shot correction surface. All are a
    * PURE compose (no heavy engine): `shotPlan` derives an editable {@link ShotPlan}
-   * from an already-computed reframe trace, and `applyOverrides` resolves a user's
-   * per-shot edits and returns the `affected` shot indices the R1 engine re-renders.
+   * from an already-computed reframe trace, `shotPlanFor` derives one from a
+   * rendered clip's persisted decision sidecar, and `applyOverrides` resolves a
+   * user's per-shot edits and returns the `affected` shot indices.
+   *
+   * HONEST LIMIT (measured 2026-08-09 against
+   * `sidecar/tests/test_handlers_rpc_surface.py:118-121`): the whole registered
+   * `reframe.*` surface is exactly these four names plus `reframe.eval`. There is
+   * **no** `reframe.render` and **no** method that persists overrides, so
+   * `affected` cannot be handed to anything that re-encodes. Any UI built on this
+   * must say so rather than offer a re-render loop that cannot run.
    */
   reframe: {
     /** `reframe.shotPlan {trace, sourceWidth, sourceHeight, fps}` -> {plan}. */
@@ -886,6 +894,18 @@ export const client = {
       sourceHeight: number;
       fps: number;
     }): Promise<{ plan: ShotPlan }> => rpc('reframe.shotPlan', { ...args }),
+    /**
+     * `reframe.shotPlanFor {clip}` -> `{plan|null, engine, aspect}`.
+     *
+     * `plan: null` is the HONEST "this clip carries no per-shot decisions"
+     * answer (the engine that rendered it dropped no `<clip>.reframe.json`
+     * sidecar) — NOT an error. Callers must render that empty state rather than
+     * a correction panel over invented data.
+     */
+    shotPlanFor: (
+      clip: string,
+    ): Promise<{ plan: ShotPlan | null; engine: string; aspect: string }> =>
+      rpc('reframe.shotPlanFor', { clip }),
     /** `reframe.applyOverrides {plan, overrides}` -> {plan, affected}. */
     applyOverrides: (args: {
       plan: ShotPlan;

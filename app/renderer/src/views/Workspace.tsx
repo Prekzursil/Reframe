@@ -59,6 +59,12 @@ const TranscriptEditor = lazy(() => import('../features/TranscriptEditor'));
 const Recipes = lazy(() => import('../features/Recipes'));
 // intelligence A: semantic transcript search (seeks the player on a hit).
 const SemanticSearch = lazy(() => import('../features/SemanticSearch'));
+// W18: the multi-lane VIDEO timeline (clips, razor, drag-to-trim, undo). Built
+// complete and 100%-covered, and imported by NOTHING but its own test until now.
+const VideoTimeline = lazy(() => import('../features/VideoTimeline'));
+// W17: manual per-shot reframe correction (panels/ReframeOverridePanel), wrapped
+// by the container that finds a clip and loads its persisted decision plan.
+const ReframeCorrect = lazy(() => import('../features/ReframeCorrect'));
 
 /**
  * v1.5 timeline-naming — two LABELS name their real subject. Ids are untouched
@@ -68,8 +74,16 @@ const SemanticSearch = lazy(() => import('../features/SemanticSearch'));
  * `timeline` mounts features/Timeline.tsx — a waveform strip plus a lane of
  * draggable subtitle CUES (Timeline.tsx:1-8), whose sidecar registers exactly
  * one method, `timeline.peaks` (timeline.py:324). No clip lane, no razor. The
- * bare name "Timeline" promised a video timeline that is not here; a genuine
- * video-timeline tab is free to claim it later.
+ * bare name "Timeline" promised a video timeline that is not here.
+ *
+ * W18 RECONCILED (2026-08-09): that last clause used to read "a genuine
+ * video-timeline tab is free to claim it later", written while
+ * features/VideoTimeline.tsx already existed on disk — complete, styled and
+ * covered — but imported by nothing except its own test. So this file and that
+ * one disagreed about whether the app has a video timeline. It does: the
+ * `videoTimeline` tab below mounts it, and it is the ONLY caller of the nine
+ * `tracks.video.*` methods (video_tracks.py:883-891), all nine of which were
+ * user-unreachable before this lane.
  *
  * `nle` mounts features/NleExport.tsx — a CMX3600 EDL / CSV handoff whose
  * events are approved short-maker clips laid back-to-back
@@ -87,7 +101,12 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'tracks', label: 'Tracks' },
   { id: 'convert', label: 'Convert' },
   { id: 'shortmaker', label: 'Short-maker' },
+  // W17: the correction path for a wrong auto-crop. It sits next to Short-maker
+  // because the clips it corrects are the ones Short-maker produced.
+  { id: 'reframeFix', label: 'Fix framing' },
   { id: 'timeline', label: 'Subtitle timeline' },
+  // W18: the real video timeline (see the reconciliation note above).
+  { id: 'videoTimeline', label: 'Video timeline' },
   { id: 'stabilize', label: 'Stabilize' },
   // v1.5: constant-factor speed / slow motion. The re-time ENGINE was already
   // wired for the Director, but nothing in the renderer could reach it, so a
@@ -113,7 +132,16 @@ export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
     label: 'Speech & Text',
     tabIds: ['transcribe', 'search', 'subtitles', 'transcriptEdit', 'diarize', 'refine'],
   },
-  { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline', 'stabilize', 'speed'] },
+  {
+    id: 'frame',
+    label: 'Frame & Cut',
+    // W17/W18: 'reframeFix' and 'videoTimeline' join the VISIBLE cluster. That
+    // takes the painted strip from 12 to 14 (it already scrolls — workspace.css
+    // `overflow-x: auto`), a real cost accepted deliberately: burying a
+    // correction surface behind the Advanced disclosure would leave a wrong
+    // auto-crop effectively uncorrectable, which is the defect being fixed.
+    tabIds: ['shortmaker', 'reframeFix', 'timeline', 'videoTimeline', 'stabilize', 'speed'],
+  },
   { id: 'audio', label: 'Audio', tabIds: ['dub', 'audiomix'] },
   {
     id: 'deliver',
@@ -315,9 +343,23 @@ export function Workspace({
         return <Convert videoId={video.id} path={video.path} />;
       case 'shortmaker':
         return <ShortMaker videoId={video.id} />;
+      case 'reframeFix':
+        return <ReframeCorrect videoId={video.id} />;
       case 'timeline':
         return (
           <TimelinePanel videoId={video.id} durationSec={video.durationSec} playerRef={playerRef} />
+        );
+      case 'videoTimeline':
+        // `sourcePath`/`sourceDurationSec` are NOT decoration: `tracks.video
+        // .addClip` is the only way a clip reaches a lane, and it needs a real
+        // file path plus a `srcOut`. Passing them is what stops every lane from
+        // being permanently empty.
+        return (
+          <VideoTimeline
+            videoId={video.id}
+            sourcePath={video.path}
+            sourceDurationSec={video.durationSec}
+          />
         );
       case 'stabilize':
         return <Stabilize videoId={video.id} />;

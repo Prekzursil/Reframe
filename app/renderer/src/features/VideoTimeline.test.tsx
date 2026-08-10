@@ -733,3 +733,95 @@ describe('rendering the timeline', () => {
     expect(text('error')).toContain('without reporting an output file');
   });
 });
+
+// ---------------------------------------------------------------------------
+// W18: putting a clip INTO a lane
+// ---------------------------------------------------------------------------
+
+// `tracks.video.addClip` is the ONLY sidecar path that can place a clip on a
+// lane (`sidecar/media_studio/features/video_tracks.py:294,692-716,883`). The
+// client omitted it, so a mounted timeline could add lanes, trim, split, move,
+// undo and render -- against lanes that were permanently EMPTY. These tests are
+// about that one hole: the button exists, it sends the right window, and it
+// refuses honestly when the source geometry it would send is unknown.
+describe('adding the source clip to a lane (W18)', () => {
+  const SOURCE = 'C:/vids/talk.mp4';
+
+  async function mountWithSource(
+    fake: FakeApi,
+    props: { sourcePath?: string; sourceDurationSec?: number } = {},
+  ): Promise<void> {
+    (globalThis as { api?: unknown }).api = fake.api;
+    await act(async () => {
+      root.render(<VideoTimeline videoId="v1" {...props} />);
+    });
+  }
+
+  it('appends the whole source after the last clip on THAT lane', async () => {
+    // lane vt1 already holds 0..60; lane vt2 is empty. Adding to each must land
+    // at that lane's own tail (60 and 0), never at the global timeline end.
+    const fake = makeFakeApi({
+      lanes: [wireLane([FULL]), wireLane([], { id: 'vt2', name: 'B-roll', index: 1 })],
+    });
+    await mountWithSource(fake, { sourcePath: SOURCE, sourceDurationSec: 12.5 });
+
+    const add = (laneId: string): HTMLButtonElement =>
+      container.querySelector(`button[data-action="add-clip"][data-lane="${laneId}"]`)!;
+    expect(add('vt1').disabled).toBe(false);
+
+    await click(add('vt1'));
+    expect(paramsOf(fake, 'tracks.video.addClip')).toEqual({
+      videoId: 'v1',
+      videoTrackId: 'vt1',
+      path: SOURCE,
+      srcIn: 0,
+      srcOut: 12.5,
+      timelineStart: 60,
+    });
+    expect(text('status')).toBe('Clip added');
+    // the lanes were RE-READ, so what is on screen is what the sidecar stored
+    expect(methods(fake).filter((m) => m === 'tracks.video.list')).toHaveLength(2);
+
+    await click(add('vt2'));
+    expect(paramsOf(fake, 'tracks.video.addClip')).toMatchObject({
+      videoTrackId: 'vt2',
+      timelineStart: 0,
+    });
+  });
+
+  it('cannot be undone by one call, so it CLEARS the undo stack', async () => {
+    const fake = makeFakeApi();
+    await mountWithSource(fake, { sourcePath: SOURCE, sourceDurationSec: 12.5 });
+    // bank a real inverse first (a trim), then add -> the inverse must be gone.
+    await drag(edge('end'), 300);
+    expect(button('undo').disabled).toBe(false);
+    await click(container.querySelector('button[data-action="add-clip"]')!);
+    expect(button('undo').disabled).toBe(true);
+  });
+
+  it('surfaces a REFUSED add instead of leaving a phantom clip', async () => {
+    const fake = makeFakeApi({ failMethod: 'tracks.video.addClip' });
+    await mountWithSource(fake, { sourcePath: SOURCE, sourceDurationSec: 12.5 });
+    await click(container.querySelector('button[data-action="add-clip"]')!);
+    expect(text('error')).toContain('refused: overlap');
+    expect(text('status')).toBe('');
+  });
+
+  it('is disabled with a stated reason when no source path was passed', async () => {
+    const fake = makeFakeApi();
+    await mountWithSource(fake);
+    const add = container.querySelector('button[data-action="add-clip"]') as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
+    expect(add.title).toContain('source file');
+    await click(add);
+    expect(methods(fake)).not.toContain('tracks.video.addClip');
+  });
+
+  it('is disabled when the source duration is unknown (never sends srcOut 0)', async () => {
+    const fake = makeFakeApi();
+    await mountWithSource(fake, { sourcePath: SOURCE, sourceDurationSec: 0 });
+    const add = container.querySelector('button[data-action="add-clip"]') as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
+    expect(add.title).toContain('source file');
+  });
+});

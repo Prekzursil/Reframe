@@ -25,9 +25,15 @@
 // add/remove) CLEARS the stack, because we can no longer walk back past it. The
 // button is enabled exactly when a real inverse is available.
 //
-// Wire surface consumed (features/video_tracks.py):
-//   tracks.video.list / addLane / removeLane / trimClip / splitClip / moveClip
-//   tracks.video.removeClip / tracks.video.render  (render is a long JOB)
+// Wire surface consumed (features/video_tracks.py) — all NINE tracks.video.*:
+//   tracks.video.list / addLane / removeLane / addClip / trimClip / splitClip
+//   tracks.video.moveClip / removeClip / render  (render is a long JOB)
+//
+// W18 NOTE — `addClip` is load-bearing, not a nicety. It is the ONLY sidecar
+// path that can put a clip on a lane (`video_tracks.py:294` `add_clip`, wired at
+// `:883`). The panel shipped without it, so every other control here acted on
+// lanes that could never hold anything: mounting the panel in that state would
+// have been theatre. The per-lane "Add clip" button closes that hole.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -56,6 +62,18 @@ import * as client from './videoTimelineClient';
 
 export interface VideoTimelineProps {
   videoId: string;
+  /**
+   * Absolute path of the workspace's source file — the media the "Add clip"
+   * button places on a lane. Omitted (or empty) DISABLES that button with a
+   * stated reason rather than sending a path the sidecar would reject.
+   */
+  sourcePath?: string;
+  /**
+   * The source's probed duration in seconds; it becomes the new clip's `srcOut`.
+   * Omitted or `<= 0` disables "Add clip": the sidecar refuses a window past the
+   * file's end (`video_tracks.py:718`) and a zero-length clip is not an edit.
+   */
+  sourceDurationSec?: number;
   /** Called with the rendered file path once `tracks.video.render` finishes. */
   onRendered?: (path: string) => void;
 }
@@ -81,7 +99,12 @@ export const MAX_UNDO = 50;
 
 const ERR = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-export function VideoTimeline({ videoId, onRendered }: VideoTimelineProps): React.ReactElement {
+export function VideoTimeline({
+  videoId,
+  sourcePath = '',
+  sourceDurationSec = 0,
+  onRendered,
+}: VideoTimelineProps): React.ReactElement {
   const [stored, setStored] = useState<VideoLane[] | null>(null);
   const [fps, setFps] = useState<Fps>(30);
   const [draft, setDraft] = useState<VideoLane[] | null>(null);
@@ -357,6 +380,41 @@ export function VideoTimeline({ videoId, onRendered }: VideoTimelineProps): Reac
     [commit, videoId],
   );
 
+  /**
+   * W18: append the whole source file to the END of one lane.
+   *
+   * `timelineDuration([lane])` is that LANE's own tail, not the timeline's — a
+   * clip appended at the global end would leave a silent gap on a short lane and
+   * (worse) the sidecar's overlap check is per-lane, so the global end is simply
+   * the wrong answer. `srcOut` is the probed source duration, which is also why
+   * the button refuses when that duration is unknown: the sidecar rejects a
+   * window past the file's end and a zero-length clip is not an edit.
+   *
+   * The stack is CLEARED (`inverse = null`): `removeClip` needs the id the
+   * sidecar minted for the new clip, and this client re-reads instead of
+   * threading that id back, so there is no honest single-call inverse.
+   */
+  const canAddSource = sourcePath !== '' && sourceDurationSec > 0;
+  const addSourceClip = useCallback(
+    (lane: VideoLane): void => {
+      void commit(
+        'Clip added',
+        () =>
+          client.addClip(
+            getApi(),
+            videoId,
+            lane.id,
+            sourcePath,
+            0,
+            sourceDurationSec,
+            timelineDuration([lane]),
+          ),
+        null,
+      );
+    },
+    [commit, sourceDurationSec, sourcePath, videoId],
+  );
+
   const onClipKeyDown =
     (clipId: string) =>
     (e: React.KeyboardEvent): void => {
@@ -514,6 +572,21 @@ export function VideoTimeline({ videoId, onRendered }: VideoTimelineProps): Reac
               <span className="vtl__laneName">{lane.name}</span>
               <button
                 type="button"
+                data-action="add-clip"
+                data-lane={lane.id}
+                aria-label={`Add the source clip to lane ${lane.name}`}
+                disabled={isBusy || !canAddSource}
+                title={
+                  canAddSource
+                    ? 'Append the whole source file to the end of this lane'
+                    : 'Unavailable: this workspace supplied no source file path and duration to add'
+                }
+                onClick={() => addSourceClip(lane)}
+              >
+                + Clip
+              </button>
+              <button
+                type="button"
                 data-action="remove-lane"
                 data-lane={lane.id}
                 aria-label={`Remove lane ${lane.name}`}
@@ -587,3 +660,7 @@ export function VideoTimeline({ videoId, onRendered }: VideoTimelineProps): Reac
     </section>
   );
 }
+
+// W18: the Workspace mounts this panel through `React.lazy`, which resolves the
+// module's DEFAULT export. Without this line the tab renders nothing.
+export default VideoTimeline;

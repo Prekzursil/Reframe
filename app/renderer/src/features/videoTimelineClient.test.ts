@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { MediaStudioApi } from './_api';
 import {
+  addClip,
   addLane,
   fetchLanes,
   moveClip,
@@ -130,6 +131,30 @@ describe('each method sends the exact param shape the sidecar requires', () => {
       timelineTime: 4.5,
     });
     expect(calls[3].params).toEqual({ videoId: 'v1', clipId: 'c1', atTimeline: 2.25 });
+  });
+
+  // W18: addClip is the ONLY sidecar path that can put a clip into a lane
+  // (`sidecar/media_studio/features/video_tracks.py:294,692-716`). It was the one
+  // `tracks.video.*` method this client omitted, so a mounted timeline could only
+  // ever show empty lanes. Param names are load-bearing: the handler reads
+  // `videoTrackId` / `path` / `srcIn` / `srcOut` / `timelineStart` via
+  // `_require_str`/`_require_number` and raises INVALID_PARAMS on any other name.
+  it('addClip sends the six params tracks.video.addClip requires', async () => {
+    const { api, calls } = fakeApi({ clip: CLIP });
+    await addClip(api, 'v1', 'vt1', 'C:/vids/a.mp4', 0, 12.5, 4);
+    expect(calls).toEqual([
+      {
+        method: 'tracks.video.addClip',
+        params: {
+          videoId: 'v1',
+          videoTrackId: 'vt1',
+          path: 'C:/vids/a.mp4',
+          srcIn: 0,
+          srcOut: 12.5,
+          timelineStart: 4,
+        },
+      },
+    ]);
   });
 
   it('moveClip includes videoTrackId ONLY for a cross-lane move', async () => {
