@@ -223,13 +223,20 @@ test('spoken words become a visible transcript and then a caption cue (real GUI 
   // D — run the REAL transcription (transcribe.start → live faster-whisper).
   await startButton.click();
 
-  // A panel-level error is a NAMED failure; race it against the transcript so a
-  // broken ASR install reports "no module named faster_whisper" instead of an
-  // anonymous timeout.
+  // Wait for the JOB to land, not for the segments — the two are different states
+  // and conflating them costs five minutes on the most interesting failure.
+  // `.transcript-summary` renders as soon as a Transcript object arrives
+  // (Transcribe.tsx:318), INCLUDING one with zero segments. Waiting on
+  // `.transcript-segments li` instead means an honest empty transcript (what the
+  // speechless `sine` sample produces) burns the whole TRANSCRIBE_WAIT_MS budget
+  // before reporting an anonymous "element not found" — measured: 5.1 minutes.
+  // Racing the summary and the panel error gives three distinct, fast verdicts:
+  // ASR blew up / ASR finished empty / ASR finished with content.
   const segments = panel.locator('.transcript-segments li');
+  const summaryLoc = panel.locator('.transcript-summary');
   const panelError = panel.locator('p.error[role="alert"]');
   await Promise.race([
-    segments.first().waitFor({ state: 'visible', timeout: TRANSCRIBE_WAIT_MS }),
+    summaryLoc.waitFor({ state: 'visible', timeout: TRANSCRIBE_WAIT_MS }),
     panelError.waitFor({ state: 'visible', timeout: TRANSCRIBE_WAIT_MS }),
   ]).catch(() => undefined);
   if (await panelError.isVisible()) {
@@ -239,10 +246,22 @@ test('spoken words become a visible transcript and then a caption cue (real GUI 
     );
   }
   await expect(
-    segments.first(),
-    `no transcript segment ever rendered within ${TRANSCRIBE_WAIT_MS}ms\n` +
+    summaryLoc,
+    `the transcription never completed within ${TRANSCRIBE_WAIT_MS}ms (no transcript reached the UI)\n` +
       `--- sidecar log tail ---\n${asrErrorTail()}`,
   ).toBeVisible({ timeout: 5_000 });
+  // A transcript OBJECT arrived. An EMPTY one is the signature of "the audio
+  // carried no recognisable speech" — precisely the pre-existing state this spec
+  // exists to distinguish from working transcription, so name it.
+  await expect(
+    segments,
+    'the transcription completed but produced ZERO segments — the audio reaching whisper ' +
+      'carried no recognisable speech (this is exactly what the speechless `sine` fixture does)',
+    // Short timeout on purpose: the summary above proves the job is TERMINAL, and
+    // Transcribe.tsx renders every segment in the same commit as the summary — so
+    // the count cannot change. Polling it for the config's 30 s only lengthens the
+    // red repro. MEASURED against the sine fixture: this arm fires.
+  ).not.toHaveCount(0, { timeout: 5_000 });
 
   // E — THE PRIMARY DONE-SIGNAL: the words the user can SEE.
   const transcriptText = ((await panel.locator('.transcript-segments').textContent()) ?? '').trim();
