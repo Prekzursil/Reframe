@@ -231,13 +231,33 @@ export const SPEECH_KEYWORDS: readonly string[] = ['fox', 'dog', 'landscape', 'v
  * How many of :data:`SPEECH_KEYWORDS` a real transcript must carry.
  *
  * DO NOT "tighten" this to `SPEECH_KEYWORDS.length`. The synthesised voice is
- * whatever the machine has installed (this box has 10 SAPI voices; a GitHub
- * windows-latest image ships a different set), and `tiny` is the cheapest whisper
- * model — so which individual words survive is machine-dependent. What is NOT
- * machine-dependent is the difference between speech and no speech: the same
- * assertion scores 0 hits on the speechless `sine` sample (measured), so a
- * threshold of 2 still fails closed on a broken transcription while tolerating one
- * mangled word. 4/4 was observed locally; 2 is the floor we are willing to defend.
+ * whatever the machine has installed, and `tiny` is the cheapest whisper model —
+ * so which individual words survive is machine-dependent. (Voice-count
+ * correction: this comment used to say "10 SAPI voices". MEASURED through the
+ * SAME `System.Speech.Synthesis` enumeration the fixture uses, this box exposes
+ * **3** — all enabled, all `en-*`. The 10 counts the OneCore voices too:
+ * `HKLM:\SOFTWARE\Microsoft\Speech\Voices\Tokens` has 3 tokens and
+ * `…\Speech_OneCore\Voices\Tokens` has 7, and `System.Speech` enumerates only the
+ * former, so 3 is the fixture's real selection pool. A GitHub windows-latest
+ * image ships its own set — UNVERIFIED which; the settling experiment is the
+ * `VOICE=` line this fixture already prints on every CI run.)
+ *
+ * SCOPE CORRECTION. An earlier version of this comment claimed the both-states
+ * proof for the THRESHOLD: "the same assertion scores 0 hits on the speechless
+ * `sine` sample (measured)". That was REFUTED and is wrong about which assertion
+ * the sine run exercises: on speechless audio the spec dies EARLIER, at the
+ * zero-segments arm (`transcribe-journey.spec.ts`, `.not.toHaveCount(0)`), so the
+ * keyword arm is never evaluated there. What is actually measured:
+ *   * the ZERO-SEGMENTS arm is both-states verified (sine red / speech green);
+ *   * the threshold's own failing direction is covered by
+ *     `speechKeywords.test.ts` — a 1-hit transcript is BELOW this floor and a
+ *     2-hit one is at it, so the arm demonstrably fails closed;
+ *   * the margin is wide: MEASURED by synthesising SPEECH_PHRASE with EACH of the
+ *     3 enabled `en-*` voices, muxing each the way `generateSpeechSample` does and
+ *     transcribing with `tiny`/cpu/int8 — David 4/4, Hazel 4/4, Zira 4/4, the only
+ *     difference being the product name ("Refrain" / "Refrain" / "Reframed"),
+ *     while the CONTROL (the repo's own 3 s `sine`) transcribed to `''` = 0 hits.
+ * So 2 tolerates one mangled word without ever tolerating silence.
  */
 export const SPEECH_KEYWORD_MIN_HITS = 2;
 
