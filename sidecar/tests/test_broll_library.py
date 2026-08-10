@@ -620,8 +620,22 @@ def test_the_dedup_key_is_IDENTICAL_with_and_without_the_directory_cache(tmp_pat
     cache: dict[str, str] = {}
     for spelling in (str(dog), str(folder / ".." / "b" / "dog.png"), str(dog).upper(), str(folder / "DOG.PNG")):
         assert _library_ops._real_key(spelling, cache) == _library_ops._real_key(spelling)
-    # one entry per distinct directory spelling, and the uncached call is unaffected
-    assert len({_library_ops._real_key(s, cache) for s in (str(dog), str(dog).upper())}) == 1
+    # One entry per distinct directory spelling, and the uncached call is unaffected.
+    #
+    # CASE-FOLDING IS A FILESYSTEM PROPERTY, NOT A CONSTANT. `_real_key` normcases the
+    # basename, and `os.path.normcase` is identity on POSIX. So an ALL-CAPS respelling of
+    # the same path is the SAME file on Windows/NTFS and a genuinely DIFFERENT (absent)
+    # file on Linux — 1 key there, 2 keys here, and BOTH are correct.
+    #
+    # This assertion originally hardcoded `== 1`. It passed on the Windows box it was
+    # written on (7440 tests green) and FAILED the Linux CI gate with `assert 2 == 1`,
+    # which also cost the 100% coverage bar because the abort skipped the trailing-
+    # separator assertion below. Detecting the filesystem instead of the platform keeps
+    # this a real assertion on BOTH: it now pins the case-SENSITIVE behaviour too, rather
+    # than being relaxed to accommodate it.
+    case_insensitive_fs = os.path.normcase("A") != "A"
+    expected_keys = 1 if case_insensitive_fs else 2
+    assert len({_library_ops._real_key(s, cache) for s in (str(dog), str(dog).upper())}) == expected_keys
     # a trailing-separator spelling has no basename to join: it resolves whole
     assert _library_ops._real_key(str(folder) + os.sep, cache) == _library_ops._real_key(str(folder) + os.sep)
 
