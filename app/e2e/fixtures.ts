@@ -8,9 +8,23 @@
 // resolves it to the source path and the mstream protocol streams real bytes.
 //
 // Why seed out-of-band instead of clicking "Add videos": the add path goes
-// through a NATIVE OS file dialog (dialog.openVideos), which Playwright cannot
-// drive headlessly. Seeding the data root the sidecar reads is equivalent — the
-// app lists + opens + plays the exact same library record either way.
+// through a NATIVE OS file dialog (dialog.openVideos). Seeding the data root the
+// sidecar reads is equivalent for everything DOWNSTREAM of the add — the app
+// lists + opens + plays the exact same library record either way.
+//
+// SCOPE CORRECTION (v1.5 e2e-coverage lane). This header used to say that path
+// "cannot be driven headlessly" and that seeding is "equivalent", full stop. Both
+// were wider than the evidence, and the gap they hid was real: only the OS WIDGET
+// is undrivable, not the chain around it (button -> Library.handlePick -> the
+// preload `window.api.openVideos` -> `ipcMain.handle('dialog.openVideos')` ->
+// dialog.showOpenDialog -> `library.add`), and that chain had ZERO end-to-end
+// coverage — a broken preload wiring would have shipped green behind the
+// "Native file picker unavailable" toast Library.tsx degrades to.
+// `add-videos-dialog.spec.ts` now drives it by replacing `dialog.showOpenDialog`
+// INSIDE the running main process (electron-playwright-helpers `stubDialog`), so
+// every other link is the real one. Seeding stays the right DEFAULT for the other
+// specs — it is faster and it is not what they are testing — rather than the only
+// option available.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, existsSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';

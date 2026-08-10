@@ -42,6 +42,10 @@ on:
         description: "Regenerate the Windows (*-win32.png) visual baselines instead of diffing (uploads them as the 'updated-visual-baselines' artifact; does NOT commit)"
         type: boolean
         default: false
+      drive_installed_build:
+        description: "Windows only: silently INSTALL the built NSIS package and drive installed-app.spec.ts against it (cold first-run bootstrap + data pipeline), then uninstall. Slow (multi-minute bootstrap, network) — off by default and NEVER on the nightly schedule."
+        type: boolean
+        default: false
   schedule:
     # Nightly at 04:17 UTC (off the hour to avoid GitHub's scheduler congestion).
     - cron: "17 4 * * *"
@@ -366,11 +370,20 @@ jobs:
       # Excluding it here keeps the pre-existing gate order intact and costs nothing.
       #
       # `--grep-invert` matches the spec's FILE PATH, verified with a detector
-      # control on this box: `--list` alone enumerates 27 tests including the 2
-      # transcribe-journey ones; with `--grep-invert transcribe-journey` it
-      # enumerates exactly those 25 others. Tripwire: rename the spec file and the
-      # exclusion silently stops matching (it would then run twice, restoring the
-      # cascade) — keep the pattern and the filename in sync.
+      # control on this box: `--list` alone enumerates 37 tests in 8 files including
+      # the 2 transcribe-journey ones; with `--grep-invert transcribe-journey` it
+      # enumerates exactly those 35 others in 7 files. Tripwire: rename the spec file
+      # and the exclusion silently stops matching (it would then run twice, restoring
+      # the cascade) — keep the pattern and the filename in sync.
+      #
+      # These counts were 27/25 and are RE-MEASURED here, not adjusted by arithmetic:
+      # the v1.5 e2e-coverage lane added `add-videos-dialog.spec.ts` (5) and
+      # `installed-app.spec.ts` (5). `installed-app` is INSIDE this invocation and
+      # that is deliberate rather than an oversight — it self-skips unless
+      # RF_E2E_APP_EXE is set, and only its own dedicated step below sets it, so here
+      # it reports 5 skips and CANNOT go red. No second `--grep-invert` is needed; a
+      # spec that cannot fail cannot start the suppression cascade this exclusion
+      # exists to prevent.
       # The macOS/Linux legs above need no exclusion: the spec self-skips there
       # with a named reason (Windows SAPI).
       - name: E2E GUI — Playwright Electron (Windows packaged .exe + dev-build pipeline)
@@ -445,6 +458,121 @@ jobs:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
         run: npx playwright test --config playwright.config.ts transcribe-journey
+
+      # ── THE INSTALLED BUILD (W-A) + THE COLD PACKAGED PIPELINE (W41) ──────────
+      # OPT-IN, WINDOWS-ONLY, workflow_dispatch ONLY (`github.event.inputs` is '' on
+      # a schedule, so the nightly can never trigger this).
+      #
+      # WHY IT EXISTS. Everything above that calls itself "packaged" drives
+      # `dist/win-unpacked` — the electron-builder OUTPUT tree. No leg has ever
+      # driven an app laid down by the NSIS INSTALLER, and no leg has ever seen the
+      # cold packaged first-run bootstrap COMPLETE: `packaged.spec.ts` proves the
+      # gate FIRES and then stops, because that bootstrap pip-installs the heavy
+      # sidecar runtime into <configDir>/envs/sidecar (multi-minute, network-bound)
+      # and cannot finish inside a normal test window. A first-run bootstrap failure
+      # on a real machine is therefore the failure class NOTHING observes.
+      #
+      # WHY IT IS OFF BY DEFAULT. It is slow by construction (a real pip install of
+      # the sidecar runtime) and network-dependent, i.e. exactly the profile that
+      # must not be added to a gate other people rely on.
+      #
+      # NOT A 7th QUALITY GATE: e2e.yml is the dispatch/nightly workflow, so the
+      # closed 6-gate charter (QUALITY-CHARTER.md rule 2, enforced both ways by
+      # .quality/charter_check.py over quality.yml) is untouched.
+      #
+      # PLACEMENT is load-bearing, same reasoning as the transcribe step above: this
+      # is the most environment-dependent leg in the file, so it sits AFTER the
+      # blocking visual/a11y gate (which deliberately has no always()) and after
+      # transcribe-journey. Everything after it already carries always(), so its red
+      # suppresses no artifact.
+      #
+      # `!cancelled()` rather than the plain implicit success() gate: this is an
+      # explicitly-requested maintainer action, and silently SKIPPING it because an
+      # unrelated earlier step failed is the "looks like it ran" trap the baseline
+      # REGEN step above documents. It is NOT `always()` — a cancelled run must not
+      # start a multi-minute install. A red here still fails the leg (no
+      # continue-on-error), which is correct: it IS the proof being asked for.
+      - name: Install the built package SILENTLY (NSIS /S) [Windows, on demand]
+        if: ${{ !cancelled() && runner.os == 'Windows' && github.event.inputs.drive_installed_build == 'true' }}
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path dist -Filter '*-win-x64.exe' -File | Select-Object -First 1
+          if (-not $installer) {
+            # FAIL CLOSED with the directory listing. Reaching here means the
+            # electron-builder step above did not produce an NSIS artifact; a
+            # confusing "file not found" from Start-Process would hide that.
+            Write-Host "dist contains: $((Get-ChildItem -Path dist -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')"
+            throw "FAILED:installed-build no *-win-x64.exe NSIS installer in dist/"
+          }
+          # NSIS: /S = silent, and /D= must be the LAST argument and unquoted (NSIS
+          # takes the rest of the command line verbatim). RUNNER_TEMP has no spaces
+          # on the GitHub Windows image, which is why no quoting is attempted.
+          $target = Join-Path $env:RUNNER_TEMP 'ReframeInstalled'
+          Write-Host "installing $($installer.Name) -> $target"
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$target" -Wait
+          # `-Wait` is not sufficient on its own: an NSIS bootstrapper can hand off
+          # to a child process and return early, so poll for the postcondition (the
+          # executable on disk) instead of trusting the exit. Bounded, and fails
+          # closed with the install-dir listing.
+          $exe = Join-Path $target 'Reframe.exe'
+          for ($i = 0; $i -lt 60 -and -not (Test-Path -LiteralPath $exe); $i++) { Start-Sleep -Seconds 2 }
+          if (-not (Test-Path -LiteralPath $exe)) {
+            Write-Host "install dir contains: $((Get-ChildItem -Path $target -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')"
+            throw "FAILED:installed-build silent install produced no $exe"
+          }
+          # Two independent signals that this is a real install, not a copied tree:
+          # the app executable AND the uninstaller NSIS writes beside it
+          # (electron-builder nsis.oneClick: false -> "Uninstall <productName>.exe").
+          Write-Host "installed tree: $((Get-ChildItem -Path $target | ForEach-Object Name) -join ', ')"
+          "RF_E2E_APP_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RF_E2E_INSTALL_DIR=$target" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # RF_E2E_APP_EXE (exported above) makes fixtures.findBuiltApp() resolve the
+      # INSTALLED app and beats the job-wide RF_E2E_DEV=1, so this drives the real
+      # install even though every other step on this leg wants the dev build.
+      # RF_PY is still passed: the spec SEEDS its data root with the host
+      # interpreter, then launches the app with MEDIA_STUDIO_PYTHON /
+      # MEDIA_STUDIO_SIDECAR_DIR stripped so the app uses its OWN bundled runtime
+      # (see the spec header).
+      - name: E2E GUI — INSTALLED build cold first-run + data pipeline [Windows, on demand]
+        if: ${{ !cancelled() && runner.os == 'Windows' && github.event.inputs.drive_installed_build == 'true' }}
+        working-directory: app
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
+          # 20 minutes. The in-app estimate is ~3 min (FirstRunSetup
+          # SETUP_ESTIMATE_MIN) but that is a warm-network developer figure and this
+          # window has NEVER been measured on a GitHub runner — UNVERIFIED, which is
+          # why it is a variable. The settling experiment is this step's own log: the
+          # spec prints the gate phase/detail it timed out on.
+          RF_E2E_COLD_TIMEOUT_MS: "1200000"
+        run: npx playwright test --config playwright.config.ts installed-app
+
+      # ALWAYS uninstall — `always()` here and not `!cancelled()`, unlike the two
+      # steps above: cleanup must run even on a cancelled run, or the runner is left
+      # with an installed app and a Start-menu shortcut. `|| true` semantics via a
+      # guard rather than a suppressed exit: a failure to uninstall is reported in
+      # the log but must not turn a green proof red, since the artifact under test
+      # has already been measured by then.
+      - name: Uninstall the built package [Windows, on demand]
+        if: always() && runner.os == 'Windows' && github.event.inputs.drive_installed_build == 'true'
+        shell: pwsh
+        run: |
+          $target = $env:RF_E2E_INSTALL_DIR
+          if (-not $target -or -not (Test-Path -LiteralPath $target)) {
+            Write-Host "nothing to uninstall (RF_E2E_INSTALL_DIR='$target')"
+            exit 0
+          }
+          $uninstaller = Get-ChildItem -Path $target -Filter 'Uninstall *.exe' -File | Select-Object -First 1
+          if ($uninstaller) {
+            Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait
+            for ($i = 0; $i -lt 30 -and (Test-Path -LiteralPath (Join-Path $target 'Reframe.exe')); $i++) { Start-Sleep -Seconds 2 }
+          } else {
+            Write-Host "no uninstaller found in $target"
+          }
+          # Report the residue rather than force-deleting it: a leftover tree is a
+          # finding about the uninstaller, and this is an ephemeral runner.
+          Write-Host "post-uninstall residue: $((Get-ChildItem -Path $target -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')"
 
       - name: Upload regenerated visual baselines
         if: always() && runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
