@@ -1,8 +1,10 @@
 """Round-trip PARITY tests for the schema-first RPC contract POC (v1.5).
 
 These prove the GENERATED contract agrees with the hand-written reality it will
-eventually replace, so the generator can be trusted before any of the 123 methods
-is migrated:
+eventually replace, so the generator can be trusted before any of the remaining
+methods is migrated (the live surface is sized in `docs/rpc-contract-v2.md` §1;
+this docstring deliberately states no count, because the literal it used to carry
+is exactly the one that rotted):
 
   * every POC method the contract declares is a REAL registered method;
   * the generated ``needsKeyInjection`` classification matches ``keyBridge.ts``;
@@ -19,6 +21,9 @@ the contract as a standalone package, and never mutates on-disk state (a tmp-dir
 """
 
 from __future__ import annotations
+
+import re
+from pathlib import Path
 
 import pytest
 from contract import generate, registry, spec
@@ -213,3 +218,84 @@ def test_drift_gate_is_not_vacuous(tmp_path, monkeypatch):
     problems = generate.check()
     assert problems, "the drift gate should have flagged the missing artifacts"
     assert any("contract.schema.json" in p for p in problems)
+
+
+# --------------------------------------------------------------------------- #
+# 6. SIZE anti-drift: the migration docs must state the MEASURED size of the
+#    surface, never a hand-copied literal.
+#
+# Why this test exists. Every "123 methods" in the v2 contract docs — including
+# the long-pole `eng-days` estimate that was SIZED from it — was a literal typed
+# once and never re-measured, so it decayed silently as methods were added. The
+# same defect shape as the tab-strip count in #371: a number asserted in prose
+# that no check could see. #371's fix was a test that DERIVES the count from
+# source, so that is the fix here too — the docs carry exactly one literal per
+# quantity and this test recomputes it from the live registry and from
+# `client.ts` on every run. A method added without touching the docs now fails
+# gate:3 instead of quietly widening the drift.
+# --------------------------------------------------------------------------- #
+
+
+def _repo_root() -> Path:
+    """Anchor on root-only markers.
+
+    NOT `parents[2]`: pytest runs with cwd=`sidecar/` (quality.yml gate:3), and
+    `.quality/docs_check.py::_find_root` records what a positional guess cost
+    when a file moved — every relative read missed and the detector blamed the
+    repo for its own relocation.
+    """
+    for cand in Path(__file__).resolve().parents:
+        if (cand / ".git").exists() and (cand / "app/package.json").is_file():
+            return cand
+    raise AssertionError(f"cannot locate the repo root from {__file__}")
+
+
+# ANCHORED on the opening quote of the wire name so only a real dispatch matches:
+# a bare `rpc(` substring also appears in `rpcTimeout`/`onProgress(` tails, and the
+# orchestrator paid for exactly that class of unanchored probe three times today.
+_RPC_CALL_RE = re.compile(r"\brpc(?:<[^>]*>)?\(\s*'([A-Za-z][A-Za-z0-9_.]*)'")
+
+
+def _client_wrapper_methods() -> set[str]:
+    """Every wire name `app/renderer/src/lib/rpc/client.ts` calls by hand."""
+    text = (_repo_root() / "app/renderer/src/lib/rpc/client.ts").read_text(encoding="utf-8")
+    return set(_RPC_CALL_RE.findall(text))
+
+
+def test_the_count_probes_find_known_present_methods(tmp_path):
+    """Detector control. A zero from a broken matcher must not read as a finding.
+
+    Both probes below are asserted to find methods that are known-present, and the
+    live registry is asserted to be a SUPERSET of the hand-written client (a wrapper
+    for an unregistered method would be a dead wire name — finding #1's failure
+    mode). Without this, `test_docs_state_the_measured_surface_size` could pass on
+    two matching zeros.
+    """
+    wrappers = _client_wrapper_methods()
+    live = _live_methods(tmp_path)
+    assert {"ping", "library.add", "settings.get"} <= wrappers
+    assert {"ping", "library.add", "settings.get"} <= live
+    assert wrappers <= live, f"client.ts calls unregistered wire names: {sorted(wrappers - live)}"
+
+
+def test_docs_state_the_measured_surface_size(tmp_path):
+    live = len(_live_methods(tmp_path))
+    wrappers = len(_client_wrapper_methods())
+    root = _repo_root()
+
+    # The canonical phrasings. Each appears exactly where the doc needs the number;
+    # every OTHER mention of the surface size in the docs is deliberately
+    # qualitative, so there is one literal per quantity rather than the seven
+    # hand-copied "123"s this test replaces.
+    for rel in ("docs/rpc-contract-v2.md", "docs/rpc-contract-v2-migration.md"):
+        body = (root / rel).read_text(encoding="utf-8")
+        assert f"{live} live-registered methods" in body, (
+            f"{rel} does not state the measured method count ({live}). "
+            "Re-measure and update the doc; do not adjust this test."
+        )
+
+    body = (root / "docs/rpc-contract-v2.md").read_text(encoding="utf-8")
+    assert f"{wrappers} hand-written `rpc()` call sites" in body, (
+        f"docs/rpc-contract-v2.md does not state the measured client.ts wrapper "
+        f"count ({wrappers}). Re-measure and update the doc; do not adjust this test."
+    )

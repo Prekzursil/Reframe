@@ -223,8 +223,10 @@ and preload. Verified by two mechanically independent probes (regex extraction, 
 
 The first four are **user-visible competitive features already paid for in engine cost**. Exposing
 them is an **S** each — a panel + a typed client wrapper in
-`app/renderer/src/lib/rpc/client.ts` (the file already holds 123 wrappers, so the pattern is
-established). This is the cheapest capability-per-effort work in the whole plan.
+`app/renderer/src/lib/rpc/client.ts` (the file already holds a hand-written wrapper for most of the
+live surface, so the pattern is established — the exact count lives in
+`docs/rpc-contract-v2.md` §1, where a test pins it; repeating it here is what let the
+old figure rot). This is the cheapest capability-per-effort work in the whole plan.
 
 Also measured: `features/scroll_regen.py` (12,131 bytes) has **zero importers**. Likely dead code
 — **UNVERIFIED**, since my probe cannot see a dynamic/string-keyed import. Settling experiment:

@@ -1,10 +1,18 @@
-# RPC Contract v2 — migration plan (123 methods, no big-bang)
+# RPC Contract v2 — migration plan (whole live surface, no big-bang)
 
 > **Status:** ACTIVE
 
 Companion to [`rpc-contract-v2.md`](./rpc-contract-v2.md). This is the incremental,
-parity-tested, CI-gated path from "5-method POC" to "all ~123 methods generated",
-with the 100%-coverage gate green at **every** commit.
+parity-tested, CI-gated path from "5-method POC" to "all 169 live-registered methods
+generated", with the 100%-coverage gate green at **every** commit.
+
+> **The surface size is measured, not remembered.** This plan previously said `123`
+> throughout — a literal typed once and never re-measured, so it decayed to **73% of
+> the real surface** while Wave 1's estimate below was *sized from it*. `169` is
+> `len(register_all(…) | protocol.METHODS)`, recomputed against this doc on every
+> `gate:3` run by
+> `sidecar/tests/test_contract_parity.py::test_docs_state_the_measured_surface_size`.
+> Re-measure before editing it; the test will reject a guess.
 
 ## Guiding invariants
 
@@ -26,7 +34,7 @@ with the 100%-coverage gate green at **every** commit.
 Contract package (`sidecar/contract/`), generator, the 5-method POC, the drift gate,
 and the parity harness (Python + TS). Nothing wired in; nothing removed.
 
-## Wave 1 — declare all 123 methods (pure addition, zero behavior change)
+## Wave 1 — declare every live-registered method (pure addition, zero behavior change)
 
 Transcribe every method into `contract/spec.py` and every shared type in
 `schemas.ts` (~40-60 data models) into contract dataclasses. Regenerate. **No wiring
@@ -110,10 +118,20 @@ contract package's suite, where it belongs) — never lower a threshold.
 | Wave | Work | Estimate |
 |---|---|---|
 | 0 | POC (this PR) | done |
-| 1 | Transcribe 123 methods + ~50 data models; extend `schema.py` (enums/unions/intersections) + the wrapper override hatch; parameterize the parity suites; **reconcile every real drift the suites surface** | **~3-5 eng-days** (the long pole; mostly mechanical transcription, but the drift reconciliation carries the real, valuable surprises) |
+| 1 | Transcribe the 169 live-registered methods + ~50 data models; extend `schema.py` (enums/unions/intersections) + the wrapper override hatch; parameterize the parity suites; **reconcile every real drift the suites surface** | **~4-7 eng-days** (the long pole; mostly mechanical transcription, but the drift reconciliation carries the real, valuable surprises) |
 | 2 | Flip keyBridge (~½d), client.ts (~1-2d), schemas.ts (~½d), Python dispatch validation + remove `_require_*` (~1-2d), Settings model (~1-2d) | **~1 eng-week** |
 | 3 | Docs/authority retire | **~½ eng-day** |
 | — | **Total** | **~2-3 focused engineer-weeks** |
+
+Wave 1's `~4-7 eng-days` is a **rescale, and UNVERIFIED as an estimate** — the
+original `~3-5` was sized against `123` methods, i.e. 73% of the real surface, so
+holding it while the count grew would have under-budgeted the long pole by ~37%.
+The rescale is linear in method count, which assumes per-method transcription cost
+is roughly uniform; the drift-reconciliation half of the work is *not* obviously
+linear in anything. Settling experiment: transcribe one whole method family
+end-to-end (e.g. the ten `tracks.video.*` methods), record wall-clock including the
+drift it surfaces, and extrapolate from that measured rate instead of from this
+ratio. Nothing downstream should be committed to on the strength of this number.
 
 Risk is **low** (every step additive-then-thin-swap, parity-gated, coverage-neutral);
 cost is dominated by careful transcription and reconciling the genuine drift the

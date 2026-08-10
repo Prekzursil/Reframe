@@ -9,15 +9,16 @@ Migration plan: [`rpc-contract-v2-migration.md`](./rpc-contract-v2-migration.md)
 
 ## 1. The problem — one contract, hand-mirrored in 7 places that drift
 
-Reframe's JSON-RPC contract (~123 methods) has **no single source of truth**. The
-same method name, its params, its result, and its "needs a provider key" flag are
-re-typed by hand across at least seven surfaces, and nothing keeps them in sync:
+Reframe's JSON-RPC contract (169 live-registered methods) has **no single source of
+truth**. The same method name, its params, its result, and its "needs a provider
+key" flag are re-typed by hand across at least seven surfaces, and nothing keeps
+them in sync:
 
 | # | Surface (file) | What it hand-maintains | Failure mode when it drifts |
 |---|---|---|---|
-| 1 | `app/renderer/src/lib/rpc/client.ts` | 123 hand-written `rpc('name', {...})` call sites | a renamed/retyped method compiles but calls a dead wire name |
-| 2 | `sidecar/media_studio/handlers/composition.py` | ~120 `reg("name", handler)` registrations | a method exists on one side only; no cross-check |
-| 3 | `CONTRACTS.md` | ~40 methods, marked "FROZEN" | **already stale** — describes 40 of 123; §0 even says "no keystore / no consent" while both now exist |
+| 1 | `app/renderer/src/lib/rpc/client.ts` | 134 hand-written `rpc()` call sites | a renamed/retyped method compiles but calls a dead wire name |
+| 2 | `sidecar/media_studio/handlers/composition.py` | 82 direct `reg("name", handler)` registrations, plus each feature module's own `register()` — no one file lists the whole surface | a method exists on one side only; no cross-check |
+| 3 | `CONTRACTS.md` | 45 methods, marked "FROZEN" | **already stale** — describes 45 of 169; §0 even says "no keystore / no consent" while both now exist |
 | 4 | `app/renderer/src/lib/rpc/schemas.ts` | 1235 hand-maintained lines of TS types | a field renamed on the Python side silently diverges from TS |
 | 5 | `app/main/keyBridge.ts:61-88` | the `needsKeyInjection` allowlist (4 prefixes + 10 exact names) | **silent key omission** — a new provider-calling method not added here gets no key → cloud silently degrades to local |
 | 6 | `sidecar/media_studio/settings_store.py` | `DEFAULT_SETTINGS: dict[str, Any]` + every `settings.get("k")` read | untyped: a wrong key returns `None` with zero signal |
@@ -26,6 +27,23 @@ re-typed by hand across at least seven surfaces, and nothing keeps them in sync:
 The through-line: **the contract is data, but it is expressed as hand-copied code
 in six languages/locations.** Every one of the seven is a place a human must
 remember to edit in lock-step. That is the definition of drift-prone.
+
+> **Every count above is measured, not remembered — and now pinned by a test.**
+> `169` is `len(register_all(…) | protocol.METHODS)` (the live registry, the same
+> seam the parity suite's `_live_methods` uses); `134` is the anchored
+> `rpc('<name>'` call-site set in `client.ts`; `82` counts only the `reg("…")`
+> calls that live in `composition.py` itself; `45` is the live-method set
+> `CONTRACTS.md` actually names, computed by **set membership against the live
+> registry** rather than by a name-shaped regex — a backticked-token regex first
+> reported `12` here by matching `boundary.py` and `re.escape`, a reading that
+> contradicted the doc it was measuring and so was a detector failure, not a
+> finding. This paragraph replaces a hand-copied `~123` that had decayed to **73%
+> of the real surface** while every doc, and the eng-day estimate sized from it,
+> kept repeating it. `sidecar/tests/test_contract_parity.py::test_docs_state_the_measured_surface_size`
+> recomputes `169` and `134` on every `gate:3` run and fails if this doc drifts
+> from them, so the numbers cannot rot again; a sibling detector-control test
+> proves both probes find known-present methods, so two matching zeros cannot pass
+> for agreement. Re-measure before editing either number.
 
 ## 2. The decision — a stdlib-typed Python contract module, JSON Schema as interchange
 
@@ -106,9 +124,9 @@ becomes impossible rather than merely discouraged.
 
 | # | Finding | Retired by |
 |---|---|---|
-| 1 | `client.ts` 123 hand call sites | generated `client.generated.ts` wrappers — wire shape is emitted, not typed by hand. **Proven at parity** with the current `client.ts` (see §5). |
-| 2 | `composition.py` ~120 `reg()` | `registry.method_names()` is the authority; the parity test asserts every declared method is actually registered, and (in migration) registration is driven from the contract. |
-| 3 | `CONTRACTS.md` stale | the machine `contract.schema.json` replaces prose as the source of truth; docs are generated/derived, never the authority. |
+| 1 | `client.ts` hand call sites (§1 count) | generated `client.generated.ts` wrappers — wire shape is emitted, not typed by hand. **Proven at parity** with the current `client.ts` (see §5). |
+| 2 | `composition.py` `reg()` + the per-feature `register()`s (§1 count) | `registry.method_names()` is the authority; the parity test asserts every declared method is actually registered, and (in migration) registration is driven from the contract. |
+| 3 | `CONTRACTS.md` stale (§1: 45 of 169) | the machine `contract.schema.json` replaces prose as the source of truth; docs are generated/derived, never the authority. |
 | 4 | `schemas.ts` 1235 hand lines | generated `schemas.generated.ts` — interfaces emitted from the same dataclasses that drive Python. |
 | 5 | `keyBridge.ts` allowlist → silent key omission | `needsKeyInjection` is **generated** from each method's declared `needs_key`. A key-consuming method can't be forgotten: it declares its own flag, and a parity test (in migration) enforces "handler touches keys ⟺ `needs_key=True`". The POC proves the generated set equals the current keyBridge verdict. |
 | 6 | untyped `DEFAULT_SETTINGS` / `settings.get("k")` | the typed `Settings` model + `validate_settings`; both sides assert it. The parity test validates a real `settings.get()` payload against the generated schema. |

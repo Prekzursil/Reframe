@@ -120,7 +120,7 @@ The five facts that get contradicted most often, and the one place each is decid
 | file | charter |
 |---|---|
 | [`rpc-contract-v2.md`](rpc-contract-v2.md) | the only wire-contract AUTHORITY doc. |
-| [`rpc-contract-v2-migration.md`](rpc-contract-v2-migration.md) | the only 5→123-method migration path. |
+| [`rpc-contract-v2-migration.md`](rpc-contract-v2-migration.md) | the only POC→whole-surface migration path. Deliberately states no method count: that number lives in the two v2 docs, where a test pins it. |
 | [`design-system.md`](design-system.md) | the only portable spec of the tokens. |
 | [`providers/SETUP.md`](providers/SETUP.md) | human-facing provider setup; mirrors `catalog.py`. |
 | [`providers/MODEL-GUIDE.md`](providers/MODEL-GUIDE.md) | human-facing model picks; mirrors `catalog.py`. |
