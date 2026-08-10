@@ -382,8 +382,11 @@ def broll_asset_rows(self: Services, registered: list[dict[str, Any]] | None = N
 def broll_assets(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``broll.assets()`` -> ``{assets, missing}`` (BR1). Direct-return, read-only.
 
-    ``assets`` is exactly what ``broll.index`` would embed (:func:`broll_asset_rows`),
-    so the panel cannot show one library while the engine indexes another.
+    ``assets`` is exactly the library ``broll.index`` works from — the same
+    :func:`broll_asset_rows` seam, so the panel cannot show one library while the
+    engine indexes another. (It is not the list the tower receives: ``broll.index``
+    then embeds only the STALE subset of it, whose size ``broll.status`` reports as
+    ``staleCount``.)
     ``missing`` lists REGISTERED assets whose file has moved or been deleted — they
     are reported rather than silently dropped, so the UI can offer a re-register or
     an unregister instead of leaving a phantom in the grid. No model, no provider,

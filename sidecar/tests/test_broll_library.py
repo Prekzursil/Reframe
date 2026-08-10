@@ -443,6 +443,43 @@ def test_a_registered_asset_is_counted_by_the_wired_broll_status(wired, tmp_path
     assert handlers["broll.status"]({}, _ctx())["libraryCount"] == 1
 
 
+def test_a_registered_asset_lands_in_the_index_EMBED_PLAN(wired, tmp_path: Path):
+    """Stronger than a count: the registry participates in INCREMENTAL indexing.
+
+    Build a real index sidecar covering ONLY the scanned file, so ``broll.status``
+    honestly reports ``stale=False, staleCount=0``. Registering an asset from OUTSIDE
+    ``brollDir`` must then raise ``staleCount`` to 1 — and ``staleCount`` is
+    ``len(refresh_plan()['embed'])``, which is verbatim the list ``broll.index`` hands
+    to the image tower. A registry that were a parallel store would leave it at 0.
+
+    No weights are involved: the vector is a hand-written 2-D literal, so this runs in
+    the gate env. UNVERIFIED (out of scope here): whether the real SigLIP-2 tower then
+    produces a useful vector for that asset — the settling experiment is design BR8's
+    real-model tier.
+    """
+    handlers, services = wired
+    folder = tmp_path / "scanned"
+    folder.mkdir()
+    (folder / "dog.png").write_bytes(b"x")
+    services.settings.set({broll_ops.BROLL_DIR_KEY: str(folder)})
+
+    scanned = broll_ops.scan_assets(str(folder))
+    broll_ops.save_index_file(
+        services.data_dir / broll_ops.INDEX_FILENAME,
+        broll_index.build(scanned, [[0.0, 1.0]], model=broll_ops.DEFAULT_MODEL_ID, built_at="t"),
+    )
+    before = handlers["broll.status"]({}, _ctx())
+    assert (before["stale"], before["staleCount"], before["libraryCount"]) == (False, 0, 1)
+
+    city = tmp_path / "outside" / "city.jpg"
+    city.parent.mkdir()
+    city.write_bytes(b"y")
+    services.library.add_broll(str(city))
+
+    after = handlers["broll.status"]({}, _ctx())
+    assert (after["stale"], after["staleCount"], after["libraryCount"]) == (True, 1, 2)
+
+
 def test_the_registry_methods_never_enter_the_key_injection_allowlist(wired):
     """broll.* is LOCAL-only: no provider, so no key may ever be injected."""
     handlers, _services = wired
