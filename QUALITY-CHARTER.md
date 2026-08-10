@@ -23,7 +23,7 @@ gates that exist in the source charter do not apply here and have been dropped.
 | 3 | tests-coverage | pytest 9 + pytest-cov (branch, `--cov-fail-under=100`) · vitest 3 (100% thresholds) | Strict 100% line+branch coverage **everywhere** — sidecar (`media_studio`) **and** the renderer (`renderer/src/**`). No hybrid/ratchet floor. Reasoned `# pragma: no cover — <reason>` / `/* v8 ignore — <reason> */` allowed only for genuinely-untestable platform/defensive branches. |
 | 4 | sast | opengrep 1.22.0 (CI) / semgrep 1.166.0 (local) | Static security analysis using the curated in-repo ruleset under `.quality/opengrep/` (NOT `--config auto`). Clean-zero lock: 0 findings, no baseline. |
 | 5 | secrets | gitleaks 8.30.1 | Secret scanning with the committed `.gitleaks.toml` allowlist (vendored deps + reasoned test fixtures only). Gate on 0. |
-| 6 | deps | osv-scanner 2.3.8 | Known-CVE scan of the lockfiles (`app` + `app/render-cli` npm, `sidecar` pyproject). Reasoned per-vuln ignores only in `osv-scanner.toml`; no baseline. Gate on 0. |
+| 6 | deps | osv-scanner 2.3.8 | Known-CVE scan of **every shipped dependency environment**: the `app` + `app/render-cli` npm lockfiles, the resolved `sidecar/requirements.lock.txt`, and both first-run `pip --target` environments (`sidecar/runtime_setup/requirements-sidecar.txt` plus `requirements-chatterbox.txt`, whose own `+cu128` torch build no other lockfile can contain). Read flat (`--no-resolve`), so declared pins rather than the transitive closure. Reasoned, dated per-vuln ignores only in `osv-scanner.toml`; no baseline. Gate on 0. |
 
 <!-- END GATES -->
 
@@ -57,6 +57,16 @@ tree, and github-actions); that is supply-chain hygiene, not part of the 6-gate 
 - **JS/TS formatter = Biome (format-only), not oxfmt.** As of the build date the OXC
   formatter (`oxfmt`) is still **beta** (no 1.0/GA), so the formatter gate uses
   Biome 2.5.0 `format --write` (linter disabled in `biome.json`; linting is oxlint's job).
+- **The deps gate scans environments, not just the two npm trees.** The isolated
+  py3.14 chatterbox voice-clone env is a *deliberate* separation — `sidecar/pyproject.toml`
+  forbids chatterbox-tts/torch in the main sidecar env, and the env exists at all because
+  chatterbox-tts 0.1.7 only accepts py3.14 — so the fix for its missing CVE coverage was to
+  add its requirements file to the EXISTING gate-6 lockfile set, never to unify the torch
+  pins. Adding a scanned lockfile is not a new gate and does not touch the one-in/one-out
+  rule (rule 2), which is about the closed list of six gates. Section 5 of
+  `sidecar/tests/test_supply_chain_pins.py` asserts the invariant that every shipped
+  environment has a `--lockfile` argument, discovering the environment set from disk so a
+  fourth one cannot be added unscanned.
 - **basedpyright mode = `standard`** (not `strict`) so "literal zero" stays achievable
   on partly-untyped code and untyped third-party libraries.
 - **react-hooks/exhaustive-deps = off** in oxlint: it is advisory and its auto-fix can

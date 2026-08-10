@@ -15,6 +15,23 @@
 #                                        compile`. Scanned with --no-resolve so osv
 #                                        reads the flat pins directly. Re-generate
 #                                        on any sidecar dep change.)
+#   - sidecar/runtime_setup/requirements-sidecar.txt     (W23: the FIRST-RUN heavy
+#                                        sidecar env, installed by pip --target into
+#                                        %APPDATA%/media-studio/envs/sidecar)
+#   - sidecar/runtime_setup/requirements-chatterbox.txt  (W23: the ISOLATED py3.14
+#                                        voice-clone env. It pins its OWN +cu128
+#                                        torch build, which none of the lockfiles
+#                                        above can contain — sidecar/pyproject.toml
+#                                        forbids chatterbox-tts/torch in the main
+#                                        env — so before W23 it was scanned by
+#                                        nothing at all.)
+#
+# The two runtime_setup files are read as FLAT pin lists under --no-resolve, so the
+# gate covers their DECLARED pins, not their transitive closure. That closure is
+# hash-pinned separately at F1 build-prep by runtime_setup/generate_hashed_lock.py,
+# whose output is generated rather than committed. Section 5 of
+# sidecar/tests/test_supply_chain_pins.py asserts that every shipped environment
+# has an argument in the gate, so a fourth one cannot be added unscanned.
 #
 # ---------------------------------------------------------------------------
 # 2026-06-16 SECURITY UPGRADE — the electron/vite/esbuild/vitest/ws ignores that
@@ -62,6 +79,15 @@
 # Measured with the pinned osv-scanner 2.3.8 over blob-exact `git archive`
 # extracts: 18 vulnerabilities / 9 packages -> 2 / 2 (1 Critical -> 0 Critical).
 # The single remaining finding is the reasoned ignore below.
+# ---------------------------------------------------------------------------
+# 2026-08-10 COVERAGE FIX (W23) — the two sidecar/runtime_setup requirements files
+# joined the scanned set above. That did not change any dependency; it changed what
+# the gate can SEE. Measured with the pinned osv-scanner 2.3.8 in the worktree:
+# 3 lockfiles -> 495+209+76 = 780 packages, exit 0; 5 lockfiles -> +13+3 = 796
+# packages, exit 1 with exactly ONE new finding (torch 2.10.0+cu128 — the second
+# reasoned ignore below). The pre-existing "unused ignores: GHSA-mh99-v99m-4gvg"
+# notice appears in BOTH states, so it is not a consequence of this change and it
+# does not affect the exit code.
 # ---------------------------------------------------------------------------
 
 [[IgnoredVulns]]
@@ -115,5 +141,69 @@ RE-CHECK CONDITION — either one retires this entry outright:
       2.1.2 exists, then re-check that release against the advisory range.
 Re-review at ignoreUntil (2026-10-25) regardless. REMOVING the ignore is the
 default outcome; extending it requires re-measuring both paths above.
+"""
+
+[[IgnoredVulns]]
+id = "GHSA-rrmf-rvhw-rf47"
+ignoreUntil = 2026-11-10
+reason = """
+torch: memory corruption via `torch.jit.script` (aliases CVE-2025-3000,
+PYSEC-2025-194, BIT-pytorch-2025-3000). CVSS 5.3 Medium,
+AV:L/AC:L/PR:L/UI:N/S:U/C:L/I:L/A:L — a LOCAL, already-authenticated attacker
+only, no network vector. Surfaced 2026-08-10, the moment the W23 coverage fix
+added sidecar/runtime_setup/requirements-chatterbox.txt to the scanned set. It is
+NOT a regression: the pin did not change, only the gate's visibility did.
+Ignored per the POLICY at the top of this file as GENUINELY UNFIXABLE for THIS
+environment.
+
+WHY UNFIXABLE — measured 2026-08-10 by execution, from two mechanically
+independent sources, not assumed:
+  1. OSV record (api.osv.dev/v1/vulns/GHSA-rrmf-rvhw-rf47): the ECOSYSTEM range
+     is introduced 0 -> fixed 2.13.0, and database_specific
+     .last_known_affected_version_range is "<= 2.12.1". Every torch release up to
+     2.12.1 is affected; only 2.13.0 clears it.
+  2. The wheel index this env actually installs from
+     (download.pytorch.org/whl/cu128/torch/) tops out at torch 2.11.0 — and for
+     cp314, the DEDICATED py3.14 embeddable interpreter this env requires (see the
+     CONTRACT-NOTE in requirements-chatterbox.txt and build/python-embed-setup.ps1),
+     only 2.9.0, 2.9.1, 2.10.0 and 2.11.0 exist. There is no fixed +cu128 wheel to
+     upgrade to at all, so the "upgrade first" arm of the policy has nothing to
+     resolve to.
+  3. Counter-intuitive corollary, recorded so it is not re-derived: bumping to the
+     torch 2.11.0 an earlier sweep proposed would NOT clear this advisory. 2.11.0
+     is still inside the affected range.
+PyPI DOES publish a plain torch 2.13.0 (measured: pypi.org/pypi/torch/json
+info.version == 2.13.0). Adopting it means abandoning the cu128 per-index
+exception AND bumping the pinned trio (chatterbox-tts + torch + torchaudio)
+together, which requirements-chatterbox.txt states must be human-verified on a
+real GPU install. That is an environment-architecture change, deliberately NOT
+made by the coverage fix that merely revealed the finding.
+
+SCOPE: the isolated voice-clone env only. It is downloaded on FIRST RUN into
+%APPDATA%/media-studio/envs/chatterbox and never ships inside the installer
+(build/make-portable.ps1 forbids torch in the artifact); the sidecar drives it as
+a child process. NOT ASSESSED, and deliberately not claimed in either direction:
+whether chatterbox-tts 0.1.7 or its transitive closure ever reaches
+`torch.jit.script`. SETTLING EXPERIMENT for that: unpack the chatterbox-tts 0.1.7
+wheel plus its closure and search the call graph for jit.script / jit.trace. If it
+provably never does, re-scope this entry from unfixable to unreachable.
+
+CAVEAT — READ THIS BEFORE TRUSTING THIS ENTRY. An osv-scanner ignore is keyed by
+VULNERABILITY ID, not by package or version, so it suppresses this advisory
+everywhere in the scanned set. Measured blast radius today: nothing else — torch
+appears in NO other scanned lockfile (sidecar/requirements.lock.txt carries zero
+torch* pins). But sidecar/pyproject.toml's `reframe-gpu` extra pins torch==2.6.0,
+which is likewise inside the affected range; if that manifest is ever added to the
+gate, THIS entry silences it there too. Assess that env separately then rather
+than assuming this reason already covers it.
+
+RE-CHECK CONDITION — either one retires this entry outright:
+  (a) a torch >= 2.13.0 cp314 wheel appears on the cu128 index — verify with
+      `curl -sSL https://download.pytorch.org/whl/cu128/torch/` and grep for
+      cp314; or
+  (b) the env moves off the cu128 index onto a fixed PyPI torch, with the trio
+      re-verified on a GPU host.
+Re-review at ignoreUntil (2026-11-10) regardless. REMOVING the ignore is the
+default outcome; extending it requires re-measuring both probes above.
 """
 
