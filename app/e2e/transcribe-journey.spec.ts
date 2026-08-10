@@ -23,15 +23,26 @@
 //   synthesise real speech with Windows SAPI → mux it over the same `testsrc`
 //   video the silent fixture uses → seed it through the real `library.add`
 //   → PIN the ASR target via the real `settings.set`
-//   → launch the built app → open the video → Workspace
+//   → launch the built app (with the HF model fetch forced ANONYMOUS — see
+//     HF_ANONYMOUS_ENV; an ambient HF_TOKEN that 401s otherwise reads as
+//     "the model does not exist") → open the video → Workspace
 //   → Transcribe tab: assert the panel's EMPTY state first (detector control),
 //     click the real "Start transcription", and assert the rendered
 //     `.transcript-segments` carries the spoken content words
 //   → Subtitles tab: click the real "Generate subtitles" and assert a rendered
 //     CUE carries one of those same words.
 //
-// Every assertion reads the UI, never the sidecar's return value: the point is
+// Every assertion about the TRANSCRIPT and the CUES reads the UI: the point is
 // that the USER can see the transcript, not that an RPC returned one.
+//
+// SCOPE CORRECTION — the earlier wording here ("every assertion reads the UI,
+// never the sidecar's return value") was REFUTED and is wrong. There is exactly
+// ONE assertion on an RPC return value: the `settings.set` pin in `beforeAll`
+// below, which checks the MERGED settings document it returns. That is a setup
+// PRECONDITION that no UI surface exposes, and it is deliberate — without it a
+// param-shape mistake becomes a mysterious 1.5 GB download instead of a named
+// setup failure. Every done-signal (transcript text, cue text) is still read
+// from the rendered DOM.
 //
 // ── WHAT THIS DOES *NOT* DO ──────────────────────────────────────────────────
 // It does NOT gate a PR. `e2e.yml` is `workflow_dispatch` + nightly `cron` only,
@@ -85,6 +96,31 @@ const PIN_MODEL = 'tiny';
 // CPU anyway. Pinning it makes the resolved target deterministic instead of a
 // side effect of which packages happen to be installed.
 const PIN_DEVICE = 'cpu';
+
+// ── THE ONE ENV OVERRIDE, AND THE DEFECT IT CLOSES ───────────────────────────
+// `fixtures.definedEnv` copies the WHOLE ambient environment into the app env, so
+// the sidecar inherits any `HF_TOKEN` the developer has exported. huggingface_hub
+// sends that token IMPLICITLY on every request — including requests for a PUBLIC
+// repo — and a token that no longer authenticates turns a public fetch into
+// `RepositoryNotFoundError: 401`, which reads as "the model does not exist", not
+// "your token is bad". MEASURED on this box, four arms, each on a FRESH empty
+// HF_HOME against the public `Systran/faster-whisper-tiny`:
+//   huggingface_hub 1.27.0, ambient token -> RepositoryNotFoundError 401, cache 5,698 B
+//   huggingface_hub 1.27.0, this override -> OK, 6 blobs / 78,207,087 B (74.6 MB)
+//   huggingface_hub 1.26.0 (the lock pin), ambient token -> RepositoryNotFoundError 401
+//   huggingface_hub 1.26.0 (the lock pin), this override -> OK, the same 6 blobs
+// and END-TO-END through this spec: WITHOUT the override, a cold-HF_HOME run goes
+// red in 41 s at the panel-error arm below, carrying the sidecar's
+// `User Access Token "Reframe" is expired`.
+//
+// The credential itself is NOT touched — AGENTS.md §9 reserves credential
+// lifecycle to the owner — so the CONSUMER is fixed instead, which is also the
+// durable half: ANY HF_TOKEN that 401s (revoked, wrong org, insufficient scope)
+// breaks the cold-cache path identically. A GitHub runner carries no HF_TOKEN and
+// was therefore already anonymous, so this changes nothing in CI and only makes a
+// developer's cold-cache run deterministic. It does NOT make the leg offline (see
+// PIN_MODEL's disclosed residual) — it makes the network fetch unauthenticated.
+const HF_ANONYMOUS_ENV: Record<string, string> = { HF_HUB_DISABLE_IMPLICIT_TOKEN: '1' };
 
 // Cold whisper: a ~75 MB model fetch on a fresh runner, then CPU/int8 inference
 // over ~7 s of audio. Measured locally (warm HF cache, 8-core): first transcript
@@ -151,7 +187,8 @@ test.beforeAll(async () => {
   app = await electron.launch({
     args: [built.main, '--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
     ...(built.executablePath ? { executablePath: built.executablePath } : {}),
-    env: seeded.appEnv,
+    // HF_ANONYMOUS_ENV last so it wins over anything the ambient env carried.
+    env: { ...seeded.appEnv, ...HF_ANONYMOUS_ENV },
   });
 
   const proc = app.process();
@@ -229,9 +266,27 @@ test('spoken words become a visible transcript and then a caption cue (real GUI 
   // (Transcribe.tsx:318), INCLUDING one with zero segments. Waiting on
   // `.transcript-segments li` instead means an honest empty transcript (what the
   // speechless `sine` sample produces) burns the whole TRANSCRIBE_WAIT_MS budget
-  // before reporting an anonymous "element not found" — measured: 5.1 minutes.
-  // Racing the summary and the panel error gives three distinct, fast verdicts:
-  // ASR blew up / ASR finished empty / ASR finished with content.
+  // before reporting an anonymous "element not found" — measured at 5.1 minutes
+  // on the PRE-SHARPENING shape of this block against a ~6.7 s speechless sine
+  // (i.e. a sine stretched to the speech fixture's length, NOT the repo's own
+  // 3 s `sine=frequency=440:duration=3`). UNVERIFIED here: that 5.1-minute figure
+  // has not been re-measured, because the shape it describes no longer exists;
+  // the settling experiment is to revert to `segments.first().waitFor(...)` and
+  // re-run the sine arm. What IS re-measured is the sharpened shape below.
+  //
+  // Racing the summary and the panel error gives three distinct, fast verdicts —
+  // and all THREE are now measured, not two:
+  //   ASR blew up            -> panel error, 41 s wall clock: a cold HF_HOME plus
+  //                             an ambient HF_TOKEN that 401s (see HF_ANONYMOUS_ENV)
+  //                             lands here carrying the sidecar's own reason.
+  //   ASR finished EMPTY     -> the zero-segments arm below, RE-MEASURED against
+  //                             the repo's OWN 3 s speechless `sine` fixture:
+  //                             failing test 12.6 s, whole invocation 56.3 s
+  //                             (it includes Playwright's worker restart). Seconds,
+  //                             not the pre-sharpening minutes — worth stating
+  //                             because the cost of the red state is the only
+  //                             argument against keeping this arm strict.
+  //   ASR finished with content -> the green path.
   const segments = panel.locator('.transcript-segments li');
   const summaryLoc = panel.locator('.transcript-summary');
   const panelError = panel.locator('p.error[role="alert"]');
@@ -321,9 +376,20 @@ test('spoken words become a visible transcript and then a caption cue (real GUI 
 });
 
 test('no console errors across the transcribe-journey session', async () => {
-  // Bound in beforeAll, so this covers load, navigation, the transcription run and
-  // the caption generation. Kept SEPARATE from — and after — the speech-to-text
+  // Bound in beforeAll. Kept SEPARATE from — and after — the speech-to-text
   // done-signal so a renderer console error never masks the primary verdict
   // (same split as golden-journey.spec.ts:318).
+  //
+  // SCOPE — this covers load, navigation, the transcription run and the caption
+  // generation ONLY WHEN THE PRIMARY TEST PASSES. After a primary failure
+  // Playwright restarts the worker, `beforeAll` re-runs, and this test then
+  // observes a FRESH app that never transcribed. MEASURED both states in one
+  // spec: the red run prints the `[transcribe-journey] speech fixture: …` line
+  // TWICE (once per beforeAll) and this test finishes in tens of ms against that
+  // fresh launch, while the green run prints it ONCE. So on a red run this is a
+  // launch-only console check, not session coverage. Not lane-introduced —
+  // golden-journey.spec.ts:318 has the identical split — and left as-is
+  // deliberately: merging it into the primary test would let a console error mask
+  // the speech verdict, which is the worse failure.
   expect(consoleErrors, `console errors across session: ${JSON.stringify(consoleErrors)}`).toEqual([]);
 });
