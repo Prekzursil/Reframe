@@ -32,6 +32,22 @@ export const MAIN_ENTRY = join(REPO_ROOT, 'app', 'out', 'main', 'main.js');
 export const DIST_DIR = join(REPO_ROOT, 'dist');
 
 /**
+ * Env var naming an app that is already INSTALLED on this machine — the escape
+ * hatch out of `DIST_DIR`.
+ *
+ * Until it existed, `findBuiltApp()` could resolve a package from exactly one
+ * place (`dist/win-unpacked` and friends), so every "packaged" assertion in this
+ * harness was really about the electron-builder OUTPUT tree. Nothing had ever
+ * driven an app laid down by the NSIS installer. Accepts what `parseElectronApp`
+ * accepts as "the app itself": a Windows `<install dir>/<Product>.exe` or a macOS
+ * `<Product>.app` bundle.
+ *
+ * Consumers: `installed-app.spec.ts` (which self-skips when it is unset) and
+ * `findBuiltApp.test.ts` (the deterministic resolution proof).
+ */
+export const APP_EXE_ENV = 'RF_E2E_APP_EXE';
+
+/**
  * What the launched app boots: the args + (for a real package) the executable
  * path, plus whether we are pointing at a PACKAGED artifact or the dev build.
  */
@@ -45,13 +61,64 @@ export interface BuiltApp {
 }
 
 /**
+ * Resolve an app that is already INSTALLED, from :data:`APP_EXE_ENV`.
+ *
+ * Two deliberate choices, both of them the difference between a proof and a
+ * plausible-looking green:
+ *
+ *  * **FAIL LOUD, never fall back.** A typo'd or stale `RF_E2E_APP_EXE` must not
+ *    quietly resolve the dev build; an "installed-build" leg reporting green
+ *    while it drove `out/main/main.js` is worse than no leg at all.
+ *  * **For a Windows `.exe`, the CALLER's path is authoritative.**
+ *    `parseElectronApp` resolves the executable with
+ *    `readdirSync(dir).find((f) => f.endsWith('.exe'))` — "assume the executable
+ *    is the only .exe file in the directory" in its own comment. An
+ *    electron-builder NSIS install directory is NOT that: `nsis.oneClick: false`
+ *    lays down `Uninstall <ProductName>.exe` beside the app, so which one that
+ *    `find` returns is filesystem-order-dependent. We only borrow `info.main`
+ *    (the asar/app entry, which needs the package.json) and keep the executable
+ *    the caller named. A macOS `.app` argument is a bundle DIRECTORY rather than
+ *    an executable, so there the derived `info.executable` is the right answer.
+ */
+function resolveInstalledApp(target: string): BuiltApp {
+  if (!existsSync(target)) {
+    throw new Error(
+      `${APP_EXE_ENV} points at a path that does not exist: ${target} — refusing to fall ` +
+        'back to the dev build. Pass the INSTALLED app itself (Windows: the ' +
+        '<install dir>/<Product>.exe; macOS: the <Product>.app bundle).',
+    );
+  }
+  let info: { main: string; executable: string };
+  try {
+    info = parseElectronApp(target);
+  } catch (err) {
+    throw new Error(
+      `${APP_EXE_ENV}=${target} is not a launchable Electron app tree ` +
+        `(expected a sibling resources/app.asar or resources/app): ${(err as Error).message}`,
+    );
+  }
+  // Suffix test on a STRING, not a filesystem case-fold: `.toLowerCase()` here
+  // asks "was this argument spelled as an .exe", which is the same question on
+  // NTFS and on ext4. (A `normcase`-style probe would be the wrong instrument —
+  // nothing about this decision depends on how the FS compares names.)
+  const executablePath = target.toLowerCase().endsWith('.exe') ? target : info.executable;
+  return { main: info.main, executablePath, packaged: true };
+}
+
+/**
  * Resolve the app under test, PREFERRING a real electron-builder package so the
  * E2E drives the SHIPPED binary (the .exe on Windows). If RF_E2E_DEV is set, or
  * no package exists in `dist/`, fall back to the dev build (out/main/main.js) so
  * the same spec still gives local GUI coverage. Set RF_E2E_REQUIRE_PACKAGED=1 to
  * make the absence of a package a hard error (the packaged.spec.ts CI leg).
+ *
+ * :data:`APP_EXE_ENV` wins over BOTH of those: it names an app installed outside
+ * the repo, so neither `dist/` nor the dev build is relevant, and the CI leg that
+ * would use it already exports `RF_E2E_DEV=1` job-wide for `preview.spec`.
  */
 export function findBuiltApp(): BuiltApp {
+  const installed = process.env[APP_EXE_ENV]?.trim();
+  if (installed) return resolveInstalledApp(installed);
   const requirePackaged = process.env.RF_E2E_REQUIRE_PACKAGED === '1';
   // RF_E2E_DEV forces the dev build (used to run preview.spec's data-pipeline
   // against the dev build on the Windows leg). But packaged.spec self-sets
@@ -155,8 +222,15 @@ function definedEnv(extra: Record<string, string>): Record<string, string> {
   return { ...out, ...extra };
 }
 
-/** Generate a real 3s H.264/AAC MP4 (faststart) Chromium can decode. */
-function generateSample(samplePath: string): void {
+/**
+ * Generate a real 3s H.264/AAC MP4 (faststart) Chromium can decode.
+ *
+ * EXPORTED (it was module-private) so a spec can make a SECOND real video that is
+ * deliberately NOT registered in the library — the file
+ * `add-videos-dialog.spec.ts` hands to the stubbed native picker, so the add path
+ * is driven with real bytes rather than a fabricated path.
+ */
+export function generateSample(samplePath: string): void {
   const args = [
     '-y',
     '-f',
@@ -596,6 +670,27 @@ export function applySettings(
   values: Record<string, unknown>,
 ): Record<string, unknown> {
   return sidecarCall(python, dataRoot, 'settings.set', values) as Record<string, unknown>;
+}
+
+/** One library row as `library.list` returns it (only the fields specs assert on). */
+export interface LibraryRow {
+  id: string;
+  /** Absolute source path, as the sidecar canonicalised it (`Path.resolve`). */
+  path: string;
+  title: string;
+}
+
+/**
+ * Read the library straight out of the data root through the real `library.list`.
+ *
+ * This is a SECOND, mechanically-independent signal for any spec that asserts a
+ * GUI add: the DOM says a card appeared, and this says the sidecar PERSISTED a row
+ * for that file. A renderer that optimistically painted a card without the RPC
+ * landing would satisfy the first and fail this one.
+ */
+export function listLibraryVideos(python: string, dataRoot: string): LibraryRow[] {
+  const result = sidecarCall(python, dataRoot, 'library.list', {}) as { videos?: LibraryRow[] };
+  return result.videos ?? [];
 }
 
 /** Direct `media.playable` probe (used to label the preview path honestly). */
