@@ -4,9 +4,36 @@
    styles driven by lib/captionTemplates.ts; this file owns only LAYOUT + the
    shared chrome. Class names + data-* attrs are test-pinned; restyle only. */
 
+/* The overlay is also the QUERY CONTAINER the caption sizes itself against (W58).
+ *
+ * The two `cqw` sites below (:52, :70) had no container anywhere in the renderer
+ * CSS, so per CSS Containment 3 §2.1 they fell back to the small viewport — the
+ * caption tracked the APP WINDOW instead of the phone stage. With
+ * `.sm-phone { width: min(248px, 100%) }` (features/shortmaker.css:22) that put
+ * `clamp(0.95rem, 5cqw, 1.55rem)` at its 24.8px CEILING on any window ≥ 496px,
+ * making the scaling term unreachable and the caption oversized for the stage.
+ *
+ * Established HERE rather than on `.sm-phone`, for three reasons:
+ *   1. `inset: 0` makes this element's inline size EQUAL to the stage's content
+ *      width, so it is the same measurement with no extra coupling;
+ *   2. the cq users are its descendants, and an element is never its own
+ *      container — putting it here is what actually makes them resolve;
+ *   3. it keeps the fix inside the sheet that owns the defect. `.sm-phone` is
+ *      styled by `features/shortmaker.css`, a different surface.
+ * Both mount sites nest the overlay in a `.sm-phone` div under the `.shortmaker`
+ * root (features/ShortMaker.tsx:1060 -> :1124 -> features/CandidateReview.tsx:110,
+ * and the ShortMaker stage itself), so `.shortmaker .sm-phone` applies at both and
+ * the 248px figure above is the geometry in BOTH cases.
+ *
+ * `inline-size`, not `size`: block size still comes from the stage via `inset: 0`,
+ * and `container-type: size` would impose block-size containment and demand an
+ * explicit height. Note this DOES add layout+style containment on the inline axis;
+ * that is inert here because the box is sized by its own absolute positioning, not
+ * by its contents. */
 .caption-overlay {
   position: absolute;
   inset: 0;
+  container-type: inline-size;
   pointer-events: none; /* never steal the player's controls */
   overflow: hidden;
   border-radius: var(--radius-lg);

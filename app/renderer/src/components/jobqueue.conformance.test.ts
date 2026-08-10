@@ -20,6 +20,7 @@ import { describe, it, expect } from 'vitest';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const JOBQUEUE_CSS = resolve(HERE, 'jobqueue.css');
+const SCHEMAS_TS = resolve(HERE, '..', 'lib', 'rpc', 'schemas.ts');
 
 /** Strip comment blocks so documentation prose never trips the scan.
  * (Deliberately a local copy of the same two-line helper in
@@ -43,16 +44,76 @@ function colorToken(body: string | null): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * The `JobInfo.status` union, read OUT OF THE SCHEMA rather than restated here.
+ *
+ * W45: the first version of this guard hardcoded a five-name array and carved
+ * `queued` out in a comment. That made it structurally unable to see the defect
+ * class it exists for — a status shipping with no colour rule. Adding a SEVENTH
+ * member to the union in schemas.ts would have left this file green, exactly as
+ * `cancelled` (the sixth) was green before H4c was reported. Deriving the list
+ * from the declaration means a new status cannot ship unstyled by omission: it
+ * either gets a rule or this test fails.
+ *
+ * DETECTOR LIMIT (stated, not hidden): this reads the single-line
+ * `status: 'a' | 'b';` form that `JobInfo` uses today. A union reformatted across
+ * lines, or aliased to a named type, would return an empty list — which is why
+ * the control test below asserts a member COUNT and two specific members rather
+ * than trusting the parse.
+ */
+/**
+ * Status pairs that resolve to the SAME `color` token, as `"--token: a + b"`.
+ *
+ * A status with no rule at all is SKIPPED, not folded in as a collision: absence
+ * is the completeness test's finding, and reporting it here too would make one
+ * cause fail two tests and obscure which is which.
+ */
+function colourCollisions(css: string, statuses: readonly string[]): readonly string[] {
+  const byToken = new Map<string, string[]>();
+  for (const status of statuses) {
+    const token = colorToken(ruleBody(css, `.jobqueue__status--${status}`));
+    if (token === null) continue;
+    byToken.set(token, [...(byToken.get(token) ?? []), status]);
+  }
+  return [...byToken.entries()]
+    .filter(([, names]) => names.length > 1)
+    .map(([token, names]) => `${token}: ${[...names].sort().join(' + ')}`)
+    .sort();
+}
+
+function wireStatuses(): readonly string[] {
+  const src = readFileSync(SCHEMAS_TS, 'utf8');
+  const decl = /\bstatus:\s*((?:'[a-z-]+'\s*\|\s*)+'[a-z-]+')\s*;/.exec(src);
+  if (decl === null) return [];
+  return [...decl[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+}
+
 const CSS = stripComments(readFileSync(JOBQUEUE_CSS, 'utf8'));
 
-describe('jobqueue status pills (W13 / audit H4b-c)', () => {
-  it('every wire status except queued has its OWN colour rule', () => {
-    // JobInfo.status is the six-value union in lib/rpc/schemas.ts:1467. `queued`
-    // is the one deliberate omission: waiting-to-start IS the neutral base state,
-    // so it inherits `.jobqueue__status`.
-    for (const status of ['running', 'error', 'done', 'interrupted', 'cancelled']) {
-      expect(ruleBody(CSS, `.jobqueue__status--${status}`)).not.toBeNull();
-    }
+describe('jobqueue status pills (W13 / audit H4b-c / W45)', () => {
+  it('reads the status union out of schemas.ts (the parser actually parsed)', () => {
+    // Control the instrument BEFORE trusting the completeness test below: a regex
+    // that silently stopped matching would return [] and make that test vacuous.
+    const statuses = wireStatuses();
+    expect(statuses).toHaveLength(6);
+    // Spot-anchor both ends of the union so a partial match cannot pass on count.
+    expect(statuses).toContain('queued');
+    expect(statuses).toContain('interrupted');
+    // …and prove it is not just echoing anything asked of it.
+    expect(statuses).not.toContain('definitely-not-a-status');
+  });
+
+  it('every wire status has its OWN colour rule — all six, none by omission', () => {
+    const missing = wireStatuses()
+      .filter((status) => ruleBody(CSS, `.jobqueue__status--${status}`) === null)
+      .sort();
+    expect(
+      missing,
+      'These JobInfo.status values render a `.jobqueue__status--<status>` class ' +
+        '(components/JobQueue.tsx:225) with no rule at all, so they fall through to ' +
+        'the base `.jobqueue__status` colour and read identically to each other. ' +
+        'Add a rule in components/jobqueue.css (tokens only).',
+    ).toEqual([]);
   });
 
   it('cancelled uses a token colour that no sibling status and no base rule uses', () => {
@@ -63,10 +124,44 @@ describe('jobqueue status pills (W13 / audit H4b-c)', () => {
     // …and it is not the base fallback it used to silently inherit.
     expect(base).toBe('--text-muted');
     expect(cancelled).not.toBe(base);
-    // …nor any other status hue (which would make two states look alike).
-    for (const status of ['running', 'error', 'done', 'interrupted']) {
+    // …nor any other status hue (which would make two states look alike). Derived
+    // from the union, so a new status is compared too rather than silently skipped.
+    for (const status of wireStatuses().filter((s) => s !== 'cancelled')) {
       expect(cancelled).not.toBe(colorToken(ruleBody(CSS, `.jobqueue__status--${status}`)));
     }
+  });
+
+  it('the colour-collision finder FIRES on a known collision (both-states control)', () => {
+    // Run the finder against a fixture where two statuses DELIBERATELY share a
+    // token, and require it to report that pair. Without this, an always-empty
+    // result would make the assertion below vacuously green — the exact failure
+    // mode that let H4c ship under a suite that was already passing.
+    const collided = [
+      '.jobqueue__status--queued { color: var(--text-muted); }',
+      '.jobqueue__status--cancelled { color: var(--text-muted); }',
+    ].join('\n');
+    expect(colourCollisions(collided, ['queued', 'cancelled'])).toEqual([
+      '--text-muted: cancelled + queued',
+    ]);
+    // …and stays silent when the same two carry different tokens. `replace` with a
+    // STRING pattern rewrites only the first hit, so this re-tokens `queued` alone.
+    const distinct = collided.replace('var(--text-muted)', 'var(--text-faint)');
+    expect(distinct).not.toBe(collided); // the fixture really did change
+    expect(colourCollisions(distinct, ['queued', 'cancelled'])).toEqual([]);
+  });
+
+  it('no two wire statuses share a colour token (W45 — the H4c defect, generalised)', () => {
+    // H4c was reported as one pair (`cancelled` reading identically to `queued`).
+    // The requirement it implies is pairwise: any two statuses that resolve to the
+    // same token are indistinguishable at a glance, whichever pair they are. Every
+    // member now carries its own rule, so this is checkable across the whole union
+    // instead of for the one pair that happened to be noticed.
+    expect(
+      colourCollisions(CSS, wireStatuses()),
+      'Two or more job statuses resolve to the SAME colour token, so a user cannot ' +
+        'tell them apart by hue. Either give one its own token or separate them on a ' +
+        'non-colour channel (as `cancelled` does with line-through).',
+    ).toEqual([]);
   });
 
   it('cancelled is separated by more than hue alone', () => {
