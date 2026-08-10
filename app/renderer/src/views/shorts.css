@@ -46,7 +46,7 @@
   padding: var(--space-4) var(--space-5);
   border-left: 3px solid var(--status-error);
   border-radius: var(--radius-sm);
-  color: var(--status-error);
+  color: var(--status-error-text);
   background: var(--status-error-soft);
 }
 
@@ -381,7 +381,7 @@
 
 .shorts__actions .shorts__delete:hover {
   background: var(--status-error-soft);
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 /* ---- F09: the gallery's only re-fetch control ----------------------------- */

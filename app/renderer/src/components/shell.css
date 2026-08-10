@@ -501,7 +501,7 @@ button {
 .library__remove-btn:hover,
 .sm-row-decide button[aria-label="Discard"]:hover {
   background: var(--status-error-soft);
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 /* ---- shared inputs ------------------------------------------------------------- */
@@ -622,7 +622,7 @@ button {
   padding: var(--space-4) var(--space-5);
   border-left: 3px solid var(--status-error);
   border-radius: var(--radius-sm);
-  color: var(--status-error);
+  color: var(--status-error-text);
   background: var(--status-error-soft);
 }
 
@@ -1305,7 +1305,7 @@ button {
   padding: var(--space-4) var(--space-5);
   border-left: 3px solid var(--status-error);
   border-radius: var(--radius-sm);
-  color: var(--status-error);
+  color: var(--status-error-text);
   background: var(--status-error-soft);
 }
 
@@ -1508,7 +1508,7 @@ button {
 
 .sm-status-discarded {
   background: var(--status-error-soft);
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 /* The hook is the editorial pull-quote — the serif voice, used nowhere else. */

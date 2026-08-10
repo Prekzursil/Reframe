@@ -158,7 +158,7 @@ append models to `DATA_MODELS`):
 
 ```python
 @dataclass
-class BrollAsset:        id: str; path: str; kind: str; addedAt: str; thumbPath: str
+class BrollAsset:        assetId: str; path: str; kind: str; addedAt: str; thumbnailPath: str
 @dataclass
 class BrollSuggestion:   segmentIndex: int; start: float; end: float; assetId: str; score: float; reason: str; layout: str
 @dataclass
@@ -184,9 +184,22 @@ privacy guarantee):
 | `broll.suggest` | job | NAMED | `BrollSuggestParams` | `JobHandle & { suggestions?: BrollSuggestion[] }` (import `BrollSuggestion` from `_OWN`) | threshold-gated, ranked |
 | `broll.apply` | job | NAMED | `BrollApplyParams` | `JobHandle` | reversible composite |
 | `broll.status` | direct | NAMED | `BrollSuggestParams`→`{videoId}` (or a slim `BrollStatusParams{videoId}`) | `BrollStatus` | pure freshness read |
-| `broll.assets` | direct | NONE | — | `{ assets: BrollAsset[] }` | list |
+| `broll.assets` | direct | NONE | — | `{ assets: BrollAsset[], missing: BrollAsset[] }` | list + loud missing |
 | `broll.addAsset` | direct | NAMED | `BrollAssetParams` | `{ asset: BrollAsset }` | mirror of `library.add` |
-| `broll.removeAsset` | direct | NAMED | `BrollAssetParams`→`{id}` | `{ removed: bool }` | — |
+| `broll.removeAsset` | direct | NAMED | `BrollAssetParams`→`{id}` | `{ ok: bool }` | — |
+
+> **BR1 wire-shape correction (implemented 2026-08-10, branch `feat/v15-w16-broll-registry`).**
+> Four keys above were CHANGED from this doc's first draft to match the already-running
+> engine, and the doc is the shape a renderer lane will code against — so the deviation is
+> recorded here rather than left to be discovered:
+> `id` → **`assetId`** and `thumbPath` → **`thumbnailPath`** (the names `broll_ops.scan_assets`
+> and the `Video` row already use, so a scanned and a registered asset need no branch);
+> `broll.assets` returns **`{assets, missing}`** (registered assets whose file has vanished are
+> reported, never silently dropped); `broll.removeAsset` returns **`{ok}`** (every other
+> boolean-ack handler in `handlers/library_ops.py` uses `ok`). A row additionally carries
+> `entityKind`, `title`, `durationSec`, `contentHash`, `sizeBytes`, `mtime`, `exists`,
+> `registered`. `thumbnailPath` is present but **unconditionally `""`** — no b-roll poster
+> extractor exists yet, so BR-thumbnail reuse is NOT implemented.
 
 **Regenerate + guard:**
 - Run `python -m contract.generate` from `sidecar/` (emits `contract.schema.json`, `schemas.generated.ts`,

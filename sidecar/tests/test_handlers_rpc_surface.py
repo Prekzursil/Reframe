@@ -38,8 +38,22 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         # v1.5 flagship #3 (auto-b-roll): local asset retrieval + compositing.
         # None of these may ever gain a key-injection prefix — they are
         # local-only and never call a provider (features/broll_ops.py).
+        #
+        # v1.5 DELIBERATE addition (design BR1): `broll.addAsset` / `broll.assets` /
+        # `broll.removeAsset` — the b-roll asset REGISTRY. Named explicitly here
+        # because adding an RPC method must be a conscious act: the four engine
+        # methods below shipped with NO way to register an asset, so the entire
+        # library was a scan of one `brollDir` setting and nothing in the app could
+        # put a specific file into it. These three are Library CRUD over
+        # `role='broll'` entity rows (handlers/library_ops.py) — local-only like the
+        # rest of the family, no provider, no model, no network. Verified this gate
+        # is not vacuous: registering them with the set unchanged failed
+        # test_rpc_surface_is_byte_identical first.
+        "broll.addAsset",
         "broll.apply",
+        "broll.assets",
         "broll.index",
+        "broll.removeAsset",
         "broll.status",
         "broll.suggest",
         "captions.cues",

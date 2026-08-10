@@ -26,7 +26,7 @@
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-xs);
   background: var(--status-error-soft);
-  color: var(--status-error);
+  color: var(--status-error-text);
   font-size: var(--type-caption-size);
 }
 
@@ -155,6 +155,6 @@
 }
 
 .managed-meter__btn--danger {
-  color: var(--status-error);
+  color: var(--status-error-text);
   border-color: var(--status-error);
 }

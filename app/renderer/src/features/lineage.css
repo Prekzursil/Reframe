@@ -110,7 +110,7 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   background: var(--status-error-soft);
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .lineage-panel__body {
@@ -255,7 +255,7 @@
 }
 
 .lineage-actions__status--error {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .lineage-actions__status--success {

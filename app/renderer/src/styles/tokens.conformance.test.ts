@@ -881,3 +881,286 @@ describe('global form-control floor (H5)', () => {
     expect(Number(m?.[1])).toBeGreaterThanOrEqual(28);
   });
 });
+
+// --- W15: the red-TEXT AA floor is enforced TREE-WIDE, not on five sheets ----------
+//
+// The `routes Library red TEXT through the AA-safe token` guard at :688 is allowlisted
+// to exactly FIVE sheets, so it stayed permanently green while the very defect its
+// comment describes shipped everywhere else. Measured at origin/main 775a97ea over the
+// 65 renderer stylesheets:
+//   * 26 sheets reference `color: var(--status-error)` in some form;
+//   * 6 of those are background-color / border-color ONLY — the CORRECT use of the
+//     solid fill red, and deliberately untouched here;
+//   * the remaining 20 sheets / 34 rules used the FILL red as a red STRING, unchecked.
+//
+// Re-derived below with this file's own contrast() helper, the fill red #e5484d AS TEXT:
+//   --surface-deep 4.97 | --surface-bg 4.62 | --surface-raised 4.12 |
+//   --surface-overlay 3.53 | --surface-hover 3.17 | --surface-active 2.69
+// and composited over the --status-error-soft wash that 21 of those 34 rules set on
+// THEMSELVES (so that verdict needs no DOM at all):
+//   deep 4.59 | bg 4.23 | raised 3.75 | overlay 3.24        — the AA floor is 4.50.
+//
+// So 31 of the 34 rules are measured sub-AA on the plane their own sheet puts them on:
+// .jobqueue__status--error inherits .jobqueue__item = --surface-hover (3.17),
+// .managed-meter__btn--danger inherits .managed-meter__btn = --surface-raised (4.12),
+// .caption-prefs__error inherits .caption-prefs__frame whose gradient light end
+// #2a2a38 gives 3.61.
+//
+// The other 3 — `.director-panel .director-op__reason`,
+// `.consent-toggle__disclosure[data-trains="true"]` and
+// `.picker-option__privacy[data-privacy="AVOID"]` — sit on --surface-bg and DO clear
+// AA, at 4.62:1. They were routed to --status-error-text rather than allowlisted, and
+// that is a judgement call worth stating: the margin is 0.12, one plane-lift to
+// --surface-raised turns it into 4.12 FAIL, the WU-2a recalibration already moved
+// these planes once, and the design-system rule is SEMANTIC — --status-error is the
+// fill/border red and --status-error-text carries every red string (:641-646). Their
+// own siblings already agree: .health-verdict.ok takes --status-success and
+// .spend-cap__status[data-zone="near"] takes --status-warn, both pinned at AA at :679.
+// Hence the allowlist below ships EMPTY *by measurement*, not by omission.
+//
+// SCOPE — read this before citing the guard. It pins WHICH TOKEN carries red text; it is
+// NOT an AA floor, and it does NOT leave every migrated site at AA. Two sentences that
+// shipped in the first pass of this block were REFUTED as overclaims and are corrected
+// here rather than deleted:
+//
+//   REFUTED #1 — "a red string inside a hovered/pressed row improves (3.17 -> 4.47) but
+//   stays ~0.03 under the floor", with 3.79 named as the worst case. Wrong state AND an
+//   incomplete set. (a) --surface-hover is the RESTING background of `.jobqueue__item`
+//   (components/jobqueue.css:177; :182 swaps to --surface-active on hover), so the failed-
+//   job status string is 4.47:1 with NO interaction at all — not a state a user has to
+//   provoke. (b) It omitted the COMPOSITE case: --status-error-text over its own
+//   --status-error-soft 10%-alpha wash measures 4.12:1 on --surface-hover and **3.55:1** on
+//   --surface-active. 3.55 — not 3.79 — is the worst post-fix value in this tree, and it is
+//   reached by a rule W15 itself migrated: `.library__remove-btn:hover` /
+//   `.sm-row-decide button[aria-label="Discard"]:hover` (components/shell.css:501-504) sets
+//   the wash on ITSELF while its host card lifts to --surface-hover / --surface-active on
+//   the SAME pointer event (components/library-cards.css:55-56, :69-72).
+//   (c) The repo's own audit ledger had already computed and warned about that exact site:
+//   docs/validation/v15-audit-ledger.md:477 — "Fixing the one-token color at shell.css:446
+//   lifts hover to 4.13:1 (still under AA because the card tint compounds), so a complete
+//   fix also needs the card-level tint suppressed". The first pass did not cite it.
+//
+// CORRECTLY SCOPED: every one of the 34 migrated sites IMPROVES, and AT LEAST TWO remain
+// sub-AA after the migration — 4.47:1 (`.jobqueue__status--error`, at rest) and 3.55:1
+// (the Remove/Discard label at press) — because --status-error-text (#ff6b6b) is itself
+// under AA on the two interaction tints: 4.47 on --surface-hover, 3.79 on --surface-active
+// (independently re-derived from raw hex, not via this file's helpers).
+//
+// "AT LEAST two" is a measured FLOOR, not a total. UNVERIFIED — how many of the 34 land on
+// an interaction tint: 17 of the 20 migrated sheets set --surface-hover or --surface-active
+// as a background somewhere, so more sites may resolve onto one. Settling experiment:
+// getComputedStyle backgroundColor on every migrated node in the running app, in the resting
+// AND hovered AND pressed state (the same probe the plane-resolution caveat below needs).
+//
+// Closing the two known ones needs a TOKEN-VALUE change plus tint suppression under the
+// Library meta lane — both outside a routing guard — so the AA assertions here stay on
+// ELEVATION_PLANES exactly as :671 does. Settling experiment: lift --status-error-text until
+// contrast() clears 4.5 on --surface-active AND give the hovered Remove button an opaque own
+// background, then re-run this file plus the five Library sheets.
+//
+// SIBLING GAP — DISCLOSED, deliberately NOT fixed here (out of W15's declared scope). This
+// block's whole thesis is "a subset-scoped guard hides the defect everywhere else", and a
+// structurally identical one is still live in this same file: :3-4 quotes tokens.css's rule
+// of use as GLOBAL — "Consume tokens only — no one-off hex values in component CSS" — but the
+// test that enforces it (`usageBar.css uses NO raw color literals`, :41, via USAGE_BAR_CSS
+// at :26) is scoped to exactly ONE sheet. Measured with RAW_COLOR (:33) over all 65 sheets,
+// comments stripped: 9 component sheets besides tokens.css carry raw literals —
+// captionCustomizer (10), captionDesigner (10), captionStylePicker (8), captionBox (6),
+// reframeOverridePanel (4), captionPreferences (3), captionOverlay (1), directorPanel (1),
+// modelsSystem (1). W15 touched three of those (captionPreferences, directorPanel,
+// modelsSystem) for the red-text migration without noting it. UNVERIFIED: whether each hit
+// is a genuine violation — several are plausibly legitimate non-palette values (e.g.
+// captionPreferences.css:71 `linear-gradient(160deg, #2a2a38, #0d0d12)` is the caption-
+// preview surface; :78 `rgba(0, 0, 0, 0.9)` is a text-shadow alpha). Settling experiment: point
+// RAW_COLOR at all 65 sheets and triage per-site, exactly as this block did for red text.
+
+/**
+ * A `color` declaration carrying the solid FILL red — the red used as a STRING.
+ *
+ * The lookbehind rejects `background-color` / `border-color` / `outline-color` by their
+ * `-`; the trailing `[,)]` rejects the `-soft` / `-text` siblings (their next character is
+ * `-`) while accepting the var() FALLBACK form `var(--status-error, #e5484d)`. `--danger`
+ * is in the alternation because tokens.css:284 aliases it to the same fill red under a
+ * "keep consumers working" comment, so `color: var(--danger)` is the same defect by another
+ * spelling. Both extra forms have ZERO consumers today (measured over all 65 sheets, with
+ * the probe controlled against a known-present `color: var(--danger)` string) — they are
+ * closed here so a future lane cannot reach for either without tripping the guard.
+ *
+ * REFUTED, and corrected: the first pass claimed this pattern "catches a declaration that
+ * starts a rule body with no preceding character" which the narrower RED_TEXT_LEAK at :649
+ * (`[^-]color:`) "cannot match". False for the string the control cites — `{` satisfies
+ * `[^-]`, so `.a{color:var(--status-error)}` matches BOTH (measured: OLD=HIT NEW=HIT). The
+ * only body-start form :649 misses is a declaration at string index 0. The real, measured
+ * widenings are whitespace tolerance: `color : var(...)` and `var( --status-error )` are
+ * OLD=miss / NEW=HIT. Both patterns still agree exactly on this tree — re-measured against
+ * the origin/main CSS blobs with a standalone probe (not this file): 20 sheets each, and 0
+ * each at HEAD. So the widening changes which FUTURE spellings are caught, and changes
+ * nothing about the migration set it was used to derive.
+ *
+ * Scoped to the `color` property on purpose: the tree contains zero references to
+ * --status-error from `-webkit-text-fill-color` or `caret-color` (measured), so widening
+ * further would add a branch no fixture exercises.
+ */
+const RED_TEXT_USE = /(?<![-\w])color\s*:\s*var\(\s*--(?:status-error|danger)\s*[,)]/;
+
+/** A sheet that still consumes --status-error as a FILL (background / border / outline).
+ *
+ * `[^;{}]*` and not `[^;]*`: the loose form crosses a `}`, so a sheet whose background
+ * and red text live in two SEPARATE rules would falsely count as a fill consumer. That
+ * matters because the assertion below sits exactly at its floor (19 sheets, `>= 19`), so
+ * one cross-block false positive would silently restore slack in the only test protecting
+ * the fills from a bulk find-and-replace. Pinned by a control at :1088. */
+const FILL_USE = /(?:background|border|outline)(?:-[\w-]+)?\s*:[^;{}]*var\(--status-error\)/;
+
+/** Selectors that set the FILL red as text in ONE stylesheet — i.e. any spelling
+ * RED_TEXT_USE matches, which since the refuter pass is `color: var(--status-error)`, its
+ * var() fallback form, and the `--danger` alias.
+ *
+ * Comments are stripped FIRST so a declaration quoted inside a comment cannot register
+ * as a real use (the use-vs-mention trap). */
+function redTextSelectors(css: string): readonly string[] {
+  const body = stripComments(css);
+  const out: string[] = [];
+  const rule = /([^{}]+)\{([^{}]*)\}/g;
+  for (let m = rule.exec(body); m !== null; m = rule.exec(body)) {
+    if (!RED_TEXT_USE.test(m[2])) continue;
+    for (const sel of m[1].split(',')) {
+      const trimmed = sel.trim().replace(/\s+/g, ' ');
+      if (trimmed) out.push(trimmed);
+    }
+  }
+  return out;
+}
+
+/** Allowlist entries matching no live site — stale permission, not a guard. */
+function deadRedTextEntries(
+  allowlist: readonly string[],
+  live: readonly string[],
+): readonly string[] {
+  const seen = new Set(live);
+  return allowlist.filter((sel) => !seen.has(sel));
+}
+
+/** Every selector permitted to carry the FILL red as text (any RED_TEXT_USE spelling). */
+const RED_TEXT_ALLOWLIST: readonly string[] = [
+  // EMPTY BY MEASUREMENT — see the block comment above. Every one of the 34 sites that
+  // existed at 775a97ea was routed to --status-error-text. To add an entry here you owe
+  // the next reader the measured ratio AND the background you measured it against.
+];
+
+describe('red status TEXT stays inside its allowlist, tree-wide (W15)', () => {
+  const cssFiles = collectCssFiles(RENDERER_SRC);
+
+  it('the red-text scanner CAN see a leak — a zero means zero for un-nested rules', () => {
+    // Detector control in BOTH directions. The tree-wide assertion below returns an
+    // empty offender list, which is only meaningful once this scanner is shown to fire
+    // on a known-present leak and stay silent on the correct uses. The title is scoped to
+    // un-nested rules on purpose — the nesting blind spot is pinned in the next test.
+    expect(redTextSelectors('.a { color: var(--status-error); }')).toEqual(['.a']);
+    expect(redTextSelectors('.a,\n.b { color: var(--status-error); }')).toEqual(['.a', '.b']);
+    // Minified form. NOT a case :649 misses — `{` satisfies its `[^-]` (see the docstring's
+    // REFUTED note). Kept because minified input must still tokenize.
+    expect(redTextSelectors('.a{color:var(--status-error)}')).toEqual(['.a']);
+    // The genuine widenings over :649, both measured OLD=miss / NEW=HIT:
+    expect(redTextSelectors('.a { color : var(--status-error); }')).toEqual(['.a']);
+    expect(redTextSelectors('.a { color: var( --status-error ); }')).toEqual(['.a']);
+    // The FILL uses must NEVER be flagged: this guard may not force a fill to migrate.
+    expect(redTextSelectors('.a { background-color: var(--status-error); }')).toEqual([]);
+    expect(redTextSelectors('.a { border-color: var(--status-error); }')).toEqual([]);
+    expect(redTextSelectors('.a { background: var(--status-error); }')).toEqual([]);
+    expect(redTextSelectors('.a { border: 1px solid var(--status-error); }')).toEqual([]);
+    // …nor the sibling tokens…
+    expect(redTextSelectors('.a { color: var(--status-error-text); }')).toEqual([]);
+    expect(redTextSelectors('.a { color: var(--status-error-soft); }')).toEqual([]);
+    // …and a leak quoted inside a COMMENT is a mention, not a use.
+    expect(redTextSelectors('/* .a { color: var(--status-error); } */')).toEqual([]);
+    // The var() FALLBACK form and the legacy `--danger` alias (tokens.css:284 aliases it
+    // to the same fill red) are BOTH fill-red-as-text and must be seen.
+    expect(redTextSelectors('.a { color: var(--status-error, #e5484d); }')).toEqual(['.a']);
+    expect(redTextSelectors('.a { color: var(--danger); }')).toEqual(['.a']);
+  });
+
+  it('sees a leak inside @media/@supports, but NOT one beside a native-nested block', () => {
+    // Wrapping at-rules are the nesting shape this tree actually uses, and they are seen:
+    expect(redTextSelectors('@media (min-width: 10px) { .a { color: var(--status-error); } }')) //
+      .toEqual(['.a']);
+    expect(redTextSelectors('@supports (color: red) { .a { color: var(--status-error); } }')) //
+      .toEqual(['.a']);
+    // DISCLOSED BLIND SPOT, pinned here so the limitation is executable rather than
+    // folklore: the `([^{}]+)\{([^{}]*)\}` tokenizer — inherited verbatim from the H7
+    // editorial-serif guard at :763 — cannot see a declaration in a PARENT rule that also
+    // contains a native-nested `&` block. Measured over the 65 sheets: 0 use native
+    // nesting, so this is latent, not live. Settling change: tokenize by brace depth
+    // instead of a flat `[^{}]` pair, then DELETE this expectation (it will go red).
+    expect(redTextSelectors('.a {\n  color: var(--status-error);\n  &:hover { color: blue; }\n}')) //
+      .toEqual([]);
+  });
+
+  it('the FILL detector cannot count a fill that is in a DIFFERENT rule', () => {
+    // `[^;]*` would cross a `}`, so a sheet whose background and red text live in two
+    // separate rules would falsely count as a fill consumer — silently restoring slack in
+    // the only assertion protecting the fills from a bulk sweep.
+    expect(FILL_USE.test('.a { background: var(--status-error); }')).toBe(true);
+    expect(FILL_USE.test('.a { border: 1px solid var(--status-error); }')).toBe(true);
+    expect(FILL_USE.test('.a { background: red }\n.b { color: var(--status-error) }')).toBe(false);
+  });
+
+  it('scans the real sheet set, and the AA-safe token is genuinely in use', () => {
+    // A dead scan over zero files would vacuously pass. Pin a file floor, and pin that
+    // the red ladder really is present in this tree — so an empty offender list reads
+    // as "migrated", never as "there is no red text here".
+    expect(cssFiles.length).toBeGreaterThan(20);
+    const consumers = cssFiles.filter((f) =>
+      stripComments(readFileSync(f, 'utf8')).includes('color: var(--status-error-text)'),
+    );
+    expect(consumers.length).toBeGreaterThan(20);
+  });
+
+  it('every bare `color: var(--status-error)` site is on the allowlist', () => {
+    const offenders: string[] = [];
+    for (const file of cssFiles) {
+      for (const sel of redTextSelectors(readFileSync(file, 'utf8'))) {
+        if (!RED_TEXT_ALLOWLIST.includes(sel)) {
+          offenders.push(`${sel}  (${relative(RENDERER_SRC, file).replace(/\\/g, '/')})`);
+        }
+      }
+    }
+    // The message names the offender AND the fix, so a failure is actionable without
+    // opening this file.
+    expect(
+      offenders,
+      'Bare `color: var(--status-error)` — the solid FILL red used as a red STRING. ' +
+        'Measured: 4.12:1 on --surface-raised and 3.17:1 on --surface-hover, both under ' +
+        'the 4.5:1 WCAG AA floor. Route red TEXT through var(--status-error-text); keep ' +
+        '--status-error for background-color / border-color. If a site genuinely clears ' +
+        'AA on its own background, add its selector to RED_TEXT_ALLOWLIST with the ' +
+        'measured ratio and the background you measured against.',
+    ).toEqual([]);
+  });
+
+  it('the allowlist has no dead entries (it tracks the tree, not history)', () => {
+    // The other direction: an allowlisted selector that no longer sets red text is
+    // stale permission, and stale permission is how an allowlist rots into a rubber
+    // stamp. (Mirrors the editorial-serif guard at :805.)
+    const live = cssFiles.flatMap((f) => redTextSelectors(readFileSync(f, 'utf8')));
+    expect(deadRedTextEntries(RED_TEXT_ALLOWLIST, live)).toEqual([]);
+  });
+
+  it('the dead-entry detector FIRES on stale permission (both-states control)', () => {
+    // The assertion above passes trivially while RED_TEXT_ALLOWLIST is empty, so the
+    // mechanism is exercised on synthetic input instead: a live entry stays silent, a
+    // stale one is reported. This is what will police the FIRST real addition.
+    expect(deadRedTextEntries(['.live'], ['.live'])).toEqual([]);
+    expect(deadRedTextEntries(['.gone'], ['.live'])).toEqual(['.gone']);
+    expect(deadRedTextEntries(['.gone', '.live'], ['.live'])).toEqual(['.gone']);
+  });
+
+  it('keeps the FILL red in use as a fill — the migration is text-only', () => {
+    // Zero-regression check on the other half of the token split. --status-error must
+    // still be consumed as a background / border; if a bulk find-and-replace had swept
+    // the fills too (the obvious way to make the guard above green by accident), the
+    // FAILED-dot, progress fills and danger borders would all have gone with it.
+    const fills = cssFiles.filter((f) => FILL_USE.test(stripComments(readFileSync(f, 'utf8'))));
+    expect(fills.length).toBeGreaterThanOrEqual(19);
+  });
+});
