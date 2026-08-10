@@ -15,7 +15,13 @@ The wiring agent applies the snippets below to the SHARED files.
 
 ---
 
-## 1. `sidecar/media_studio/handlers.py` — register `timeline.peaks`
+## 1. `sidecar/media_studio/handlers/composition.py` — register `timeline.peaks`
+
+> **Path corrected.** This section said `sidecar/media_studio/handlers.py`, which was
+> deleted in `c12400c4` when the module became the `handlers/` package. `register_all`
+> now lives in `handlers/composition.py`. Nothing under `docs/**` guards a *source*
+> path — `.quality/docs_check.py` r2 only resolves `docs/**` and `reports/**` — so an
+> ACTIVE doc kept directing wiring edits at a file that does not exist.
 
 In the imports block:
 
@@ -41,7 +47,14 @@ job-registry-related is needed. The peaks cache lives in
 `settings_store.default_config_dir()`, so the `MEDIA_STUDIO_CONFIG_DIR` env
 override used by tests redirects it automatically).
 
-## 2. `app/renderer/src/lib/rpc.ts` — typed client method
+## 2. `app/renderer/src/lib/rpc/client.ts` — typed client method
+
+> **Path corrected.** `app/renderer/src/lib/rpc.ts` was split (F4b) into
+> `lib/rpc/client.ts` (the runtime: the bridge accessor, `rpc`, `onProgress`, and the
+> `client` object) and `lib/rpc/schemas.ts` (the §3 data interfaces), re-exported by
+> `lib/rpc/index.ts`. A `client` addition goes in `client.ts`; a new TS interface goes
+> in `schemas.ts`. Importers still write `from '../lib/rpc'`, which is why this
+> rotted invisibly — the barrel kept working while the cited file stopped existing.
 
 Add to the `client` object (next to `tracks`):
 

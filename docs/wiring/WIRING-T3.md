@@ -15,7 +15,26 @@ ONLY changes T3 needs in shared files. Apply exactly.
 
 ---
 
-## 1. `sidecar/media_studio/handlers.py` — route subtitles.translate through the tiers
+## 1. `sidecar/media_studio/handlers/` — route subtitles.translate through the tiers
+
+> **Path corrected, and the snippets below are stale in SHAPE too.** This section said
+> `sidecar/media_studio/handlers.py`, deleted in `c12400c4` when the module became the
+> `handlers/` package. Each sub-step now lands in a different module, verified
+> individually rather than guessed at as one file:
+>
+> | sub-step | symbol | lives in |
+> |---|---|---|
+> | 1a | `Services.__init__` | `handlers/_services.py:40` |
+> | 1b | beside `_get_provider` | `handlers/ai_ops.py:42` |
+> | 1c | `subtitles_translate` | `handlers/media_ops.py:144` |
+>
+> **UNVERIFIED that the code below still applies as written**: the split also turned
+> these from `Services` METHODS into module-level functions taking `self: Services`
+> (`ai_ops.py:42`, `media_ops.py:144`), so the `def _get_model_runner(self)` /
+> `self._get_provider()` forms in 1b/1c no longer match the surrounding style even
+> though the intent is unchanged. Treat the snippets as intent, not as paste-ready.
+> Settling experiment: apply 1b against `ai_ops.py` and run
+> `pytest sidecar/tests -k translate` — a signature mismatch fails at import.
 
 ### 1a. `Services.__init__` — one shared ModelRunner slot
 

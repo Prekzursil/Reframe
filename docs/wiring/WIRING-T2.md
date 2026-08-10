@@ -16,7 +16,10 @@ The snippets below are the ONLY changes T2 needs in shared files. Apply exactly.
 
 ---
 
-## 1. `sidecar/media_studio/handlers.py` — register tracks.audio.* + tts.*
+## 1. `sidecar/media_studio/handlers/composition.py` — register tracks.audio.* + tts.*
+
+> **Path corrected** — `handlers.py` was deleted in `c12400c4`; `register_all` now
+> lives in `handlers/composition.py`. See the note in `docs/wiring/WIRING-T1.md` §1.
 
 At the end of `register_all(...)` (after the existing `reg(...)` calls, before
 the final `log.info`), add:
@@ -182,7 +185,10 @@ const Dub = lazyPanel<{ videoId: string }>('../features/Dub', 'Dub');
 `window.api.onProgress`, `window.api.onJobDone`) — **no preload/ipc changes
 needed**.
 
-## 8. `app/renderer/src/lib/rpc.ts` — optional typed client additions
+## 8. `app/renderer/src/lib/rpc/client.ts` — optional typed client additions
+
+> **Path corrected** — `lib/rpc.ts` was split into `lib/rpc/client.ts` (runtime +
+> `client`) and `lib/rpc/schemas.ts` (interfaces). See `docs/wiring/WIRING-T1.md` §2.
 
 If the canonical client is being extended this round, the T2 methods are:
 
