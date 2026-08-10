@@ -9,6 +9,7 @@ import type {
   BatchConsent,
   BatchState,
   BatchSummary,
+  DoneEvent,
   ProgressEvent,
   Template,
   Video,
@@ -22,11 +23,20 @@ const batchPlanMock = vi.fn();
 const batchStartMock = vi.fn();
 const batchStatusMock = vi.fn();
 const batchResumeMock = vi.fn();
+const batchCancelMock = vi.fn();
 const batchDeleteMock = vi.fn();
 const settingsGetMock = vi.fn();
 
 let progressCbs: Array<(e: ProgressEvent) => void> = [];
-let doneCbs: Array<() => void> = [];
+// Typed as the REAL bridge types it: `window.api.onJobDone` always relays a
+// `{jobId, result?}` payload. The mock previously invoked the callback with no
+// argument at all, which is a shape the preload cannot produce and which hid the
+// fact that the panel was ignoring `jobId` entirely.
+let doneCbs: Array<(e: DoneEvent) => void> = [];
+/** Fire `job.done` for a jobId (default: the parent job the tests start). */
+function fireJobDone(jobId = 'job-1'): void {
+  doneCbs.forEach((c) => c({ jobId }));
+}
 
 vi.mock('../lib/rpc', () => ({
   client: {
@@ -39,6 +49,7 @@ vi.mock('../lib/rpc', () => ({
       start: (...a: unknown[]) => batchStartMock(...a),
       status: (...a: unknown[]) => batchStatusMock(...a),
       resume: (...a: unknown[]) => batchResumeMock(...a),
+      cancel: (...a: unknown[]) => batchCancelMock(...a),
       delete: (...a: unknown[]) => batchDeleteMock(...a),
     },
     settings: { get: (...a: unknown[]) => settingsGetMock(...a) },
@@ -49,7 +60,7 @@ vi.mock('../lib/rpc', () => ({
       progressCbs = progressCbs.filter((c) => c !== cb);
     };
   },
-  onJobDone: (cb: () => void) => {
+  onJobDone: (cb: (e: DoneEvent) => void) => {
     doneCbs.push(cb);
     return () => {
       doneCbs = doneCbs.filter((c) => c !== cb);
@@ -174,6 +185,7 @@ beforeEach(() => {
   batchStartMock.mockResolvedValue({ jobId: 'job-1' });
   batchStatusMock.mockResolvedValue({ batch: state([{ videoId: 'v1', status: 'queued' }]) });
   batchResumeMock.mockResolvedValue({ jobId: 'job-2' });
+  batchCancelMock.mockResolvedValue({ ok: true });
   batchDeleteMock.mockResolvedValue({ ok: true });
   // The §9.1 budget setting defaults ON (settings_store confirmCloudBudget=True).
   settingsGetMock.mockResolvedValue({ confirmCloudBudget: true });
@@ -185,8 +197,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+function findText(text: string): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll('button')].find((b) => b.textContent === text);
+}
+
 function clickText(text: string): void {
-  const btn = [...container.querySelectorAll('button')].find((b) => b.textContent === text);
+  const btn = findText(text);
   if (!btn) throw new Error(`button not found: ${text}`);
   act(() => btn.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 }
@@ -398,7 +414,7 @@ describe('BatchQueue', () => {
       ),
     });
     await act(async () => {
-      doneCbs.forEach((c) => c());
+      fireJobDone();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -414,7 +430,7 @@ describe('BatchQueue', () => {
     await render();
     batchStatusMock.mockClear();
     await act(async () => {
-      doneCbs.forEach((c) => c());
+      fireJobDone();
       await Promise.resolve();
     });
     expect(batchStatusMock).not.toHaveBeenCalled();
@@ -634,7 +650,7 @@ describe('BatchQueue', () => {
       batch: state([{ videoId: 'v1', status: 'done' }], { status: 'done' }),
     });
     await act(async () => {
-      doneCbs.forEach((c) => c());
+      fireJobDone();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -865,6 +881,386 @@ describe('BatchQueue', () => {
     });
     expect(container.querySelector('.batch-consent__split')).not.toBeNull();
     expect(batchStartMock).not.toHaveBeenCalled();
+  });
+
+  // ---- W08: a running batch can be CANCELLED from the UI --------------------
+  //
+  // `batch.cancel` shipped end-to-end (client.ts:805 -> batch.py BatchService.cancel,
+  // which sets the parent job's cooperative cancel flag) but the panel called
+  // list/status/start/create/plan/resume/delete and NEVER cancel — so a batch that
+  // was mid-flight could only be stopped by killing the app.
+
+  /** Gate OFF -> Run -> one live source, so the live panel is mounted. */
+  async function runToLiveBatch(): Promise<void> {
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
+    batchStatusMock.mockResolvedValue({ batch: state([{ videoId: 'v1', status: 'running' }]) });
+    await render();
+    const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
+    act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await act(async () => {
+      clickText('Run batch');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('offers Cancel only while the batch is unsettled, and cancels the parent job', async () => {
+    await runToLiveBatch();
+    // Present while a source is still running…
+    expect(findText('Cancel')).toBeDefined();
+    await act(async () => {
+      clickText('Cancel');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(batchCancelMock).toHaveBeenCalledWith('bNew');
+    // …and GONE once every source is terminal (nothing left to cancel). The
+    // both-states check: the affordance must appear AND disappear, so a rule that
+    // always renders it fails here too.
+    batchStatusMock.mockResolvedValue({
+      batch: state([{ videoId: 'v1', status: 'done' }], { status: 'done' }),
+    });
+    await act(async () => {
+      fireJobDone();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(findText('Cancel')).toBeUndefined();
+  });
+
+  it('does NOT offer Cancel before the batch has actually started (consent window)', async () => {
+    // Gate ON: `batch.create` mounts the live panel (queued rows, 0% bar) while
+    // `batch.start` is still deferred behind the consent card, so no parent job
+    // exists yet. Offering Cancel there would be a control whose ONLY possible
+    // outcome is the {ok:false} "nothing to cancel" reply — a fresh dead click on
+    // the very surface this change exists to de-deaden.
+    await runToConsentCard();
+    expect(container.querySelector('.batch-queue__rows')).not.toBeNull();
+    expect(findText('Cancel')).toBeUndefined();
+    // …and it appears as soon as a parent job IS tracked (the both-states check).
+    await act(async () => {
+      clickText('Acknowledge cloud egress for this batch');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(findText('Cancel')).toBeDefined();
+  });
+
+  it('surfaces a refused cancel (ok:false) as a notice, never as a failure', async () => {
+    // `BatchService.cancel` answers {ok: false} when THIS sidecar process tracks no
+    // parent job for the batch (post-restart, or the job was evicted) — nothing was
+    // cancelled, but nothing failed either, so it must announce politely.
+    batchCancelMock.mockResolvedValueOnce({ ok: false });
+    await runToLiveBatch();
+    await act(async () => {
+      clickText('Cancel');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.batch-queue__error')).toBeNull();
+    expect(container.querySelector('.batch-queue__notice')?.textContent).toContain(
+      'no running job',
+    );
+  });
+
+  it('surfaces a cancel failure with an Error message (instanceof arm)', async () => {
+    batchCancelMock.mockRejectedValueOnce(new Error('cancel-boom'));
+    await runToLiveBatch();
+    await act(async () => {
+      clickText('Cancel');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.batch-queue__error')?.textContent).toBe('cancel-boom');
+  });
+
+  it('surfaces a cancel failure on a non-Error rejection (Cancel failed)', async () => {
+    batchCancelMock.mockRejectedValueOnce('x');
+    await runToLiveBatch();
+    await act(async () => {
+      clickText('Cancel');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.batch-queue__error')?.textContent).toBe('Cancel failed');
+  });
+
+  // ---- W09: retryErrors reaches the wire ------------------------------------
+  //
+  // `batch.resume` accepts {id, retryErrors?} and the sidecar implements it
+  // (batch.py:477/490 resumable_video_ids, :938 the param read), but the renderer
+  // never sent it. Consequence, measured against derive_status (batch.py:172): a
+  // `partial` aggregate means EVERY item is already terminal, so the default
+  // resume selects nothing, no job starts, and the sidecar returns the
+  // {jobId: null} no-op shape — every Resume button on a partial batch is dead.
+
+  const partialWithErrors = (): BatchSummary =>
+    summary({
+      status: 'partial',
+      counts: { total: 3, done: 1, error: 2, skipped: 0, queued: 0, running: 0, cancelled: 0 },
+    });
+
+  it('offers Retry errors only when a batch has failed sources, and sends retryErrors', async () => {
+    batchListMock.mockResolvedValue({ batches: [partialWithErrors()] });
+    await render();
+    await act(async () => {
+      clickText('Retry errors');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(batchResumeMock).toHaveBeenCalledWith('bA', { retryErrors: true });
+  });
+
+  it('omits Retry errors on a batch with no failed sources', async () => {
+    // The other direction of the same affordance: a queued/running batch has
+    // nothing to retry, so offering the control would be a lie.
+    batchListMock.mockResolvedValue({ batches: [summary()] });
+    await render();
+    expect(findText('Resume')).toBeDefined();
+    expect(findText('Retry errors')).toBeUndefined();
+  });
+
+  it('says nothing is left to resume on a TERMINAL no-op, not "already running"', async () => {
+    // The sidecar reuses ONE {jobId: null} wire shape for two very different
+    // refusals: "the parent job is still live" (status queued/running) and
+    // "nothing was resumable" (a terminal aggregate). The panel announced the
+    // live-run message for both, so a partial batch reported that it was
+    // "already running" when in fact it had finished and had nothing to re-run.
+    batchListMock.mockResolvedValue({ batches: [partialWithErrors()] });
+    batchResumeMock.mockResolvedValueOnce({ jobId: null, status: 'partial' });
+    await render();
+    await act(async () => {
+      clickText('Resume');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const notice = container.querySelector('.batch-queue__notice')?.textContent ?? '';
+    expect(notice).toContain('Nothing left to resume');
+    expect(notice).not.toContain('already running');
+  });
+
+  it('says nothing is left to RETRY when the retry itself is a no-op', async () => {
+    batchListMock.mockResolvedValue({ batches: [partialWithErrors()] });
+    batchResumeMock.mockResolvedValueOnce({ jobId: null, status: 'error' });
+    await render();
+    await act(async () => {
+      clickText('Retry errors');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.batch-queue__notice')?.textContent).toContain(
+      'Nothing left to retry',
+    );
+  });
+
+  // ---- W09, the ALL-ERROR batch --------------------------------------------
+  //
+  // The case the brief actually names, and the one the first pass missed while
+  // fixing `partial`. `derive_status` gives a run whose every source failed the
+  // TERMINAL aggregate `error`; `isIncomplete` is {queued, running, partial}; so
+  // `incompleteBatches` filtered it out and the panel rendered NO row for it —
+  // not a dead Resume button, no button at all, and no route back to the failures
+  // from anywhere in the app.
+
+  const allErrors = (): BatchSummary =>
+    summary({
+      id: 'bErr',
+      name: 'All failed',
+      status: 'error',
+      counts: { total: 3, done: 0, error: 3, skipped: 0, queued: 0, running: 0, cancelled: 0 },
+    });
+
+  it('surfaces an ALL-ERROR batch, which the incomplete list structurally cannot', async () => {
+    batchListMock.mockResolvedValue({ batches: [allErrors()] });
+    await render();
+    // Both states in one assertion pair: the batch is genuinely absent from the
+    // resume surface (so a fix that only touched that list could not reach it)…
+    expect(container.querySelector('.batch-queue__resume')).toBeNull();
+    // …and present on the retry surface, with its failure count named.
+    const row = container.querySelector('.batch-queue__retry-row');
+    expect(row?.textContent).toContain('All failed');
+    expect(row?.textContent).toContain('3 of 3 failed');
+    await act(async () => {
+      clickText('Retry errors');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // A PLAIN resume here can never re-enqueue an `error` item, so the only
+    // control offered is the one that passes the flag.
+    expect(findText('Resume')).toBeUndefined();
+    expect(batchResumeMock).toHaveBeenCalledWith('bErr', { retryErrors: true });
+  });
+
+  it('removes an all-error batch from the retry surface', async () => {
+    batchListMock
+      .mockResolvedValueOnce({ batches: [allErrors()] })
+      .mockResolvedValueOnce({ batches: [] });
+    await render();
+    await act(async () => {
+      clickText('Remove');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(batchDeleteMock).toHaveBeenCalledWith('bErr');
+    expect(container.querySelector('.batch-queue__retry')).toBeNull();
+  });
+
+  it('never lists the same batch on BOTH the resume and retry surfaces', async () => {
+    // `partial` with errors is resumable AND retryable; it must keep its single
+    // row on the resume surface rather than being duplicated below it.
+    batchListMock.mockResolvedValue({ batches: [partialWithErrors(), allErrors()] });
+    await render();
+    expect(container.querySelectorAll('.batch-queue__resume-row').length).toBe(1);
+    expect(container.querySelectorAll('.batch-queue__retry-row').length).toBe(1);
+    expect(container.querySelector('.batch-queue__retry-row')?.textContent).toContain('All failed');
+  });
+
+  it('offers no retry surface for a terminal batch with no failed sources', async () => {
+    batchListMock.mockResolvedValue({
+      batches: [
+        summary({
+          status: 'done',
+          counts: { total: 2, done: 2, error: 0, skipped: 0, queued: 0, running: 0, cancelled: 0 },
+        }),
+      ],
+    });
+    await render();
+    expect(container.querySelector('.batch-queue__retry')).toBeNull();
+  });
+
+  // ---- W08 follow-up: Cancel must not outlive its own parent job ------------
+
+  /** A snapshot the runner really produces after an unwind: cancelled + queued. */
+  const unwoundSnapshot = (): { batch: BatchState } => ({
+    batch: state(
+      [
+        { videoId: 'v1', status: 'cancelled' },
+        { videoId: 'v2', status: 'queued' },
+      ],
+      { status: 'running' },
+    ),
+  });
+
+  it('retires Cancel when the PARENT job ends, even with items still queued', async () => {
+    // The dead click the first pass created. `batchSettled` cannot end the run:
+    // the runner unwinds at the first observed cancel and leaves every source it
+    // never reached `queued` ON DISK, so those items are non-terminal forever.
+    // With only the settled gate, Cancel stayed enabled after the job was already
+    // terminal, and pressing it hit `JobRegistry.cancel` on a finished job — which
+    // returns True and does nothing (jobs.py:829-836): ok:true, no notice, no
+    // change. The parent `job.done` is the only signal that retires it.
+    batchStatusMock.mockResolvedValue(unwoundSnapshot());
+    await runToLiveBatch();
+    expect(findText('Cancel')).toBeDefined(); // PASSES today — the control is live
+    await act(async () => {
+      fireJobDone('job-1');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // The items are STILL not all terminal here, so `batchSettled` is false and a
+    // gate built only on it keeps rendering the button. FAILS before the teardown.
+    expect(container.querySelector('.batch-queue__rows')).not.toBeNull();
+    expect(findText('Cancel')).toBeUndefined();
+    expect(findText('Cancelling…')).toBeUndefined();
+  });
+
+  it('keeps Cancel alive when a per-source SUB-job finishes', async () => {
+    // The other direction: a batch fans out sub-jobs that each emit their own
+    // `job.done`, so the teardown must key on the tracked PARENT jobId or the
+    // control would vanish the moment the first source completed.
+    batchStatusMock.mockResolvedValue(unwoundSnapshot());
+    await runToLiveBatch();
+    await act(async () => {
+      fireJobDone('sub-9');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(findText('Cancel')).toBeDefined();
+  });
+
+  it('makes an accepted Cancel observable and unrepeatable until it unwinds', async () => {
+    // Cancellation is cooperative, so the row legitimately stays "Running" for a
+    // while. Without a local pending state the click produced NO observable change
+    // whatsoever, which is indistinguishable from a dead control — and a second
+    // press re-flagged an already-flagged job for another ok:true no-op.
+    await runToLiveBatch();
+    await act(async () => {
+      clickText('Cancel');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(batchCancelMock).toHaveBeenCalledTimes(1);
+    const pending = findText('Cancelling…');
+    expect(pending).toBeDefined();
+    expect(pending?.disabled).toBe(true);
+    expect(findText('Cancel')).toBeUndefined();
+    // A disabled control cannot fire a second RPC.
+    act(() => pending?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(batchCancelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the pending state when the cancel was refused (ok:false)', async () => {
+    // Nothing is unwinding, so "Cancelling…" would be a lie; the control returns.
+    batchCancelMock.mockResolvedValueOnce({ ok: false });
+    await runToLiveBatch();
+    await act(async () => {
+      clickText('Cancel');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(findText('Cancelling…')).toBeUndefined();
+    expect(findText('Cancel')).toBeDefined();
+  });
+
+  it('releases the pending state when the cancel THROWS', async () => {
+    batchCancelMock.mockRejectedValueOnce(new Error('cancel-boom'));
+    await runToLiveBatch();
+    await act(async () => {
+      clickText('Cancel');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(findText('Cancelling…')).toBeUndefined();
+    expect(findText('Cancel')).toBeDefined();
+  });
+
+  it('clears a pending cancel when a NEW run starts', async () => {
+    await runToLiveBatch();
+    await act(async () => {
+      clickText('Cancel');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(findText('Cancelling…')).toBeDefined();
+    await act(async () => {
+      clickText('Run batch');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(findText('Cancelling…')).toBeUndefined();
+  });
+
+  it('clears a pending cancel when a resume starts a fresh parent job', async () => {
+    batchListMock.mockResolvedValue({ batches: [summary()] });
+    await runToLiveBatch();
+    await act(async () => {
+      clickText('Cancel');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(findText('Cancelling…')).toBeDefined();
+    await act(async () => {
+      clickText('Resume');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(findText('Cancelling…')).toBeUndefined();
   });
 });
 

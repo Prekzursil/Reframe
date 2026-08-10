@@ -71,13 +71,40 @@
   gap: 0;
 }
 
+/* THE SCROLLPORT LIVES ON THE TABLIST, NOT ON THE STRIP (v1.5 W17/W18).
+ *
+ * `.workspace .tabbar` above is `overflow-x: auto`, which made the WHOLE grouped
+ * strip the scroll container — Advanced and Export included. Advanced was pinned
+ * back into view with `position: sticky` (the F17 fix, kept in the history note
+ * below); Export never was, and the e2e spec measured it starting 4px past the
+ * right edge at 12 painted tabs. W17/W18 took the strip to 14 painted, pushing
+ * Export further out — a control the user cannot reach is a control that is not
+ * there, and Export is the terminal goal of the whole app.
+ *
+ * Moving the scrollport onto `.tabbar__tablist` fixes BOTH with one rule and no
+ * DOM change: the tab clusters scroll inside the list, while Advanced and Export
+ * are flex siblings OUTSIDE the scrollport and therefore cannot be scrolled away
+ * at any tab count. It is strictly stronger than sticky, which only pinned the
+ * one control it was applied to and painted it over the tabs beneath.
+ *
+ * The `overflow-x: visible` is written with `.workspace` in the selector so it
+ * out-specifies `.workspace .tabbar` rather than relying on source order. */
+.workspace .tabbar.tabbar--grouped {
+  overflow-x: visible;
+}
+
 /* The real role="tablist" is an INNER wrapper that holds ONLY the tab clusters
    (the Advanced/Export controls are its siblings, kept out of the list so it
    owns only tabs). It lays the clusters out inline exactly as the flat strip
-   did — no visual change to the cluster row itself. */
+   did — no visual change to the cluster row itself. `min-width: 0` is required:
+   without it the flex item refuses to shrink below its content width and the
+   overflow escapes the strip again. */
 .tabbar--grouped .tabbar__tablist {
   display: flex;
   align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .tabbar--grouped .tabbar__group {
@@ -110,31 +137,28 @@
 
 /* Advanced disclosure: shares the tab voice but reads as a control, not a tab.
  *
- * PINNED to the right edge of the scrolling strip. `.workspace .tabbar` above is
- * `overflow-x: auto`, so this control scrolls away with the tabs — and it is the
- * ONLY control that can collapse the Deliver cluster. When it leaves the window
- * the cluster becomes uncollapsible, which is the F17 defect.
- *
- * That is not hypothetical. F17 was fixed when the strip held 13 tabs (8 painted
- * collapsed) and left ~94px of overflow. The v1.5 wave took it to 17 tabs / 12
- * painted, and the nightly e2e caught the regression precisely:
+ * HISTORY, kept because it names a defect that must not come back. This control
+ * is the ONLY thing that can collapse the Deliver cluster, so when it leaves the
+ * window the cluster becomes uncollapsible — that is F17. It was fixed when the
+ * strip held 13 tabs (8 painted collapsed) and left ~94px of overflow; the v1.5
+ * wave took it to 17/12 and the nightly e2e caught the regression precisely:
  * `expect(toggle).toBeInViewport()` -> "Received: viewport ratio 0" on windows,
- * macos AND ubuntu. Off-screen entirely, not merely clipped.
+ * macos AND ubuntu. Off-screen entirely, not merely clipped. Collapsing the
+ * cluster cannot fix it — the overflow is in the PRIMARY tabs, which paint
+ * whether or not the cluster is open.
  *
- * Collapsing the cluster cannot fix this — the overflow is now in the PRIMARY
- * tabs, which paint whether or not the cluster is open. Sticky makes the control
- * reachable at ANY tab count instead of buying headroom that the next lane spends.
+ * The fix WAS `position: sticky; right: 0` here. It is now the scrollport move
+ * above, which keeps this control (and Export, which sticky never covered)
+ * permanently outside the scrolling region. Sticky is therefore REMOVED rather
+ * than layered on top: nested inside a non-scrolling parent it would resolve
+ * against a different ancestor scrollport and could drift.
  *
- * The background must be OPAQUE (it was `transparent`): a sticky element sits over
- * the tabs scrolling beneath it, and a transparent one would render them through
- * the label. `--surface-bg` is the strip's own canvas, so it reads unchanged when
- * there is no overflow to scroll. */
+ * The OPAQUE background is kept (it was `transparent` before F17): `--surface-bg`
+ * is the strip's own canvas, so it reads unchanged, and it stays correct if this
+ * control is ever moved back over scrolling content. */
 .tabbar--grouped .tabbar__advanced-toggle {
   appearance: none;
   align-self: center;
-  position: sticky;
-  right: 0;
-  z-index: 1;
   background: var(--surface-bg);
   border: none;
   color: var(--text-muted);

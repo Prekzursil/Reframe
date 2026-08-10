@@ -735,6 +735,14 @@ const EDITORIAL_SERIF_ALLOWLIST: readonly string[] = [
   '.director-handoff__title',
   '.lineage-panel__title',
   '.export-inspector__confirm-title',
+  // W04 — REVIEWED ALLOWLIST ADDITION. `.confirm-dialog-title` is the SAME node as
+  // `.export-inspector__confirm-title` above: both are rendered by the one shared
+  // <ConfirmDialog/> (components/ConfirmDialog.tsx), only under a different BEM
+  // block. It is a modal display title — the third category this list already
+  // admits — and refusing it here would make the six former native-`confirm()`
+  // gates read typographically differently from the export gate they were lifted
+  // from. This adds no NEW site: it is the existing site under its second skin.
+  '.confirm-dialog-title',
   '.export-result__title',
   // identity / display moments
   '.first-run-setup__brand',

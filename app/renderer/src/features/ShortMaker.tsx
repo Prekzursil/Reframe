@@ -620,6 +620,9 @@ export function ShortMaker({
   // so the exported clips gain the gallery card actions after each export.
   const {
     videoShorts,
+    // W04: the hook owns the themed delete gate but cannot mount it — this
+    // container renders it beside the gallery it guards.
+    confirmDialog: shortsConfirmDialog,
     playingShortPath,
     reloadVideoShorts,
     playShort,
@@ -1036,6 +1039,7 @@ export function ShortMaker({
         onReexport={onReexport ? (p) => void reexportShort(p) : undefined}
         onDelete={(p) => void deleteShort(p)}
       />
+      {shortsConfirmDialog}
 
       {/* P3-D: the taste-profile footer (quiet; hidden until stats resolve). */}
       {feedbackStats && (

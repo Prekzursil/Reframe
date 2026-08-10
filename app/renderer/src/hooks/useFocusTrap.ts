@@ -8,7 +8,8 @@
 //
 //   * on mount it moves focus to the RECOMMENDED control (initialFocus selector)
 //     or, failing that, the first focusable element, or the container itself;
-//   * it traps Tab / Shift+Tab so focus cycles within the container;
+//   * it traps Tab / Shift+Tab so focus cycles within the container (opt out with
+//     `trapTab: false` on a NON-modal surface — see FocusTrapOptions.trapTab);
 //   * Escape calls the optional onEscape handler (dialogs wire this to dismiss);
 //   * on unmount it restores focus to whatever was focused before the dialog
 //     opened.
@@ -44,6 +45,18 @@ export interface FocusTrapOptions {
    * the container itself.
    */
   initialFocus?: string;
+  /**
+   * Whether Tab / Shift+Tab are CAGED inside the container. Default `true` (the
+   * behaviour every existing caller relies on).
+   *
+   * Pass `false` for a NON-modal surface. Caging the keyboard is only honest when
+   * the pointer is caged too: on a card with no scrim over the page, a Tab trap
+   * strands a keyboard user inside a dialog a mouse user can simply click past.
+   * With `false` the hook still does the other three jobs — initial focus, Escape,
+   * focus restore — it just does not intercept Tab, so it is a focus MANAGER
+   * rather than a trap. A caller that passes `false` must NOT set `aria-modal`.
+   */
+  trapTab?: boolean;
 }
 
 /**
@@ -53,7 +66,7 @@ export interface FocusTrapOptions {
 export function useFocusTrap<T extends HTMLElement = HTMLElement>(
   options: FocusTrapOptions,
 ): RefObject<T> {
-  const { onEscape, initialFocus } = options;
+  const { onEscape, initialFocus, trapTab = true } = options;
   // useRef<T>(null) resolves to RefObject<T> (a read-only ref whose `current`
   // is T | null) — exactly what a JSX `ref` prop expects.
   const ref = useRef<T>(null);
@@ -82,7 +95,9 @@ export function useFocusTrap<T extends HTMLElement = HTMLElement>(
         onEscapeRef.current?.();
         return;
       }
-      if (e.key !== 'Tab') return;
+      // A non-modal caller (trapTab: false) keeps Escape + initial focus + restore
+      // but must be able to Tab OUT — see FocusTrapOptions.trapTab.
+      if (e.key !== 'Tab' || !trapTab) return;
       const items = getFocusable(node);
       if (items.length === 0) {
         e.preventDefault();
@@ -105,7 +120,7 @@ export function useFocusTrap<T extends HTMLElement = HTMLElement>(
       node.removeEventListener('keydown', onKeyDown);
       previouslyFocused?.focus();
     };
-  }, [initialFocus]);
+  }, [initialFocus, trapTab]);
 
   return ref;
 }

@@ -252,48 +252,75 @@ describe('Shorts view', () => {
     expect(listMock).toHaveBeenCalledTimes(1); // no refetch
   });
 
-  it('Delete confirms, calls shorts.delete with the path, then reloads', async () => {
-    listMock
-      .mockResolvedValueOnce({
-        shorts: [makeShort({ id: 's1', path: '/exports/shorts-v1/a.mp4' })],
-      })
-      .mockResolvedValueOnce({ shorts: [] });
-    deleteMock.mockResolvedValue({ ok: true });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-
-    await act(async () => {
-      root.render(<Shorts />);
-    });
-    await flush();
-
+  // W04 — REVIEWED TEST CHANGE (not a weakening). The three Delete tests below
+  // used to stub `window.confirm`. That stub is blind to WHICH dialog appears —
+  // it passes for the native OS confirm and for a themed one alike — so it could
+  // never have caught W04. They now drive the themed gate and additionally assert
+  // the native confirm is never reached. `toHaveBeenCalledTimes(1)` on the spy is
+  // replaced by "the gate is open, and nothing was deleted before it was
+  // answered", which is the property that assertion was standing in for.
+  async function openDeleteGate(): Promise<HTMLElement> {
     const delBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Delete"]');
     expect(delBtn).not.toBeNull();
     await act(async () => {
       delBtn!.click();
     });
     await flush();
+    const gate = container.querySelector<HTMLElement>('.confirm-dialog');
+    if (!gate) throw new Error('themed confirm gate did not open for Delete');
+    return gate;
+  }
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(deleteMock).toHaveBeenCalledWith('/exports/shorts-v1/a.mp4');
-    // reload ran (list called twice total) and the card is gone.
-    expect(listMock).toHaveBeenCalledTimes(2);
-    expect(container.querySelectorAll('.shorts__card').length).toBe(0);
-  });
+  async function answerDeleteGate(gate: HTMLElement, approve: boolean): Promise<void> {
+    const sel = approve ? '.confirm-dialog-approve' : '.confirm-dialog-cancel';
+    await act(async () => {
+      gate.querySelector<HTMLButtonElement>(sel)?.click();
+    });
+    await flush();
+  }
 
-  it('Delete is a no-op when the user cancels the confirm', async () => {
-    listMock.mockResolvedValue({ shorts: [makeShort()] });
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+  it('Delete gates on the THEMED dialog, calls shorts.delete with the path, then reloads', async () => {
+    listMock
+      .mockResolvedValueOnce({
+        shorts: [makeShort({ id: 's1', path: '/exports/shorts-v1/a.mp4' })],
+      })
+      .mockResolvedValueOnce({ shorts: [] });
+    deleteMock.mockResolvedValue({ ok: true });
+    const native = vi.spyOn(window, 'confirm');
 
     await act(async () => {
       root.render(<Shorts />);
     });
     await flush();
 
-    const delBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Delete"]');
+    const gate = await openDeleteGate();
+    // The gate names the clip and nothing is destroyed while it is open.
+    expect(gate.querySelector('.confirm-dialog-blurb')?.textContent).toContain('a.mp4');
+    expect(deleteMock).not.toHaveBeenCalled();
+
+    await answerDeleteGate(gate, true);
+
+    expect(native).not.toHaveBeenCalled();
+    expect(container.querySelector('.confirm-dialog')).toBeNull();
+    expect(deleteMock).toHaveBeenCalledWith('/exports/shorts-v1/a.mp4');
+    // reload ran (list called twice total) and the card is gone.
+    expect(listMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelectorAll('.shorts__card').length).toBe(0);
+  });
+
+  it('Delete is a no-op when the user declines the themed gate', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort()] });
+    const native = vi.spyOn(window, 'confirm');
+
     await act(async () => {
-      delBtn!.click();
+      root.render(<Shorts />);
     });
     await flush();
+
+    const gate = await openDeleteGate();
+    await answerDeleteGate(gate, false);
+    expect(native).not.toHaveBeenCalled();
+    expect(container.querySelector('.confirm-dialog')).toBeNull();
 
     expect(deleteMock).not.toHaveBeenCalled();
     expect(listMock).toHaveBeenCalledTimes(1);
@@ -636,9 +663,8 @@ describe('Shorts view', () => {
     expect(container.querySelector('.shorts__note')).toBeNull();
   });
 
-  it('surfaces an error when shorts.delete rejects (after confirm)', async () => {
+  it('surfaces an error when shorts.delete rejects (after the themed gate is approved)', async () => {
     listMock.mockResolvedValue({ shorts: [makeShort({ path: '/exports/a.mp4' })] });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     deleteMock.mockRejectedValue(new Error('unlink failed'));
 
     await act(async () => {
@@ -646,11 +672,8 @@ describe('Shorts view', () => {
     });
     await flush();
 
-    const delBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Delete"]');
-    await act(async () => {
-      delBtn!.click();
-    });
-    await flush();
+    const gate = await openDeleteGate();
+    await answerDeleteGate(gate, true);
 
     expect(deleteMock).toHaveBeenCalledWith('/exports/a.mp4');
     expect(container.querySelector('.shorts__error')?.textContent).toContain('unlink failed');

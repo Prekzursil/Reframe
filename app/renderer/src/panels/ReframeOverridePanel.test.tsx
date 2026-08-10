@@ -1,7 +1,9 @@
 // ReframeOverridePanel.test.tsx — the manual per-shot speaker/layout/crop
 // correction panel (WU R2): override state (flip speaker / switch layout / nudge
-// + zoom crop), the per-shot "changed" marking, and the affected-shot re-render
-// handoff (Re-render passes EXACTLY the changed shot indices to the parent).
+// + zoom crop), the per-shot "changed" marking, and the re-render handoff
+// (Re-render passes EXACTLY the changed shot indices AND the corrections
+// themselves to the parent — the overrides must escape this component or no host
+// can ever send them to `shortmaker.export {reframeOverrides}`).
 
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -125,7 +127,11 @@ describe('ReframeOverridePanel', () => {
     expect(rerender.disabled).toBe(false);
     expect(rerender.textContent).toBe('Re-render 1 shot');
     await click('[data-action="rerender"]');
-    expect(onRerender).toHaveBeenCalledWith([0]);
+    // STRENGTHENED 2026-08-10: the callback must also hand out the corrections
+    // themselves. Asserting only `[0]` passed while the ShotOverride objects were
+    // trapped in this component's private state, which is why no host could send
+    // them anywhere (see the `onRerender` prop doc).
+    expect(onRerender).toHaveBeenCalledWith([0], [{ index: 0, speaker: 'b' }]);
   });
 
   it('switches the layout via the select', async () => {
@@ -168,6 +174,12 @@ describe('ReframeOverridePanel', () => {
     const rerender = $('[data-action="rerender"]') as HTMLButtonElement;
     expect(rerender.textContent).toBe('Re-render 2 shots');
     await click('[data-action="rerender"]');
-    expect(onRerender).toHaveBeenCalledWith([0, 1]);
+    expect(onRerender).toHaveBeenCalledWith(
+      [0, 1],
+      [
+        { index: 0, speaker: 'b' },
+        { index: 1, layout: 'composite' },
+      ],
+    );
   });
 });

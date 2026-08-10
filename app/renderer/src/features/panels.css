@@ -357,6 +357,56 @@
   color: var(--status-success);
 }
 
+/* ---- AI-content disclosure (W21, EU AI Act Art. 50) --------------------------- */
+
+/* The disclosure block is an INFORMATION rail, not an alarm: it must be legible
+   and unmissable without competing with the consent gate (the only warn-coloured
+   element in this panel). */
+.dub-panel .ai-disclosure {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--text-muted);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+}
+
+.dub-panel .ai-disclosure h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-caption-size);
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.dub-panel .ai-disclosure p {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+.dub-panel .ai-disclosure p:last-child {
+  margin-bottom: 0;
+}
+
+.dub-panel .ai-disclosure-c2pa-label {
+  font-weight: 650;
+  color: var(--text-secondary);
+}
+
+/* The label itself: a chip that reads as a STATEMENT about the audio, so it
+   carries its own colour rather than inheriting the row's muted voice. */
+.dub-panel .ai-audio-badge {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius-xs);
+  font-size: var(--type-caption-size);
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
 /* ---- Assets ------------------------------------------------------------------- */
 
 .assets-panel .asset-row {

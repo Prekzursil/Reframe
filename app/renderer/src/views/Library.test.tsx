@@ -1094,6 +1094,24 @@ function fire(el: Element | null): void {
   (el as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
 }
 
+// W04 — REVIEWED TEST CHANGE (not a weakening). The gallery-delete tests below
+// used to stub `window.confirm`. A `window.confirm` spy is blind to WHICH dialog
+// the app shows — it is satisfied by the native OS confirm and by a themed one
+// alike — so it could not have caught W04 (native confirm is unthemeable, cannot
+// be labelled/described for AT, and blocks the Electron renderer). They now drive
+// the themed gate and also assert that the native confirm is never reached.
+// `expect(confirmSpy).toHaveBeenCalledTimes(1)` is replaced by the stronger pair
+// "the themed gate is open" + "nothing was removed before it was answered".
+async function answerConfirmGate(approve: boolean): Promise<void> {
+  const gate = container.querySelector('.confirm-dialog');
+  if (!gate) throw new Error('themed confirm gate is not open');
+  const sel = approve ? '.confirm-dialog-approve' : '.confirm-dialog-cancel';
+  await act(async () => {
+    fire(gate.querySelector(sel));
+  });
+  await flush();
+}
+
 describe('Library search + sort (v1.5 §4)', () => {
   it('filters the grid by the search query, showing a filter-empty state on no match', async () => {
     rpcMock.mockResolvedValueOnce({
@@ -1344,23 +1362,24 @@ describe('Library produced-shorts gallery (v1.5 §4 P0)', () => {
     });
     expect(port.openFolder).toHaveBeenCalledWith('/o/s1.mp4');
 
-    // Delete s1 -> the v1 group keeps s2 (kept.length > 0). Deletion now CONFIRMS
-    // first (see the dedicated test below), so approve it here.
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    // Delete s1 -> the v1 group keeps s2 (kept.length > 0). Deletion CONFIRMS
+    // first through the themed gate (see the dedicated test below), so approve it.
     await act(async () => {
       fire(container.querySelector('[data-testid="delete-s1"]'));
     });
     await flush();
+    await answerConfirmGate(true);
     expect(port.remove).toHaveBeenCalledWith('/o/s1.mp4');
     // Delete s2 -> the group empties (kept.length === 0 -> dropped) -> modal empty.
     await act(async () => {
       fire(container.querySelector('[data-testid="delete-s2"]'));
     });
     await flush();
+    await answerConfirmGate(true);
     expect(container.querySelector('.shorts-modal__empty')).not.toBeNull();
   });
 
-  it('Delete CONFIRMS first and is a no-op when the user cancels', async () => {
+  it('Delete CONFIRMS first through the THEMED gate and is a no-op when the user cancels', async () => {
     // shorts.delete hard-unlinks the .mp4, its .thumb.jpg and its .json
     // (sidecar/media_studio/features/shorts.py:442-455) with no OS recycle bin, so
     // one stray click destroyed a finished render. The other TWO call sites of the
@@ -1373,7 +1392,7 @@ describe('Library produced-shorts gallery (v1.5 §4 P0)', () => {
     const port = shortsPort({
       listAll: vi.fn(async () => [makeShort({ id: 's1', path: '/o/s1.mp4', videoId: 'v1' })]),
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const native = vi.spyOn(window, 'confirm');
     await renderWithShorts(port);
     await act(async () => {
       fire(container.querySelector('.library__shorts-label'));
@@ -1384,16 +1403,24 @@ describe('Library produced-shorts gallery (v1.5 §4 P0)', () => {
       fire(container.querySelector('[data-testid="delete-s1"]'));
     });
     await flush();
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    // The gate is up, names the clip, and NOTHING has been removed yet.
+    expect(container.querySelector('.confirm-dialog')?.getAttribute('role')).toBe('alertdialog');
+    expect(container.querySelector('.confirm-dialog-blurb')?.textContent).toContain('/o/s1.mp4');
     expect(port.remove).not.toHaveBeenCalled();
 
+    await answerConfirmGate(false);
+    expect(port.remove).not.toHaveBeenCalled();
+    expect(container.querySelector('.confirm-dialog')).toBeNull();
+
     // Approving the same click deletes for real.
-    confirmSpy.mockReturnValue(true);
     await act(async () => {
       fire(container.querySelector('[data-testid="delete-s1"]'));
     });
     await flush();
+    await answerConfirmGate(true);
     expect(port.remove).toHaveBeenCalledWith('/o/s1.mp4');
+    // The renderer-blocking native dialog is never reached on either path.
+    expect(native).not.toHaveBeenCalled();
   });
 
   it('surfaces a toast when a gallery action fails', async () => {
@@ -1417,12 +1444,12 @@ describe('Library produced-shorts gallery (v1.5 §4 P0)', () => {
     });
     await flush();
     expect(errorToasts().join(' ')).toContain('reveal failed');
-    // Approve the confirm so the rejection path (not the cancel path) is exercised.
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    // Approve the gate so the rejection path (not the cancel path) is exercised.
     await act(async () => {
       fire(container.querySelector('[data-testid="delete-s1"]'));
     });
     await flush();
+    await answerConfirmGate(true);
     expect(errorToasts().join(' ')).toContain('delete failed');
   });
 });

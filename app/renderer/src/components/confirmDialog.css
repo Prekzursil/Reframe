@@ -1,0 +1,138 @@
+/* confirmDialog.css — the shared themed destructive-confirm gate (W04).
+ *
+ * Only the `confirm-dialog` BEM block lives here. The Export inspector renders
+ * the SAME component with `block="export-inspector__confirm"`, and that skin
+ * stays in features/export/export.css where it already was — one component, two
+ * skins, no duplicated markup.
+ *
+ * Presentation is a centred overlay card, because these six gates replace a
+ * NATIVE confirm: the user expects the question to take over, not to appear as
+ * one more block at the bottom of a panel.
+ *
+ * THE SCRIM IS ITS OWN ELEMENT, AND THE CARD CARRIES NO `transform`.
+ * The first cut of this file centred the card with `position: fixed` +
+ * `transform: translate(-50%,-50%)` and painted the scrim as `.confirm-dialog
+ * ::before { position: fixed; inset: 0 }`. That does not work: per CSS Transforms
+ * Level 1 §3, any `transform` other than `none` makes the element a containing
+ * block for its fixed-position descendants — so `inset: 0` resolved against the
+ * CARD, not the viewport. The scrim was card-sized and hidden behind the card:
+ * zero page dim, zero pointer interception, while ConfirmDialog.tsx asserted
+ * `aria-modal="true"`. The geometry below (a fixed flex wrapper that centres the
+ * card) is the same layout with none of that trap, and it is pinned by
+ * confirmDialog.overlay.test.ts + e2e/confirm-scrim.hittest.spec.ts.
+ */
+
+/* The scrim: dims the surface the question is about and — being a real, fixed,
+   full-viewport element with the default `pointer-events: auto` — swallows
+   pointer input aimed at the surface behind, so a second destructive click
+   cannot land while the first question is open. Together with the Tab cage in
+   ConfirmDialog.tsx (hooks/useFocusTrap) this is what backs `aria-modal="true"`:
+   neither pointer nor keyboard reaches the background. A click on the scrim is
+   intentionally inert — it neither confirms nor cancels, because a stray click
+   must not answer a destructive question either way.
+
+   Do NOT add `pointer-events: none` here and do NOT add a `transform` to this
+   rule: either one silently un-modals the gate while the ARIA keeps claiming
+   otherwise. Both are asserted against in confirmDialog.overlay.test.ts. */
+.confirm-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  /* ABOVE `.shorts-modal__backdrop` (z-index 100, components/library-shell.css):
+     the Library raises this gate from INSIDE that modal, so an equal z-index would
+     bury the question behind the surface it is asking about. */
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: var(--overlay-scrim);
+}
+
+.confirm-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(28rem, 100%);
+  padding: var(--space-5);
+  background: var(--surface-overlay);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-3);
+}
+
+.confirm-dialog-title {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: var(--type-subhead-size);
+  color: var(--text-primary);
+}
+
+.confirm-dialog-blurb {
+  /* The messages carry `\n\n` between the question and its detail line — the
+     shape they had as native-confirm strings. `pre-line` keeps that break
+     visible instead of collapsing it into one run-on sentence. */
+  white-space: pre-line;
+  margin: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.confirm-dialog-approve {
+  flex: 1;
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-bold);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--accent-glow);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.confirm-dialog-approve:hover {
+  background: var(--accent-hover);
+}
+
+.confirm-dialog-approve:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.confirm-dialog-cancel {
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.confirm-dialog-cancel:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.confirm-dialog-cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm-dialog-approve,
+  .confirm-dialog-cancel {
+    transition: none;
+    transform: none;
+  }
+}
