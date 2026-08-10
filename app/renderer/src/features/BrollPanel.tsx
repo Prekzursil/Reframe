@@ -144,23 +144,49 @@ export const THRESHOLD_IS_UNCALIBRATED =
   'would replace it is described in docs/plans/v1.5/flagship-auto-broll.md section 11.2.';
 
 /**
- * The two PREREQUISITES, stated up front rather than discovered by clicking.
+ * The THREE PREREQUISITES, stated up front rather than discovered by clicking.
  *
- * `broll_ops.suggest`'s job body enforces them in this order: `require_model`
- * against the index (`broll_ops.py:403`), then
+ * `broll_ops.suggest`'s job body enforces them in THIS order: `require_model`
+ * against the index (`broll_ops.py:403`) FIRST, then
  * `raise _invalid(f"{video_id} has no transcript yet; run transcribe.start
  * first")` (`:408`). So a user on a freshly imported video reaches an ERROR, not
- * a suggestion, and discovers the two serially. The repo's own convention is to
- * say so first — `Diarize.tsx:138` ("Needs a transcript first"),
- * `caption/CaptionInspector.tsx:47`, `TranscriptEditor.tsx:221` all do. This
- * panel previously mentioned a transcript exactly once, inside
- * {@link BROLL_LOCAL_ONLY}, which is an EGRESS statement and not a prerequisite.
+ * a suggestion, and discovers them serially.
+ *
+ * REFUTED IN REVIEW, and recorded rather than quietly edited: this docstring said
+ * "the two PREREQUISITES" and the shipped copy named only two. There are three, and
+ * the omitted one is the one enforced FIRST — the matcher itself. It is
+ * `google/siglip2-so400m-patch16-384`, a registered manifest asset installed from the
+ * Assets tab (`vlm_backbone.py:482-491`, `installer="hf"`), and its declared size is
+ * `BACKBONE_SIZE_MB = 4540` — a **4.5 GB** download.
+ *
+ * The previous wording was worse than merely incomplete: "index your library above (a
+ * matcher must be loaded)" implies that clicking Index is what loads it. For a user
+ * without the weights it is not. `broll.index` reaches
+ * `broll_ops._default_backbone_factory` -> `vlm._default_backbone_factory` ->
+ * `RealBackboneBackend(settings)` with NO `models_present` guard — the graceful-degrade
+ * path lives in `vlm_backbone.analyze`, which the b-roll path never calls. So the copy
+ * pointed at a button instead of at the Assets tab that actually fixes it.
+ *
+ * The repo's own convention states BOTH halves in one breath and this panel had copied
+ * only the first: `Diarize.tsx:138` ("Needs a transcript first;") plus `:139` ("the
+ * SpeechBrain models install on demand from the Assets tab"). `Gaze.tsx:102`, the
+ * sibling panel from this same wave, carries the full form. Detector controlled: a
+ * probe for `Assets tab|install|download` returned 0 hits here while firing on both of
+ * those files, so the omission was real and not a matcher artifact.
+ *
+ * UNVERIFIED, inline: nobody has run a first index on a machine with NO cached
+ * SigLIP-2, so it is unknown whether that path raises cleanly or silently begins a
+ * 4.5 GB fetch. The disclosure does not depend on which — either way the user must be
+ * told before clicking. SETTLING EXPERIMENT: clear the siglip2-so400m cache, click
+ * "Index library", observe.
  */
 export const BROLL_NEEDS_TRANSCRIPT =
-  'Before this can match anything: index your library above (a matcher must be ' +
-  'loaded), and transcribe THIS video first — matching compares what you say ' +
-  'against your clips, so with no transcript there is nothing to compare and ' +
-  'Suggest fails with "has no transcript yet".';
+  'Before this can match anything, three things must be in place. First, the matcher ' +
+  'model (SigLIP-2, about 4.5 GB) must be installed — it does NOT arrive by clicking ' +
+  'Index; install it from the Assets tab. Then index your library above. Then ' +
+  'transcribe THIS video — matching compares what you say against your clips, so with ' +
+  'no transcript there is nothing to compare and Suggest fails with "has no transcript ' +
+  'yet".';
 
 /**
  * The BR6 disclosure, rendered directly ABOVE the Apply control. A user must know

@@ -1012,12 +1012,29 @@ describe('<BrollPanel />', () => {
   // only previous mention of a transcript was inside the EGRESS badge, which is a
   // different statement. Diarize.tsx:138, caption/CaptionInspector.tsx:47 and
   // TranscriptEditor.tsx:221 all say it up front; so does this now.
-  it('states BOTH prerequisites BEFORE the button that hits them', async () => {
+  it('states ALL THREE prerequisites BEFORE the button that hits them', async () => {
     await mount(makeFakeApi().api);
     const prereq = q('[data-section="prerequisites"]');
+    // NOTE on the first assertion: `toBe(BROLL_NEEDS_TRANSCRIPT)` proves the panel
+    // RENDERS the constant, but it cannot detect a content change — both sides move
+    // together. That is why the `toContain` pins below exist, and why the third one
+    // had to be added: this test passed unchanged while the copy omitted the
+    // prerequisite the sidecar enforces FIRST.
     expect(prereq?.textContent).toBe(BROLL_NEEDS_TRANSCRIPT);
     expect(prereq?.textContent).toContain('transcribe');
     expect(prereq?.textContent).toContain('index your library');
+    // THE MATCHER MODEL — enforced FIRST by `broll_ops.suggest` (`require_model` at
+    // broll_ops.py:403, ahead of the transcript raise at :408) and the most expensive
+    // to discover by clicking: SigLIP-2 is a 4.5 GB manifest asset
+    // (`vlm_backbone.py` BACKBONE_SIZE_MB = 4540). Pinned by CONTENT, not by
+    // reference, so the sentence cannot regress to the two-prerequisite version.
+    expect(prereq?.textContent).toContain('Assets tab');
+    expect(prereq?.textContent).toContain('4.5 GB');
+    // …and it must not send the user to the Index button for it. `broll.index`
+    // reaches RealBackboneBackend with NO models_present guard — the graceful-degrade
+    // path lives in `vlm_backbone.analyze`, which the b-roll path never calls — so
+    // "clicking Index loads the matcher" would be a false instruction, not a shortcut.
+    expect(prereq?.textContent).toContain('does NOT arrive by clicking');
     // BEFORE, not after: document order decides whether it is a warning or a
     // post-mortem. (`compareDocumentPosition` is the same check the one-way
     // disclosure uses against Apply.)

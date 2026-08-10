@@ -278,9 +278,18 @@ describe('Workspace ↔ BrollPanel seam (W16-UI)', () => {
     expect(container.querySelector('[data-section="status"]')).toBeNull();
     // The prerequisites are the first thing a user on a fresh video needs, so they
     // must survive the real lazy mount, not just the unit harness.
-    expect(container.querySelector('[data-section="prerequisites"]')?.textContent).toContain(
-      'transcribe THIS video first',
-    );
+    //
+    // THIS ASSERTION WAS CHANGED, and the reason matters: it used to pin the phrase
+    // 'transcribe THIS video first'. That wording was itself the defect. The sidecar
+    // enforces `require_model` (broll_ops.py:403) BEFORE the transcript raise (:408),
+    // so transcribing is the THIRD prerequisite, not the first — and the omitted one
+    // is a 4.5 GB SigLIP-2 download that no copy mentioned. Pinning "first" therefore
+    // locked in a false ordering. The replacement is STRICTER, not looser: it keeps
+    // the transcript pin and adds the matcher pin, so the seam now proves both halves
+    // survive the real lazy mount.
+    const prereq = container.querySelector('[data-section="prerequisites"]')?.textContent;
+    expect(prereq).toContain('transcribe THIS video');
+    expect(prereq).toContain('Assets tab');
   });
 });
 
