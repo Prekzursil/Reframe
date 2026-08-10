@@ -7,13 +7,22 @@
 // a clip has no per-shot decisions, and whether the UI tells the truth about
 // what "Re-render" can actually do in this build.
 //
-// The honesty assertions are load-bearing, not decoration. The sidecar's whole
-// registered reframe surface is four methods
-// (`sidecar/tests/test_handlers_rpc_surface.py:118-121`): applyOverrides, eval,
-// shotPlan, shotPlanFor. There is no `reframe.render` and no method that
-// persists overrides, so the panel's "Re-render N shots" button cannot re-encode
-// anything. A mount that implied otherwise would be exactly the "false sentence
-// on top of correct code" this repo keeps shipping.
+// The honesty assertions are load-bearing, not decoration — and they were WRONG
+// in the first version of this file, which pinned the sentence "this build
+// registers no reframe.render method" as the reason corrections cannot be
+// applied. That sentence named the wrong blocker: the re-render engine is built
+// and lives in the export pipeline (`shortmaker.export {reframeOverrides}`,
+// `shortmaker.py:257,1450-1455`; `docs/plans/v1.5/SCOPE.md:47-74`). The
+// assertions below now pin the CORRECTED sentences, plus the two properties the
+// old version got wrong:
+//   * the UI must NOT offer "re-export the short" as a remedy — that path is
+//     `shortmaker.export` without the map, so it re-cuts and DISCARDS the user's
+//     corrections;
+//   * the corrections must survive the press, as the exact `reframeOverrides`
+//     entry the export takes.
+// Both of those fail against the previous commit (it printed the re-export
+// advice and rendered no payload at all), so neither is green in the known-bad
+// state.
 
 // @vitest-environment jsdom
 import { act } from 'react';
@@ -146,7 +155,7 @@ describe('ReframeCorrect — where the plan comes from', () => {
   });
 
   // ReframeOverridePanel keeps its override map in `useState`, seeded ONCE
-  // (`panels/ReframeOverridePanel.tsx:77`). A new `plan` prop does not reset it,
+  // (`panels/ReframeOverridePanel.tsx:96`). A new `plan` prop does not reset it,
   // so without a remount an edit made on clip A would be replayed onto clip B —
   // clip B would open already "edited", by shot INDEX, against decisions that
   // were never its own. The container must not let that happen.
@@ -225,20 +234,7 @@ describe('ReframeCorrect — honest empty states', () => {
 });
 
 describe('ReframeCorrect — telling the truth about Re-render', () => {
-  // The disclosure must be present WHENEVER the panel is, and must name the
-  // missing method. A user who edits a shot and presses the panel's own
-  // "Re-render" button gets nothing re-encoded; if the UI does not say that
-  // before they press it, the mount is a lie.
-  it('discloses the missing re-render method next to the panel', async () => {
-    await mount();
-    const limits = section('limits');
-    expect(limits).not.toBeNull();
-    expect(limits?.textContent).toContain('reframe.render');
-    expect(limits?.textContent).toContain('not re-encode');
-  });
-
-  it('reports the affected shots on Re-render and states nothing was re-encoded', async () => {
-    await mount();
+  async function editShotOneAndRerender(): Promise<void> {
     // edit shot 1 (index 0): flip its speaker a -> b
     const flip = container.querySelector(
       '[data-shot="0"] button[data-action="flip-speaker"]',
@@ -251,8 +247,67 @@ describe('ReframeCorrect — telling the truth about Re-render', () => {
     await act(async () => {
       rerender.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
+  }
+
+  // The disclosure must be present WHENEVER the panel is, and must name the REAL
+  // blocker. A user who edits a shot and presses the panel's own "Re-render"
+  // button gets nothing re-encoded; if the UI does not say that before they press
+  // it, the mount is a lie.
+  it('discloses that corrections are not applied, naming the built export path', async () => {
+    await mount();
+    const limits = section('limits');
+    expect(limits).not.toBeNull();
+    expect(limits?.textContent).toContain('not re-encode');
+    // the REAL mechanism, so the next reader looks at the wiring, not at a
+    // sidecar method that does not need building
+    expect(limits?.textContent).toContain('shortmaker.export');
+    expect(limits?.textContent).toContain('reframeOverrides');
+  });
+
+  // REGRESSION (fails on the previous commit, which printed exactly this advice).
+  // `shortmaker.export` WITHOUT `reframeOverrides` re-cuts the clip from scratch,
+  // so "re-export the short" is not a remedy — it is data loss dressed as one.
+  it('never offers re-exporting the short as a remedy', async () => {
+    await mount();
+    await editShotOneAndRerender();
+    const shown = `${sectionText('limits')} ${sectionText('rerender-note')}`;
+    // The retracted sentence, verbatim from the previous commit:
+    //   "Re-export the short to pick up a different framing."
+    expect(shown).not.toMatch(/re-export the short to pick up/i);
+    // …and re-exporting is only ever mentioned as a WARNING, in both places the
+    // user reads. Absence alone would pass on a page that simply said nothing,
+    // so pin the warning positively too.
+    expect(sectionText('limits')).toMatch(/re-exporting the short is not a workaround/i);
+    expect(sectionText('rerender-note')).toMatch(/discards these corrections/i);
+  });
+
+  it('reports the affected shots on Re-render and states nothing was re-encoded', async () => {
+    await mount();
+    await editShotOneAndRerender();
     const note = sectionText('rerender-note');
     expect(note).toContain('shot 1');
     expect(note).toContain('nothing has been re-encoded');
+  });
+
+  // REGRESSION (fails on the previous commit: the panel handed back indices only
+  // and this container rendered no payload, so the corrections died on press).
+  it('keeps the corrections as the exact reframeOverrides entry for the clip', async () => {
+    await mount();
+    expect(section('payload')).toBeNull();
+    await editShotOneAndRerender();
+    const box = container.querySelector('textarea[data-action="payload"]') as HTMLTextAreaElement;
+    expect(JSON.parse(box.value)).toEqual({ [CLIP_A]: [{ index: 0, speaker: 'b' }] });
+  });
+
+  it('drops a stale payload when another clip is picked', async () => {
+    await mount();
+    await editShotOneAndRerender();
+    expect(section('payload')).not.toBeNull();
+    const select = container.querySelector('select[data-action="clip"]') as HTMLSelectElement;
+    await act(async () => {
+      select.value = CLIP_B;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(section('payload')).toBeNull();
   });
 });

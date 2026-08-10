@@ -90,10 +90,16 @@ export async function addLane(api: MediaStudioApi, videoId: string, name?: strin
 /**
  * `tracks.video.addClip` — place a source window onto a lane.
  *
- * W18: this is the ONLY sidecar path that can put a clip into a lane
- * (`video_tracks.py:294` `add_clip`, wired at `:883`). Without it a mounted
- * timeline can add lanes and render, but every lane stays permanently empty, so
- * trim / split / move / undo have nothing to act on. The sidecar refuses a
+ * W18: this is the ONLY sidecar path that can put an ARBITRARY clip into a lane
+ * (`video_tracks.py:294` `add_clip`, wired at `:883`).
+ *
+ * CORRECTED 2026-08-10 — this used to claim that without it "every lane stays
+ * permanently empty". False: `tracks.video.list` auto-seeds lane 0 with the
+ * whole source (`video_tracks.py:595-612,653`). The real consequence of the gap
+ * was one-way editing — a lane made by `addLane` could never be filled, and a
+ * `removeClip` or razor could never be undone by putting material back.
+ *
+ * The sidecar refuses a
  * source file it cannot stat and a window that runs past the file's end
  * (`video_tracks.py:701-703,718`), so a rejection surfaces as a real error here.
  */

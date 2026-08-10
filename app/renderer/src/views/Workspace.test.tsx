@@ -834,9 +834,15 @@ describe('W17/W18 mounted editor surfaces', () => {
   });
 
   // THE red-proof assertion for W18. Mounting VideoTimeline is not enough: its
-  // only path to putting a clip IN a lane is `tracks.video.addClip`, which needs
-  // a real source path and a duration for `srcOut`. Without both, every lane is
-  // permanently empty and the mount is theatre.
+  // only path to putting an ARBITRARY clip in a lane is `tracks.video.addClip`,
+  // which needs a real source path and a duration for `srcOut`.
+  //
+  // CORRECTED 2026-08-10 — this comment used to end "without both, every lane is
+  // permanently empty and the mount is theatre", which is false:
+  // `tracks.video.list` auto-seeds lane 0 with the whole source
+  // (`video_tracks.py:595-612,653`). Without the props the editor can still trim
+  // and split that seeded clip; what it cannot do is fill a lane made by
+  // `addLane` or put material back after a remove/razor.
   it('hands the video timeline the source path AND duration addClip needs', async () => {
     await mount();
     await open('videoTimeline');

@@ -29,11 +29,21 @@
 //   tracks.video.list / addLane / removeLane / addClip / trimClip / splitClip
 //   tracks.video.moveClip / removeClip / render  (render is a long JOB)
 //
-// W18 NOTE — `addClip` is load-bearing, not a nicety. It is the ONLY sidecar
-// path that can put a clip on a lane (`video_tracks.py:294` `add_clip`, wired at
-// `:883`). The panel shipped without it, so every other control here acted on
-// lanes that could never hold anything: mounting the panel in that state would
-// have been theatre. The per-lane "Add clip" button closes that hole.
+// W18 NOTE — `addClip` is load-bearing, but NOT for the reason first written
+// here. That comment said the panel shipped acting on "lanes that could never
+// hold anything"; that is FALSE and is retracted. `tracks.video.list` calls
+// `_seed_base_lane` (`video_tracks.py:595-612,653`), which on first contact lays
+// the source down as ONE full-length clip on lane 0 — so the panel opens with a
+// real clip and trim / split / move / undo / render all had something to act on.
+// (It seeds an EMPTY lane only when the duration probe yields nothing usable.)
+//
+// What was actually missing: `add_clip` (`video_tracks.py:294`, wired at `:883`)
+// is the only sidecar path that can place an ARBITRARY clip — a sub-range, a
+// second source, or anything at all onto a lane made by `addLane`, which really
+// does start empty. Without it the editor could only whittle down the one
+// auto-seeded clip and could never put material back, so a `removeClip` or an
+// over-eager razor was a one-way door and every extra lane stayed empty for
+// good. The per-lane "Add clip" button closes that hole.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 

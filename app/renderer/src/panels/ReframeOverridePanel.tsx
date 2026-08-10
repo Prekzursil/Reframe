@@ -4,8 +4,15 @@
 // shows the chosen active speaker + layout, and lets the user FLIP the speaker to
 // another detected candidate, SWITCH the layout (single / split / composite), or
 // NUDGE / ZOOM the crop. It then computes EXACTLY which shots changed and the
-// "Re-render" action hands that affected-shot set to the parent (the R1 engine
-// re-renders ONLY those shots — never the whole clip).
+// "Re-render" action hands the parent BOTH that affected-shot set and the
+// corrections themselves.
+//
+// WHAT "RE-RENDER" MEANS DOWNSTREAM — corrected 2026-08-10, it used to read
+// "the R1 engine re-renders ONLY those shots — never the whole clip", which is
+// wider than the evidence. `docs/plans/v1.5/SCOPE.md:62-65` states the measured
+// scope: the ANALYSIS pass is skipped for untouched shots, but the timeline is
+// re-encoded end to end and the caption / zoom / brand stages re-run. The saving
+// is the ML pass, not the encode.
 //
 // Reuses the Director panel's pattern (a thin render shell over pure lib logic +
 // per-row controls, immutable state) and the draggable-caption crop infra concept
@@ -66,8 +73,20 @@ function cropText(crop: Crop): string {
 export interface ReframeOverridePanelProps {
   /** The editable per-shot plan (derived from a trace / the R1 engine). */
   plan: ShotPlan;
-  /** Called with the affected shot indices when the user re-renders. */
-  onRerender: (shotIndices: readonly number[]) => void;
+  /**
+   * Called when the user re-renders, with BOTH the affected shot indices AND the
+   * corrections themselves.
+   *
+   * The second argument is not decoration. Until 2026-08-10 this callback handed
+   * back indices only, so the `ShotOverride` objects never left this component's
+   * private `useState` — and a host had literally nothing to send anywhere. That
+   * is one of the three renderer-side gaps that keep `docs/plans/v1.5/SCOPE.md`
+   * O-2 open; the sidecar half (`shortmaker.export {reframeOverrides}`,
+   * `shortmaker.py:257,1450-1455`) has been built since v1.5 and takes exactly
+   * this list. Handing the overrides out is what lets a host preserve the user's
+   * work instead of discarding it.
+   */
+  onRerender: (shotIndices: readonly number[], overrides: readonly ShotOverride[]) => void;
 }
 
 export function ReframeOverridePanel({
@@ -115,7 +134,10 @@ export function ReframeOverridePanel({
     });
   }, []);
 
-  const rerender = useCallback((): void => onRerender(affected), [onRerender, affected]);
+  const rerender = useCallback(
+    (): void => onRerender(affected, overrideList),
+    [onRerender, affected, overrideList],
+  );
 
   return (
     <section className="feature-panel reframe-override" aria-label="Manual reframe correction">

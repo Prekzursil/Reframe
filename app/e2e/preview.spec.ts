@@ -238,12 +238,22 @@ test('Advanced disclosure actually COLLAPSES the Deliver cluster (F17)', async (
   // pushed the toggle out of the window entirely, so the only control that could
   // collapse the cluster was itself off-screen.
   await expect(toggle).toBeInViewport();
-  // Deliberately NOT asserted: `.tabbar__export` in-viewport. Measured on the
-  // live app at the default window (innerWidth 1264), collapsing the cluster
-  // cuts the strip's overflow from 587px to 94px — which restores the toggle
-  // (x 1175..1268) but still leaves Export starting at x=1268, 4px past the
-  // right edge. Export needs a separate layout change that this rule does not
-  // govern, so asserting it here would pin a promise this fix does not keep.
+  // NOW ASSERTED (v1.5 W17/W18). This used to read "deliberately NOT asserted:
+  // `.tabbar__export` in-viewport", recording that at the default window
+  // (innerWidth 1264) collapsing the cluster cut the strip's overflow from 587px
+  // to 94px — restoring the toggle (x 1175..1268) but leaving Export starting at
+  // x=1268, 4px past the right edge. Sticky only ever pinned the toggle.
+  //
+  // W17/W18 added two painted tabs, which would have pushed Export further out,
+  // so the layout change that comment called for landed with them: the scrollport
+  // moved from `.tabbar--grouped` onto `.tabbar__tablist` (workspace.css), which
+  // puts BOTH right-hand controls outside the scrolling region at any tab count.
+  // This assertion is the pin for that. It is RED in the pre-fix state by the
+  // measurement quoted above (x=1268 > 1264).
+  //
+  // UNVERIFIED by the author of this change: e2e is nightly and needs a packaged
+  // Electron build, which was not run here. Settling experiment: this test.
+  await expect(win.locator('.tabbar__export')).toBeInViewport();
 
   // The disclosure still REVEALS when asked — pins that the fix scopes the rule
   // rather than deleting the cluster (passes before AND after the fix).

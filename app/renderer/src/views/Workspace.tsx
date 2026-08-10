@@ -351,9 +351,16 @@ export function Workspace({
         );
       case 'videoTimeline':
         // `sourcePath`/`sourceDurationSec` are NOT decoration: `tracks.video
-        // .addClip` is the only way a clip reaches a lane, and it needs a real
-        // file path plus a `srcOut`. Passing them is what stops every lane from
-        // being permanently empty.
+        // .addClip` is the only way an ARBITRARY clip reaches a lane, and it
+        // needs a real file path plus a `srcOut`.
+        //
+        // CORRECTED 2026-08-10: this used to say passing them "stops every lane
+        // from being permanently empty", which is false. `tracks.video.list`
+        // auto-seeds lane 0 with the whole source on first contact
+        // (`video_tracks.py:595-612,653`), so the panel is never blank. What the
+        // props buy is the ability to put material BACK — onto a lane created by
+        // `addLane` (those do start empty) or after a remove/razor — instead of
+        // an edit session that can only subtract.
         return (
           <VideoTimeline
             videoId={video.id}

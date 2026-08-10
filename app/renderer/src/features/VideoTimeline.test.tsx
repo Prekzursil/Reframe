@@ -738,12 +738,18 @@ describe('rendering the timeline', () => {
 // W18: putting a clip INTO a lane
 // ---------------------------------------------------------------------------
 
-// `tracks.video.addClip` is the ONLY sidecar path that can place a clip on a
-// lane (`sidecar/media_studio/features/video_tracks.py:294,692-716,883`). The
-// client omitted it, so a mounted timeline could add lanes, trim, split, move,
-// undo and render -- against lanes that were permanently EMPTY. These tests are
-// about that one hole: the button exists, it sends the right window, and it
-// refuses honestly when the source geometry it would send is unknown.
+// `tracks.video.addClip` is the ONLY sidecar path that can place an ARBITRARY
+// clip on a lane (`sidecar/media_studio/features/video_tracks.py:294,692-716,883`).
+//
+// CORRECTED 2026-08-10 -- this used to say the client's omission left a mounted
+// timeline working "against lanes that were permanently EMPTY". False:
+// `tracks.video.list` auto-seeds lane 0 with the whole source on first contact
+// (`video_tracks.py:595-612,653`), so trim/split/move/undo/render always had one
+// real clip to act on. The hole was one-way editing -- a lane created by
+// `addLane` could never be filled and a remove/razor could never be reversed by
+// putting material back. These tests are about that one hole: the button exists,
+// it sends the right window, and it refuses honestly when the source geometry it
+// would send is unknown.
 describe('adding the source clip to a lane (W18)', () => {
   const SOURCE = 'C:/vids/talk.mp4';
 
