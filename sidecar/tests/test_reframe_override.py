@@ -338,6 +338,39 @@ def test_affected_rejects_index_mismatch() -> None:
         ro.affected_shot_indices(plan, swapped)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("start_frame", -4), ("end_frame", 10_000_000), ("end_frame", 1)],
+    ids=["negative-start", "past-the-trace", "end-before-start"],
+)
+def test_affected_rejects_a_frame_span_mismatch(field, value) -> None:
+    # A shot's SPAN is an analysis output, not user input. Leaving it unchecked let
+    # an `endFrame` past the analysed trace reach speaker_candidate_crops and die on
+    # a bare IndexError, and a negative `startFrame` produce a wrap-around crop plus
+    # a negative ffmpeg -ss, both reported as a successful job.
+    plan = _plan()
+    edited = ro.ShotPlan(
+        plan.source_width,
+        plan.source_height,
+        plan.fps,
+        (replace(plan.shots[0], **{field: value}), *plan.shots[1:]),
+    )
+    with pytest.raises(ro.OverrideError, match="shot 0 has a different frame span"):
+        ro.affected_shot_indices(plan, edited)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("source_width", 99_999), ("source_height", 4), ("fps", 1.0)],
+)
+def test_affected_rejects_a_source_geometry_mismatch(field, value) -> None:
+    # source_width/height feed every crop region and fps feeds every segment's
+    # -ss/-t, and none of them is part of the segment reuse key.
+    plan = _plan()
+    with pytest.raises(ro.OverrideError, match="different source geometry"):
+        ro.affected_shot_indices(plan, replace(plan, **{field: value}))
+
+
 # --------------------------------------------------------------------------- #
 # RPC registration
 # --------------------------------------------------------------------------- #

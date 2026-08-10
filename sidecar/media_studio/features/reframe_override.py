@@ -583,14 +583,34 @@ def affected_shot_indices(base: ShotPlan, resolved: ShotPlan) -> tuple[int, ...]
     """The indices of shots whose speaker / layout / crop changed.
 
     This is the EXACT set a caller must re-render — never the whole clip. The two
-    plans must describe the same shots (same length + indices), else it is loud.
+    plans must describe the same shots, else it is loud.
+
+    "The same shots" is checked on FOUR axes, not one: shot count, per-shot index,
+    the per-shot ``[start, end)`` frame span, and the plan-level source geometry
+    (``source_width`` / ``source_height`` / ``fps``). Only ``speaker`` / ``layout``
+    / ``crop`` are user-editable — the rest come from the analysis that produced
+    the plan. Checking only count+index (the pre-2026-08-10 behaviour) left the
+    spans and the geometry as UNVALIDATED wire fields on the
+    ``reframe.render`` boundary: an ``endFrame`` past the analysed trace reached
+    ``speaker_candidate_crops`` and died on a bare ``IndexError``, a negative
+    ``startFrame`` silently produced a wrap-around crop and a negative ffmpeg
+    ``-ss``, and an edited ``sourceWidth`` / ``fps`` changed every crop region and
+    every segment timing while the reuse key could not see it.
     """
     if len(base.shots) != len(resolved.shots):
         raise OverrideError("plans have a different number of shots")
+    if (base.source_width, base.source_height, base.fps) != (
+        resolved.source_width,
+        resolved.source_height,
+        resolved.fps,
+    ):
+        raise OverrideError("plans describe a different source geometry")
     affected: list[int] = []
     for before, after in zip(base.shots, resolved.shots, strict=True):
         if before.index != after.index:
             raise OverrideError("plans describe different shots")
+        if (before.start_frame, before.end_frame) != (after.start_frame, after.end_frame):
+            raise OverrideError(f"shot {after.index} has a different frame span")
         if (before.speaker, before.layout, before.crop) != (after.speaker, after.layout, after.crop):
             affected.append(after.index)
     return tuple(affected)

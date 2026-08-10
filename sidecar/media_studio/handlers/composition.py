@@ -375,6 +375,24 @@ def register_all(
 
     _reframe_override.register(register_fn=reg)
 
+    # reframe.analyze / reframe.render (WU-E1..E3): the trace PRODUCER, its
+    # size-bounded analysis cache, and the edited-plan re-render. Registered right
+    # after the override layer because they close that layer's loop: shotPlan /
+    # applyOverrides could edit a plan, but nothing produced a trace over the wire
+    # and nothing could render an edited plan back to pixels.
+    #
+    # HONEST SCOPE: this wires the BACKEND only. The UI wave (WU-U1..U4) is a
+    # separate work unit, so both methods are REGISTERED BUT NOT USER-REACHABLE
+    # after this change — per-shot active-speaker editing is NOT available to users.
+    from ..features import reframe_analyze as _reframe_analyze  # local: import-light
+
+    _reframe_analyze.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "reframed",
+        settings_provider=svc.settings.get,
+        register_fn=reg,
+    )
+
     # shorts.* (P4 §2/C6): the shorts library registers its own four methods,
     # bound to the same exports root + per-video out-dir layout the short-maker
     # export uses (Services.exports_dir / "shorts-<videoId>").
