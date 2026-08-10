@@ -220,6 +220,18 @@
   color: var(--status-warn);
 }
 
+/* Cancelled: deliberately stopped by the user — neither success nor failure, so
+ * it earns no ladder hue. It used to have NO rule at all and inherited the base
+ * --text-muted, making it byte-identical to a `queued` row (audit H4c). It now
+ * drops to the quietest text step (the ladder's "disabled" tone) and is struck
+ * through. HONEST SCOPE: --text-faint and --text-muted are ADJACENT steps, so
+ * the hue delta alone is a weak signal; the strikethrough is what actually
+ * separates the two states, and the pill still spells the word out. */
+.jobqueue__status--cancelled {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
 .jobqueue__label {
   font-size: var(--type-caption-size);
   color: var(--text-muted);

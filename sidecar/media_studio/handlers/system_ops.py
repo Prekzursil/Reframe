@@ -84,15 +84,53 @@ def asr_engines(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict
     """``asr.engines()`` -> ``{engines:[{id, label, installed}]}``. Direct-return.
 
     Lists the selectable ASR engines (whisper default / parakeet opt-in) with
-    an installed flag per engine (drives the ASR picker UI). Whisper is treated
-    as always available (the always-installed default); parakeet's installed
-    flag reflects whether its weights are cached.
+    an installed flag per engine (drives the ASR picker UI).
+
+    W25: whisper's flag used to be a hardcoded ``True`` ("the always-installed
+    default"), which was false on every install that did not download the
+    weights — the Minimum profile pulls nothing, a Custom profile need not
+    include transcription, and the whisper snapshot is excluded from the
+    renderer's first-run completion gate. The picker therefore could not warn
+    that the model the user is about to need is absent, and
+    ``recommender._pick_asr_engine`` always found "an installed engine".
+
+    Whisper's flag is the LOADER's own answer, not a second guess about it:
+    :func:`transcribe.resolve_transcribe_target` decides which model id this
+    machine + these settings would actually load (device auto-detect,
+    :func:`transcribe.cpu_auto_model`, an explicit ``transcribeModel``
+    override), and :func:`transcribe.whisper_snapshot_dir` — the same call
+    ``resolve_model_source`` makes on the load path — reports whether that id's
+    PINNED snapshot is on disk. So ``installed: True`` means exactly "a
+    ``transcribe.start`` right now resolves locally".
+
+    CORRECTION (W25 review): the first cut of this fix read whisper's flag out
+    of :meth:`_models_present_map` instead. That probe answers "does the HF
+    cache hold ANY non-empty snapshot of the repo"
+    (``AssetManager.installed_path`` -> ``hf_snapshot_present``), and the
+    accompanying comment claimed the two agree because faster-whisper would
+    resolve a non-pinned snapshot through its own ``refs/`` entry. That claim
+    was FALSE, and this repo had already measured it false:
+    :func:`transcribe.resolve_model_source` documents (against huggingface_hub
+    1.22.0) that a pin-installed repo has NO ``refs/main``, so an offline load
+    of the bare id raises ``LocalEntryNotFoundError``. The divergent state is
+    also routine, not exotic — bumping ``manifest.WHISPER_HF_REVISION`` puts
+    every existing install into it — so the weaker probe would have re-created
+    the very "reports installed, then fails to load" lie W25 exists to kill.
+
+    Parakeet keeps the :meth:`_models_present_map` probe: its backend loads by
+    asset (``parakeet_asr.ASSET_NAME``), so asset-presence IS its loader's
+    question. Fail-open per engine — a probe error reports not-installed (a
+    picker warning), never a crashed RPC.
     """
     settings = self.settings.get()
     installed = self._models_present_map(settings)
     return {
         "engines": [
-            {"id": "whisper", "label": "Whisper large-v3-turbo", "installed": True},
+            {
+                "id": "whisper",
+                "label": "Whisper large-v3-turbo",
+                "installed": _whisper_snapshot_present(settings),
+            },
             {
                 "id": "parakeet",
                 "label": "Parakeet-TDT-0.6b-v3 (multilingual)",
@@ -100,6 +138,43 @@ def asr_engines(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict
             },
         ]
     }
+
+
+def _whisper_snapshot_present(settings: dict[str, Any]) -> bool:
+    """Is the whisper model THIS machine would load already on disk (W25)?
+
+    Asks ``transcribe`` both halves of the question rather than re-deriving
+    either: :func:`~media_studio.features.transcribe.resolve_transcribe_target`
+    for WHICH model id would be loaded (device auto-detect / ``cpu_auto_model``
+    / an explicit ``transcribeModel``), then
+    :func:`~media_studio.features.transcribe.whisper_snapshot_dir` for whether
+    that id's PINNED snapshot is cached — the same call the load path makes.
+
+    ``False`` therefore covers every way a load would have to hit the network:
+    no snapshot, only a NON-pinned revision of the repo (a stale install after a
+    ``WHISPER_HF_REVISION`` bump), or a forced ``transcribeModel`` id the
+    manifest does not map to a registered, pinned asset.
+
+    Fail-open like :meth:`_models_present_map`: any probe error reports
+    not-installed (the picker warns) instead of sinking the RPC.
+
+    PERF, MEASURED (not a guess): ``resolve_transcribe_target`` with
+    ``transcribeDevice`` unset runs ``detect_device`` -> the lazy ``import
+    torch`` CUDA probe. On this box that cost **3.2 s once per process** and
+    **0.000 s** on every later call (module cache); with ``transcribeDevice``
+    set to ``cpu``/``cuda`` it is skipped entirely. Accepted deliberately: any
+    cheaper stand-in (e.g. the advisor's ``gpu_present``) answers a DIFFERENT
+    question than ``torch.cuda.is_available()``, which is what the loader
+    actually branches on — and a flag derived from a different question is the
+    second-guess class this fix exists to remove.
+    """
+    from ..features import transcribe as _transcribe  # local: import-light (faster_whisper stays deferred)
+
+    try:
+        model, _device, _compute = _transcribe.resolve_transcribe_target(settings)
+        return _transcribe.whisper_snapshot_dir(model) is not None
+    except Exception:  # noqa: BLE001 - a bad probe must not sink the picker
+        return False
 
 
 def _detect_local_servers(self: Services, settings: dict[str, Any]) -> list[dict[str, Any]]:
@@ -458,10 +533,14 @@ def _models_present_map(self: Services, settings: dict[str, Any]) -> dict[str, b
     """Map each model-backed advisor component -> is its weight installed.
 
     Probes the asset manager for each Phase-8 component's pinned asset so the
-    advisor (and the ASR picker) can report installed-state + degrade an
-    offline-missing model. Components with no registered asset are omitted
-    (the advisor then treats them as not-installed). Fail-open: a probe error
-    for one component marks it absent, never crashes the report.
+    advisor (and the parakeet row of the ASR picker) can report installed-state
+    + degrade an offline-missing model. Components with no registered asset are
+    omitted (the advisor then treats them as not-installed). Fail-open: a probe
+    error for one component marks it absent, never crashes the report.
+
+    NOT the right probe for whisper (W25 review): ``installed_path`` is true for
+    ANY cached snapshot of the repo, while the whisper loader needs the pinned
+    revision — ``asr.engines`` uses :func:`_whisper_snapshot_present` instead.
     """
     from ..assets import manifest as _manifest  # local: import-light
     from ..assets.manager import AssetManager  # local: import-light

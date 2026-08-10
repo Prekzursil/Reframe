@@ -59,6 +59,13 @@ def _js_number(value: Any) -> str:
 #: advisor component name -> its registered manifest asset name (the installed
 #: -state probe key). Components with no own asset (motion/diversity/ranker are
 #: zero-download floors) are absent; ``aesthetic`` shares the SigLIP-2 backbone.
+#:
+#: EVERY key is a ``system_advisor.COMPONENTS`` spec name — the invariant the
+#: tier/verdict roll-ups rely on. W25 briefly added a probe-only ``whisper`` key
+#: here; that was reverted, because an asset-presence probe is the WRONG oracle
+#: for whisper (see :func:`~media_studio.handlers.system_ops.asr_engines`: it
+#: answers "any snapshot of the repo is cached", while the loader needs the
+#: PINNED revision). ``asr.engines`` asks ``transcribe`` directly instead.
 _COMPONENT_ASSETS: dict[str, str] = {
     "saliency": "vinet-s-saliency",
     "audio_saliency": "panns-cnn14",

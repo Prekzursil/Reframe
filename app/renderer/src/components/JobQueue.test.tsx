@@ -115,8 +115,15 @@ describe('canCancel / canRetry', () => {
     expect(canCancel(makeJob({ status: 'cancelled' }))).toBe(false);
   });
 
-  it('retry applies to error only', () => {
+  // W13 (audit H4b): this case used to assert "error only" and never named
+  // `cancelled` — the omission is why a cancelled job shipped with no action at
+  // all. The sidecar contract is explicit that BOTH are retryable
+  // (protocol.py:266-268, "the UI is expected to offer retry on error/cancelled
+  // jobs"), so the table now covers all six statuses with no gap.
+  it('retry applies to error and cancelled (table-test all six statuses)', () => {
     expect(canRetry(makeJob({ status: 'error' }))).toBe(true);
+    expect(canRetry(makeJob({ status: 'cancelled' }))).toBe(true);
+    expect(canRetry(makeJob({ status: 'queued' }))).toBe(false);
     expect(canRetry(makeJob({ status: 'running' }))).toBe(false);
     expect(canRetry(makeJob({ status: 'done' }))).toBe(false);
     expect(canRetry(makeJob({ status: 'interrupted' }))).toBe(false);
@@ -253,6 +260,29 @@ describe('JobQueue', () => {
     await click('.jobqueue__retry');
 
     expect(rpcMock).toHaveBeenCalledWith('job.retry', { jobId: 'err-1' });
+    expect(listCalls()).toBe(before + 1);
+  });
+
+  it('a cancelled job offers Retry (W13 / audit H4b) and fires job.retry', async () => {
+    // The audit found a cancelled row with NO button of any kind: canCancel is
+    // false, canResume is false, and canRetry was error-only. The sidecar has
+    // always accepted it (protocol.py:266-268).
+    serveJobs([makeJob({ jobId: 'can-1', label: 'Ensure assets', status: 'cancelled', pct: 2 })]);
+    await renderQueue(true);
+
+    expect(container.querySelectorAll('.jobqueue__retry').length).toBe(1);
+    expect(container.querySelectorAll('.jobqueue__cancel').length).toBe(0);
+    expect(container.querySelectorAll('.jobqueue__resume').length).toBe(0);
+    const retry = container.querySelector('.jobqueue__retry') as HTMLButtonElement;
+    expect(retry.getAttribute('aria-label')).toBe('Retry Ensure assets');
+    // The status pill carries the word too — colour is never the sole signal.
+    expect(container.textContent).toContain('cancelled');
+    expect(container.querySelector('.jobqueue__status--cancelled')).not.toBeNull();
+
+    const before = listCalls();
+    await click('.jobqueue__retry');
+
+    expect(rpcMock).toHaveBeenCalledWith('job.retry', { jobId: 'can-1' });
     expect(listCalls()).toBe(before + 1);
   });
 
