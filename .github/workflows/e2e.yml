@@ -211,12 +211,39 @@ jobs:
       # loudly on the macOS/Linux legs. Installing ~200 MB of ctranslate2 /
       # onnxruntime / tokenizers wheels for a spec that skips would be pure cost.
       #
-      # PINNED to the version in `sidecar/requirements.lock.txt` (== what the
-      # shipped app runs) per A6 lesson 5 — deliberately unlike the e2e-sidecar
+      # PINNED to `sidecar/requirements.lock.txt` (== what the shipped app runs),
+      # TRANSITIVES INCLUDED, per A6 lesson 5 — deliberately unlike the e2e-sidecar
       # job's unpinned `faster-whisper`, so a new upstream release cannot silently
-      # change this nightly's ASR behaviour. Its own pinned transitives
-      # (ctranslate2 4.8.1 / tokenizers 0.23.1 / onnxruntime 1.28.0 / av 17.1.0)
-      # come along as declared dependencies.
+      # change this nightly's ASR behaviour.
+      #
+      # REFUTED WORDING, recorded so it cannot be reintroduced: this comment used
+      # to claim faster-whisper's "own pinned transitives (ctranslate2 4.8.1 /
+      # tokenizers 0.23.1 / onnxruntime 1.28.0 / av 17.1.0) come along as declared
+      # dependencies". faster-whisper 1.2.1 pins NOTHING. MEASURED with
+      # `importlib.metadata.requires('faster-whisper')`: `ctranslate2<5,>=4.0`,
+      # `onnxruntime<2,>=1.14`, `tokenizers<1,>=0.13`, `av>=11` — all open ranges.
+      # And a bare `pip install "faster-whisper==1.2.1"` on this box resolved
+      # av 18.0.0 + numpy 2.5.2 against lock `av==17.1.0` (:17) and `numpy==2.5.1`
+      # (:107). So the reproducibility rationale was false exactly where it
+      # mattered: ctranslate2 IS the inference engine and onnxruntime IS the VAD
+      # runtime, and both floated freely inside their major bounds.
+      #
+      # `--constraint` makes that original claim TRUE rather than merely rewording
+      # it. MEASURED in a fresh venv (Windows, CPython 3.12) — every transitive
+      # lands lock-exact: faster-whisper 1.2.1 · ctranslate2 4.8.1 · tokenizers
+      # 0.23.1 · onnxruntime 1.28.0 · av 17.1.0 · numpy 2.5.1 · huggingface-hub
+      # 1.26.0 · tqdm 4.70.0, pip exit 0. `--constraint` and not `-r <lock>`
+      # because `-r` would install the WHOLE sidecar runtime and would fight the
+      # deliberate `opencv-python-headless==4.13.0.92` pin above (the lock carries
+      # `opencv-python==4.14.0.94`, a different distribution); a constraint only
+      # bounds packages already in faster-whisper's own resolution closure. The
+      # lock is constraint-safe: plain `==` lines plus pip-compile `# via`
+      # comments, and zero URLs / hashes / extras (which pip rejects in a
+      # constraints file).
+      # UNVERIFIED on a GitHub runner (measured here on the same OS family and the
+      # same CPython minor, so the wheel set should match — likely, 80%); the
+      # settling experiment is the next nightly, whose pip log prints every
+      # resolved version.
       #
       # NO `assets.ensure` step, on purpose. The spec pins whisper `tiny` via the
       # real `settings.set`, and `tiny` is NOT a registered manifest asset — so
@@ -228,7 +255,7 @@ jobs:
       # and is NOT an offline proof.
       - name: Install the ASR runtime for the speech-to-caption journey (Windows only)
         if: runner.os == 'Windows'
-        run: pip install "faster-whisper==1.2.1"
+        run: pip install "faster-whisper==1.2.1" --constraint sidecar/requirements.lock.txt
 
       - name: Install app deps
         working-directory: app
@@ -325,18 +352,34 @@ jobs:
       # (multi-minute, network) and cannot answer RPCs inside a CI window — a
       # documented packaged-runtime limitation, not a regression (see app/e2e/README).
       #
-      # transcribe-journey.spec (speech -> transcript -> caption) runs HERE and only
-      # here: it needs Windows SAPI for its speech fixture, so the macOS/Linux legs
-      # above self-skip it with a named reason. RF_E2E_DEV=1 puts it on the dev
-      # build, whose sidecar is the system python the ASR step above installed
-      # faster-whisper into.
+      # transcribe-journey.spec (speech -> transcript -> caption) is EXCLUDED here
+      # and runs in its OWN step AFTER the visual+a11y suite below. Why: a red
+      # Playwright step makes every LATER step inherit GitHub's implicit success()
+      # gate, and the BLOCKING visual/a11y diff step below deliberately does NOT
+      # carry always() (it must stay a real gate — see the comment there). This repo
+      # has already MEASURED that cascade on run 30612141716. A separate spec FILE
+      # is not separate CI exposure: playwright.config.ts testMatch is
+      # '**/*.spec.ts', so the new spec would otherwise join THIS one invocation —
+      # and by its own account it is the most fragile member (it needs an `en-*`
+      # SAPI voice on the runner and huggingface.co egress, both UNVERIFIED on a
+      # GitHub image), so its first red would silently drop visual+a11y coverage.
+      # Excluding it here keeps the pre-existing gate order intact and costs nothing.
+      #
+      # `--grep-invert` matches the spec's FILE PATH, verified with a detector
+      # control on this box: `--list` alone enumerates 27 tests including the 2
+      # transcribe-journey ones; with `--grep-invert transcribe-journey` it
+      # enumerates exactly those 25 others. Tripwire: rename the spec file and the
+      # exclusion silently stops matching (it would then run twice, restoring the
+      # cascade) — keep the pattern and the filename in sync.
+      # The macOS/Linux legs above need no exclusion: the spec self-skips there
+      # with a named reason (Windows SAPI).
       - name: E2E GUI — Playwright Electron (Windows packaged .exe + dev-build pipeline)
         if: runner.os == 'Windows'
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
-        run: npm run test:e2e
+        run: npm run test:e2e -- --grep-invert "transcribe-journey"
 
       # WAVE-2b VISUAL + A11Y — Windows ONLY. The visual screenshot baselines are
       # platform-specific (committed as `*-win32.png`), so this suite runs on the
@@ -382,6 +425,26 @@ jobs:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
         run: npm run test:e2e:visual:update
+
+      # SPEECH -> TRANSCRIPT -> CAPTION, deliberately LAST of the test steps.
+      # It runs on Windows only (its fixture synthesises speech with Windows SAPI;
+      # the macOS/Linux legs self-skip it loudly), on the dev build, whose sidecar is
+      # the system python the ASR step above installed faster-whisper into.
+      #
+      # Placed after the visual/a11y gate ON PURPOSE: this is the leg with the most
+      # environmental dependencies (an `en-*` SAPI voice on the image, huggingface.co
+      # reachable for the 74.6 MB `tiny` snapshot), so if anything here goes red it
+      # must not be able to skip a suite that would otherwise have run. Everything
+      # after this point carries always(), so a red here suppresses no artifact.
+      #
+      # NO always() here: this IS a gate for the nightly, and a red must fail the leg.
+      - name: E2E GUI — Playwright Electron (speech -> transcript -> caption) [Windows only]
+        if: runner.os == 'Windows'
+        working-directory: app
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
+        run: npx playwright test --config playwright.config.ts transcribe-journey
 
       - name: Upload regenerated visual baselines
         if: always() && runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
