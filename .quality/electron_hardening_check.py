@@ -1,7 +1,8 @@
 """Electron hardening gate (W66) — the packaging fuses and the renderer sandbox.
 
-PROGRAM.md's Wave-1 line claimed "Electron 39 (EOL) -> 43 + ASAR-integrity fuses +
-Electronegativity CI. SHIPPED". Only the version bump had landed: `electron-builder.yml`
+The Wave-1 line in `docs/plans/v1.5/PROGRAM.md` claimed "Electron 39 (EOL) -> 43 +
+ASAR-integrity fuses + Electronegativity CI. SHIPPED". Only the version bump had landed:
+`electron-builder.yml`
 declared no `electronFuses` block at all, so the shipped exe kept every Node-injection
 surface open and would happily load a tampered `app.asar`.
 

@@ -1,7 +1,7 @@
 """W66 — both-states proof for `.quality/electron_hardening_check.py`.
 
 The gate reads two files that decide whether the SHIPPED binary is hardened, so a
-silent no-op here is worse than no gate: `PROGRAM.md` already recorded
+silent no-op here is worse than no gate: `docs/plans/v1.5/PROGRAM.md` already recorded
 "ASAR-integrity fuses + Electronegativity CI ... SHIPPED" while
 `electron-builder.yml` declared no `electronFuses` block at all.
 

@@ -105,7 +105,7 @@ describe('brand rename — NO user-facing "media-studio" leak (WU A1 / R8 audit)
   }
 });
 
-describe('app/package.json — v1.4 version + productName (WU A1 / WU-R2)', () => {
+describe('app/package.json — version + productName (WU A1 / WU-R2)', () => {
   const pkg = JSON.parse(read(PACKAGE_JSON)) as {
     version: string;
     productName: string;
@@ -113,14 +113,23 @@ describe('app/package.json — v1.4 version + productName (WU A1 / WU-R2)', () =
   };
 
   // This pin is deliberate: it forces every version change to be a CONSCIOUS edit
-  // rather than drift. 1.4.2 is a maintenance bump over the shipped v1.4.1 tag —
-  // 8 security audit fixes (incl. the settings.set executable-path write refusal),
-  // the Windows packaged-runtime unblock, the critical dangling-aria-controls fix,
-  // and refreshed visual baselines. NOT 1.5.0: the locked v1.5 scope (4 flagships,
-  // keystone RPC refactor, full pro-shell redesign) is still unlanded, so claiming
-  // the 1.5 line here would overstate what shipped.
-  it('version is bumped to 1.4.2', () => {
-    expect(pkg.version).toBe('1.4.2');
+  // rather than drift, so bumping it means editing this line on purpose.
+  //
+  // 1.4.2 -> 1.5.0, 2026-08-10. The previous comment here argued for 1.4.2 and
+  // "NOT 1.5.0 ... the locked v1.5 scope is still unlanded" (the same reasoning as
+  // docs/plans/v1.5/GRILL-DECISION-QUEUE.md B-1, 2026-07-29). That premise expired:
+  // the v1.5 programme is landing, and the ARTIFACT problem B-1 was created to solve
+  // had returned in full — dist/ already holds a built media-studio-1.4.2-win-x64.exe
+  // (docs/plans/v1.5/distribution-audit-2026-08.md:101), so another build at 1.4.2
+  // would overwrite it, NSIS would treat the equal version as a repair, and
+  // electron-updater would never see it as newer. That is the exact failure B-1
+  // named when it moved 1.4.1 -> 1.4.2.
+  //
+  // NOT a find/replace: `updateVerify.test.ts` holds '1.4.1'/'1.4.2' as DOWNGRADE-CHECK
+  // FIXTURES and ~10 references to WCAG 1.4.1 ("Use of Color") exist across the
+  // renderer — both are use-vs-mention, and both are deliberately untouched.
+  it('version is bumped to 1.5.0', () => {
+    expect(pkg.version).toBe('1.5.0');
   });
 
   it('productName is the display brand "Reframe"', () => {
