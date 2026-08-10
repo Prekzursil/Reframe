@@ -243,6 +243,22 @@ def register_all(
     # renderer holds it in a ref only (never state/store/logs/telemetry/crash) and
     # re-masks on blur/timeout. Every other providers.* read stays last-4 redacted.
     reg("providers.revealKey", svc.providers_reveal_key)
+    # W64 / docs/plans/v1.5/SCOPE.md O-1 — there is DELIBERATELY no
+    # ``providers.editKey`` beside these two, and this is the one place that would
+    # register it. O-1 is right that the name is absent from both sides (so the
+    # surface is parity-clean, not drifted) and wrong that the CAPABILITY is
+    # missing: an index-targeted key edit already ships as validate-then-store,
+    # ``providers.testKey`` + ``providers.upsert``, driven by the Replace
+    # affordance in ``app/renderer/src/features/ProvidersKeys.tsx`` (see the long
+    # note on its ``replaceKey`` callback for the full rationale and the test that
+    # pins it).
+    #
+    # Registering ``providers.editKey`` here would ADD a credential-loss path, not
+    # a feature: ``app/main/keyBridge.ts`` intercepts only ``providers.upsert`` /
+    # ``providers.remove``, so an ``editKey`` request would carry its raw key past
+    # the DPAPI keystore into this process, where ``settings_store`` redacts on
+    # persist -- leaving a last-4 marker with no raw counterpart anywhere. Any
+    # future ``editKey`` must land together with a keyBridge interception.
     reg("providers.setConsent", svc.providers_set_consent)
     # WU-usage-ui: per-key live usage (cached, persisted, stale-flagged; no poll
     # burst). The rotation pool already accounts usage from optimistic decrement +
