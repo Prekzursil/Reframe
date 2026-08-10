@@ -617,7 +617,7 @@ class TestRenderShotPlan:
         assert out == "out.mp4"
         assert any("shot manifest" in m for m in seen)
 
-    def test_a_shot_manifest_write_failure_DROPS_the_stale_manifest(self):
+    def test_a_shot_manifest_write_failure_drops_the_stale_manifest(self):
         # The consequence of a failed write is NOT "re-encodes every shot" unless the
         # PREVIOUS manifest is removed: this render already overwrote the segment
         # files, so a surviving manifest describes bytes that are gone. Executed
