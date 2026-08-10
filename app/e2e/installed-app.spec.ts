@@ -41,6 +41,18 @@
 //   spec asserts nothing about version parity. Settling experiment: install the
 //   artifact built from THIS commit, which is what the CI step does.
 //
+// WHY PRE-SEEDING DOES NOT SHORT-CIRCUIT THE COLD RUN — the obvious way this spec
+// could be vacuous is if handing the app a data root that already has `library.db`
+// made it decide no first run was needed, so it would sail past a bootstrap that
+// never happened. It does not: `classifyFirstRun` (app/main/firstRunGate.ts:225)
+// keys ONLY on `isPackaged` plus the presence of the `.first-run-complete.json`
+// marker AT THE DATA ROOT (`FIRST_RUN_COMPLETE_MARKER`, firstRunGate.ts:21), which
+// `bootstrap.py` writes and `seedEnvironment` does not — so a fresh `mkdtemp` root
+// with a library in it still classifies as `first-ever`. That is a code-reading of
+// a pure, unit-tested decision function (firstRunGate.test.ts), not a measurement
+// of this spec; the measurement is the bootstrap actually being observed to run,
+// which is what the COLD FIRST RUN test below asserts.
+//
 // ── SCOPE ────────────────────────────────────────────────────────────────────
 // `e2e.yml` is `workflow_dispatch` + nightly `cron` only and this spec is gated on
 // an env var that only its own dedicated step sets, so it gates NOTHING — it
