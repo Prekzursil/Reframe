@@ -1364,7 +1364,14 @@ SHOT_MANIFEST_SUFFIX = ".shots.json"
 #: re-encodes every shot, which is always the correct output. So it degrades with
 #: a warning instead of raising — the conservative direction, not a silent
 #: wrong answer.
-SHOT_MANIFEST_VERSION = 1
+#:
+#: **v2 (2026-08-10)** added the source identity (``fps`` / ``sourceWidth`` /
+#: ``sourceHeight``) and the per-shot ``regions``, because a v1 manifest could
+#: license reuse across a trace change, an fps change or a resolution change — all
+#: of which move pixels. A v1 file on disk is therefore correctly rejected as
+#: "unknown version": it cannot prove those four things, so the conservative
+#: answer is to re-encode.
+SHOT_MANIFEST_VERSION = 2
 
 
 def _write_text_file(path: str, text: str) -> None:
@@ -1446,6 +1453,20 @@ def shot_segment_path(root: str, ext: str, index: int) -> str:
     return f"{root}.multispeaker.shot{index:03d}{ext}"
 
 
+def shot_segment_part_path(root: str, ext: str, index: int) -> str:
+    """The IN-FLIGHT temp path shot ``index`` is encoded to before it is published.
+
+    The segment IS the cache, so encoding straight to :func:`shot_segment_path`
+    made the cache entry and the write target the same file: a process that is
+    KILLED mid-encode (OOM-killer, power loss — no Python cleanup runs) left a
+    truncated file at the cache path, and the reuse check is a bare ``exists()``.
+    Encoding to ``.part`` and ``os.replace``-ing on success makes that impossible:
+    a killed run leaves only an orphan ``.part``, never a half-written cache entry.
+    The extension is preserved so ffmpeg can still infer the muxer.
+    """
+    return f"{root}.multispeaker.shot{index:03d}.part{ext}"
+
+
 @dataclass(frozen=True)
 class ShotSegment:
     """One shot of an edited plan: its compositor regions + the reuse verdict."""
@@ -1462,16 +1483,75 @@ class ShotSegment:
     reuse: bool
 
 
-def manifest_shot_decisions(manifest: Mapping[str, Any] | None, aspect: str) -> dict[int, dict[str, Any]]:
-    """The previous render's shot decisions, keyed by shot index.
+def shot_manifest_entry(shot: _override.ShotDecision, regions: Sequence[Box]) -> dict[str, Any]:
+    """One manifest row: a shot's decision PLUS the regions it was rendered with.
 
-    Empty (i.e. "re-encode everything") when there is no manifest, when it was
-    written for a DIFFERENT aspect (the geometry would be wrong), or when its
-    ``shots`` array is not usable. Individual malformed entries are skipped rather
-    than poisoning the whole map — a skipped entry simply forces its shot to be
-    re-encoded.
+    ``shot.to_dict()`` alone is not a sufficient reuse key. A segment's pixels also
+    depend on ``other_centers`` — the OTHER candidate speakers' crop centres, which
+    come from the TRACE (``trace.speaker_per_frame`` / ``trace.crops`` via
+    :func:`other_speaker_centers`) and appear nowhere in the decision dict. So a
+    re-analysis that moved a non-primary speaker while leaving the majority speaker,
+    the majority layout and the first-frame crop unchanged produced a
+    BYTE-IDENTICAL decision dict and a stale segment was concat-copied (measured:
+    cell 2 moved 705 px and ``reuse`` was ``True`` both times). Recording the
+    computed regions closes that: they are the actual crop rectangles that were
+    encoded, so any trace / geometry / aspect change that moves a pixel also moves
+    this row.
     """
-    if manifest is None or manifest.get("aspect") != aspect:
+    return {**shot.to_dict(), "regions": [list(box) for box in regions]}
+
+
+def shot_manifest_payload(
+    plan: _override.ShotPlan,
+    segments: Sequence[ShotSegment],
+    *,
+    aspect: str,
+) -> dict[str, Any]:
+    """The full ``<clip>.shots.json`` payload for a completed render.
+
+    Carries the SOURCE IDENTITY (``aspect`` + ``fps`` + source dimensions) as well
+    as the per-shot rows, because all four decide a segment's content:
+    :func:`regions_for_shot` is fed ``plan.source_width`` / ``plan.source_height``
+    and every segment's ffmpeg ``-ss`` / ``-t`` is ``frame / fps``.
+    """
+    return {
+        "version": SHOT_MANIFEST_VERSION,
+        "aspect": aspect,
+        "fps": float(plan.fps),
+        "sourceWidth": plan.source_width,
+        "sourceHeight": plan.source_height,
+        "shots": [shot_manifest_entry(shot, seg.regions) for shot, seg in zip(plan.shots, segments, strict=True)],
+    }
+
+
+def manifest_shot_decisions(
+    manifest: Mapping[str, Any] | None,
+    plan: _override.ShotPlan,
+    *,
+    aspect: str,
+) -> dict[int, dict[str, Any]]:
+    """The previous render's shot rows, keyed by shot index.
+
+    Empty (i.e. "re-encode everything") when there is no manifest, when its SOURCE
+    IDENTITY differs from ``plan``'s (aspect, fps, or source dimensions — the
+    geometry or the timing would be wrong), or when its ``shots`` array is not
+    usable. Individual malformed entries are skipped rather than poisoning the whole
+    map — a skipped entry simply forces its shot to be re-encoded.
+
+    CORRECTION 2026-08-10: the identity check used to be ``aspect`` ALONE, and its
+    stated rationale ("the geometry would be wrong") applied verbatim to the three
+    fields it did not cover. Executed repro: a manifest written at fps 30 /
+    1920x1080 licensed reuse for a plan carrying fps 60 / 1280x720, so exactly one
+    ffmpeg pass ran (the concat) and the stale segment was republished at the old
+    geometry and timing.
+    """
+    if (
+        manifest is None
+        or manifest.get("aspect") != aspect
+        or manifest.get("fps") != float(plan.fps)
+        or manifest.get("sourceWidth") != plan.source_width
+        or manifest.get("sourceHeight") != plan.source_height
+    ):
         return {}
     shots = manifest.get("shots")
     if not isinstance(shots, list):
@@ -1510,32 +1590,35 @@ def plan_shot_segments(
     """PURE: one :class:`ShotSegment` per shot of an edited ``plan``.
 
     A shot is REUSED (not re-encoded) only when all three hold: the caller asked
-    for ``affected_only``; the previous manifest records a BYTE-IDENTICAL decision
-    for that index (same span, speaker, layout and crop); and its segment file is
-    still on disk. Decision-equality — rather than diffing two plans — is what
-    makes the reuse survive a sidecar restart and makes a first render (no
-    manifest) correctly re-encode everything.
+    for ``affected_only``; the previous manifest records a BYTE-IDENTICAL row for
+    that index — same span, speaker, layout, crop **and rendered regions**, over a
+    manifest whose aspect / fps / source dimensions match this plan
+    (:func:`shot_manifest_entry` and :func:`manifest_shot_decisions` own those two
+    halves); and its segment file is still on disk. Row-equality — rather than
+    diffing two plans — is what makes the reuse survive a sidecar restart and makes
+    a first render (no manifest) correctly re-encode everything.
     """
-    previous = manifest_shot_decisions(manifest, aspect)
+    previous = manifest_shot_decisions(manifest, plan, aspect=aspect)
     segments: list[ShotSegment] = []
     for shot in plan.shots:
         path = shot_segment_path(root, ext, shot.index)
+        regions = regions_for_shot(
+            layout=shot.layout,
+            crop=shot.crop,
+            other_centers=other_speaker_centers(trace, shot, plan.source_width),
+            aspect=aspect,
+            width=plan.source_width,
+            height=plan.source_height,
+        )
         segments.append(
             ShotSegment(
                 index=shot.index,
                 start_frame=shot.start_frame,
                 end_frame=shot.end_frame,
                 layout=shot.layout,
-                regions=regions_for_shot(
-                    layout=shot.layout,
-                    crop=shot.crop,
-                    other_centers=other_speaker_centers(trace, shot, plan.source_width),
-                    aspect=aspect,
-                    width=plan.source_width,
-                    height=plan.source_height,
-                ),
+                regions=regions,
                 path=path,
-                reuse=affected_only and previous.get(shot.index) == shot.to_dict() and exists(path),
+                reuse=affected_only and previous.get(shot.index) == shot_manifest_entry(shot, regions) and exists(path),
             )
         )
     return tuple(segments)
@@ -1813,10 +1896,22 @@ class MultiSpeakerReframeEngine:
           hidden: those pieces are never garbage-collected, so a rendered clip
           carries roughly its own size again in cached segments until something else
           removes them. Bounding that directory is follow-up work, not part of E3.
-        * writes to temp paths and atomically renames on success only, removing
-          every FRESHLY written partial on any failure, so an OOM can never leave a
-          corrupt half-clip at ``out_path`` nor a truncated segment that a later run
-          would mistake for a valid cached piece.
+        * writes EVERY output — each shot segment and the concatenated clip — to a
+          ``.part`` temp path and ``os.replace``\\ s it on success only, removing the
+          partials this run wrote on any failure. So neither an in-process failure
+          NOR a hard kill (OOM-killer, power loss, where no Python cleanup runs) can
+          leave a corrupt half-clip at ``out_path`` or a truncated segment at a cache
+          path that a later run's bare ``exists()`` would trust — a killed run leaves
+          only an orphan ``.part``.
+
+          SCOPED HONESTLY: this is a claim about what THIS code can leave behind. A
+          truncated segment written by an OLDER build (which encoded straight to the
+          cache path) is still trusted if its manifest row matches, because reuse
+          binds no size or hash to the row. That residual is closed by the v1->v2
+          manifest version bump for any clip whose manifest is re-written, but NOT
+          for a v2 segment truncated out-of-band (e.g. a truncating disk error after
+          the rename). UNVERIFIED — settling experiment: add the segment's byte size
+          to the manifest row and re-run the truncate-then-rerender probe.
 
         Returns ``(out_path, reencoded_shot_indices)``.
         """
@@ -1836,21 +1931,26 @@ class MultiSpeakerReframeEngine:
         )
         out_w, out_h = _aspect.output_dimensions(aspect)
         fps = float(plan.fps)
-        fresh: list[str] = []  # only the pieces THIS run wrote are cleanup-eligible
+        fresh: list[str] = []  # only the pieces THIS run PUBLISHED are cleanup-eligible
         for seg in segments:
             if seg.reuse:
                 continue
             duration_sec = (seg.end_frame - seg.start_frame) / fps
+            seg_part = shot_segment_part_path(root, ext, seg.index)
             argv = build_segment_argv(
                 in_path,
-                seg.path,
+                seg_part,
                 build_filter_complex(seg.layout, list(seg.regions), out_w=out_w, out_h=out_h),
                 start_sec=seg.start_frame / fps,
                 duration_sec=duration_sec,
                 settings=self._settings,
             )
+            # The in-flight .part is cleanup-eligible immediately; seg.path only
+            # becomes so AFTER the rename, because until then any file there is a
+            # PREVIOUS render's still-valid cache entry that this run must not eat.
+            self._run_pass(argv, duration_sec, on_progress, should_cancel, [*fresh, seg_part])
+            self._replace(seg_part, seg.path)
             fresh.append(seg.path)
-            self._run_pass(argv, duration_sec, on_progress, should_cancel, list(fresh))
         part_path = f"{root}.multispeaker.part{ext}"
         list_path = f"{root}.multispeaker.concat{ext}.txt"
         try:
@@ -1868,7 +1968,7 @@ class MultiSpeakerReframeEngine:
         )
         self._cleanup_all([list_path])  # the shot pieces are the CACHE -> kept
         self._replace(part_path, out_path)  # atomic: no corrupt half-clip at out_path
-        self._write_shot_manifest(out_path, aspect, plan)
+        self._write_shot_manifest(out_path, aspect, plan, segments)
         return out_path, tuple(seg.index for seg in segments if not seg.reuse)
 
     def _load_shot_manifest(self, clip: str) -> dict[str, Any] | None:
@@ -1894,24 +1994,40 @@ class MultiSpeakerReframeEngine:
             return None
         return dict(payload)
 
-    def _write_shot_manifest(self, clip: str, aspect: str, plan: _override.ShotPlan) -> None:
-        """Record the decisions that produced ``clip``'s kept segment pieces.
+    def _write_shot_manifest(
+        self,
+        clip: str,
+        aspect: str,
+        plan: _override.ShotPlan,
+        segments: Sequence[ShotSegment],
+    ) -> None:
+        """Record the decisions + regions that produced ``clip``'s kept segment pieces.
 
         Written only AFTER the atomic rename, so a manifest never claims a piece
         that a failed render left truncated. A write failure is logged, not fatal —
-        the clip is already correct and the only consequence is that the next
-        re-render re-encodes every shot.
+        the clip is already correct.
+
+        CORRECTION 2026-08-10: this used to claim "the only consequence is that the
+        next re-render re-encodes every shot", which was the OPPOSITE of what
+        happened. A failed write left the PREVIOUS manifest on disk while this run
+        had already overwritten the segment files, so manifest and bytes disagreed
+        and the reuse predicate trusts the manifest. Executed repro: render(split)
+        -> render(single) with the manifest write failing -> render(split) reused the
+        SINGLE segment and reported ``reencoded: []``. The stale manifest is now
+        DROPPED, which is what makes the sentence true.
         """
         path = shot_manifest_path(clip)
-        payload = {
-            "version": SHOT_MANIFEST_VERSION,
-            "aspect": aspect,
-            "shots": [shot.to_dict() for shot in plan.shots],
-        }
         try:
-            self._write_text(path, json.dumps(payload))
+            self._write_text(path, json.dumps(shot_manifest_payload(plan, segments, aspect=aspect)))
         except OSError as exc:
             _log.warning("could not write the reframe shot manifest %s: %s", path, exc)
+            try:
+                self._remove(path)
+            except OSError as rm_exc:
+                # Belt and braces: a surviving stale manifest can only mis-license
+                # reuse if its row still matches, and v2 rows carry the regions, so
+                # the blast radius is a same-decision same-geometry re-render.
+                _log.warning("could not drop the stale reframe shot manifest %s: %s", path, rm_exc)
 
     def _persist_sidecar(self, clip: str, payload: Mapping[str, Any]) -> None:
         """Write ``payload`` to ``<clip>.reframe.json`` (a failure is logged, not fatal)."""

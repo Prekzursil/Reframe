@@ -72,16 +72,26 @@ def _invalid(message: str) -> RpcError:
 class AnalysisKey:
     """What makes two analyses interchangeable.
 
-    ``aspect`` changes the crop geometry and ``allow_split`` / ``allow_composite``
-    change the LAYOUT decisions, so all four fields are part of the identity of a
-    cached bundle (a trace built with ``allowSplit=False`` is not a valid answer
-    for a request that allows splits).
+    ``aspect`` changes the crop geometry, ``allow_split`` / ``allow_composite``
+    change the LAYOUT decisions, and ``diarize_backend`` changes WHICH diarizer
+    runs and therefore the :class:`~media_studio.features.reframe_multispeaker.ShotAnalysis`
+    itself — so all FIVE fields are part of the identity of a cached bundle (a
+    trace built with ``allowSplit=False`` is not a valid answer for a request that
+    allows splits, and one diarized by backend A is not an answer for backend B).
+
+    CORRECTION 2026-08-10: ``diarize_backend`` was missing from the original
+    four-field key even though the same commit validated it and overlaid it onto
+    the engine settings *precisely because* it changes the analysis. Measured on
+    the real service with a counting backend, ``analyze(diarizeBackend="beta")``
+    after ``analyze(diarizeBackend="alpha")`` returned alpha's plan verbatim and
+    never constructed the beta backend at all.
     """
 
     video_id: str
     aspect: str
     allow_split: bool
     allow_composite: bool
+    diarize_backend: str | None = None
 
 
 @dataclass(frozen=True)
@@ -153,13 +163,27 @@ class LruAnalysisCache:
     def find(self, video_id: str, aspect: str) -> AnalysisBundle | None:
         """The most recent bundle for ``video_id`` at ``aspect``, whatever its flags.
 
-        ``reframe.render``'s params carry ``{videoId, plan, aspect, affectedOnly}``
-        and deliberately NOT the layout flags — the caller edits a plan, it does not
-        re-declare how the plan was produced. It only needs the TRACE, whose
-        per-frame speakers and crops do not depend on ``allow_split`` /
-        ``allow_composite`` (those only steer :func:`~media_studio.features.reframe_multispeaker.decide_layout`).
-        So a flag-insensitive lookup is both sufficient and correct here, while
-        :meth:`get` keeps the full four-field identity for the producer.
+        The BACKWARD-COMPATIBLE FALLBACK for a ``reframe.render`` call that does not
+        re-declare how its plan was produced. :meth:`ReframeAnalyzeService.render`
+        tries the exact five-field :meth:`get` first and only lands here when that
+        misses.
+
+        CORRECTION 2026-08-10 — the original justification was too wide. It claimed
+        a flag-insensitive lookup is "both sufficient and correct" because render
+        "only needs the TRACE, whose per-frame speakers and crops do not depend on
+        ``allow_split`` / ``allow_composite``". The narrow half is CONFIRMED
+        (measured: ``speaker_per_frame`` and ``crops`` are byte-identical across
+        both flags — they are set by :func:`~media_studio.features.reframe_multispeaker._render_shot`
+        before :func:`~media_studio.features.reframe_multispeaker.decide_layout` sees
+        the flags), so the PIXELS this fallback produces are flag-independent. The
+        conclusion was not: ``render`` also uses ``bundle.plan`` as the diff BASELINE
+        for the ``affected`` set it reports, and a plan's per-shot ``layout`` IS
+        flag-dependent. So when two analyses of the same ``(video_id, aspect)``
+        differ only in flags and the caller omits them, this returns the
+        most-recently-USED one and ``affected`` can name a shot the caller never
+        edited (measured: ``affected=(0,)`` for an untouched plan). Wrong reported
+        METADATA, never wrong output. Pass ``allowSplit`` / ``allowComposite`` /
+        ``diarizeBackend`` to ``reframe.render`` to get the exact bundle instead.
         """
         for key in reversed(self._items):
             if key.video_id == video_id and key.aspect == aspect:
@@ -215,6 +239,31 @@ def _optional_aspect(params: dict[str, Any]) -> str:
         return _aspect.require_supported_aspect(value)
     except ValueError as exc:
         raise _invalid(f"aspect is not supported: {exc}") from exc
+
+
+def _optional_diarize_backend(params: dict[str, Any]) -> str | None:
+    """The requested diarizer id, or ``None`` (loud on a non-string / empty value)."""
+    value = params.get("diarizeBackend")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise _invalid("diarizeBackend must be a non-empty string when given")
+    return value
+
+
+def multispeaker_out_name(video_id: str, aspect: str) -> str:
+    """The re-render's output filename for ``video_id`` at ``aspect``.
+
+    The aspect is part of the NAME because the kept per-shot segment cache is
+    derived from the output path (:func:`~media_studio.features.reframe_multispeaker.shot_segment_path`).
+    Without it, rendering the same clip at a second aspect ``os.replace``\\ d onto
+    the first render's clip AND overwrote its segment cache — the manifest's aspect
+    guard only ensured the destruction was a full re-encode rather than a
+    mixed-geometry concat. ``:`` is not a legal Windows filename character, so the
+    slug uses the ``x`` separator :func:`~media_studio.features.aspect.parse_aspect`
+    already accepts.
+    """
+    return f"{video_id}.multispeaker.{aspect.replace(':', 'x')}.mp4"
 
 
 def _default_engine_factory(settings: dict[str, Any]) -> Any:
@@ -293,10 +342,8 @@ class ReframeAnalyzeService:
         allow_composite = _optional_bool(params, "allowComposite", True)
         allow_degrade = _optional_bool(params, "allowDegrade", False)
         settings = self._settings()
-        diarize_backend = params.get("diarizeBackend")
+        diarize_backend = _optional_diarize_backend(params)
         if diarize_backend is not None:
-            if not isinstance(diarize_backend, str) or not diarize_backend:
-                raise _invalid("diarizeBackend must be a non-empty string when given")
             # The backend selector reads settings['diarizeBackend'] (diarize.py's
             # eager, typed validation), so overlaying it here is the whole wiring.
             settings = {**settings, "diarizeBackend": diarize_backend}
@@ -308,7 +355,13 @@ class ReframeAnalyzeService:
             if not allow_degrade:
                 raise _invalid(f"multi-speaker reframe engine requested but unavailable: {reason}")
 
-        key = AnalysisKey(video_id=video_id, aspect=aspect, allow_split=allow_split, allow_composite=allow_composite)
+        key = AnalysisKey(
+            video_id=video_id,
+            aspect=aspect,
+            allow_split=allow_split,
+            allow_composite=allow_composite,
+            diarize_backend=diarize_backend,
+        )
         cache = self._cache
         engine_factory = self._engine_factory
 
@@ -323,14 +376,23 @@ class ReframeAnalyzeService:
                 job_ctx.progress(100.0, "reused the cached analysis")
                 return _analysis_result(cached)
             job_ctx.progress(2.0, "detecting shots")
-            analysis = engine_factory(settings).analyze(
-                in_path,
-                # The staged backend owns the shots -> diarize -> faces/ASD
-                # messages; clamping to 90 leaves room for the plan stage so a
-                # backend that reports 100% cannot make the job look finished.
-                on_progress=lambda pct, msg: job_ctx.progress(clamp(pct, 0.0, 90.0), msg),
-                should_cancel=lambda: job_ctx.cancelled,
-            )
+            try:
+                analysis = engine_factory(settings).analyze(
+                    in_path,
+                    # The staged backend owns the shots -> diarize -> faces/ASD
+                    # messages; clamping to 90 leaves room for the plan stage so a
+                    # backend that reports 100% cannot make the job look finished.
+                    on_progress=lambda pct, msg: job_ctx.progress(clamp(pct, 0.0, 90.0), msg),
+                    should_cancel=lambda: job_ctx.cancelled,
+                )
+            except Exception:
+                # The real backend honours should_cancel by raising its OWN domain
+                # error (MultiSpeakerReframeError, reframe_multispeaker_backend.py
+                # :106,:111). jobs.py maps ONLY JobCancelled to _finish_cancelled, so
+                # without this the job would report ERROR for a user-requested
+                # cancel. Re-raise anything that is NOT a cancel untouched.
+                job_ctx.raise_if_cancelled()
+                raise
             job_ctx.raise_if_cancelled()
             job_ctx.progress(92.0, "building the shot plan")
             bundle = build_bundle(analysis, aspect=aspect, allow_split=allow_split, allow_composite=allow_composite)
@@ -342,7 +404,8 @@ class ReframeAnalyzeService:
         return {"jobId": job.id}
 
     def render(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-        """``reframe.render({videoId, plan, aspect?, affectedOnly?})`` -> ``{jobId}``.
+        """``reframe.render({videoId, plan, aspect?, affectedOnly?, allowSplit?,
+        allowComposite?, diarizeBackend?})`` -> ``{jobId}``.
 
         ``job.done.result`` is ``{outPath, affected, reencoded}``. ``affected`` is
         the shots the caller's plan changed relative to the cached analysis (the
@@ -350,6 +413,18 @@ class ReframeAnalyzeService:
         computes for ``reframe.applyOverrides``); ``reencoded`` is what actually had
         to be re-encoded, which is a SUPERSET of ``affected`` on a first render
         because no segment pieces exist to reuse yet.
+
+        Only ``speaker`` / ``layout`` / ``crop`` are editable. The plan's frame
+        SPANS and its ``sourceWidth`` / ``sourceHeight`` / ``fps`` must match the
+        cached analysis exactly (:func:`~media_studio.features.reframe_override.affected_shot_indices`
+        is the guard) — they are analysis outputs, not user input, and accepting an
+        edit to them was a live hole on this boundary.
+
+        The three analysis-identity params (``allowSplit`` / ``allowComposite`` /
+        ``diarizeBackend``) are OPTIONAL and default to ``reframe.analyze``'s own
+        defaults. Passing them selects the EXACT cached bundle; omitting them falls
+        back to :meth:`LruAnalysisCache.find`, whose documented ambiguity is
+        recorded on that method.
 
         A cache MISS is loud: without the analysis there is no trace, so the
         split/composite cells could not be placed. It refuses and names
@@ -359,21 +434,29 @@ class ReframeAnalyzeService:
         An EMPTY ``affected`` set is NOT an error — re-rendering the unedited plan
         is exactly how the first file gets produced after an analyze.
 
-        The output path is composed from ``video_id``, so it is deliberately built
-        only AFTER :meth:`_resolve` proved the id is a real library record (the
-        library lookup is what keeps a caller-supplied id from steering the write
-        outside ``out_dir``); mirrors the ``shorts`` out-dir convention.
+        The output path is composed from ``video_id`` **and the aspect**
+        (:func:`multispeaker_out_name`), so it is deliberately built only AFTER
+        :meth:`_resolve` proved the id is a real library record (the library lookup
+        is what keeps a caller-supplied id from steering the write outside
+        ``out_dir``); mirrors the ``shorts`` out-dir convention.
         """
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
         video_id, in_path = self._resolve(params)
         aspect = _optional_aspect(params)
         affected_only = _optional_bool(params, "affectedOnly", True)
+        key = AnalysisKey(
+            video_id=video_id,
+            aspect=aspect,
+            allow_split=_optional_bool(params, "allowSplit", True),
+            allow_composite=_optional_bool(params, "allowComposite", True),
+            diarize_backend=_optional_diarize_backend(params),
+        )
         try:
             edited = _override.ShotPlan.from_dict(params.get("plan"))
         except _override.OverrideError as exc:
             raise _invalid(f"plan is not a valid shot plan: {exc}") from exc
-        bundle = self._cache.find(video_id, aspect)
+        bundle = self._cache.get(key) or self._cache.find(video_id, aspect)
         if bundle is None:
             raise _invalid(
                 f"no cached reframe analysis for {video_id} at {aspect} — run reframe.analyze before rendering an edit"
@@ -391,18 +474,26 @@ class ReframeAnalyzeService:
         def job_body(job_ctx: Any) -> dict[str, Any]:
             job_ctx.raise_if_cancelled()
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = str(out_dir / f"{video_id}.multispeaker.mp4")
+            out_path = str(out_dir / multispeaker_out_name(video_id, aspect))
             job_ctx.progress(2.0, f"re-rendering {len(affected)} changed shot(s)")
-            rendered, reencoded = engine_factory(settings).render_shot_plan(
-                in_path,
-                out_path,
-                edited,
-                trace,
-                aspect=aspect,
-                affected_only=affected_only,
-                on_progress=lambda pct, msg: job_ctx.progress(clamp(pct, 0.0, 99.0), msg),
-                should_cancel=lambda: job_ctx.cancelled,
-            )
+            try:
+                rendered, reencoded = engine_factory(settings).render_shot_plan(
+                    in_path,
+                    out_path,
+                    edited,
+                    trace,
+                    aspect=aspect,
+                    affected_only=affected_only,
+                    on_progress=lambda pct, msg: job_ctx.progress(clamp(pct, 0.0, 99.0), msg),
+                    should_cancel=lambda: job_ctx.cancelled,
+                )
+            except Exception:
+                # A cancel that surfaced as an encode failure (ffmpeg is TERMINATED,
+                # so it exits non-zero -> MultiSpeakerRenderError) must still end the
+                # job CANCELLED: jobs.py maps ONLY JobCancelled to _finish_cancelled.
+                job_ctx.raise_if_cancelled()
+                raise
+            job_ctx.raise_if_cancelled()  # unwind -> registry marks CANCELLED
             job_ctx.progress(100.0, "done")
             return {"outPath": rendered, "affected": list(affected), "reencoded": list(reencoded)}
 

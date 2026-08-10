@@ -113,20 +113,74 @@ def _plan(*shots: ro.ShotDecision, width: int = 1920, height: int = 1080, fps: f
     )
 
 
-def _manifest(plan: ro.ShotPlan, aspect: str = ASPECT) -> dict[str, Any]:
-    """The on-disk shot manifest a previous successful render would have left."""
-    return {
+def _trace_two(second_x: float, *, total: int = 6, layout: str = "split") -> ReframeTrace:
+    """A two-speaker trace where the NON-primary speaker sits at ``second_x``.
+
+    Speaker ``"0"`` owns frame 0, ``"1"`` owns the rest, so
+    :func:`~media_studio.features.reframe_multispeaker.other_speaker_centers` for a
+    shot whose speaker is ``"0"`` resolves to ``"1"``'s crop centre — the ONLY thing
+    that moves between two traces here.
+    """
+    return ReframeTrace(
+        shot_boundaries=(),
+        speaker_per_frame=tuple("0" if i == 0 else "1" for i in range(total)),
+        segments=(Segment(start_frame=0, end_frame=total, layout=layout),),
+        crops=tuple((0.0 if i == 0 else second_x, 0.0, 608.0, 1080.0) for i in range(total)),
+    )
+
+
+def _segments_for(plan: ro.ShotPlan, trace: ReframeTrace, aspect: str = ASPECT) -> tuple[ms.ShotSegment, ...]:
+    """The segments a first (cache-less) render of ``plan`` would produce."""
+    return ms.plan_shot_segments(
+        plan,
+        trace,
+        aspect=aspect,
+        root="out",
+        ext=".mp4",
+        affected_only=False,
+        manifest=None,
+        exists=lambda _p: False,
+    )
+
+
+def _manifest(plan: ro.ShotPlan, aspect: str = ASPECT, trace: ReframeTrace | None = None) -> dict[str, Any]:
+    """The on-disk shot manifest a previous successful render would have left.
+
+    Built through the PRODUCTION payload builder over the PRODUCTION segment
+    planner, so a test manifest can never drift from what a real render writes.
+    """
+    return ms.shot_manifest_payload(plan, _segments_for(plan, trace or _trace(), aspect), aspect=aspect)
+
+
+def _bare_manifest(**over: Any) -> dict[str, Any]:
+    """A hand-built manifest whose top-level identity MATCHES ``_plan()`` at ASPECT.
+
+    Needed so a test that probes the ``shots``-array branches cannot be silently
+    short-circuited by the identity guard (aspect / fps / source dimensions) and
+    pass for the wrong reason.
+    """
+    base = {
         "version": ms.SHOT_MANIFEST_VERSION,
-        "aspect": aspect,
-        "shots": [shot.to_dict() for shot in plan.shots],
+        "aspect": ASPECT,
+        "fps": 30.0,
+        "sourceWidth": 1920,
+        "sourceHeight": 1080,
+        "shots": [],
     }
+    return {**base, **over}
 
 
 # --------------------------------------------------------------------------- #
 # WU-E2 — the size-bounded, injectable analysis cache
 # --------------------------------------------------------------------------- #
-def _key(video_id="v", aspect=ASPECT, allow_split=True, allow_composite=True) -> ra.AnalysisKey:
-    return ra.AnalysisKey(video_id=video_id, aspect=aspect, allow_split=allow_split, allow_composite=allow_composite)
+def _key(video_id="v", aspect=ASPECT, allow_split=True, allow_composite=True, diarize_backend=None) -> ra.AnalysisKey:
+    return ra.AnalysisKey(
+        video_id=video_id,
+        aspect=aspect,
+        allow_split=allow_split,
+        allow_composite=allow_composite,
+        diarize_backend=diarize_backend,
+    )
 
 
 def _bundle(analysis=None) -> ra.AnalysisBundle:
@@ -184,6 +238,16 @@ class TestLruAnalysisCache:
         cache.put(_key(allow_split=True), _bundle())
         assert cache.get(_key(allow_split=False)) is None
 
+    def test_the_diarize_backend_is_part_of_the_key(self):
+        # REFUTED-OBJECTION FIX: diarizeBackend selects WHICH diarizer runs, so it
+        # changes the ShotAnalysis and therefore the whole bundle. Keying without it
+        # served backend A's plan to every later request for backend B.
+        cache = ra.LruAnalysisCache()
+        cache.put(_key(diarize_backend="alpha"), _bundle())
+        assert cache.get(_key(diarize_backend="beta")) is None
+        assert cache.get(_key(diarize_backend=None)) is None
+        assert cache.get(_key(diarize_backend="alpha")) is not None
+
     def test_find_returns_the_most_recent_match_for_video_and_aspect(self):
         cache = ra.LruAnalysisCache()
         older, newer = _bundle(), _bundle()
@@ -235,32 +299,45 @@ class TestBuildBundle:
 # --------------------------------------------------------------------------- #
 class TestManifestShotDecisions:
     def test_no_manifest_is_empty(self):
-        assert ms.manifest_shot_decisions(None, ASPECT) == {}
+        assert ms.manifest_shot_decisions(None, _plan(), aspect=ASPECT) == {}
 
     def test_a_different_aspect_is_empty(self):
-        assert ms.manifest_shot_decisions(_manifest(_plan(), aspect="1:1"), ASPECT) == {}
+        assert ms.manifest_shot_decisions(_manifest(_plan(), aspect="1:1"), _plan(), aspect=ASPECT) == {}
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("fps", 60.0), ("sourceWidth", 1280), ("sourceHeight", 720)],
+        ids=["fps", "width", "height"],
+    )
+    def test_a_manifest_written_for_a_different_source_identity_is_empty(self, field, value):
+        # The aspect guard's own rationale ("the geometry would be wrong") applies
+        # verbatim to fps and the source dimensions: regions_for_shot is fed
+        # plan.source_width/height and every segment's -ss/-t is frame/fps. Omitting
+        # them let a relinked source at a new resolution republish stale segments.
+        assert ms.manifest_shot_decisions(_bare_manifest(**{field: value}), _plan(), aspect=ASPECT) == {}
 
     def test_shots_that_are_not_a_list_are_empty(self):
-        assert ms.manifest_shot_decisions({"aspect": ASPECT, "shots": "nope"}, ASPECT) == {}
+        assert ms.manifest_shot_decisions(_bare_manifest(shots="nope"), _plan(), aspect=ASPECT) == {}
 
     def test_a_valid_manifest_is_keyed_by_shot_index(self):
         plan = _plan(_shot(0, start=0, end=3), _shot(1, start=3, end=6))
-        decisions = ms.manifest_shot_decisions(_manifest(plan), ASPECT)
+        decisions = ms.manifest_shot_decisions(_manifest(plan), plan, aspect=ASPECT)
         assert sorted(decisions) == [0, 1]
         assert decisions[1]["startFrame"] == 3
+        assert decisions[1]["regions"], "a manifest entry must record the regions it rendered"
 
     def test_a_non_object_entry_is_skipped(self):
-        assert ms.manifest_shot_decisions({"aspect": ASPECT, "shots": ["nope"]}, ASPECT) == {}
+        assert ms.manifest_shot_decisions(_bare_manifest(shots=["nope"]), _plan(), aspect=ASPECT) == {}
 
     def test_an_entry_without_an_integer_index_is_skipped(self):
-        assert ms.manifest_shot_decisions({"aspect": ASPECT, "shots": [{"index": "0"}]}, ASPECT) == {}
+        assert ms.manifest_shot_decisions(_bare_manifest(shots=[{"index": "0"}]), _plan(), aspect=ASPECT) == {}
 
 
 class TestPlanShotSegments:
-    def _segments(self, plan, *, manifest=None, exists=False, affected_only=True):
+    def _segments(self, plan, *, manifest=None, exists=False, affected_only=True, trace=None):
         return ms.plan_shot_segments(
             plan,
-            _trace(),
+            trace if trace is not None else _trace(),
             aspect=ASPECT,
             root="out",
             ext=".mp4",
@@ -302,6 +379,28 @@ class TestPlanShotSegments:
     def test_a_split_layout_shot_has_two_cells(self):
         segments = self._segments(_plan(_shot(0, layout="split")))
         assert len(segments[0].regions) == 2
+
+    def test_a_moved_other_speaker_forces_a_re_encode(self):
+        # THE reuse hole. A segment's PIXELS also depend on `other_centers`, which
+        # comes from the TRACE (speaker_per_frame + crops), and shot.to_dict()
+        # records only index/span/speaker/layout/crop/speakers — never the other
+        # speaker's rectangle. So a re-analysis that moves a NON-primary speaker
+        # while leaving the majority speaker, layout and crop untouched produced a
+        # byte-identical decision dict, and the stale segment was concat-copied.
+        plan = _plan(_shot(0, layout="split"))
+        before, after = _trace_two(0.0), _trace_two(705.0)
+        stale = _manifest(plan, trace=before)
+        moved = self._segments(plan, manifest=stale, exists=True, trace=after)
+        assert moved[0].regions != _segments_for(plan, before)[0].regions, "the fixture must move a cell"
+        assert [s.reuse for s in moved] == [False], "a moved cell must NOT be concat-copied"
+
+    def test_an_unmoved_other_speaker_still_reuses(self):
+        # Detector control for the test above: the SAME trace must still reuse, so
+        # the assertion above is measuring the trace change and not a broken key.
+        plan = _plan(_shot(0, layout="split"))
+        trace = _trace_two(0.0)
+        segments = self._segments(plan, manifest=_manifest(plan, trace=trace), exists=True, trace=trace)
+        assert [s.reuse for s in segments] == [True]
 
 
 # --------------------------------------------------------------------------- #
@@ -393,10 +492,16 @@ class TestRenderShotPlan:
         assert reencoded == (0, 1)
         # two per-shot encodes + one concat pass
         assert len(runs) == 3
-        assert runs[0][-1] == "out.multispeaker.shot000.mp4"
-        assert runs[1][-1] == "out.multispeaker.shot001.mp4"
+        # Every ffmpeg target is a .part; the cache entries only ever appear as the
+        # DESTINATION of an atomic rename (see the temp-path test below).
+        assert runs[0][-1] == "out.multispeaker.shot000.part.mp4"
+        assert runs[1][-1] == "out.multispeaker.shot001.part.mp4"
         assert runs[2][-1] == "out.multispeaker.part.mp4"
-        assert moves == [("out.multispeaker.part.mp4", "out.mp4")]
+        assert moves == [
+            ("out.multispeaker.shot000.part.mp4", "out.multispeaker.shot000.mp4"),
+            ("out.multispeaker.shot001.part.mp4", "out.multispeaker.shot001.mp4"),
+            ("out.multispeaker.part.mp4", "out.mp4"),
+        ]
 
     def test_a_reused_shot_is_not_re_encoded(self):
         runs: list[list[str]] = []
@@ -410,7 +515,7 @@ class TestRenderShotPlan:
         _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", edited, _trace())
         assert reencoded == (1,)
         assert len(runs) == 2  # ONE shot re-encoded + the concat
-        assert runs[0][-1] == "out.multispeaker.shot001.mp4"
+        assert runs[0][-1] == "out.multispeaker.shot001.part.mp4"
 
     def test_the_concat_manifest_is_removed_but_the_shot_segments_are_kept(self):
         removed: list[str] = []
@@ -430,6 +535,9 @@ class TestRenderShotPlan:
         assert "out.multispeaker.shot000.mp4" in removed
 
     def test_an_encode_failure_removes_only_the_freshly_written_segments(self):
+        # A first-shot failure now removes ONLY this run's .part — never the cache
+        # entry at shot000.mp4, which (if it exists at all) is a PREVIOUS render's
+        # still-valid piece that this run has not replaced yet.
         removed: list[str] = []
         plan = _plan(_shot(0, start=0, end=3), _shot(1, start=3, end=6))
         eng = _engine(
@@ -438,13 +546,13 @@ class TestRenderShotPlan:
         )
         with pytest.raises(ms.MultiSpeakerRenderError, match="exit 1"):
             eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
-        assert removed == ["out.multispeaker.shot000.mp4"]
+        assert removed == ["out.multispeaker.shot000.part.mp4"]
 
     def test_an_extensionless_output_defaults_to_mp4(self):
         runs: list[list[str]] = []
         eng = _engine(runner=lambda argv, **_kw: runs.append(list(argv)) or 0)
         eng.render_shot_plan("in.mp4", "out", _plan(_shot(0)), _trace())
-        assert runs[0][-1] == "out.multispeaker.shot000.mp4"
+        assert runs[0][-1] == "out.multispeaker.shot000.part.mp4"
 
     def test_the_shot_manifest_is_written_after_a_successful_render(self):
         writes: list[tuple[str, str]] = []
@@ -455,7 +563,13 @@ class TestRenderShotPlan:
         payload = json.loads(writes[0][1])
         assert payload["version"] == ms.SHOT_MANIFEST_VERSION
         assert payload["aspect"] == ASPECT
-        assert payload["shots"] == [plan.shots[0].to_dict()]
+        # The SOURCE IDENTITY is recorded too: fps and the source dimensions decide a
+        # segment's timing and geometry exactly as much as the aspect does.
+        assert (payload["fps"], payload["sourceWidth"], payload["sourceHeight"]) == (30.0, 1920, 1080)
+        # And each row carries the regions it rendered, so a trace change that moves
+        # a split/composite cell cannot present as an unchanged decision.
+        assert payload["shots"] == [ms.shot_manifest_entry(plan.shots[0], _segments_for(plan, _trace())[0].regions)]
+        assert payload["shots"][0]["regions"] == [[0.0, 0.0, 608.0, 1080.0]]
 
     def test_a_shot_manifest_write_failure_is_logged_not_fatal(self):
         # `util.get_logger` sets propagate=False, so caplog cannot see this record —
@@ -469,6 +583,122 @@ class TestRenderShotPlan:
             out, _ = _engine(write_text_fn=boom).render_shot_plan("in.mp4", "out.mp4", _plan(_shot(0)), _trace())
         assert out == "out.mp4"
         assert any("shot manifest" in m for m in seen)
+
+    def test_a_shot_manifest_write_failure_DROPS_the_stale_manifest(self):
+        # The consequence of a failed write is NOT "re-encodes every shot" unless the
+        # PREVIOUS manifest is removed: this render already overwrote the segment
+        # files, so a surviving manifest describes bytes that are gone. Executed
+        # repro before the fix: render(split) -> render(single, manifest write
+        # fails) -> render(split) REUSED the file, delivering the single render
+        # while reporting `reencoded: []`.
+        removed: list[str] = []
+
+        def boom(_p, _t):
+            raise OSError("disk full")
+
+        eng = _engine(write_text_fn=boom, remove_fn=lambda p: removed.append(p))
+        eng.render_shot_plan("in.mp4", "out.mp4", _plan(_shot(0)), _trace())
+        assert "out.mp4.shots.json" in removed
+
+    def test_a_failed_stale_manifest_drop_is_also_logged(self):
+        def boom_write(_p, _t):
+            raise OSError("disk full")
+
+        def boom_remove(path):
+            if path.endswith(".shots.json"):
+                raise OSError("read-only volume")
+
+        with _captured_warnings() as seen:
+            out, _ = _engine(write_text_fn=boom_write, remove_fn=boom_remove).render_shot_plan(
+                "in.mp4", "out.mp4", _plan(_shot(0)), _trace()
+            )
+        assert out == "out.mp4"
+        assert any("stale" in m for m in seen)
+
+    def test_a_manifest_from_a_different_trace_does_not_license_reuse(self):
+        # End-to-end through the SHIPPED render path, not just the pure planner.
+        runs: list[list[str]] = []
+        plan = _plan(_shot(0, layout="split"))
+        eng = _engine(
+            runner=lambda argv, **_kw: runs.append(list(argv)) or 0,
+            read_text_fn=lambda _p: json.dumps(_manifest(plan, trace=_trace_two(0.0))),
+            exists_fn=lambda _p: True,
+        )
+        _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace_two(705.0))
+        assert reencoded == (0,)
+        assert len(runs) == 2, "the moved cell must be re-encoded, then concatenated"
+
+    def test_a_manifest_from_a_different_fps_re_encodes_everything(self):
+        # Executed repro: a plan carrying fps 60 / 1280x720 over a manifest written
+        # at fps 30 / 1920x1080 previously reported reencoded=() and ran exactly ONE
+        # ffmpeg pass (the concat), republishing the stale segment at the old
+        # geometry and timing.
+        runs: list[list[str]] = []
+        old = _plan(_shot(0), width=1920, height=1080, fps=30.0)
+        new = _plan(_shot(0), width=1280, height=720, fps=60.0)
+        eng = _engine(
+            runner=lambda argv, **_kw: runs.append(list(argv)) or 0,
+            read_text_fn=lambda _p: json.dumps(_manifest(old)),
+            exists_fn=lambda _p: True,
+        )
+        _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", new, _trace())
+        assert reencoded == (0,)
+        assert len(runs) == 2
+
+    def test_each_segment_is_encoded_to_a_temp_path_then_atomically_renamed(self):
+        # The segment IS the cache, so encoding straight to its final path made the
+        # cache entry and the in-flight write target the same file: an OOM-KILLED
+        # process (no Python cleanup runs) left a truncated segment that the next
+        # render's bare exists() check happily concat-copied.
+        runs: list[list[str]] = []
+        moves: list[tuple[str, str]] = []
+        eng = _engine(
+            runner=lambda argv, **_kw: runs.append(list(argv)) or 0,
+            replace_fn=lambda a, b: moves.append((a, b)),
+        )
+        eng.render_shot_plan("in.mp4", "out.mp4", _plan(_shot(0)), _trace())
+        assert runs[0][-1] == "out.multispeaker.shot000.part.mp4", "ffmpeg must write the .part, not the cache entry"
+        assert moves == [
+            ("out.multispeaker.shot000.part.mp4", "out.multispeaker.shot000.mp4"),
+            ("out.multispeaker.part.mp4", "out.mp4"),
+        ]
+
+    def test_a_later_encode_failure_removes_this_runs_segments_and_its_part(self):
+        removed: list[str] = []
+        calls = {"n": 0}
+
+        def runner(_argv, **_kw):
+            calls["n"] += 1
+            return 0 if calls["n"] == 1 else 1  # the SECOND shot fails
+
+        eng = _engine(runner=runner, remove_fn=lambda p: removed.append(p))
+        plan = _plan(_shot(0, start=0, end=3), _shot(1, start=3, end=6))
+        with pytest.raises(ms.MultiSpeakerRenderError, match="exit 1"):
+            eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
+        assert removed == ["out.multispeaker.shot000.mp4", "out.multispeaker.shot001.part.mp4"]
+
+    def test_the_per_shot_encode_receives_the_progress_and_cancel_seams(self):
+        # Both seams were passed to the CONCAT pass but nothing asserted they reach
+        # the per-shot encode, so mutants that replaced either with None survived
+        # the whole suite.
+        seen: list[dict[str, Any]] = []
+        sink: list[tuple[float, str]] = []
+
+        def runner(_argv, **kw):
+            seen.append(kw)
+            return 0
+
+        _engine(runner=runner).render_shot_plan(
+            "in.mp4",
+            "out.mp4",
+            _plan(_shot(0)),
+            _trace(),
+            on_progress=lambda p, m: sink.append((p, m)),
+            should_cancel=lambda: True,
+        )
+        assert seen[0]["should_cancel"] is not None and seen[0]["should_cancel"]() is True
+        seen[0]["on_progress"](7.0, "encoding shot 0")
+        assert sink == [(7.0, "encoding shot 0")]
 
     @pytest.mark.parametrize(
         "raw",
@@ -658,6 +888,25 @@ class TestAnalyzeHandler:
         _run(reg, svc.analyze({"videoId": "v", "aspect": "1:1"}, _ctx(reg)))
         assert backend.calls == 2
 
+    def test_a_different_diarize_backend_is_a_cache_miss(self, tmp_path):
+        # The ONLY parameter this WU newly wired must not be the one the cache
+        # silently ignores: a second analyze naming a different diarizer has to
+        # actually re-run the analysis stage.
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache()
+        svc, backend = _service(tmp_path, cache=cache)
+        _run(reg, svc.analyze({"videoId": "v", "diarizeBackend": "alpha"}, _ctx(reg)))
+        _run(reg, svc.analyze({"videoId": "v", "diarizeBackend": "beta"}, _ctx(reg)))
+        assert backend.calls == 2
+
+    def test_the_same_diarize_backend_still_hits_the_cache(self, tmp_path):
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache()
+        svc, backend = _service(tmp_path, cache=cache)
+        _run(reg, svc.analyze({"videoId": "v", "diarizeBackend": "alpha"}, _ctx(reg)))
+        _run(reg, svc.analyze({"videoId": "v", "diarizeBackend": "alpha"}, _ctx(reg)))
+        assert backend.calls == 1
+
     def test_the_default_cache_is_used_when_none_is_injected(self, tmp_path):
         reg, _ = _registry()
         svc, backend = _service(tmp_path, cache=None)
@@ -800,7 +1049,7 @@ class TestRenderHandler:
         out = svc.render({"videoId": "v", "plan": edited}, _ctx(reg))
         job = _run(reg, out)
         assert job.status.value == "done", job.error
-        assert job.result["outPath"].endswith("v.multispeaker.mp4")
+        assert job.result["outPath"].endswith("v.multispeaker.9x16.mp4")
         assert job.result["affected"] == [0]
         assert job.result["reencoded"] == [0]
         assert runs, "the edited plan must actually be encoded"
@@ -844,6 +1093,116 @@ class TestRenderHandler:
         svc, _cache, plan, _b = self._seeded(tmp_path)
         _run(reg, svc.render({"videoId": "v", "plan": plan}, _ctx(reg)))
         assert (tmp_path / "reframed").is_dir()
+
+    # ----------------------------------------------------------------- #
+    # The caller-supplied plan's SPANS + geometry are boundary-guarded too
+    # ----------------------------------------------------------------- #
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("endFrame", 10_000_000),  # past the analysed trace -> was an IndexError leak
+            ("endFrame", 2),  # end < start
+            ("startFrame", -4),  # negative -> was a wrap-around crop + a negative -ss
+        ],
+    )
+    def test_a_plan_whose_frame_span_was_edited_is_refused(self, tmp_path, field, value):
+        # These four scalars are NOT user-editable: they come from the analysis.
+        # Before the guard, endFrame=10_000_000 crashed INSIDE the job with a bare
+        # `IndexError: tuple index out of range` (an untyped internal message, not
+        # the typed RPC error the contract advertises), and a negative startFrame
+        # was ACCEPTED and reported done after building `-ss -0.133333`.
+        reg, _ = _registry()
+        svc, _cache, plan, _b = self._seeded(tmp_path)
+        edited = {**plan, "shots": [{**plan["shots"][0], field: value}]}
+        with pytest.raises(RpcError, match="frame span"):
+            svc.render({"videoId": "v", "plan": edited}, _ctx(reg))
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("sourceWidth", 99_999), ("sourceHeight", 4), ("fps", 1.0)],
+    )
+    def test_a_plan_whose_source_geometry_was_edited_is_refused(self, tmp_path, field, value):
+        # sourceWidth/Height drive every crop region and fps drives every -ss/-t,
+        # and none of them is part of the segment reuse key, so accepting an edit
+        # republished stale segments at the old geometry/timing.
+        reg, _ = _registry()
+        svc, _cache, plan, _b = self._seeded(tmp_path)
+        with pytest.raises(RpcError, match="source geometry"):
+            svc.render({"videoId": "v", "plan": {**plan, field: value}}, _ctx(reg))
+
+    def test_the_output_path_carries_the_aspect(self, tmp_path):
+        reg, _ = _registry()
+        svc, _cache, plan, _b = self._seeded(tmp_path)
+        job = _run(reg, svc.render({"videoId": "v", "plan": plan}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["outPath"].endswith("v.multispeaker.9x16.mp4")
+
+    def test_a_second_aspect_renders_to_its_own_path_and_segment_cache(self, tmp_path):
+        # Without the aspect in the name, a 1:1 render os.replace()d onto the 9:16
+        # clip AND overwrote its segment cache.
+        reg, _ = _registry()
+        runs: list[list[str]] = []
+        cache = ra.LruAnalysisCache()
+        svc, _b = _service(
+            tmp_path, cache=cache, engine_kw={"runner": lambda argv, **_kw: runs.append(list(argv)) or 0}
+        )
+        wide = _run(reg, svc.analyze({"videoId": "v", "aspect": "9:16"}, _ctx(reg))).result["plan"]
+        square = _run(reg, svc.analyze({"videoId": "v", "aspect": "1:1"}, _ctx(reg))).result["plan"]
+        first = _run(reg, svc.render({"videoId": "v", "aspect": "9:16", "plan": wide}, _ctx(reg)))
+        second = _run(reg, svc.render({"videoId": "v", "aspect": "1:1", "plan": square}, _ctx(reg)))
+        assert first.status.value == "done", first.error
+        assert second.status.value == "done", second.error
+        assert first.result["outPath"] != second.result["outPath"]
+        encoded = [argv[-1] for argv in runs]
+        assert len({p for p in encoded if "shot000" in p}) == 2, "each aspect needs its OWN segment cache"
+
+    def test_the_layout_flags_select_the_exact_cached_bundle(self, tmp_path):
+        # Two analyses of the same (videoId, aspect) differing only in allowSplit
+        # leave two bundles. A flag-insensitive most-recently-used lookup diffed the
+        # UNTOUCHED allowSplit=True plan against the allowSplit=False bundle and
+        # reported affected=[0] — a shot the caller never edited.
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache()
+        svc, _b = _service(tmp_path, analysis=_two_talker_analysis(), cache=cache)
+        split = _run(reg, svc.analyze({"videoId": "v", "allowSplit": True}, _ctx(reg))).result["plan"]
+        collapsed = _run(reg, svc.analyze({"videoId": "v", "allowSplit": False}, _ctx(reg))).result["plan"]
+        assert split["shots"][0]["layout"] != collapsed["shots"][0]["layout"], "the fixture must differ"
+        job = _run(reg, svc.render({"videoId": "v", "plan": split, "allowSplit": True}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["affected"] == []
+
+    def test_an_omitted_flag_set_still_falls_back_to_the_most_recent_bundle(self, tmp_path):
+        # Backward compatibility for the documented fallback: with only ONE cached
+        # bundle for (videoId, aspect) the flag-insensitive lookup is unambiguous.
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache()
+        svc, _b = _service(tmp_path, analysis=_two_talker_analysis(), cache=cache)
+        collapsed = _run(reg, svc.analyze({"videoId": "v", "allowSplit": False}, _ctx(reg))).result["plan"]
+        job = _run(reg, svc.render({"videoId": "v", "plan": collapsed}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["affected"] == []
+
+    def test_a_non_boolean_render_flag_is_refused(self, tmp_path):
+        reg, _ = _registry()
+        svc, _ = _service(tmp_path)
+        with pytest.raises(RpcError, match="allowComposite"):
+            svc.render({"videoId": "v", "plan": _plan().to_dict(), "allowComposite": "yes"}, _ctx(reg))
+
+    def test_a_blank_render_diarize_backend_is_refused(self, tmp_path):
+        reg, _ = _registry()
+        svc, _ = _service(tmp_path)
+        with pytest.raises(RpcError, match="diarizeBackend"):
+            svc.render({"videoId": "v", "plan": _plan().to_dict(), "diarizeBackend": ""}, _ctx(reg))
+
+    def test_the_diarize_backend_selects_the_exact_cached_bundle(self, tmp_path):
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache()
+        svc, backend = _service(tmp_path, cache=cache)
+        plan = _run(reg, svc.analyze({"videoId": "v", "diarizeBackend": "alpha"}, _ctx(reg))).result["plan"]
+        _run(reg, svc.analyze({"videoId": "v", "diarizeBackend": "beta"}, _ctx(reg)))
+        assert backend.calls == 2
+        job = _run(reg, svc.render({"videoId": "v", "plan": plan, "diarizeBackend": "alpha"}, _ctx(reg)))
+        assert job.status.value == "done", job.error
 
 
 # --------------------------------------------------------------------------- #
