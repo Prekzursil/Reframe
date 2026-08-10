@@ -1154,6 +1154,67 @@ describe('Library search + sort (v1.5 §4)', () => {
   });
 });
 
+// W53 + W54 — two claims the Library made that its own code does not back.
+describe('Library first-run honesty + control gating (W53/W54)', () => {
+  // W53. The ONLY drag-and-drop handlers in the entire renderer are the three on
+  // this view's ROOT div (views/Library.tsx:519-523); a repo-wide scan for
+  // `onDrop=`/`onDragOver=` under app/renderer/src returns exactly those two
+  // attribute lines and nothing else. So "drop video files anywhere here" stops
+  // being true the instant the user leaves the Library — the drop scope has to be
+  // named, not implied. Same shape as Edit.test.tsx's "does not promise editing
+  // verbs the app cannot deliver".
+  it('names the Library as the drop target instead of claiming files drop anywhere', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+    const hint = container.querySelector('.library__empty-hint')?.textContent ?? '';
+    // Guard the guard: a missing element or empty copy would satisfy the absence
+    // check below for the wrong reason.
+    expect(hint.length).toBeGreaterThan(20);
+    expect(hint.toLowerCase()).not.toContain('anywhere');
+    // ...and it must still say WHERE a dropped file lands.
+    expect(hint.toLowerCase()).toContain('library');
+  });
+
+  // W54. Search and Sort were mounted unconditionally as a SIBLING of the
+  // `videos.length === 0` arm, so a first-run user got a live, enabled search box
+  // and sort select over zero rows. LibraryToolbar already gates its batch bar on
+  // `selectedCount > 0`; the filters now use the same gate on the video count.
+  it('does not offer search or sort over an empty library', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+    // We really are in the first-run arm (not, say, the error arm).
+    expect(container.querySelector('.library__empty')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__search')).toBeNull();
+    expect(container.querySelector('.library-toolbar__sort-select')).toBeNull();
+  });
+
+  // Detector control for the two `toBeNull()` assertions above: prove these
+  // selectors DO find the controls when they are present, so their absence in the
+  // empty case is a real absence and not a typo'd selector.
+  it('offers search and sort as soon as the library has content', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+    expect(container.querySelector('.library-toolbar__search')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__sort-select')).not.toBeNull();
+  });
+
+  // The gate is the RAW library count, never the filtered/visible count. Gating on
+  // `visible.length` would delete the only control that can undo the filter the
+  // moment a query matched nothing, trapping the user in "No matches".
+  it('keeps search reachable when a query matches nothing', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo({ id: 'a', title: 'Keynote' })] });
+    await renderLibrary();
+    const search = container.querySelector('.library-toolbar__search') as HTMLInputElement;
+    await act(async () => {
+      typeInto(search, 'zzz');
+    });
+    await flush();
+    expect(container.querySelector('.library__empty--filtered')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__search')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__sort-select')).not.toBeNull();
+  });
+});
+
 describe('Library multi-select + batch actions (v1.5 §4)', () => {
   it('selects cards and batch-removes them', async () => {
     rpcMock.mockResolvedValueOnce({

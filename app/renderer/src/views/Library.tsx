@@ -549,11 +549,20 @@ export function Library({
           separate from the visible card count). */}
       <CapabilitiesChip onAction={onReadinessAction} />
 
+      {/* W54: `videos.length` — the RAW count — gates the search + sort controls,
+          which used to mount unconditionally as a sibling of the
+          `videos.length === 0` arm below and so offered a live, enabled search box
+          over a first-run library of zero rows. NOT `visible.length`: gating on the
+          filtered count would remove the search box the moment a query matched
+          nothing and trap the user in the "No matches" arm with no way to clear it
+          (pinned by Library.test.tsx "keeps search reachable when a query matches
+          nothing"). */}
       <LibraryToolbar
         query={query}
         onQueryChange={setQuery}
         sort={sortMode}
         onSortChange={setSortMode}
+        videoCount={videos.length}
         selectedCount={selected.size}
         onRemoveSelected={() => void removeSelected()}
         onClearSelection={clearSelection}
@@ -633,8 +642,16 @@ export function Library({
               <span className="library__empty-timecode">--:--</span>
             </div>
             <p className="library__empty-title">No videos yet</p>
+            {/* W53 — this used to read "drop video files anywhere here". "anywhere"
+                is wider than the app: the ONLY drag-and-drop handlers in the whole
+                renderer are the three on this view's root div (:519-523 above), so
+                a user who reads "anywhere" and then drops onto Edit, Caption or
+                Export gets nothing — the browser navigates away or ignores it. The
+                copy now names the surface that actually accepts the drop. Pinned by
+                Library.test.tsx. If an app-level drop target ever lands, widen this
+                sentence in the SAME commit that ships it. */}
             <p className="library__empty-hint">
-              Click “Add videos” or drop video files anywhere here.
+              Click “Add videos”, or drop video files onto the Library.
             </p>
           </div>
         )

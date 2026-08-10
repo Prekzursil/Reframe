@@ -25,6 +25,7 @@ interface Over {
   onQueryChange?: (q: string) => void;
   sort?: LibrarySort;
   onSortChange?: (s: LibrarySort) => void;
+  videoCount?: number;
   selectedCount?: number;
   onRemoveSelected?: () => void;
   onClearSelection?: () => void;
@@ -38,6 +39,11 @@ function renderToolbar(over: Over = {}): void {
         onQueryChange={over.onQueryChange ?? (() => {})}
         sort={over.sort ?? 'recent'}
         onSortChange={over.onSortChange ?? (() => {})}
+        // W54: the filters only exist over a NON-empty library, so a populated
+        // library is the default state for every pre-existing case below (each
+        // one is about the controls' behaviour, which presupposes content). The
+        // empty-library cases pass 0 explicitly.
+        videoCount={over.videoCount ?? 2}
         selectedCount={over.selectedCount ?? 0}
         onRemoveSelected={over.onRemoveSelected ?? (() => {})}
         onClearSelection={over.onClearSelection ?? (() => {})}
@@ -109,5 +115,32 @@ describe('LibraryToolbar', () => {
       );
     });
     expect(onClearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  // W54 — search + sort were the one part of this toolbar that rendered
+  // unconditionally: on an empty library the user got an enabled search box and
+  // sort select over zero rows. They now ride the SAME gate the batch bar above
+  // already used, just keyed on the video count instead of the selection count.
+  it('hides search + sort when there is nothing to filter', () => {
+    renderToolbar({ videoCount: 0 });
+    expect(container.querySelector('.library-toolbar__search')).toBeNull();
+    expect(container.querySelector('.library-toolbar__sort-select')).toBeNull();
+    expect(container.querySelector('.library-toolbar__filters')).toBeNull();
+  });
+
+  it('renders no toolbar strip at all when there is neither content nor a selection', () => {
+    renderToolbar({ videoCount: 0, selectedCount: 0 });
+    // Keeping the wrapper would leave an empty padded strip above the first-run
+    // poster (.library-toolbar carries its own padding in library-shell.css).
+    expect(container.querySelector('.library-toolbar')).toBeNull();
+  });
+
+  it('still shows the batch bar when a selection exists with the filters hidden', () => {
+    renderToolbar({ videoCount: 0, selectedCount: 2 });
+    expect(container.querySelector('.library-toolbar')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__batch-count')?.textContent).toBe(
+      '2 selected',
+    );
+    expect(container.querySelector('.library-toolbar__filters')).toBeNull();
   });
 });
