@@ -30,12 +30,13 @@
 // adjacent assertion (the error message) compares against the value this test
 // itself wrote.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { createPackage } from '@electron/asar';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { findBuiltApp } from './fixtures';
+import { bundledFfmpegPath, findBuiltApp } from './fixtures';
 
 /** The env keys this suite mutates; saved and restored around every case. */
 const TOUCHED = ['RF_E2E_APP_EXE', 'RF_E2E_DEV', 'RF_E2E_REQUIRE_PACKAGED'] as const;
@@ -76,12 +77,39 @@ function makeWindowsInstall(name: string, decoys: string[] = []): { exe: string;
   return { exe, main };
 }
 
-/** A synthetic macOS `.app` bundle (the other shape `parseElectronApp` accepts). */
-function makeMacInstall(name: string): { bundle: string; executable: string; main: string } {
+/**
+ * A synthetic macOS `.app` bundle (the other shape `parseElectronApp` accepts).
+ *
+ * `decoys` are extra, COMPLETE `.app` bundles dropped in the SAME parent
+ * directory. That is the canonical macOS case, not a contrivance: the documented
+ * install location is `/Applications`, which holds many bundles. It matters
+ * because `parseElectronApp` strips a `.app` argument to its PARENT and then picks
+ * `readdirSync(parent).find((f) => f.endsWith('.app'))` (node_modules/
+ * electron-playwright-helpers/dist/find_parse_builds.js — `buildDir =
+ * dirname(bundle)` then the `.app` find) — the SAME readdir-order hazard the
+ * Windows twin has, and for darwin it poisons `main` as well as `executable`
+ * because both are derived from the bundle that `find` chose.
+ */
+function makeMacInstall(
+  name: string,
+  decoys: string[] = [],
+): { bundle: string; executable: string; main: string } {
   const dir = mkdtempSync(join(root, 'macinstall-'));
+  for (const decoy of decoys) makeMacBundle(dir, decoy);
+  return makeMacBundle(dir, name);
+}
+
+/** One complete `<parent>/<name>.app` bundle (executable + non-asar app dir). */
+function makeMacBundle(
+  dir: string,
+  name: string,
+): { bundle: string; executable: string; main: string } {
   const bundle = join(dir, `${name}.app`);
   const macos = join(bundle, 'Contents', 'MacOS');
   mkdirSync(macos, { recursive: true });
+  // The inner executable is named after the bundle, as electron-builder writes
+  // it — so a decoy bundle yields a DIFFERENT executable basename, which is what
+  // makes a mis-resolution visible rather than coincidentally identical.
   const executable = join(macos, name);
   writeFileSync(executable, '#!/bin/sh\n', 'utf8');
   const appDir = join(bundle, 'Contents', 'Resources', 'app');
@@ -94,6 +122,37 @@ function makeMacInstall(name: string): { bundle: string; executable: string; mai
   const main = join(appDir, 'out', 'main', 'main.js');
   writeFileSync(main, '// entry', 'utf8');
   return { bundle, executable, main };
+}
+
+/**
+ * A macOS bundle in the shape electron-builder ACTUALLY ships: the app entry
+ * inside `Contents/Resources/app.asar` rather than a plain `app/` directory.
+ *
+ * Built with the real `@electron/asar` (already a transitive dep — it is what
+ * `parseElectronApp` itself reads the archive with) so the archive is genuine and
+ * the resolution is not being proven against a hand-faked file.
+ */
+async function makeMacAsarBundle(dir: string, name: string): Promise<string> {
+  const bundle = join(dir, `${name}.app`);
+  const macos = join(bundle, 'Contents', 'MacOS');
+  mkdirSync(macos, { recursive: true });
+  writeFileSync(join(macos, name), '#!/bin/sh\n', 'utf8');
+  const resources = join(bundle, 'Contents', 'Resources');
+  mkdirSync(resources, { recursive: true });
+  // Stage the app tree, pack it, then drop the staging dir — leaving it behind
+  // would make `resources/` contain BOTH `app.asar` and `app/`, which is not a
+  // shape electron-builder produces and would blur which branch is under test.
+  const staging = join(dir, `${name}-asar-staging`);
+  mkdirSync(join(staging, 'out', 'main'), { recursive: true });
+  writeFileSync(
+    join(staging, 'package.json'),
+    JSON.stringify({ name: 'media-studio', main: 'out/main/main.js' }),
+    'utf8',
+  );
+  writeFileSync(join(staging, 'out', 'main', 'main.js'), '// entry', 'utf8');
+  await createPackage(staging, join(resources, 'app.asar'));
+  rmSync(staging, { recursive: true, force: true });
+  return bundle;
 }
 
 beforeEach(() => {
@@ -191,11 +250,35 @@ describe('findBuiltApp — RF_E2E_APP_EXE (installed-build escape hatch)', () =>
 
     expect(() => findBuiltApp()).toThrowError(/RF_E2E_APP_EXE/);
     expect(() => findBuiltApp()).toThrowError(new RegExp(missing.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')));
+    // WHICH GUARD FIRED, not merely "something threw". Asserting only the two
+    // patterns above was a SURVIVING MUTANT: deleting the `existsSync` pre-check
+    // lets control fall through to `parseElectronApp`, whose failure is re-wrapped
+    // as "…is not a launchable Electron app tree", and that message ALSO contains
+    // `RF_E2E_APP_EXE` and the path — so all seven cases stayed green with the
+    // pre-check gone. This substring belongs to the missing-path branch alone.
+    expect(() => findBuiltApp()).toThrowError(/refusing to fall back/);
+  });
+
+  it('FAILS LOUD on a path that EXISTS but is not an Electron app tree', () => {
+    // The other half of the fail-loud contract, previously unpinned: a directory
+    // that is really there but carries no resources/app[.asar]. `parseElectronApp`
+    // throws and the wrapper must re-report it against the variable rather than
+    // letting a raw library error surface (or, worse, falling back to dev).
+    const bare = mkdtempSync(join(root, 'not-an-app-'));
+    const exe = join(bare, 'Reframe.exe');
+    writeFileSync(exe, 'MZ', 'utf8');
+    process.env.RF_E2E_APP_EXE = exe;
+
+    expect(() => findBuiltApp()).toThrowError(/is not a launchable Electron app tree/);
+    expect(() => findBuiltApp()).toThrowError(/RF_E2E_APP_EXE/);
+    // And it is a DIFFERENT branch from the missing-path one above — without this
+    // the two cases could both be satisfied by a single generic message.
+    expect(() => findBuiltApp()).not.toThrowError(/refusing to fall back/);
   });
 
   it('accepts a macOS .app bundle and derives its inner executable', () => {
-    // The `.app` bundle directory is NOT itself an executable, so here the
-    // derived `info.executable` is the right answer and the raw variable is not.
+    // The `.app` bundle directory is NOT itself an executable, so the inner
+    // `Contents/MacOS/<name>` is the right answer and the raw variable is not.
     const { bundle, executable, main } = makeMacInstall('Reframe');
     process.env.RF_E2E_APP_EXE = bundle;
 
@@ -203,5 +286,123 @@ describe('findBuiltApp — RF_E2E_APP_EXE (installed-build escape hatch)', () =>
     expect(built.packaged).toBe(true);
     expect(built.executablePath).toBe(executable);
     expect(built.main).toBe(main);
+  });
+
+  it('resolves the NAMED .app bundle, not a sibling one, when the parent holds several', () => {
+    // The darwin twin of the `Aardvark.exe` decoy case above, and it was MISSING:
+    // `makeMacInstall` built a fresh mkdtemp holding exactly ONE bundle, so the
+    // macOS arm could not observe `parseElectronApp`'s `dirname` +
+    // `readdirSync(parent).find(f => f.endsWith('.app'))` picking a sibling.
+    //
+    // This is the CANONICAL macOS input, not an edge case: the documented install
+    // location is /Applications. It is also the WORSE half of the hazard — for
+    // darwin the chosen bundle drives `main` as well as `executable`, so both come
+    // back pointing into the wrong app, and it fails SILENTLY because
+    // parseElectronApp returns a well-formed (wrong) result and nothing throws.
+    //
+    // MEASURED on this box: with the resolution delegated to
+    // `parseElectronApp(bundle).executable`, `Aardvark.app` wins both fields and
+    // this case is red while the six others stay green — the mutation-sensitive
+    // arm for the darwin branch.
+    const { bundle, executable, main } = makeMacInstall('Reframe', ['Aardvark', 'Zebra']);
+    process.env.RF_E2E_APP_EXE = bundle;
+
+    const built = findBuiltApp();
+    expect(built.executablePath).toBe(executable);
+    expect(built.main).toBe(main);
+    // Stated as containment too, so the case still bites if the decoy naming
+    // scheme changes: everything resolved must live under the bundle we named.
+    expect(built.executablePath!.startsWith(bundle)).toBe(true);
+    expect(built.main.startsWith(bundle)).toBe(true);
+  });
+
+  it('resolves an ASAR-packed .app bundle from inside the named bundle', async () => {
+    // electron-builder ships `Contents/Resources/app.asar`, not a plain `app/`
+    // dir, so the non-asar fixtures above do not cover the shape a REAL installed
+    // macOS app has. Pinned with a decoy present, because the asar branch reads
+    // package.json out of the bundle it picked — the field most likely to be
+    // silently taken from the wrong app.
+    const dir = mkdtempSync(join(root, 'macasar-'));
+    makeMacBundle(dir, 'Aardvark');
+    const bundle = await makeMacAsarBundle(dir, 'Reframe');
+    process.env.RF_E2E_APP_EXE = bundle;
+
+    const built = findBuiltApp();
+    expect(built.executablePath).toBe(join(bundle, 'Contents', 'MacOS', 'Reframe'));
+    expect(built.main).toBe(
+      join(bundle, 'Contents', 'Resources', 'app.asar', 'out', 'main', 'main.js'),
+    );
+  });
+
+  it('picks the binary NAMED after the bundle when Contents/MacOS holds several', () => {
+    // `parseElectronApp` takes `readdirSync(appDir)[0]` unconditionally
+    // (find_parse_builds.js:212). Our replacement prefers the productName match
+    // first and only falls back to a lone entry — without this case that
+    // preference is decorative: every other fixture puts exactly ONE file in
+    // Contents/MacOS, so `[0]` and the stem match are the same answer and the
+    // branch is never discriminated. `app/e2e/**` is outside the vitest coverage
+    // gate, so nothing else would notice it was unmeasured.
+    const { bundle, executable, main } = makeMacInstall('Reframe');
+    // `Aardvark` sorts first, so an index-0 pick returns the WRONG binary on any
+    // ordered readdir.
+    writeFileSync(join(bundle, 'Contents', 'MacOS', 'Aardvark'), '#!/bin/sh\n', 'utf8');
+    process.env.RF_E2E_APP_EXE = bundle;
+
+    const built = findBuiltApp();
+    expect(built.executablePath).toBe(executable);
+    expect(built.main).toBe(main);
+  });
+
+  it('REFUSES TO GUESS when Contents/MacOS is ambiguous — no silent wrong binary', () => {
+    // The other half of the same branch. Several candidates and none named after
+    // the bundle: there is no defensible answer, and returning any of them is the
+    // exact failure mode (a leg driving the wrong binary) this resolution exists
+    // to prevent. It must throw, naming the candidates it saw.
+    const { bundle, executable } = makeMacInstall('Reframe');
+    rmSync(executable);
+    for (const stray of ['Aardvark', 'Zebra']) {
+      writeFileSync(join(bundle, 'Contents', 'MacOS', stray), '#!/bin/sh\n', 'utf8');
+    }
+    process.env.RF_E2E_APP_EXE = bundle;
+
+    expect(() => findBuiltApp()).toThrowError(/refusing to guess/);
+    expect(() => findBuiltApp()).toThrowError(/Aardvark/);
+  });
+});
+
+describe('bundledFfmpegPath — the extraResources layout of the tree under test', () => {
+  // WHY THIS SUITE EXISTS: `bundledFfmpegPath` had NO unit test, and it was wrong
+  // for the macOS input `RF_E2E_APP_EXE` documents as supported. It keyed the whole
+  // layout off `process.platform` and a flat `dirname(exe)/resources`, so for a
+  // `.app` (whose executable is `<bundle>/Contents/MacOS/<name>`) it produced
+  // `<bundle>/Contents/MacOS/resources/bin/ffmpeg` — electron-builder puts
+  // extraResources at `<bundle>/Contents/Resources/`. `installed-app.spec.ts`
+  // asserts `existsSync` on that path with the message "NSIS is NOT laying
+  // resources out identically", so a Mac maintainer following the spec's own
+  // printed instructions would have got a false and actively misleading diagnosis
+  // on a platform where NSIS is not involved.
+  //
+  // The layout is now derived from the TARGET PATH, not from `process.platform`,
+  // which is also what makes these cases assert identically on every runner — the
+  // same reasoning the win32 arm above relies on.
+  it('derives <install dir>/resources/bin/ffmpeg.exe for a Windows install', () => {
+    expect(bundledFfmpegPath(join('C:', 'Program Files', 'Reframe', 'Reframe.exe'))).toBe(
+      join('C:', 'Program Files', 'Reframe', 'resources', 'bin', 'ffmpeg.exe'),
+    );
+  });
+
+  it('derives Contents/Resources/bin/ffmpeg for a macOS bundle, NOT Contents/MacOS/resources', () => {
+    const inner = join('/Applications', 'Reframe.app', 'Contents', 'MacOS', 'Reframe');
+    expect(bundledFfmpegPath(inner)).toBe(
+      join('/Applications', 'Reframe.app', 'Contents', 'Resources', 'bin', 'ffmpeg'),
+    );
+    // Stated as the negative too: the old flat derivation is what this replaces.
+    expect(bundledFfmpegPath(inner)).not.toContain(join('MacOS', 'resources'));
+  });
+
+  it('derives <dir>/resources/bin/ffmpeg (no .exe) for a linux-unpacked tree', () => {
+    expect(bundledFfmpegPath(join('/opt', 'Reframe', 'reframe'))).toBe(
+      join('/opt', 'Reframe', 'resources', 'bin', 'ffmpeg'),
+    );
   });
 });

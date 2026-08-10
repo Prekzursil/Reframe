@@ -32,8 +32,31 @@
 // which is right for the dev build and WRONG here: it would make the installed app
 // run the repo's sidecar under the host python, so a green would say nothing about
 // the packaged runtime. Both keys are therefore DELETED from the env handed to the
-// launch (`definedEnv` also copies the ambient environment, so deleting the keys
-// covers a developer who exported them too). Only MEDIA_STUDIO_CONFIG_DIR travels.
+// launch. `definedEnv` (fixtures.ts) copies the ENTIRE ambient `process.env` and
+// then layers the three seeded keys on top, so deleting has to cover a developer
+// who exported them too — and this box really does carry an ambient
+// MEDIA_STUDIO_PYTHON, so that is not a hypothetical.
+//   REFUTED AND WIDENED (2026-08-11). This block used to delete exactly two keys
+//   and then claim "Only MEDIA_STUDIO_CONFIG_DIR travels". The claim was right
+//   about what SHOULD happen and the code did not do it, and the gap was not
+//   cosmetic: `buildSidecarEnv` (app/main/sidecar.ts:168-197) starts from
+//   `{ ...process.env }` and assigns every packaged default as
+//   `env.X = env.X ?? <resources path>` — its own header says "Pre-set env vars
+//   always win (never clobber a user override)". So an ambient MEDIA_STUDIO_FFMPEG
+//   / _FFPROBE / _NODE_EXE / _RENDER_JS / _REMOTION_BUNDLE ALSO wins over the
+//   shipped resource, which would have let this spec assert that the INSTALLED
+//   tree carries `resources/bin/ffmpeg` (it does, below) while the app under test
+//   ran the host one — a self-inconsistent green.
+//   Rather than narrow the sentence to match two deletions, the deletion is now
+//   the whole ambient `MEDIA_STUDIO_*` set except CONFIG_DIR (the one key that
+//   MUST travel: it is the seeded data root). Non-`MEDIA_STUDIO_` variables are
+//   deliberately left alone — PATH is needed to launch at all, and
+//   PIP_EXTRA_INDEX_URL is a real bootstrap input.
+//   Still UNVERIFIED and inline: no run has confirmed the app then resolves the
+//   packaged ffmpeg, because the sidecar's chosen binary is not read back here.
+//   Settling experiment: assert `media.capabilities`/the sidecar's reported ffmpeg
+//   path equals `bundledFfmpegPath(built.executablePath)` once this leg is green
+//   once — deliberately not asserted now, from a leg that has never run.
 //   The SEEDING itself still runs under the host python against `sidecar/` — the
 //   same thing every other spec does — because it only has to write a library row
 //   the app then reads. UNVERIFIED and inline: if the installed build is OLDER than
@@ -79,6 +102,8 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   APP_EXE_ENV,
+  DIST_DIR,
+  REPO_ROOT,
   SIDECAR_DIR,
   bundledFfmpegPath,
   findBuiltApp,
@@ -199,10 +224,20 @@ test.describe('INSTALLED build — first run to working pipeline (W-A + W41)', (
 
     seeded = seedEnvironment();
     // ISOLATE THE PACKAGED RUNTIME — see the header. Without this the installed
-    // .exe would run the repo's sidecar under the host interpreter.
+    // .exe would run the repo's sidecar under the host interpreter, and any
+    // ambient MEDIA_STUDIO_* override would beat the shipped resource because
+    // buildSidecarEnv resolves each packaged default as `env.X ?? <resources>`.
     const appEnv = { ...seeded.appEnv };
-    delete appEnv.MEDIA_STUDIO_PYTHON;
-    delete appEnv.MEDIA_STUDIO_SIDECAR_DIR;
+    for (const key of Object.keys(appEnv)) {
+      if (key.startsWith('MEDIA_STUDIO_') && key !== 'MEDIA_STUDIO_CONFIG_DIR') delete appEnv[key];
+    }
+    // Postcondition, asserted rather than assumed: the loop above is the only
+    // thing standing between this spec and a green that measured the dev runtime,
+    // so a typo'd prefix must fail HERE and not silently downgrade the isolation.
+    expect(
+      Object.keys(appEnv).filter((k) => k.startsWith('MEDIA_STUDIO_')),
+      'exactly one MEDIA_STUDIO_* key may reach the installed app: the seeded data root',
+    ).toEqual(['MEDIA_STUDIO_CONFIG_DIR']);
 
     app = await electron.launch({
       args: [built.main, '--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
@@ -224,12 +259,29 @@ test.describe('INSTALLED build — first run to working pipeline (W-A + W41)', (
     await app?.close();
   });
 
-  test('the running process IS the installed executable (not dist/, not the dev build)', async () => {
-    // `process.execPath` read in the MAIN process is the strongest available
-    // statement about WHICH binary is running — stronger than `isPackaged`, which
-    // `dist/win-unpacked` also satisfies. Compared through `resolve()` on both
-    // sides so a trailing-separator or `.`-segment difference cannot fail it,
-    // while a genuinely different binary still does.
+  test('the running process is a PACKAGED binary from OUTSIDE the repo (not dist/, not dev)', async () => {
+    // ── SCOPE CORRECTION (refuted 2026-08-11) ────────────────────────────────
+    // This test was titled "the running process IS the installed executable" and
+    // its comment called `process.execPath` "the strongest available statement
+    // about WHICH binary is running". Both were wider than the evidence, and the
+    // REFUTATION is exact: for a `.exe`, `resolveInstalledApp` returns the caller's
+    // path verbatim (fixtures.ts) and Playwright launches precisely that via
+    // `executablePath`, so `resolve(execPath) === resolve(built.executablePath)`
+    // reduces to `resolve($RF_E2E_APP_EXE) === resolve($RF_E2E_APP_EXE)`. It can
+    // only fail if Electron re-execs, and beforeAll has already asserted the value
+    // is truthy. The two supporting assertions are equally insensitive: the old
+    // comment itself conceded `dist/win-unpacked` satisfies `isPackaged`, and its
+    // `getAppPath()` also contains `resources`. So pointing the variable at
+    // `dist/win-unpacked/Reframe.exe` — the exact misuse SKIP_REASON warns against
+    // — passed this test in full, in the test named for excluding it.
+    //
+    // WHAT EACH LINE NOW CLAIMS, scoped to what it can observe:
+    //   (a) Playwright honoured `executablePath` (a tautology unless Electron
+    //       re-execs; kept because a re-exec IS worth catching, not as proof of
+    //       WHICH tree),
+    //   (b) the tree resolved as a packaged artifact,
+    //   (c) — the one that actually discriminates — the running binary is OUTSIDE
+    //       the repo, so it is neither `dist/` nor `out/main/main.js`.
     const execPath = await app.evaluate(() => process.execPath);
     expect(resolve(execPath)).toBe(resolve(built.executablePath!));
 
@@ -238,6 +290,25 @@ test.describe('INSTALLED build — first run to working pipeline (W-A + W41)', (
 
     const appPath = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
     expect(appPath.replace(/\\/g, '/').toLowerCase()).toContain('resources');
+
+    // (c) THE DISTINGUISHING CHECK. `DIST_DIR` and `REPO_ROOT` are the two trees
+    // this spec exists NOT to be driving; an app installed by NSIS lives outside
+    // both (the CI step installs into RUNNER_TEMP). Compared on `resolve()`d,
+    // separator-normalised, case-folded prefixes — case-folding is correct here
+    // because the question is "is this the same Windows path", and the ONE OS this
+    // leg runs on is case-insensitive; a Linux/macOS caller is unaffected because
+    // an install there simply is not under the repo either way.
+    const norm = (p: string): string => resolve(p).replace(/\\/g, '/').toLowerCase();
+    for (const [label, root] of [
+      ['the electron-builder output tree (packaged.spec.ts already covers it)', DIST_DIR],
+      ['the repo checkout (that would be the dev build)', REPO_ROOT],
+    ] as const) {
+      expect(
+        norm(execPath).startsWith(`${norm(root)}/`),
+        `${APP_EXE_ENV} must name an INSTALLED app, but the running binary is inside ` +
+          `${label}: ${execPath}`,
+      ).toBe(false);
+    }
   });
 
   test('the INSTALLED tree ships an ffmpeg with every encoder the pipeline hardcodes', () => {

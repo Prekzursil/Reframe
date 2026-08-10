@@ -27,9 +27,17 @@
 // option available.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findLatestBuild, parseElectronApp } from 'electron-playwright-helpers';
 
@@ -52,9 +60,13 @@ export const DIST_DIR = join(REPO_ROOT, 'dist');
  * Until it existed, `findBuiltApp()` could resolve a package from exactly one
  * place (`dist/win-unpacked` and friends), so every "packaged" assertion in this
  * harness was really about the electron-builder OUTPUT tree. Nothing had ever
- * driven an app laid down by the NSIS installer. Accepts what `parseElectronApp`
- * accepts as "the app itself": a Windows `<install dir>/<Product>.exe` or a macOS
- * `<Product>.app` bundle.
+ * driven an app laid down by the NSIS installer.
+ *
+ * Accepts "the app itself" in either shape: a Windows `<install dir>/<Product>.exe`
+ * or a macOS `<Product>.app` bundle. It NO LONGER simply forwards to
+ * `parseElectronApp` — that helper picks the app by scanning the PARENT directory,
+ * which mis-resolves both shapes in their real install locations; see
+ * `resolveInstalledApp` for the measurement and what replaced it.
  *
  * Consumers: `installed-app.spec.ts` (which self-skips when it is unset) and
  * `findBuiltApp.test.ts` (the deterministic resolution proof).
@@ -83,16 +95,39 @@ export interface BuiltApp {
  *  * **FAIL LOUD, never fall back.** A typo'd or stale `RF_E2E_APP_EXE` must not
  *    quietly resolve the dev build; an "installed-build" leg reporting green
  *    while it drove `out/main/main.js` is worse than no leg at all.
- *  * **For a Windows `.exe`, the CALLER's path is authoritative.**
- *    `parseElectronApp` resolves the executable with
- *    `readdirSync(dir).find((f) => f.endsWith('.exe'))` — "assume the executable
- *    is the only .exe file in the directory" in its own comment. An
- *    electron-builder NSIS install directory is NOT that: `nsis.oneClick: false`
- *    lays down `Uninstall <ProductName>.exe` beside the app, so which one that
- *    `find` returns is filesystem-order-dependent. We only borrow `info.main`
- *    (the asar/app entry, which needs the package.json) and keep the executable
- *    the caller named. A macOS `.app` argument is a bundle DIRECTORY rather than
- *    an executable, so there the derived `info.executable` is the right answer.
+ *  * **The CALLER's target is authoritative — for BOTH shapes.**
+ *    `parseElectronApp` resolves an app by stripping the argument to its PARENT
+ *    directory and then scanning that directory: `readdirSync(dir).find((f) =>
+ *    f.endsWith('.exe'))` on Windows — "assume the executable is the only .exe
+ *    file in the directory" in its own comment — and the identical
+ *    `readdirSync(dir).find((f) => f.endsWith('.app'))` on macOS
+ *    (node_modules/electron-playwright-helpers/dist/find_parse_builds.js:
+ *    `buildDir = dirname(...)` at :124-131, the two `find` calls at :205-207 and
+ *    :239-241). Neither directory is the single-app directory it assumes:
+ *    an electron-builder NSIS install dir has `Uninstall <ProductName>.exe`
+ *    beside the app (`nsis.oneClick: false`), and the canonical macOS install
+ *    location is `/Applications`, which holds every other app on the machine.
+ *    Which entry that `find` returns is readdir-order-dependent.
+ *
+ *    SCOPE CORRECTION (refuted 2026-08-11): this used to harden ONLY the `.exe`
+ *    branch and hand `.app` straight back to `info.executable`, on the stated
+ *    reasoning that "a macOS `.app` argument is a bundle DIRECTORY rather than an
+ *    executable, so there the derived `info.executable` is the right answer".
+ *    The premise is true and the conclusion did not follow: the derived value is
+ *    only right if `find` chose the bundle the caller named. MEASURED — with a
+ *    sibling `Aardvark.app` in the same parent, asking for `Reframe.app` returned
+ *    `Aardvark.app/Contents/MacOS/Aardvark` for the executable AND `Aardvark`'s
+ *    entry for `main`, silently (nothing throws; the result is well-formed and
+ *    wrong). Worse than the Windows twin, because on darwin the chosen bundle
+ *    drives `main` too, whereas the win32 branch derives `main` from
+ *    `join(buildDir, 'resources')` and so is immune (find_parse_builds.js:246).
+ *    Pinned by the sibling-decoy cases in `findBuiltApp.test.ts`.
+ *
+ *    So: for `.exe` keep the caller's path and borrow only `info.main` (immune,
+ *    above); for `.app` derive BOTH from inside the named bundle and never call
+ *    `parseElectronApp` at all. A prefix-remap of its answer would NOT do — the
+ *    sibling can have a different inner executable name and a different
+ *    asar-vs-plain `Resources/app` shape, so the remapped path need not exist.
  */
 function resolveInstalledApp(target: string): BuiltApp {
   if (!existsSync(target)) {
@@ -102,6 +137,14 @@ function resolveInstalledApp(target: string): BuiltApp {
         '<install dir>/<Product>.exe; macOS: the <Product>.app bundle).',
     );
   }
+  // Suffix tests on a STRING, not a filesystem case-fold: `.toLowerCase()` here
+  // asks "was this argument spelled as an .exe/.app", which is the same question
+  // on NTFS and on ext4. (A `normcase`-style probe would be the wrong instrument —
+  // nothing about this decision depends on how the FS compares names.) Keeping it
+  // suffix-driven rather than `process.platform`-driven is also what lets the
+  // darwin arm be exercised on a Linux/Windows CI runner.
+  const spelled = target.toLowerCase();
+  if (spelled.endsWith('.app')) return resolveMacBundle(target);
   let info: { main: string; executable: string };
   try {
     info = parseElectronApp(target);
@@ -111,12 +154,73 @@ function resolveInstalledApp(target: string): BuiltApp {
         `(expected a sibling resources/app.asar or resources/app): ${(err as Error).message}`,
     );
   }
-  // Suffix test on a STRING, not a filesystem case-fold: `.toLowerCase()` here
-  // asks "was this argument spelled as an .exe", which is the same question on
-  // NTFS and on ext4. (A `normcase`-style probe would be the wrong instrument —
-  // nothing about this decision depends on how the FS compares names.)
-  const executablePath = target.toLowerCase().endsWith('.exe') ? target : info.executable;
+  const executablePath = spelled.endsWith('.exe') ? target : info.executable;
   return { main: info.main, executablePath, packaged: true };
+}
+
+/**
+ * Resolve a macOS `<Product>.app` bundle using ONLY paths under that bundle.
+ *
+ * Mirrors what `parseElectronApp` does for darwin (find_parse_builds.js:211-226)
+ * with the one difference that is the whole point: the bundle root is the one the
+ * caller named, never `readdirSync(parent).find(...)`.
+ */
+function resolveMacBundle(bundle: string): BuiltApp {
+  const macosDir = join(bundle, 'Contents', 'MacOS');
+  const resourcesDir = join(bundle, 'Contents', 'Resources');
+  let entries: string[];
+  try {
+    entries = readdirSync(macosDir);
+  } catch (err) {
+    throw new Error(
+      `${APP_EXE_ENV}=${bundle} is not a launchable Electron app tree ` +
+        `(no Contents/MacOS inside the bundle): ${(err as Error).message}`,
+    );
+  }
+  // electron-builder names the inner binary after productName, i.e. the bundle
+  // stem — prefer that exact match. Fall back to a lone entry (what
+  // parseElectronApp assumes unconditionally), and REFUSE to guess when there are
+  // several and none matches: a wrong executable is the failure this whole
+  // function exists to prevent, so guessing here would reintroduce it.
+  const stem = basename(bundle).replace(/\.app$/i, '');
+  const inner = entries.includes(stem) ? stem : entries.length === 1 ? entries[0] : undefined;
+  if (inner === undefined) {
+    throw new Error(
+      `${APP_EXE_ENV}=${bundle}: cannot tell which of Contents/MacOS/[${entries.join(', ')}] ` +
+        `is the app binary (none is named "${stem}") — refusing to guess.`,
+    );
+  }
+  const asarPath = join(resourcesDir, 'app.asar');
+  const plainPkg = join(resourcesDir, 'app', 'package.json');
+  let entry: string | undefined;
+  let main: string;
+  if (existsSync(asarPath)) {
+    // `@electron/asar` is electron-playwright-helpers' OWN declared dependency
+    // (^3.2.4) — the very module it reads the archive with — so it is present
+    // wherever that helper is. Required LAZILY so a Windows-only run never loads
+    // it and a hoisting change can only ever break the darwin arm, loudly.
+    const { extractFile } = createRequire(import.meta.url)('@electron/asar') as {
+      extractFile: (archive: string, file: string) => Buffer;
+    };
+    entry = (JSON.parse(extractFile(asarPath, 'package.json').toString('utf8')) as { main?: string })
+      .main;
+    main = join(asarPath, entry ?? '');
+  } else if (existsSync(plainPkg)) {
+    entry = (JSON.parse(readFileSync(plainPkg, 'utf8')) as { main?: string }).main;
+    main = join(resourcesDir, 'app', entry ?? '');
+  } else {
+    throw new Error(
+      `${APP_EXE_ENV}=${bundle} is not a launchable Electron app tree ` +
+        `(expected Contents/Resources/app.asar or Contents/Resources/app/package.json).`,
+    );
+  }
+  if (!entry) {
+    throw new Error(
+      `${APP_EXE_ENV}=${bundle}: the bundle's package.json declares no "main" entry, so there ` +
+        'is nothing to launch.',
+    );
+  }
+  return { main, executablePath: join(macosDir, inner), packaged: true };
 }
 
 /**
@@ -730,9 +834,32 @@ export function probePlayable(
  * packaged smoke may trust. Verified against a real install: an executable at
  * `D:/Program Files/Reframe/Reframe.exe` yields
  * `D:/Program Files/Reframe/resources/bin/ffmpeg.exe`.
+ *
+ * SCOPE CORRECTION (refuted 2026-08-11). This was `dirname(exe)/resources/bin` +
+ * a `process.platform === 'win32'` suffix, and both halves were wrong for the
+ * macOS input `APP_EXE_ENV` documents as supported:
+ *   * a `.app`'s executable is `<bundle>/Contents/MacOS/<name>`, so the flat
+ *     `dirname` produced `<bundle>/Contents/MacOS/resources/bin/ffmpeg` — but
+ *     electron-builder puts extraResources at `<bundle>/Contents/Resources/`.
+ *     MEASURED red before this fix. `installed-app.spec.ts` asserts `existsSync`
+ *     on the result with the message "NSIS is NOT laying resources out
+ *     identically", i.e. a Mac maintainer following the spec's own printed
+ *     instructions got a false diagnosis naming an installer that is not involved.
+ *   * `process.platform` is the HOST, not the tree under test. Both are now
+ *     derived from the TARGET PATH — a property of the input, which is what lets
+ *     `findBuiltApp.test.ts` assert every layout identically on every runner
+ *     (the same reasoning its win32-on-Linux arm already relies on).
+ * These are string tests on how the path is SPELLED, not filesystem probes, so
+ * they answer the same on NTFS, APFS and ext4.
  */
 export function bundledFfmpegPath(executablePath: string): string {
-  return join(dirname(executablePath), 'resources', 'bin', `ffmpeg${process.platform === 'win32' ? '.exe' : ''}`);
+  const dir = dirname(executablePath);
+  const binary = `ffmpeg${executablePath.toLowerCase().endsWith('.exe') ? '.exe' : ''}`;
+  // A macOS bundle: `<bundle>/Contents/MacOS/<name>` -> `<bundle>/Contents/Resources`.
+  if (basename(dir).toLowerCase() === 'macos' && basename(dirname(dir)).toLowerCase() === 'contents') {
+    return join(dirname(dir), 'Resources', 'bin', binary);
+  }
+  return join(dir, 'resources', 'bin', binary);
 }
 
 /**
