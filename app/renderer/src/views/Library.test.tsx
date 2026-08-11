@@ -1323,9 +1323,11 @@ describe('Library first-run honesty + control gating (W53/W54)', () => {
     //
     // This line PINS CURRENT BEHAVIOUR; it is not a requirement that the box be
     // enabled. The enabled choice is owned and justified elsewhere
-    // (LibraryToolbar.test.tsx:142-161 — library-shell.css has no `:disabled` rule for
-    // these controls, so a disabled one would look identical to a live one), and that
-    // suite already asserts the same thing at :159. If a future change decides to add
+    // (LibraryToolbar.test.tsx:142-161), and that suite already asserts the same thing at
+    // :159. SCOPED: the looks-live-but-is-dead reason applies to the SEARCH INPUT only —
+    // `styles/controls.css:76-80` is a global `select:disabled` rule (muted, 60% opacity,
+    // not-allowed), imported at App.tsx:96, so a disabled sort SELECT does signal. See the
+    // comment at LibraryToolbar.tsx for the full derivation. If a future change decides to add
     // `disabled={loading}`, this assertion is EXPECTED to go red: flip it there and
     // here together, and do not read the test name as saying the flash is wanted.
     expect(container.querySelector('.library__loading')).not.toBeNull();

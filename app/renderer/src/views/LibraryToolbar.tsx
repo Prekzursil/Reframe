@@ -74,14 +74,25 @@ export function LibraryToolbar({
   //
   // Only the mount->unmount SEQUENCE is new here. The enabled-over-zero-rows STATE was
   // already disclosed and deliberately chosen before this change, at
-  // LibraryToolbar.test.tsx:142-161, which gives the reason — library-shell.css defines
-  // no `:disabled` rule for these two controls (its only one is
-  // `.capabilities-chip__toggle:disabled`, :44) so a `disabled` box would look identical
-  // to a live one, i.e. looks-live-but-is-dead — and pins `search.disabled === false` at
-  // :159. `disabled={loading}` would therefore mute the enabled half of this transient
-  // at the price of reversing that merged decision and reddening its test: out of THIS
-  // change's scope, not impossible. Recorded so a future reader knows which half is
-  // still open and that the other one is a choice, not an oversight.
+  // LibraryToolbar.test.tsx:142-161, and pins `search.disabled === false` at :159.
+  //
+  // SCOPED — the looks-live-but-is-dead reason holds for the SEARCH INPUT ONLY.
+  // The earlier wording said it of "these two controls" on the strength of a scan of ONE
+  // stylesheet (library-shell.css, whose only `:disabled` rule is
+  // `.capabilities-chip__toggle:disabled` at :44). But rendered appearance is the union of
+  // every loaded sheet, and `styles/controls.css:76-80` is a GLOBAL unscoped element rule —
+  // `select:disabled { color: var(--text-muted); cursor: not-allowed; opacity: 0.6; }` —
+  // imported at App.tsx:96. The sort control IS a `<select>` (:161-162 below), and
+  // library-shell.css:134-143 sets background/color/cursor but no opacity, so nothing opposes
+  // it; `select:disabled` (0,1,1) also outranks `.library-toolbar__sort-select` (0,1,0) on
+  // colour and cursor. A disabled sort select therefore renders muted at 60% with
+  // not-allowed — it signals correctly, the OPPOSITE of looks-live-but-is-dead.
+  // The INPUT half survives: there is no `input:disabled` rule anywhere in renderer CSS.
+  //
+  // So `disabled={loading}` would be safe for the SELECT and deadly for the INPUT. Muting the
+  // enabled half of this transient still means reversing a merged decision and reddening its
+  // test, so it stays out of THIS change's scope — but the reason is now per-control rather
+  // than a blanket claim a one-sheet scan could not support.
   //   - That the DOM sequence OCCURS: almost certain (90-99%) — it is the direct
   //     reading of this expression, and the two Library.test.tsx cases named above
   //     drive both edges of both paths in one render each and pin them.
