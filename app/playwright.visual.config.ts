@@ -49,7 +49,14 @@ export default defineConfig({
   // png files — only two `error-context.md`, both from `installed-app`. The
   // visual regression was undiagnosable without re-running it locally.
   //
-  // A dedicated sibling directory is untouched by any other config's cleanup.
+  // A dedicated sibling directory is untouched by any OTHER config's cleanup.
+  //
+  // Scoped honestly: it is NOT untouched by THIS config. The REGEN step
+  // (e2e.yml, "VISUAL baseline REGEN (--update-snapshots)") re-runs this very
+  // config, so it removes this directory too. That costs nothing, because the
+  // two steps are MUTUALLY EXCLUSIVE by their guards — the gate step requires
+  // `update_visual_baselines != 'true'` and REGEN requires `== 'true'`, so on a
+  // regen dispatch no diff has been produced for REGEN to destroy.
   outputDir: './test-results-visual',
   // The `list` reporter is what the CI log shows; the `html` reporter is what
   // makes a red diff DIAGNOSABLE — for a toHaveScreenshot failure it embeds the
@@ -58,10 +65,18 @@ export default defineConfig({
   //
   // It is written INSIDE `app/playwright-report/` on purpose: e2e.yml's existing
   // "Upload Playwright report" step already uploads that whole tree with
-  // `if: always()`, so this becomes diagnosable with NO workflow change — and
-  // nothing else wipes it (playwright.config.ts configures no html reporter, and
-  // a reporter only cleans its own outputFolder). The `visual/` segment keeps it
-  // namespaced so a future GUI-suite report can sit beside it.
+  // `if: always()`, so this is diagnosable through that upload alone — and today
+  // nothing else wipes it, because playwright.config.ts configures no html
+  // reporter and a reporter only cleans its own outputFolder.
+  //
+  // ⚠ THAT LAST CLAUSE IS A TRAP FOR THE NEXT EDITOR. Playwright's html reporter
+  // defaults its outputFolder to `playwright-report` — the PARENT of this one. So
+  // adding a bare `['html']` to playwright.config.ts would clean
+  // `app/playwright-report/` wholesale and take `visual/` with it, on steps that
+  // run AFTER the visual gate. MEASURED: a second config whose html outputFolder
+  // was the parent left `report/visual/index.html` absent and `data/` empty.
+  // A GUI report may only sit beside this one as an EXPLICIT sibling —
+  // `['html', { outputFolder: 'playwright-report/gui' }]` — never a bare `['html']`.
   // `open: 'never'` so a local red run does not try to spawn a browser.
   reporter: [['list'], ['html', { outputFolder: 'playwright-report/visual', open: 'never' }]],
   use: {

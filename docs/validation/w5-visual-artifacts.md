@@ -5,6 +5,20 @@
 **Branch:** `ci/v15-w5-visual-artifacts` · **Base:** `origin/main` @ `81a04965`
 Both deliverables measured.
 
+> **⚠ The base is NOT the merge target, and three claims below were refuted because of
+> it.** `origin/main` moved `81a04965 → 60f1a43e → 5c80c79b (PR #408) → 739ff6ed → a75ba50a`
+> while this branch was in review. Everything measured against `81a04965` still holds *at
+> 81a04965*; every statement about **which CI steps run after a red visual gate** is
+> merge-target dependent and was re-measured at `739ff6ed`. Where the two disagree, the
+> refuted wording is kept and marked, per the corrections-are-recorded rule.
+>
+> **Pin the BLOB, not the commit** — that is the lesson this section cost. `origin/main`
+> advanced twice more during the remediation, but `e2e.yml` at `a75ba50a` is blob
+> `986f1d1b`, byte-identical to `739ff6ed`, so the measurements below still hold. Before
+> citing any of them, re-run the two-line check rather than comparing commit SHAs:
+> `git rev-parse origin/main:.github/workflows/e2e.yml` — if it is still `986f1d1b`, nothing
+> here has drifted.
+
 > Write-as-you-go marker, kept deliberately: "If it still reads this way, the unit died before
 > measuring anything and no verdict here may be cited." It does **not** still read that way —
 > every section below carries a measurement.
@@ -72,29 +86,103 @@ A first attempt at this probe died at config load (`Cannot find module '@playwri
 its "marker survived" reading was **void, not evidence** — recorded so the passing probe above is
 not mistaken for a first-try result.
 
-### Scope of the defect — narrower than "always broken"
+### Scope of the defect — REFUTED as written; it is UNIVERSAL on the Windows leg
 
-- **Nightly / plain dispatch, visual red:** steps 25-28 all skip (implicit `success()` gate; 27/28
-  are dispatch-only), nothing clobbers, PNGs upload. Diagnosable today.
-- **Dispatch with `drive_installed_build=true`, visual red:** step 28 runs and clobbers. **Not**
-  diagnosable. That is run 31445248586.
+> **REFUTED wording, kept verbatim (was true at `81a04965`, false at the merge target):**
+>
+> > - **Nightly / plain dispatch, visual red:** steps 25-28 all skip (implicit `success()` gate;
+> >   27/28 are dispatch-only), nothing clobbers, PNGs upload. Diagnosable today.
+> > - **Dispatch with `drive_installed_build=true`, visual red:** step 28 runs and clobbers.
+> >   **Not** diagnosable. That is run 31445248586.
+> >
+> > This matters: a naive "move outputDir and let PR #408 add the upload later" would have been
+> > a **regression** for the nightly case. It was avoided — see below.
+>
+> Why it is wrong: it is a **merge-target-dependent** claim about `e2e.yml`, asserted with no
+> inline UNVERIFIED tag, about a file this lane knew was owned by open PR #408 **whose entire
+> subject was those guards**. #408 merged as `5c80c79b` and flipped exactly the two post-visual
+> steps that are Windows-only with no dispatch gate.
 
-This matters: a naive "move outputDir and let PR #408 add the upload later" would have been a
-**regression** for the nightly case. It was avoided — see below.
+**Correctly-scoped version (measured at `origin/main` = `739ff6ed`):**
 
-### What LANDED here (no `e2e.yml` edit — PR #408 owns that file)
+`yaml.safe_load` over `e2e.yml` at both revs, resolving `npm run` wrappers through
+`app/package.json` (detector control: the matcher was first confirmed to find the two
+known-present `test:e2e:visual` steps; a narrower first matcher keyed only on the literal
+`playwright test` **missed step 20** and undercounted 4 as 3 — recorded):
+
+| `e2e-gui` step | invokes | guard @ `81a04965` | guard @ `739ff6ed` |
+|---|---|---|---|
+| 20 Windows packaged suite | `playwright.config.ts` | `runner.os == 'Windows'` | `!cancelled() && Windows` |
+| 21 VISUAL gate | `playwright.visual.config.ts` | `!cancelled() && Windows && inputs != 'true'` | unchanged |
+| 22 VISUAL REGEN | `playwright.visual.config.ts` | `always() && Windows && inputs == 'true'` | unchanged |
+| 23 transcribe-journey | `playwright.config.ts` | **bare — implicit `success()`** | **`!cancelled() && Windows`** |
+| 24 add-videos-dialog | `playwright.config.ts` | **bare — implicit `success()`** | **`!cancelled() && Windows`** |
+| 26 installed-app | `playwright.config.ts` | `!cancelled() && Windows && inputs == 'true'` | unchanged |
+
+Neither 23 nor 24 carries a `github.event.inputs` condition, so both fire on the **cron**. So:
+
+- **Before #408** — on the nightly a red visual gate skipped 23/24, and 26 was dispatch-only, so
+  nothing clobbered and the PNGs uploaded. Independent corroboration that they used to skip:
+  `gh run view 31445248586 --json jobs` reports `25 skipped … 26 skipped`.
+- **Since #408 (`5c80c79b`)** — 23 and 24 run after a red visual gate on the nightly too, each
+  deleting `app/test-results/` at start. **The clobber is universal on the Windows leg, not
+  dispatch-only.**
+
+This does not weaken the landed fix; it makes it strictly more necessary. What it does kill is
+the *rationale* above: the "regression for the nightly case" that the html-reporter design was
+chosen to avoid can no longer occur, so that design argument is moot (the design is still right
+for the other reason — the report survives an outputDir wipe).
+
+### What LANDED here
 
 `app/playwright.visual.config.ts`:
 
-- **`outputDir: './test-results-visual'`** — a sibling directory no other config cleans, so the
-  raw `-actual` / `-diff` / `-expected` PNGs survive any later Playwright step.
-- **`reporter: [['list'], ['html', { outputFolder: 'playwright-report/visual', open: 'never' }]]`**
-  — written *inside* `app/playwright-report/`, which `e2e.yml:707` **already** uploads with
-  `always()`. So this is diagnosable **with zero workflow change**, and it also survives the
-  clobber (nothing else configures an html reporter, and a reporter only cleans its own
-  `outputFolder`).
+- **`outputDir: './test-results-visual'`** — a sibling directory no **other** config cleans, so
+  the raw `-actual` / `-diff` / `-expected` PNGs survive any later Playwright step **that uses a
+  different config**.
 
-`.gitignore`: added `app/test-results-visual/`.
+  > **REFUTED wording, kept:** *"survive any later Playwright step."* Too wide. The REGEN step
+  > (`e2e.yml`, "VISUAL baseline REGEN (`--update-snapshots`)") re-runs **this** config, so it
+  > removes both `test-results-visual/` and `playwright-report/visual/`. **Measured cost: zero** —
+  > the gate step requires `update_visual_baselines != 'true'` and REGEN requires `== 'true'`, so
+  > the two are mutually exclusive and on a regen dispatch the gate never ran to produce a diff.
+  > (This is narrower than the objection, which said the harm was merely "bounded".)
+
+- **`reporter: [['list'], ['html', { outputFolder: 'playwright-report/visual', open: 'never' }]]`**
+  — written *inside* `app/playwright-report/`, which the existing "Upload Playwright report" step
+  **already** uploads with `always()`. A reporter only cleans its own `outputFolder`, so nothing
+  else wipes it **today**.
+
+  > **Trap flagged for the next editor** (now also in the source comment): Playwright's html
+  > reporter **defaults** `outputFolder` to `playwright-report` — the *parent*. A future bare
+  > `['html']` on `playwright.config.ts` would therefore clean `app/playwright-report/` wholesale
+  > and take `visual/` with it, on steps that run *after* the visual gate. Measured: a second
+  > config with the parent as its outputFolder left `report/visual/index.html` absent and `data/`
+  > empty. A GUI report may only sit beside this one as an explicit
+  > `['html', { outputFolder: 'playwright-report/gui' }]`.
+
+`.github/workflows/e2e.yml` — **now editable: PR #408 MERGED as `5c80c79b`** (`gh pr view 408`
+→ `state: MERGED`, and `castfix`'s `e2e.yml` blob is byte-identical to `origin/main`'s
+`986f1d1b`, so no live branch competes for the file):
+
+- **A dedicated `e2e-gui-visual-diff-${{ matrix.os }}` upload** (`!cancelled() && Windows`,
+  `retention-days: 14`) carrying `app/test-results-visual/` + `app/playwright-report/visual/`.
+  This is a **prerequisite, not an enhancement**, for raw-image access: no other step uploads
+  `app/test-results-visual/`, so without it the named triples never leave the runner. The html
+  report *is* reachable via the existing upload, but it stores the images as content-hashed
+  copies under `data/`, not as `<name>-actual.png`.
+
+  > **REFUTED wording, kept:** *"This patch is an **enhancement, not a prerequisite** — the landed
+  > config change already makes the failure diagnosable through the existing
+  > `app/playwright-report/` upload."* Correctly scoped: diagnosable **through the html report**,
+  > yes; the **raw named triples** were unreachable from CI on every path until this step landed.
+
+- **Per-invocation `--output` on the four Windows-leg `playwright.config.ts` steps** (20 packaged
+  suite, 23 transcribe-journey, 24 add-videos-dialog, 26 installed-app) →
+  `test-results/gui-<name>`. See the next section.
+
+`.gitignore`: added `app/test-results-visual/` (the new `test-results/gui-*` subdirectories are
+already covered by the existing `app/test-results/` entry).
 
 **The load-bearing claim was verified executably, not assumed.** After the local run,
 `app/playwright-report/visual/data/` holds 6 PNGs whose byte sizes match the two failures'
@@ -102,58 +190,74 @@ expected/actual/diff triples exactly (`133872 / 110707 / 112741` and `46754 / 58
 The HTML reporter really does copy the diff triple into its own folder, so the report stays
 complete even if `outputDir` is removed afterwards.
 
-Net effect vs today: **strictly better, no interim regression** — the images reach the artifact in
-both the nightly and the clobber scenario, before PR #408 lands anything.
+### The other half of the same defect: the GUI config (CONFIRMED, now fixed)
 
-### BLOCKED-ON-PR-408 — the `e2e.yml` patch (prepared, NOT applied)
+The root-cause sentence was *"neither Playwright config set `outputDir`, so both resolved to the
+same `app/test-results/`"* — but the invariant actually violated is **"N Playwright invocations in
+one job share one `outputDir`"**, and the first version of this lane fixed only the visual config.
+`app/playwright.config.ts` still set none, and at `739ff6ed` **four** steps on the Windows leg
+invoke it, all surviving a red (table above). Concrete live defect: on every nightly, if step 20 —
+the largest suite (`confirm-scrim golden-journey overlay-hittest packaged preview installed-app`)
+— goes red, steps 23 and 24 run afterwards and destroy its traces and `error-context.md` before
+the `always()` upload. Pre-#408 the implicit `success()` chain masked this; #408 widened it from
+dispatch-only to universal on the same day.
 
-`.github/workflows/e2e.yml` is owned by open PR #408, so this is a patch, not an edit. It adds the
-raw per-test directory and a self-describing artifact name. Insert between the existing
-"Upload regenerated visual baselines" and "Upload Playwright report" steps (currently `:700`):
+**The obvious one-liner does not fix it.** Giving `playwright.config.ts` a single different
+`outputDir` (e.g. `./test-results-gui`) only *renames* the shared directory — all four invocations
+would still clobber each other. Isolation has to be **per invocation**, which means the CLI, which
+means `e2e.yml`.
 
-```diff
-@@ -699,6 +699,29 @@
-           if-no-files-found: warn
-           retention-days: 7
- 
-+      # VISUAL diagnostics, SEPARATE from the general report upload below.
-+      #
-+      # A screenshot-diff failure is the one class that is useless without the
-+      # images, and until now they never survived to the artifact: both Playwright
-+      # configs left `outputDir` at the default `app/test-results/`, and Playwright
-+      # DELETES outputDir at the start of every run — so the `installed-app` step
-+      # above (which carries `!cancelled()` and therefore runs after a red visual
-+      # gate) wiped them. MEASURED on run 31445248586: the uploaded
-+      # `e2e-gui-playwright-report-windows-latest` artifact contained ZERO png
-+      # files, only two `error-context.md`, both from `installed-app`.
-+      #
-+      # playwright.visual.config.ts now writes to its own `test-results-visual/`
-+      # (clobber-proof) and emits an html report under `playwright-report/visual/`
-+      # that embeds the expected/actual/diff triple as copied attachments.
-+      #
-+      # `!cancelled()` rather than `always()`, matching the visual gate step itself:
-+      # it MUST upload when that gate goes red (the entire point), but a cancelled
-+      # run has no diff worth keeping. Windows-only because the suite is.
-+      - name: Upload VISUAL screenshot-diff diagnostics (actual + diff + html report)
-+        if: ${{ !cancelled() && runner.os == 'Windows' }}
-+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-+        with:
-+          name: e2e-gui-visual-diff-${{ matrix.os }}
-+          path: |
-+            app/test-results-visual/
-+            app/playwright-report/visual/
-+          if-no-files-found: ignore
-+          # Longer than the 7 days the other uploads use: deciding "drift or
-+          # regression" on a nightly needs the images to outlive a weekend.
-+          retention-days: 14
-+
-       - name: Upload Playwright report
-         if: always()
-         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-```
+Landed fix, and the both-states probe that chose it (`npx playwright test` ×2, planted markers,
+Playwright 1.62.1):
 
-This patch is an **enhancement, not a prerequisite** — the landed config change already makes the
-failure diagnosable through the existing `app/playwright-report/` upload.
+| state | shape | marker after 2nd run |
+|---|---|---|
+| **X — control** | both runs share `outputDir=_probe_tr` | **False** — clobbered, so the probe measures something |
+| **Y — proposed** | `_probe_tr/gui-a` and `_probe_tr/gui-b` | **True**, and the `_probe_tr/parent-level` marker also **True** |
+
+`_probe_tr` afterwards held `['.last-run.json', 'gui-a', 'gui-b', 'parent-level']`. Playwright
+removes **only** its own `outputDir` subtree, so per-invocation subdirectories *under*
+`test-results/` isolate the four steps **and** need no change to the existing `app/test-results/`
+upload path. Arg forwarding was verified in both shapes the workflow uses — `npx playwright test
+--config <cfg> --output=<dir> <filter>` and `npm run <script> -- --output=<dir> <filter>` — each
+against a control run with no `--output` that correctly landed in the config's own directory.
+
+**UNVERIFIED — that these five `e2e.yml` changes behave as intended on a real runner.** `e2e.yml`
+is `workflow_dispatch` + nightly cron only and gates no PR, so nothing in the `quality` gate
+exercises it; the evidence above is local Playwright behaviour plus a YAML parse, not a CI run.
+Settling experiment: dispatch `e2e.yml` on Windows and confirm the job produces an
+`e2e-gui-visual-diff-windows-latest` artifact and that `app/test-results/` contains all four
+`gui-*` subdirectories.
+
+### The `e2e.yml` patch: it was MALFORMED, and it is now LANDED instead
+
+> **REFUTED, kept:** this section previously shipped the upload step as a *"prepared unified
+> diff"* under the heading `BLOCKED-ON-PR-408`, with residual #2's settling experiment reading
+> *"after #408 merges, **apply the diff** and dispatch `e2e.yml`."* `docs/INDEX.md` advertised it
+> as *"Carries the prepared `e2e.yml` upload patch."*
+>
+> **The diff would never have applied, at any base.** Measured against the committed blob
+> (`git cat-file -p HEAD:docs/validation/w5-visual-artifacts.md`, so a later edit cannot change
+> what is audited):
+>
+> ```text
+> declared header : '@@ -699,6 +699,29 @@'
+> measured body   : context=6 added=31 removed=0
+>   => old-side must be 6   (declared 6)   OK      <- control: the counter is sound
+>   => new-side must be 37  (declared 29)  MISMATCH
+> file-headers present (--- a/ , +++ b/): False / False
+> ```
+>
+> `git apply --check` therefore returns `error: corrupt patch at line 41`, exit 128, at **both**
+> `81a04965` and `origin/main`; correcting only the count to `37` makes it apply cleanly at both.
+> The old-side count being right is the control that isolates the defect to the new-side number.
+> This was base-independent — not staleness. Three independent refuters reached the same
+> arithmetic.
+
+**Resolution: the step is no longer a patch.** PR #408 is `MERGED` (`5c80c79b`), so `e2e.yml` is
+not owned by an open PR and the step is applied directly on this branch — see *What LANDED here*
+above. There is no prepared diff to mis-apply, and the settling experiment is now a dispatch, not
+a `git apply`.
 
 ---
 
@@ -270,5 +374,26 @@ race at its source.
 
 Both deliverables measured. Deliverable 1's fix is landed and its key mechanism (html reporter
 copies the diff triple) is executably verified. Deliverable 2's verdict rests on inspected pixels
-plus a CI↔local three-point numeric agreement, not on git history alone. The one open item is the
-regen itself, tagged UNVERIFIED inline above with its settling experiment.
+plus a CI↔local three-point numeric agreement, not on git history alone.
+
+**Corrections applied after adversarial review** (all recorded above, none deleted):
+
+| # | what was wrong | status |
+|---|---|---|
+| 1 | *"Nightly … nothing clobbers … Diagnosable today"* and the *"regression … was avoided"* rationale | **REFUTED** — true at `81a04965`, false since #408 (`5c80c79b`). Re-measured at `739ff6ed`; clobber is universal on the Windows leg |
+| 2 | *"neither config set `outputDir`"* fixed in only 1 of 2 configs | **DEFECT CONFIRMED and fixed** — four `playwright.config.ts` invocations shared one dir; each now has its own `test-results/gui-*`. The refuters' suggested single-`outputDir` one-liner is itself insufficient (it renames a shared dir) |
+| 3 | *"a future GUI-suite report can sit beside it"* | **TRAP CONFIRMED** — the html reporter's default `outputFolder` is the *parent*; source comment now forbids a bare `['html']` |
+| 4 | *"survive any later Playwright step"* | **REFUTED** — REGEN re-runs this config. Harm measured at **zero** (guards are mutually exclusive), narrower than the objection claimed |
+| 5 | the *"prepared unified diff"* | **REFUTED** — hunk header declared 29 new-side lines against a measured 37, and had no file headers; never appliable at any base. Now landed as a real edit |
+| 6 | *"enhancement, not a prerequisite"* | **REFUTED** — no step uploaded `app/test-results-visual/`, so the raw named triples were unreachable from CI on every path |
+
+Two items remain open, each tagged UNVERIFIED inline above with its settling experiment: the
+baseline **regen** itself, and whether the five `e2e.yml` changes behave as intended on a real
+runner (`e2e.yml` gates no PR, so no gate here can exercise them).
+
+One detector failure of my own, recorded: a first matcher keyed on the literal string
+`playwright test` in a step's `run:` reported **3** `playwright.config.ts` invocations. It was
+blind to `npm run test:e2e` wrappers and missed step 20 — the largest suite. The refuters' count
+of **4** was right. The corrected matcher resolves `npm run <script>` through `app/package.json`;
+it in turn over-matches (`test:e2e` is a prefix of `test:e2e:visual`), so steps 17/21/22 appear as
+false hits in its raw output and were excluded by hand.
