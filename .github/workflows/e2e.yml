@@ -431,8 +431,18 @@ jobs:
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
+        # --output: FOUR steps on this Windows leg invoke playwright.config.ts, and
+        # Playwright DELETES outputDir at the start of every run. Sharing the default
+        # `app/test-results/` therefore means each step destroys the previous step's
+        # traces + error-context.md before the upload at the end of the job. Each
+        # invocation gets its own SUBDIRECTORY of test-results/ so they cannot clobber
+        # one another, and the existing `app/test-results/` upload still collects them
+        # all. MEASURED (both-states): with a shared outputDir a planted marker is gone
+        # after the second run; with sibling subdirectories under one parent it — and
+        # the parent — survive.
         run: >-
           npm run test:e2e --
+          --output=test-results/gui-windows-suite
           confirm-scrim golden-journey overlay-hittest packaged preview installed-app
 
       # WAVE-2b VISUAL + A11Y — Windows ONLY. The visual screenshot baselines are
@@ -536,7 +546,12 @@ jobs:
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
-        run: npx playwright test --config playwright.config.ts transcribe-journey
+        # --output: own subdirectory, so this step does not wipe the packaged-suite
+        # step's artifacts (and is not wiped by add-videos-dialog below). See the
+        # comment on the packaged-suite step.
+        run: >-
+          npx playwright test --config playwright.config.ts
+          --output=test-results/gui-transcribe-journey transcribe-journey
 
       # NATIVE "Add videos" DIALOG (W40) — its own step, after the visual gate.
       #
@@ -574,7 +589,10 @@ jobs:
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
-        run: npx playwright test --config playwright.config.ts add-videos-dialog
+        # --output: own subdirectory — see the packaged-suite step's comment.
+        run: >-
+          npx playwright test --config playwright.config.ts
+          --output=test-results/gui-add-videos-dialog add-videos-dialog
 
       # ── THE INSTALLED BUILD (W-A) + THE COLD PACKAGED PIPELINE (W41) ──────────
       # OPT-IN, WINDOWS-ONLY, workflow_dispatch ONLY (`github.event.inputs` is '' on
@@ -686,7 +704,11 @@ jobs:
           # spec prints the gate phase/detail it timed out on.
           RF_E2E_COLD_TIMEOUT_MS: "1200000"
           RF_E2E_APP_EXE: ${{ steps.install-app.outputs.exe }}
-        run: npx playwright test --config playwright.config.ts installed-app
+        # --output: own subdirectory — see the packaged-suite step's comment. This is
+        # the step that was MEASURED wiping the visual suite's PNGs on run 31445248586.
+        run: >-
+          npx playwright test --config playwright.config.ts
+          --output=test-results/gui-installed-app installed-app
 
       # ALWAYS uninstall — `always()` here and not `!cancelled()`, unlike the two
       # steps above: cleanup must run even on a cancelled run, or the runner is left
@@ -728,6 +750,49 @@ jobs:
           path: app/e2e/visual/**/*-win32.png
           if-no-files-found: warn
           retention-days: 7
+
+      # VISUAL diagnostics, SEPARATE from the general report upload below.
+      #
+      # A screenshot-diff failure is the one class that is useless without the
+      # images. `playwright.visual.config.ts` writes its raw `-expected` / `-actual`
+      # / `-diff` PNGs to `app/test-results-visual/` — a SIBLING of `test-results/`,
+      # so no other config's cleanup can reach it — and NO other step uploads that
+      # path, so without this step the raw named triples never leave the runner.
+      # (The html report under `app/playwright-report/visual/` does ride the upload
+      # below, but it embeds the triple as content-hashed copies under `data/`, not
+      # as the named files.)
+      #
+      # `always()`, matching the "Upload Playwright report" step immediately below.
+      #
+      # CORRECTED before merge. This first shipped as `!cancelled()` "matching the visual gate
+      # step itself", and that reasoning does not transfer. The gate uses `!cancelled()` because
+      # it is a TEST step — do not start work on a cancelled run. An UPLOAD step has the OPPOSITE
+      # requirement: it exists to rescue evidence that is already on disk.
+      #
+      # The cancel is reachable, not theoretical: `:56-58` sets `concurrency: {group:
+      # e2e-${{ github.ref }}, cancel-in-progress: true}`, so a superseding dispatch or cron on
+      # the same ref cancels an in-flight run. The visual gate is step 21 and this upload is step
+      # 29; between them sit steps 23-26, and step 26 carries `RF_E2E_COLD_TIMEOUT_MS: 1200000` —
+      # a twenty-minute window in which a REAL diff sits on disk and a cancel discards it, while
+      # the `always()` neighbour below still fires.
+      #
+      # Blast radius was bounded rather than total (the html reporter's relative `outputFolder`
+      # resolves against the CONFIG directory, so `app/playwright-report/visual/` is a child of
+      # the neighbour's path and survived a cancel; only the raw named -actual/-diff/-expected
+      # triples were lost). Bounded is not a reason to leave a step strictly weaker than the one
+      # beside it, for a stated reason that does not survive scrutiny.
+      - name: Upload VISUAL screenshot-diff diagnostics (actual + diff + html report)
+        if: ${{ always() && runner.os == 'Windows' }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: e2e-gui-visual-diff-${{ matrix.os }}
+          path: |
+            app/test-results-visual/
+            app/playwright-report/visual/
+          if-no-files-found: ignore
+          # Longer than the 7 days the other uploads use: deciding "drift or
+          # regression" on a nightly needs the images to outlive a weekend.
+          retention-days: 14
 
       - name: Upload Playwright report
         if: always()
