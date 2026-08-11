@@ -63,11 +63,17 @@ changed — never the reverse.
   inside a model-name regex in `advisorMeta.test.ts`, i.e. a mention, not a swap).
 
 - **B-roll is not deferred.** `docs/ROADMAP.md` lists B-roll, emoji/SFX triggers and
-  publishing as "deferred from V1"; `PROGRAM.md` makes local auto-B-roll flagship #3
-  and puts emoji-burst + SFX-on-emphasis in the caption engine. docs/ROADMAP.md is stale
-  at v1.2.0 while `app/package.json` is several minor versions ahead of it. (This clause used
-  to pin "1.4.2", which went false the moment #402 bumped the package to 1.5.0 — the argument
-  survived the drift but the literal did not, so it is now version-agnostic.)
+  publishing as "deferred from V1" (`docs/ROADMAP.md:66`); `PROGRAM.md` makes local
+  auto-B-roll flagship #3 and puts emoji-burst + SFX-on-emphasis in the caption engine.
+  Re-measured 2026-08-11: `docs/ROADMAP.md`'s Release-status list still stops at **v1.2.0**
+  while `app/package.json` is **1.5.0** — so the gap is three minors wide (1.2 -> 1.3 -> 1.4
+  -> 1.5), not the two it was when this line was written.
+  (An earlier revision of this line asserted `app/package.json` is 1.4.2. That was true when
+  written and is now REFUTED; the version is a moving figure, so treat the dated measurement
+  as the claim and re-run it rather than reading the number as a standing fact. A first
+  attempt at this correction closed with "not one", which is also REFUTED: the superseded
+  figure 1.4.2 against v1.2.0 is a TWO-minor gap, and no revision of this line ever claimed
+  one.)
 
 ## Two documents were archived, not promoted
 
@@ -100,9 +106,11 @@ It exits non-zero and names each **registered** claim that no longer resolves as
 
 > **SCOPE, corrected — it does NOT check this file.** The earlier wording ("re-checks every
 > load-bearing factual claim behind this reconciliation") was wider than the tool, and the proof
-> was sitting in its own output: it exited 0 (`total=40 as-predicted=40 mismatched=0`) in the very
-> tree where line 68 above asserted `app/package.json` is 1.4.2, twenty lines from its own
-> `P2.11a ... app/package.json version=1.5.0`. The instrument was right; nothing compared the
-> prose against it. A green run here means the 40 REGISTERED claims hold — it says nothing about
-> a literal written in this README. Closing that properly means adding checks that pin this
-> corpus's own literals, which is a follow-up, not a wording change.
+> was sitting in its own output: it exited 0 (`total=40 as-predicted=40 mismatched=0`) in a tree
+> where the B-roll bullet above still asserted `app/package.json` is 1.4.2 — twenty lines from
+> the tool's own `P2.11a ... app/package.json version=1.5.0`. The instrument was right; nothing
+> compared the prose against it. (That bullet has since been re-measured and now carries the
+> dated 1.2.0-vs-1.5.0 gap, so the example is historical — the SCOPE limit it demonstrates is
+> not.) A green run here means the 40 REGISTERED claims hold; it says nothing about a literal
+> written in this README. Closing that properly means adding checks that pin this corpus's own
+> literals, which is a follow-up, not a wording change.

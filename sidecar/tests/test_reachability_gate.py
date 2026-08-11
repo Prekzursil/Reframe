@@ -276,12 +276,56 @@ def test_a_missing_entry_point_fails_on_the_cause_not_the_symptoms(gate: ModuleT
 
 def test_strip_comments_keeps_string_literals(gate: ModuleType) -> None:
     src = "const u = 'https://example.test/x'; // drop me\nconst t = `a/*b*/c`;\n/* multi\nline */ const z = 1;\n"
-    out = gate.strip_comments(src)
+    out, desynced, spans = gate.strip_comments(src)
     assert "https://example.test/x" in out
     assert "a/*b*/c" in out
     assert "drop me" not in out
     assert "multi" not in out
     assert out.count("\n") == src.count("\n"), "line count must be preserved"
+    assert desynced is False
+    # The contents are KEPT (an import specifier is a string literal), so the caller needs the
+    # spans to tell a real import from an `import` written inside a string.
+    assert spans, "string spans must be reported so the caller can reject in-string keywords"
+
+
+def test_an_import_written_inside_a_string_creates_no_edge(gate: ModuleType, tmp_path) -> None:
+    """The phantom-edge hole: a string literal could mint an edge and SILENCE a dead module.
+
+    `const DOC = "import { d } from './dead';"` in any analysed module used to create the edge,
+    which is the one direction this gate must never fail in — a silent pass over dead code.
+    """
+    files = [
+        "app/renderer/src/main.tsx",
+        "app/renderer/src/lib/dead.ts",
+    ]
+    bodies = {
+        # The entry mentions ./lib/dead ONLY inside a string literal.
+        "app/renderer/src/main.tsx": "const DOC = \"import { d } from './lib/dead';\";\nexport const x = DOC;\n",
+        "app/renderer/src/lib/dead.ts": "export const dead = 1;\n",
+    }
+    graph, unresolved = gate.build_graph(files, lambda rel: bodies[rel])
+    assert graph["app/renderer/src/main.tsx"] == set(), "a string literal must not mint an edge"
+    # Control: the SAME specifier as real code does create the edge.
+    bodies["app/renderer/src/main.tsx"] = "import { d } from './lib/dead';\nexport const x = d;\n"
+    graph2, _ = gate.build_graph(files, lambda rel: bodies[rel])
+    assert graph2["app/renderer/src/main.tsx"] == {"app/renderer/src/lib/dead.ts"}
+
+
+def test_a_file_that_ends_inside_a_string_is_reported_rather_than_trusted(gate: ModuleType) -> None:
+    """The desync hole: a bare apostrophe in JSX text opens a string that never closes.
+
+    Every comment after it stops being stripped, so a prose comment naming a real sibling mints
+    an edge. Not fixable by a character walker without a JSX parser (this hook is stdlib-only),
+    so it is DETECTED and the file is refused rather than silently analysed.
+    """
+    files = ["app/renderer/src/main.tsx"]
+    body = "export const A = () => <div>Checking what's ready</div>;\n"
+    _graph, unresolved = gate.build_graph(files, lambda _rel: body)
+    assert any("unterminated string" in u for u in unresolved)
+    # Both-states control: the typographic apostrophe does NOT desync.
+    ok_body = "export const A = () => <div>Checking what’s ready</div>;\n"
+    _g2, unresolved2 = gate.build_graph(files, lambda _rel: ok_body)
+    assert not any("unterminated string" in u for u in unresolved2)
 
 
 def test_non_module_suffixes_are_skipped_rather_than_unresolved(gate: ModuleType) -> None:
@@ -335,7 +379,7 @@ def _renderer_referenced(gate: ModuleType, candidates: set[str]) -> set[str]:
     for path in RENDERER_SRC.rglob("*"):
         if path.suffix not in (".ts", ".tsx") or ".test." in path.name:
             continue
-        text = gate.strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+        text, _desynced, _spans = gate.strip_comments(path.read_text(encoding="utf-8", errors="replace"))
         for name in candidates:
             if f"'{name}'" in text or f'"{name}"' in text or f"`{name}`" in text:
                 seen.add(name)

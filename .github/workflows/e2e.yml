@@ -414,8 +414,19 @@ jobs:
       # legs and has never been observed green there — UNVERIFIED; settling
       # experiment is the next nightly's macOS/Linux logs. It cannot cascade there:
       # every step after those two legs is either Windows-gated or carries always().
+      #
+      # `!cancelled()` added 2026-08-11 for the same reason as the other three Windows
+      # gates. This is the LARGEST of them — confirm-scrim, golden-journey,
+      # overlay-hittest, packaged, preview — and it was bare, so a red in the vitest
+      # DOM step above silently skipped the whole packaged suite. It was missed by
+      # reading the previous audit's prose; a mechanical re-audit of every step's
+      # guard (yaml.safe_load, not eyeballing) is what surfaced it. Accepted
+      # trade-off, and the one the VISUAL gate already accepts: if PACKAGING fails
+      # this now attempts to run and fails a second time, rather than reporting a
+      # clean `skipped` over a suite nobody ran. The leg is red either way and the
+      # packaging error is still the first failure in the log.
       - name: E2E GUI — Playwright Electron (Windows packaged .exe + dev-build pipeline)
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
@@ -502,13 +513,25 @@ jobs:
       # Placed after the visual/a11y gate ON PURPOSE: this is the leg with the most
       # environmental dependencies (an `en-*` SAPI voice on the image, huggingface.co
       # reachable for the 74.6 MB `tiny` snapshot), so if anything here goes red it
-      # must not be able to skip a suite that would otherwise have run. Everything
-      # after this point carries always() or !cancelled(), so a red here suppresses
-      # no artifact.
+      # must not be able to skip a suite that would otherwise have run.
       #
-      # NO always() here: this IS a gate for the nightly, and a red must fail the leg.
+      # CORRECTED 2026-08-11. This comment used to end "Everything after this point
+      # carries always() or !cancelled(), so a red here suppresses no artifact." That
+      # was FALSE when written: the very next step (the W40 gate below) carried
+      # neither, so a red HERE skipped it. Worse, this step itself carried a bare
+      # `if: runner.os == 'Windows'`, which inherits GitHub's implicit success(), so a
+      # red in the VISUAL gate above skipped BOTH. Measured on Actions run
+      # 31445248586: the visual gate failed on one screenshot and steps 25 and 26 —
+      # this step and the W40 gate — both reported `skipped`. The "root fix" the
+      # previous commit claimed had been applied to exactly ONE of the three Windows
+      # test-gate steps.
+      #
+      # `!cancelled()` here does NOT weaken the gate: there is no continue-on-error,
+      # so a red still fails the leg. It only stops an EARLIER red from silently
+      # deciding that this suite never runs. Same argument the visual gate already
+      # makes for itself.
       - name: E2E GUI — Playwright Electron (speech -> transcript -> caption) [Windows only]
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
@@ -518,8 +541,13 @@ jobs:
       # NATIVE "Add videos" DIALOG (W40) — its own step, after the visual gate.
       #
       # Excluded from the shared Windows invocation above (see the detector control
-      # there). Two independent reasons, and neither is the cascade — that is now
-      # handled at the root by `!cancelled()` on the visual gate:
+      # there). Two independent reasons, and neither is the cascade — the cascade is
+      # handled by `!cancelled()` on each of the three Windows test-gate steps (the
+      # visual gate, transcribe-journey above, and this one). CORRECTED 2026-08-11:
+      # this sentence used to say the cascade was "handled at the root by
+      # `!cancelled()` on the visual gate", singular, which was the whole defect —
+      # one of three steps was guarded, so a red in the visual gate skipped the other
+      # two. Measured on run 31445248586, where both showed `skipped`.
       #   * it sorted FIRST of the 8 spec files, so in the shared invocation it ran
       #     ahead of `packaged`, `preview` and the proven `golden-journey`, putting
       #     the newest and least-observed spec in front of the ones the nightly is
@@ -536,9 +564,12 @@ jobs:
       # nothing. Placing it BEFORE transcribe-journey would have made a red here skip
       # that step, which is exactly the trap being closed.
       #
-      # NO always(): this IS the W40 gate for the nightly.
+      # NO always(): this IS the W40 gate for the nightly. `!cancelled()` is not
+      # always() — a red here still fails the leg; it only stops an earlier red from
+      # deciding this gate never runs, which is precisely what happened on run
+      # 31445248586.
       - name: E2E GUI — Playwright Electron (native "Add videos" dialog, W40) [Windows only]
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
