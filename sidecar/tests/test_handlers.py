@@ -389,9 +389,25 @@ def _assert_job_done(ctx: RpcContext, job_id: str) -> None:
     does a one-time warm-up ON THE JOB THREAD, inside exactly the region this
     deadline covers -- 6.096s for the first call vs 0.026s for the second in the
     same process (234x), and 11.39s under the coverage gate, where it is the 3rd
-    slowest test of 7752. A sibling helper still joining at 5s
-    (test_handlers_phase8.py) fails deterministically on that cost when its file
-    runs first.
+    slowest test of 7752.
+
+    REFUTED IN REVIEW -- the sentence here used to read "A sibling helper still
+    joining at 5s (test_handlers_phase8.py) fails deterministically on that cost
+    when its file runs first". Singular, and wrong: THREE helpers do, and running
+    each candidate file ALONE under the gate's real `--cov=media_studio
+    --cov=contract --cov-branch` configuration found the other two --
+    test_handlers_extra.py::_make_track (5.03s call, 1 failed / 48 passed) and
+    test_handlers_captions_export.py::_make_track (5.17s call, 1 failed / 12
+    passed). All three are fixed on this branch; see those two helpers' docstrings.
+    The related residual that guessed "~40 other join(timeout=5) sites ... likely
+    at least one more is [order-dependent]" is also corrected: two independent
+    scans count 107 occurrences across 22 tracked test files, and the four files
+    that residual named all pass alone.
+
+    Latency, not a live red: no pytest-randomly and no pytest-xdist are installed,
+    so collection order is deterministic and single-process, and THIS file sorts
+    before both offenders ('.' 0x2E < '_' 0x5F), absorbing the warm-up for them in
+    a full-gate run. The class was one collection-order change away from live.
     """
     job = ctx.jobs.get(job_id)
     assert job is not None, f"job {job_id} is unknown to the registry"

@@ -27,7 +27,7 @@ import pytest
 from media_studio import handlers
 from media_studio import library as _library
 from media_studio.handlers import Services
-from media_studio.jobs import JobRegistry
+from media_studio.jobs import JobRegistry, JobStatus
 from media_studio.protocol import ErrorCode, RpcContext, RpcError
 
 
@@ -110,9 +110,45 @@ def _add_video(services: Services, video_file: Path) -> str:
 
 
 def _make_track(services: Services, ctx: RpcContext, video_file: Path) -> tuple[str, str]:
+    """Transcribe, then generate a track from the transcript.
+
+    FOUND BY REVIEW, not by this lane's own sweep, and the lane's residual was
+    wrong about it twice over. That residual said "~40 other join(timeout=5) sites
+    exist ... (test_ai_job.py, test_assets.py, test_handlers.py,
+    test_handlers_budget_preflight.py) ... likely (55-80%) at least one more is"
+    order-dependent. MEASURED: there are 107 occurrences across 22 tracked test
+    files (2.7x the guess), all four files it named pass alone, and the two that do
+    NOT were not on its list. This is one of them.
+
+    Reproduced independently, deterministically, running this file ALONE under the
+    gate's real configuration (`--cov=media_studio --cov=contract --cov-branch`,
+    which roughly doubles the warm-up):
+        5.03s call tests/test_handlers_extra.py::test_subtitles_edit_requires_cues_list
+        FAILED ... 1 failed, 48 passed in 31.43s
+    -- the transcribe job below missed the 5s bound, so no transcript was persisted
+    and the failure surfaced downstream as
+    `RpcError: video <id> has no transcript yet (run transcribe.start first)`,
+    naming neither the job nor the timeout. Identical defect class to
+    test_handlers_phase8.py: the FIRST transcribe in a process pays a one-time
+    warm-up ON THE JOB THREAD, inside exactly the window this deadline covers.
+
+    Why it is latent rather than live in CI, stated so nobody reads this as a
+    currently-red gate: neither pytest-randomly nor pytest-xdist is installed, so
+    collection order is deterministic and single-process, and `test_handlers.py`
+    sorts before this file ('.' 0x2E < '_' 0x5F) and absorbs the warm-up. That is
+    the same accidental protection phase8 had -- correctness resting on filename
+    sort order. 60s matches the bound test_handlers.py and phase8 already adopted.
+    """
     vid = _add_video(services, video_file)
-    services.transcribe_start({"videoId": vid}, ctx)
-    ctx.jobs.join(timeout=5)
+    started = services.transcribe_start({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=60)
+    job = ctx.jobs.get(started["jobId"])
+    # join() gives up silently at its deadline, and error/cancel set the same done
+    # event as success, so without this the three are indistinguishable and reach
+    # the caller only as the confusing downstream RpcError quoted above.
+    assert job is not None and job.status is JobStatus.DONE, (
+        f"transcribe job did not finish cleanly: {job and job.status.value} err={job and job.error!r}"
+    )
     track_id = services.subtitles_generate({"videoId": vid}, ctx)["track"]["id"]
     return vid, track_id
 
