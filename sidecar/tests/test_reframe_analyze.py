@@ -504,6 +504,21 @@ class TestSegmentIsReusable:
         # broken key rather than the property under test.
         assert ms.segment_is_reusable(self._row(size_bytes=4096), decision=self._decision(), measured_bytes=4096)
 
+    def test_a_zero_byte_row_over_a_zero_byte_file_is_still_reusable(self):
+        # The ZERO hole, ASSERTED rather than described. segment_is_reusable's docstring
+        # said "ZERO is NOT closed ... reuse is GRANTED" and cited a scratch probe that
+        # no longer exists, so nothing could redden if that stopped being true. MEASURED
+        # over the sidecar suite AS IT STOOD BEFORE this test, by wrapping this function:
+        # 75 calls, and the ONLY granting triple was (4096, 4096, True) x9 — no call ever
+        # had recorded == 0, so a `recorded > 0 and ...` mutant was provably
+        # indistinguishable and the suite stayed GREEN. With this assertion the same
+        # mutant reddens exactly one test: this one. Its health control
+        # is test_a_matching_row_and_size_is_reusable directly above (the 4096 grant);
+        # the deny direction from zero is covered by the two arms below.
+        assert ms.segment_is_reusable(self._row(size_bytes=0), decision=self._decision(), measured_bytes=0)
+        assert not ms.segment_is_reusable(self._row(size_bytes=0), decision=self._decision(), measured_bytes=3)
+        assert not ms.segment_is_reusable(self._row(size_bytes=3), decision=self._decision(), measured_bytes=0)
+
     def test_a_truncated_segment_is_not_reusable(self):
         # THE residual. Same decision, same regions, file still present — but 3
         # bytes instead of the 4096 the manifest published.
@@ -914,6 +929,54 @@ class TestRenderShotPlan:
         _out2, reencoded2 = again.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
         assert reencoded2 == (0,), "the stump must never become the recorded truth"
         assert len(next_runs) == 2, "the re-encode plus the concat"
+
+    def test_a_fresh_rows_size_is_measured_after_the_rename_not_carried(self):
+        # RESIDUAL 4, executed. The persistence half pinned by the test above closes the
+        # laundering window for a REUSED row, whose plan-time-proven size is CARRIED. A
+        # FRESHLY-ENCODED row has no proven size to carry: shot_manifest_payload MEASURES
+        # it, and render_shot_plan runs that write only AFTER the os.replace that
+        # publishes the piece and AFTER the concat pass. A truncation in THAT window
+        # becomes the recorded truth by exactly the mechanism the reused-row fix closed,
+        # so the guarantee "the bad state does not become the recorded truth" holds for a
+        # reused row only. Asserted here so the residual cannot silently stop being true.
+        plan = _plan(_shot(0))
+
+        def render_fresh(manifest_time_size: int) -> str:
+            writes: list[tuple[str, str]] = []
+            probed: list[str] = []
+
+            def size(path: str) -> int | None:
+                probed.append(path)
+                # Probe 1 is the planner, on a clip with no cache and no manifest. Every
+                # later probe is the manifest writer — after the rename and the concat.
+                return None if len(probed) == 1 else manifest_time_size
+
+            eng = _engine(size_fn=size, write_text_fn=lambda p, t: writes.append((p, t)))
+            _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
+            assert reencoded == (0,), "no manifest, so the shot is FRESHLY encoded rather than reused"
+            assert probed == ["out.multispeaker.shot000.mp4"] * 2, "the planner's probe, then the writer's"
+            return writes[0][1]
+
+        def rerender_over(manifest_json: str) -> tuple[tuple[int, ...], int]:
+            runs: list[list[str]] = []
+            eng = _engine(
+                runner=lambda argv, **_kw: runs.append(list(argv)) or 0,
+                read_text_fn=lambda _p: manifest_json,
+                size_fn=lambda _p: 3,  # the 3-byte stump is what is on disk in BOTH arms
+            )
+            _out, reencoded = eng.render_shot_plan("in.mp4", "out.mp4", plan, _trace())
+            return reencoded, len(runs)
+
+        laundered = render_fresh(3)
+        assert json.loads(laundered)["shots"][0]["bytes"] == 3, "the stump IS published as the authoritative size"
+        assert rerender_over(laundered) == ((), 1), "so the next render matches 3, reuses, and concat-copies it"
+        # BOTH-STATES control, same harness: the writer's probe sees an intact file, so
+        # the manifest records 4096, the unchanged 3-byte disk state no longer matches,
+        # and the shot IS re-encoded. Without this the () above could be a harness that
+        # can never re-encode rather than the laundering being real.
+        intact = render_fresh(SEGMENT_BYTES)
+        assert json.loads(intact)["shots"][0]["bytes"] == SEGMENT_BYTES
+        assert rerender_over(intact) == ((0,), 2), "the re-encode plus the concat"
 
     def test_a_shot_manifest_write_failure_is_logged_not_fatal(self):
         # `util.get_logger` sets propagate=False, so caplog cannot see this record —
@@ -1741,6 +1804,59 @@ class TestRenderHandler:
         )
         assert exact.status.value == "done", exact.error
         assert exact.result["affected"] == [], "passing the values analyze was called with is what makes get() hit"
+
+    def test_two_bundles_differing_only_in_the_backend_report_no_affected_shot(self, tmp_path):
+        # REFUTES the SUFFICIENCY of the two clauses LruAnalysisCache.find shipped as
+        # "what is EXECUTABLE". Both hold here and there is still no misreport, because
+        # `affected` diffs PLAN CONTENT and build_bundle never reads diarize_backend: two
+        # entries under the same layout flags carry byte-identical plans, so falling back
+        # to the OTHER entry costs nothing. Clause 3 (the returned bundle's plan must
+        # actually DIFFER) is what the two clauses were missing.
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache()
+        svc, _b = _service(tmp_path, analysis=_two_talker_analysis(concurrent=3), cache=cache)
+        callers = _run(reg, svc.analyze({"videoId": "v", "diarizeBackend": "a"}, _ctx(reg))).result["plan"]
+        _run(reg, svc.analyze({"videoId": "v", "diarizeBackend": "b"}, _ctx(reg)))
+        resident = [(k.allow_split, k.allow_composite, k.diarize_backend) for k in cache._items]
+        assert resident == [(True, True, "a"), (True, True, "b")], "the fixture must cache two backend-only variants"
+        # CLAUSE 1: the key this render BUILDS is (True, True, "x") and no entry holds it.
+        # CLAUSE 2: the most-recently-used entry is "b", not the "a" the plan derives from.
+        assert cache.find("v", ASPECT).plan.to_dict() == callers, "CLAUSE 3 fails here: the two plans are equal"
+        job = _run(reg, svc.render({"videoId": "v", "plan": callers, "diarizeBackend": "x"}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["affected"] == [], "clauses 1+2 are NOT sufficient — equal plans cannot misreport"
+        # The detector control is test_two_bundles_each_non_default_on_a_different_flag_
+        # also_report_one above: identical shape, layout flags instead of the backend, so
+        # the plans DO differ and affected == [0]. Without it this [] could be a harness
+        # that never reports anything.
+
+    def test_the_prescribed_exact_values_still_miss_once_the_callers_entry_is_evicted(self, tmp_path):
+        # REFUTES the prescription LruAnalysisCache.find shipped ("pass the SAME values
+        # reframe.analyze was called with, which is what makes get() hit exactly"). It
+        # holds only while that entry is RESIDENT. Measured at the SHIPPED default bound
+        # rather than max_entries=1, because AnalysisKey carries video_id: the bound is
+        # GLOBAL across clips, so an ordinary session evicts the entry on its own.
+        # The 0- and 3-further arms are the BOTH-STATES controls: same call, same
+        # prescription, cache full in the second, and both report [].
+        def prescribed(further: int) -> list[int]:
+            reg, _ = _registry()
+            cache = ra.LruAnalysisCache()
+            svc, _b = _service(tmp_path, analysis=_two_talker_analysis(concurrent=3), cache=cache)
+            edit = {"videoId": "v", "allowComposite": False, "diarizeBackend": "a"}
+            callers = _run(reg, svc.analyze(dict(edit), _ctx(reg))).result["plan"]
+            for i in range(further):
+                _run(reg, svc.analyze({"videoId": "v", "allowSplit": False, "diarizeBackend": f"b{i}"}, _ctx(reg)))
+            assert len(cache) == min(1 + further, ra.DEFAULT_CACHE_ENTRIES)
+            job = _run(reg, svc.render({**edit, "plan": callers}, _ctx(reg)))
+            assert job.status.value == "done", job.error
+            return job.result["affected"]
+
+        assert ra.DEFAULT_CACHE_ENTRIES == 4, "this test measures the SHIPPED bound, so it must read it"
+        assert prescribed(0) == [], "control: nothing evicted, the prescription works"
+        assert prescribed(ra.DEFAULT_CACHE_ENTRIES - 1) == [], "control: cache FULL, caller's entry still resident"
+        assert prescribed(ra.DEFAULT_CACHE_ENTRIES) == [0], (
+            "one more analysis evicts the caller's own entry, so even the exact values miss and fall back"
+        )
 
     def test_a_non_boolean_render_flag_is_refused(self, tmp_path):
         reg, _ = _registry()

@@ -266,7 +266,7 @@ class LruAnalysisCache:
         (``test_the_layout_flags_select_the_exact_cached_bundle``).
 
         SCOPED 2026-08-11 (third pass) — that three-clause precondition is still wider
-        than the code in one clause and narrower in another. What is EXECUTABLE is two
+        than the code in one clause and narrower in another. What is EXECUTABLE is three
         clauses:
 
         1. the key the CALL BUILDS — ``(video_id, aspect, allowSplit|True,
@@ -274,7 +274,27 @@ class LruAnalysisCache:
            :meth:`ReframeAnalyzeService.render` — is resident under no cache entry, so
            its ``get(key) or find(...)`` falls through to here; AND
         2. the most-recently-USED resident entry for ``(video_id, aspect)`` is not the
-           bundle the caller's plan derives from.
+           bundle the caller's plan derives from; AND
+        3. that entry's PLAN differs from the one the caller's edit derives from.
+
+        REFUTED 2026-08-11 (fourth pass) — clause 3 was MISSING, and clauses 1+2 shipped
+        as "what is EXECUTABLE", i.e. as the trigger. They are NECESSARY and NOT
+        SUFFICIENT. ``affected`` is a diff of PLAN CONTENT
+        (:func:`~media_studio.features.reframe_override.affected_shot_indices` over
+        ``bundle.plan``), not of cache entries, and :func:`build_bundle` never reads
+        ``diarize_backend`` — so two entries under the SAME layout flags and DIFFERENT
+        backends carry byte-identical plans and there is no misreport to have. MEASURED:
+        bundles cached at ``(True, True, "a")`` and ``(True, True, "b")``, the caller
+        rendering ``"a"``'s plan with ``diarizeBackend="x"`` — clause 1 holds (the built
+        key ``(True, True, "x")`` is resident under no entry), clause 2 holds (this
+        method hands back the ``"b"`` entry), the two plans compare EQUAL, and
+        ``affected == []``, which is correct
+        (``test_two_bundles_differing_only_in_the_backend_report_no_affected_shot``).
+        Its detector control is the same shape with the two bundles differing in a
+        LAYOUT flag, where the plans do differ and ``affected == [0]``
+        (``test_two_bundles_each_non_default_on_a_different_flag_also_report_one``).
+        Clause 2 is kept because it IS necessary: it is the entry-identity half that
+        clause 3 then tests for content.
 
         Against the wording above: "**≥2 bundles exist** for this ``(video_id,
         aspect)``" is REFUTED as *necessary*. With ``max_entries=1`` the second analysis
@@ -291,8 +311,28 @@ class LruAnalysisCache:
         (``test_passing_an_identity_value_no_cached_bundle_carries_misreports``).
 
         So the workaround is narrower than "pass the three identity params": pass the
-        SAME values ``reframe.analyze`` was called with, which is what makes :meth:`get`
-        hit exactly. Passing a value no cached bundle carries lands here just the same.
+        SAME values ``reframe.analyze`` was called with AND have that entry still
+        RESIDENT — that PAIR is what makes :meth:`get` hit exactly. Passing a value no
+        cached bundle carries lands here just the same.
+
+        REFUTED 2026-08-11 (fourth pass) — the residency half was missing, and the
+        prescription shipped as unconditional ("pass the SAME values ``reframe.analyze``
+        was called with, which is what makes :meth:`get` hit exactly") thirteen lines
+        under the very eviction scenario that breaks it. Once the caller's own
+        :class:`AnalysisKey` has been evicted, :meth:`get` misses even for the exact
+        values ``analyze`` was called with, this fallback runs, and the misreport is
+        back. NOT a ``max_entries=1`` artifact: :data:`DEFAULT_CACHE_ENTRIES` is 4 and
+        :class:`AnalysisKey` carries ``video_id``, so the bound is GLOBAL across clips
+        and four further analyses in one session evict it. MEASURED at the SHIPPED
+        default with the prescription followed verbatim
+        (``allowComposite=False, diarizeBackend="a"``): 0 further analyses ->
+        ``affected=[]``; 3 further -> ``affected=[]`` (cache full, caller's entry still
+        resident); 4 further -> the caller's entry is evicted and ``affected=[0]``. The
+        first two are the controls, so that ``[0]`` is the eviction and not a probe
+        stuck at one answer
+        (``test_the_prescribed_exact_values_still_miss_once_the_callers_entry_is_evicted``).
+        Under eviction there is NO caller-side workaround at all — only a larger cache
+        or a fresh ``reframe.analyze``.
         """
         for key in reversed(self._items):
             if key.video_id == video_id and key.aspect == aspect:
