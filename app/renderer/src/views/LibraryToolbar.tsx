@@ -56,6 +56,33 @@ export function LibraryToolbar({
   // — displacing the entire list by this strip's box at first paint, and again on
   // every remount of the view. Adversarial review refuted that as a regression; a
   // count of 0 with the listing outstanding is "unknown", not "empty".
+  //
+  // DISCLOSED COST of that disjunct, on a library that resolves EMPTY: `loading`
+  // is unconditionally true while the listing is in flight, so this strip MOUNTS
+  // above the skeleton and then UNMOUNTS when `{videos: []}` lands — a flash of a
+  // live, ENABLED "Search videos" box on a library that has nothing, followed by a
+  // collapse of this strip's own box. Neither behaviour this gate replaced had
+  // that transient: the pre-W54 strip was always mounted, and the `videoCount > 0`
+  // first attempt was never mounted while loading. It is new here, and it is the
+  // reason this paragraph exists.
+  //   - That the DOM sequence OCCURS: almost certain (90-99%) — it is the direct
+  //     reading of this expression, and Library.test.tsx "flashes the toolbar over
+  //     the skeleton before dropping it on an empty library" drives both edges in
+  //     one render and pins them.
+  //   - That it is PERCEPTIBLE, and the magnitude of the collapse: UNVERIFIED.
+  //     It depends on `library.list` latency, and the box is token-driven
+  //     (`--space-4` / `--control-pad-input` / `--type-body-size`,
+  //     components/library-shell.css:87-114), so no figure is asserted here.
+  //     jsdom has neither layout nor real timing, so NO test in this repo's unit
+  //     suite can settle it. Settling experiment: a Playwright `boundingBox()` of
+  //     `.library__empty` sampled across the resolve against a seeded-EMPTY data
+  //     root — a y-shift is the collapse, no y-shift refutes it.
+  //
+  // Kept deliberately. The count is unknowable before the RPC resolves, so no gate
+  // reading only `videoCount`/`loading` can avoid it — the choice is WHICH path
+  // pays. This trades a first-run-only flicker on an empty library against a shift
+  // on EVERY return to a non-empty Library tab (App.tsx renderRoute() remounts the
+  // view with `videos` reset to []), which is by far the commoner path.
   const showFilters = videoCount > 0 || loading;
   const showBatch = selectedCount > 0;
   // Nothing to show -> no strip. `.library-toolbar` carries its own padding

@@ -1281,6 +1281,64 @@ describe('Library first-run honesty + control gating (W53/W54)', () => {
     expect(container.querySelector('.library__empty')).not.toBeNull();
     expect(container.querySelector('.library-toolbar')).toBeNull();
   });
+
+  // The SEQUENCE, which the two tests above only cover as separate halves: the one
+  // above resolves NON-empty so it never reaches the drop, and the one below it
+  // uses `mockResolvedValueOnce` so it never observes the in-flight state. On a
+  // library that resolves EMPTY the W54 gate does BOTH in one render — `loading`
+  // holds the strip up over the skeleton, then `{videos: []}` takes it away. That
+  // transient is new (the pre-W54 strip was always mounted; the `videoCount > 0`
+  // first attempt was never mounted while loading), it is disclosed at the gate
+  // itself (LibraryToolbar.tsx `showFilters`), and it is kept: the count is
+  // unknowable before the RPC resolves, so the only question is which path pays.
+  //
+  // SCOPE: this asserts the DOM sequence ONLY. It cannot assert that the collapse
+  // is VISIBLE, or how large it is — jsdom has no layout engine, which the rect
+  // assertion below MEASURES rather than assumes. Settling experiment for the
+  // perceptibility question: a Playwright boundingBox() of `.library__empty`
+  // sampled across the resolve against a seeded-empty data root.
+  it('flashes the toolbar over the skeleton before dropping it on an empty library', async () => {
+    let settle: (r: { videos: Video[] }) => void = () => {};
+    rpcMock.mockReturnValueOnce(
+      new Promise<{ videos: Video[] }>((resolve) => {
+        settle = resolve;
+      }),
+    );
+    await act(async () => {
+      root.render(<Library onOpen={() => {}} />);
+    });
+
+    // Edge 1 — in flight over what will turn out to be an empty library: skeleton
+    // rows AND a live, ENABLED search box for zero rows. `disabled` is asserted
+    // explicitly because "an enabled control over nothing" is the claim; a merely
+    // present-but-inert box would be a different (milder) transient.
+    expect(container.querySelector('.library__loading')).not.toBeNull();
+    const during = container.querySelector('.library-toolbar') as HTMLElement;
+    expect(during).not.toBeNull();
+    const search = container.querySelector('.library-toolbar__search') as HTMLInputElement;
+    expect(search).not.toBeNull();
+    expect(search.disabled).toBe(false);
+
+    // Detector control for the SCOPE note above: jsdom reports a zero-height box
+    // for a node that is unambiguously present, so "no layout engine here" is
+    // measured, not remembered. A failure here means jsdom grew layout and the
+    // perceptibility question became answerable in-suite — read the note, don't
+    // just delete the line.
+    expect(during.getBoundingClientRect().height).toBe(0);
+
+    await act(async () => {
+      settle({ videos: [] });
+    });
+    await flush();
+
+    // Edge 2 — empty landed: the strip is GONE, not merely re-rendered, and the
+    // first-run poster is what replaces it. Node identity mirrors the
+    // "cannot shift" test above, where the same node surviving is the property.
+    expect(container.querySelector('.library__loading')).toBeNull();
+    expect(container.querySelector('.library__empty')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar')).toBeNull();
+    expect(container.contains(during)).toBe(false);
+  });
 });
 
 describe('Library multi-select + batch actions (v1.5 §4)', () => {
