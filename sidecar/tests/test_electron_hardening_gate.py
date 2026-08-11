@@ -177,3 +177,63 @@ def test_the_safe_direction_of_a_banned_webpref_is_not_flagged(gate: ModuleType,
     fine = "const wp = {\n      webSecurity: true,\n};\n"
     problems = gate.check_webprefs(main_ts, {"app/main/main.ts": main_ts, "app/main/fine.ts": fine})
     assert not problems, problems
+
+
+# --------------------------------------------------------------------------------------------
+# Four holes the wave-4 verifier found in this gate. Each was CLEAN before the 2026-08-11 fix
+# and each is latent-not-live today (one BrowserWindow, all fuses in the right block), but the
+# gate's entire stated value is forward-looking pinning, so a hole here is the whole defect.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_SECOND_browser_window_inverting_the_triple_is_caught(gate: ModuleType, main_ts: str) -> None:
+    """`.search()` read only the FIRST occurrence per key, so a second window was invisible."""
+    second = (
+        "\nconst probe = new BrowserWindow({\n  webPreferences: {\n"
+        "    contextIsolation: false,\n    nodeIntegration: true,\n    sandbox: false,\n"
+        "  },\n});\n"
+    )
+    problems = gate.check_webprefs(main_ts + second, {"app/main/main.ts": main_ts})
+    for key in ("contextIsolation", "nodeIntegration", "sandbox"):
+        assert any(key in p for p in problems), (key, problems)
+
+
+def test_a_banned_webpref_in_its_SECOND_occurrence_is_caught(gate: ModuleType, main_ts: str) -> None:
+    """`webSecurity: true` then `webSecurity: false` used to read CLEAN off the first match."""
+    rogue = "const a = {\n      webSecurity: true,\n};\nconst b = {\n      webSecurity: false,\n};\n"
+    problems = gate.check_webprefs(main_ts, {"app/main/main.ts": main_ts, "app/main/rogue.ts": rogue})
+    assert any("app/main/rogue.ts" in p and "webSecurity" in p for p in problems), problems
+
+
+def test_a_NON_LITERAL_banned_webpref_is_refused_rather_than_ignored(gate: ModuleType, main_ts: str) -> None:
+    """The gate was asymmetric in the UNSAFE direction.
+
+    A non-literal fails closed for the required triple (no match reads as "no longer declares"),
+    but for a banned key no match meant silence — so `webSecurity: isDev ? false : true` passed.
+    A value this gate cannot evaluate must be refused, not exempted.
+    """
+    rogue = "const a = {\n      webSecurity: isDev ? false : true,\n};\n"
+    problems = gate.check_webprefs(main_ts, {"app/main/main.ts": main_ts, "app/main/rogue.ts": rogue})
+    assert any("app/main/rogue.ts" in p and "boolean literal" in p for p in problems), problems
+
+
+def test_fuses_re_homed_under_another_top_level_key_are_caught(gate: ModuleType, yml: str) -> None:
+    """`electronFuses:` membership was never checked — only that the HEADER line existed.
+
+    The fuse lines were then matched anywhere in the file, so moving all eight under a different
+    top-level key left the gate CLEAN over a build that flips zero fuses.
+    """
+    import re as _re
+
+    m = _re.search(r"^electronFuses:[ \t]*$", yml, _re.M)
+    assert m is not None, "no electronFuses: header — the mutation would be vacuous"
+    tail = yml[m.end() :].splitlines(keepends=True)
+    body, rest, ended = [], [], False
+    for line in tail:
+        if not ended and line.strip() and not line[:1].isspace():
+            ended = True
+        (rest if ended else body).append(line)
+    assert any(x.strip() for x in body), "block already empty — the mutation would be vacuous"
+    mutated = yml[: m.end()] + "\n" + "".join(rest) + "\nzzSomeOtherKey:\n" + "".join(body)
+    problems = gate.check_fuses(mutated)
+    assert problems, "an empty electronFuses block with the fuses elsewhere must not pass"
