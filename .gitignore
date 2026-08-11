@@ -9,6 +9,13 @@ app/.vite/
 # never commit. Screenshot BASELINES under e2e/**/-snapshots/ ARE tracked.
 app/playwright-report/
 app/test-results/
+# The VISUAL suite writes its per-test artifacts to a SIBLING directory rather
+# than app/test-results/, because Playwright deletes outputDir at the start of
+# every run and the two configs used to share that one default path — so a later
+# Playwright step in the same CI job destroyed the visual `-actual`/`-diff` PNGs
+# before they could be uploaded (measured on Actions run 31445248586). See the
+# comment on `outputDir` in app/playwright.visual.config.ts.
+app/test-results-visual/
 # Ad-hoc end-to-end scratch outputs (probe scripts + runner datadirs/library.db
 # written under e2e_artifacts/ during manual E2E drives) — regenerable, never commit.
 e2e_artifacts/

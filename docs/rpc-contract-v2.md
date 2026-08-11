@@ -95,6 +95,68 @@ remember to edit in lock-step. That is the definition of drift-prone.
 >   divergence runs — behind vs. ahead of main; only blob inequality was measured.)
 >   So this residual is real, and nothing under `docs/**` guards it. Settling
 >   experiment: re-run that detector after those branches land.
+> - **Independently re-measured at `81a04965` by a second pass that did not write the
+>   numbers above, because the pass that did write them lost its verifier before it
+>   returned a verdict.** Every figure in the table reproduced. Method, so the reading can
+>   be reproduced or refuted rather than trusted: each probe was run against the STORED
+>   BLOB (`git cat-file -p <rev>:<path>`), never the working tree, so a CRLF working copy
+>   cannot move a line count; and each was given a known-present control that had to fire
+>   before a count was believed. Row 4 was taken four mechanically different ways — `\n`
+>   bytes in the blob, `splitlines()` on the decoded blob, `splitlines()` on the working
+>   tree, and `git diff --numstat` against the empty blob — all four agree on `1521`, and
+>   the blob holds zero `CR` bytes. Row 3 was taken three ways (raw substring membership,
+>   backtick-opened span, word boundary) and all three agree on `45`. Row 1's split is
+>   `134` inline literals plus seven names reachable only through `BROLL_METHODS`. Row 5's
+>   two entry lists were counted by regex and again by a line walk between the fences.
+>   Row 2's registrations are all distinct — no name is registered twice.
+> - **The `1235` a refuting reader still sees is not live.** At `fde9d61b` the row-4 cell
+>   did read `1235`, and the paragraph that then claimed "every count above is measured"
+>   left it as unchanged context — a real defect, and the refutation was correct against
+>   that commit. `200de40d` replaced the cell. At `81a04965` the only surviving occurrence
+>   of that literal in this file was inside the REFUTED record that opens *"Two numbers in
+>   the table above were REFUTED by this re-measurement"*, which is where a retired figure
+>   is supposed to live. **REFUTED, and the refuted wording is kept rather than deleted:
+>   this bullet first placed that record "two bullets above" and stated the containment as
+>   if it were current.** Both were wrong on arrival. Counting `^> - ` bullet starts, this
+>   claim is the 8th and the REFUTED record is the 4th — FOUR above, not two — and the very
+>   commit making the claim is what inserted the bullets that pushed it there, so a reader
+>   following the pointer landed on the wrong bullet. It is located by quoting its opening
+>   words now, because a quotation does not move when a line above it does; a position is
+>   exactly the rot this file names as *"a line number in prose rots on the next edit above
+>   it and nothing checks it"*. The containment sentence breaks itself the same way: writing
+>   this bullet takes that literal from one standalone occurrence in the file to three.
+>   Correctly scoped, the fact that holds at every revision is narrower — no LIVE table cell
+>   carries it, and every occurrence sits in prose whose purpose is to retire it.
+> - **The residual detector re-run, and its earlier reading REFUTED — refuted wording kept.**
+>   This bullet first reported that the matcher "was rebuilt from this bullet's own
+>   description" and read **six** hits over `docs/**` at `81a04965` with "exactly the claimed
+>   split — four quotations … and the two in this bullet", closing "the residual is real and
+>   unchanged". Three things in that are wrong. **(a) The prose does not determine a
+>   matcher.** Rebuilding `~?\d{3}` modifying `methods?`/`handlers` and sweeping the allowed
+>   gap yields 0 / 3 / 5 / 7 / 8 / 13 hits at gaps 0 / 1 / 4 / 8 / 12 / 20, and the claimed
+>   membership appears at **no** width: the narrowest gap that reaches
+>   `plans/v1.5/competitor-matrix-2026-08.md` (whose `~150` has two words of separation) also
+>   reaches `rpc-contract-v2-migration.md` and `validation/v15-audit-ledger.md`, which the
+>   split never names. The earlier `10`-before / `6`-after figures are therefore not
+>   reproducible from their own description — and a reading that cannot be reproduced cannot
+>   be refuted either, which is the defect, not the count. **(b) "the two in this bullet" was
+>   false when written** — the two it means live in the bullet quoted above, not in the one
+>   asserting it. **(c) "unchanged" was self-breaking**, because that sentence quoted the
+>   detector's own control string and so added a hit while certifying the total; the older
+>   bullet above disclosed exactly this reflexivity and the re-verification replaced the
+>   disclosure with a denial of it. **Correctly scoped, and pinned so it is reproducible:**
+>   with the exact matcher `(?<![:\d])~?\d{3}(?![\d])[^.\n]{0,8}?(?:methods?|handlers)\b` over
+>   `docs/**` — controlled to fire on all three known-present quotations and to stay silent on
+>   a `path.py:507`-style line citation and on `1521 lines` — `81a04965` reads **seven** hits
+>   across six files, and this commit reads seven as well, because this bullet deliberately
+>   names no counted string. Both LIVE disagreements are still there — but they are NOT both
+>   inside that seven, and that gap IS point (a): `plans/v1.5/flagship-auto-broll.md`'s DRAFT
+>   handler figure is one of the seven at both revisions, while
+>   `plans/v1.5/competitor-matrix-2026-08.md`'s audit-yield figure carries two words of
+>   separation and is only reached once the gap is widened to 12 — a width at which the total
+>   becomes eight and pulls in two files the claimed split never named. **UNVERIFIED that any
+>   of this survives a later edit** — nothing recomputes it; settling experiment: pin this
+>   matcher in `sidecar/tests/test_contract_parity.py`, or stop quoting a count no test owns.
 > - **The pin's cost, disclosed because it lands on other branches:** registering one
 >   new method changes the live count, so any branch that adds a `reg(...)` / `@method`
 >   must also update ONE line here and one in the migration plan, or its own `gate:3`

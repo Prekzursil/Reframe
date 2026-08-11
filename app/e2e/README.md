@@ -117,17 +117,30 @@ one invocation would let its first red silently drop visual + a11y coverage. Thi
 repo has already measured that cascade on run 30612141716. Everything after this
 step carries `always()` or `!cancelled()`, so its own red suppresses no artifact.
 
-**The cascade is now closed at the ROOT as well** (2026-08-11). Every mitigation
-until then was per-spec, which meant each newly added spec had to re-derive the
-reasoning — and the v1.5 lane got it wrong for `add-videos-dialog.spec.ts`, placing
-it in the shared invocation on an argument (*"a spec that cannot fail cannot start
-the cascade"*) that only holds for `installed-app.spec.ts`, which self-skips.
-`add-videos-dialog` **can** fail, and `--list` showed it sorting FIRST of the eight
-spec files, ahead of `packaged`, `preview` and the proven `golden-journey`. So the
-blocking visual/a11y step now carries `!cancelled()`: it still diffs the committed
-baselines and still fails the leg on a mismatch, it simply can no longer be SKIPPED
-because something unrelated went red. `always()` is still withheld, so a cancelled
-run cannot start a screenshot suite.
+**The cascade is closed across all four Windows gate steps** (corrected 2026-08-11).
+Every mitigation before that was per-spec, which meant each newly added spec had to
+re-derive the reasoning — and the v1.5 lane got it wrong for
+`add-videos-dialog.spec.ts`, placing it in the shared invocation on an argument
+(*"a spec that cannot fail cannot start the cascade"*) that only holds for
+`installed-app.spec.ts`, which self-skips. `add-videos-dialog` **can** fail, and
+`--list` showed it sorting FIRST of the eight spec files, ahead of `packaged`,
+`preview` and the proven `golden-journey`.
+
+> **This paragraph previously claimed the cascade was "closed at the ROOT", and that
+> was FALSE when written.** `!cancelled()` had been applied to exactly ONE of the four
+> Windows gate steps — the visual/a11y gate. The shared Playwright suite,
+> transcribe-journey and the new W40 gate all still carried a bare
+> `if: runner.os == 'Windows'`, which inherits GitHub's implicit `success()`.
+> **Measured on Actions run `31445248586`:** the visual gate failed on one screenshot
+> (`workspace-preview.png`) and the speech→caption and W40 steps both reported
+> `skipped` — the exact "one red job hid four bugs" class this section exists to
+> document, reproduced by the fix that claimed to have closed it. All four now carry
+> `!cancelled()`, verified by parsing the workflow and asserting every gate step's
+> guard rather than by reading the diff.
+
+`!cancelled()` is not `always()`: each step still diffs/asserts as before and still
+fails the leg, it simply can no longer be SKIPPED because something unrelated went
+red. `always()` is still withheld, so a cancelled run cannot start a screenshot suite.
 
 `add-videos-dialog` also moved to its own step (after `transcribe-journey`), because
 it launches its own Electron app plus a cold sidecar and needs a 60 s `beforeAll`
@@ -176,7 +189,9 @@ belief into a measurement, because it probes the **install directory's** binary.
 
 ### Refuted claims (2026-08-11 adversarial round) — recorded, not deleted
 
-Four sentences in this harness were wider than their evidence. Each is corrected at
+Five sentences in this harness were wider than their evidence (the count read "Four"
+while enumerating five — corrected 2026-08-11; a self-contradicting count inside the
+section built to record honesty). Each is corrected at
 its source; they are collected here so a reader who remembers the old wording knows
 it was withdrawn rather than quietly edited away.
 
