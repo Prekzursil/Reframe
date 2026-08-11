@@ -87,14 +87,37 @@ Methods registered: `tracks.audio.list` / `tracks.audio.mux` /
 > Two scope limits, stated here because they are deliberate, not omissions:
 >
 > 1. **`replace` / `strip` are offered for a `kind: 'dub'` row only.** For a dub
->    both are pure manifest edits. For an ORIGINAL both re-mux the entire
->    container into a new derived path which the handler **returns but never
->    writes back to the project** (`tracks_audio.py:533-554`, `:578-588`), so the
->    app would keep resolving the untouched source while the manifest row
->    vanished. Making original-track editing real is sidecar work — re-point the
->    project at the derivative — and is NOT done. Settling experiment: call
->    `tracks.audio.strip` on an `original` row, then `library.get` that video and
->    assert its `path` is the returned `-noaud-` derivative; today it is not.
+>    both are pure manifest edits (`tracks_audio.py:528-532`, `:572-577`). For an
+>    ORIGINAL both re-mux the entire container into a new derived **sibling** file
+>    (`_derived_path`, `:477-480` — `<stem>-<suffix>-<epoch><ext>`, never in place;
+>    there is no `os.replace` / `shutil.move` / `.rename` anywhere in the module),
+>    and **the project is never re-pointed at that file**. The gate is justified;
+>    the two handlers differ in exactly one respect and the earlier wording flattened
+>    them:
+>
+>    | handler | derived container | returned to the caller? | project re-pointed? |
+>    |---|---|---|---|
+>    | `strip` ORIGINAL (`:579-588`) | `<stem>-noaud-<epoch>` | **yes** — `:588` returns `{"path": out_path}` | no |
+>    | `replace` ORIGINAL (`:536-554`) | `<stem>-aud-replace-<epoch>` | **no** — `:554` returns `{"audioTrack": fresh}` | no |
+>
+>    > **REFUTED 2026-08-11, kept rather than deleted.** This item, and its three
+>    > sibling copies, said the ORIGINAL branch re-muxes "into a new derived path
+>    > which the handler **returns but never writes back to the project**". That is
+>    > accurate for `strip` and wrong for `replace`, which never returns the derived
+>    > path at all — it writes the container to disk and returns the track row
+>    > (`:554`), leaving the derivative referenced by nothing. So `replace`'s
+>    > ORIGINAL branch is *worse* than the sentence claimed, not better, and the
+>    > dub-only gate stands on stronger ground than the wording it was justified by.
+>    > The user-visible consequence is unchanged for both: the app keeps resolving
+>    > the untouched source while the manifest row is rewritten or dropped.
+>
+>    Making original-track editing real is sidecar work — re-point the project at
+>    the derivative — and is NOT done. Settling experiment, per handler:
+>    (a) call `tracks.audio.strip` on an `original` row, then `library.get` that
+>    video and assert its `path` is the returned `-noaud-` derivative — today it is
+>    not; (b) call `tracks.audio.replace` on an `original` row and assert the
+>    response carries the `-aud-replace-` path at all — today it does not, so the
+>    file can only be found by listing the source's directory.
 > 2. **An imported track's `kind` is fixed to `dub`, never user-selectable.**
 >    `isAiGeneratedAudioTrack` withholds the AI-generated badge for exactly one
 >    value, `original`, so a kind picker would be a switch that turns the
@@ -224,8 +247,20 @@ needed**.
 **This section is a client-wrapper inventory, NOT evidence that anything calls
 these methods** — see the W62 correction under §1 for what was actually reachable
 and what is now. The wrappers below shipped in
-`app/renderer/src/lib/rpc/client.ts`; three of the four `tracksAudio` entries had
-no caller until 2026-08-10.
+`app/renderer/src/lib/rpc/client.ts`.
+
+> **REFUTED 2026-08-11, kept rather than deleted.** This paragraph used to end
+> "three of the four `tracksAudio` entries had no caller until 2026-08-10", which
+> contradicted its own heading two lines above and was wrong on the count.
+> Measured: **all four** `client.tracksAudio` wrappers have zero production
+> callers, and still do — `list` included. Their only callers are
+> `app/renderer/src/lib/rpc.test.ts:456-481`. What DID become reachable on
+> 2026-08-10 is the `tracks.audio.*` **wire surface**, which `features/Dub.tsx`
+> reaches by `bridge.rpc` string dispatch (`:252`, `:391`, `:407`, `:428`), not
+> through these wrappers. Detector control for that zero: the same matcher fires
+> on the known-present test file, so the absence in production is real and not a
+> broken probe. This is not a `tracksAudio` quirk — 67 of the 140 typed wrappers
+> are in the same state; see `docs/wiring/WIRING-TRANSPORTS.md`.
 
 If the canonical client is being extended this round, the T2 methods are:
 

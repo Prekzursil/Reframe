@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 from media_studio import handlers, protocol
 from media_studio.handlers import Services
-from media_studio.jobs import JobRegistry
+from media_studio.jobs import JobRegistry, JobStatus
 from media_studio.protocol import ErrorCode, RpcContext, RpcError
 
 # --------------------------------------------------------------------------- #
@@ -375,8 +375,51 @@ def test_transcribe_and_persist_rejects_unknown_video(services: Services) -> Non
 # --------------------------------------------------------------------------- #
 # subtitles.* (generate/edit/export direct; translate job)
 # --------------------------------------------------------------------------- #
+def _assert_job_done(ctx: RpcContext, job_id: str) -> None:
+    """Prove the job SUCCEEDED instead of inferring it from a downstream side effect.
+
+    ``JobRegistry.join`` returns ``None`` and gives up SILENTLY once its deadline
+    passes (jobs.py:860-864), and ``_finish_error`` / ``_finish_cancelled`` set the
+    SAME ``_done_event`` as ``_finish_done`` (jobs.py:770-811). So a job that timed
+    out, one that raised, and one that was cancelled were all indistinguishable
+    here from one that succeeded -- every one of them reached the caller only as an
+    empty ``cues`` list, an assertion that names neither the job nor the error.
+
+    MEASURED why that window is not theoretical: the FIRST transcribe of a session
+    does a one-time warm-up ON THE JOB THREAD, inside exactly the region this
+    deadline covers -- 6.096s for the first call vs 0.026s for the second in the
+    same process (234x), and 11.39s under the coverage gate, where it is the 3rd
+    slowest test of 7752.
+
+    REFUTED IN REVIEW -- the sentence here used to read "A sibling helper still
+    joining at 5s (test_handlers_phase8.py) fails deterministically on that cost
+    when its file runs first". Singular, and wrong: THREE helpers do, and running
+    each candidate file ALONE under the gate's real `--cov=media_studio
+    --cov=contract --cov-branch` configuration found the other two --
+    test_handlers_extra.py::_make_track (5.03s call, 1 failed / 48 passed) and
+    test_handlers_captions_export.py::_make_track (5.17s call, 1 failed / 12
+    passed). All three are fixed on this branch; see those two helpers' docstrings.
+    The related residual that guessed "~40 other join(timeout=5) sites ... likely
+    at least one more is [order-dependent]" is also corrected: two independent
+    scans count 105 real call sites across 22 tracked test files (a raw line match
+    returns 108; 3 of those are this branch's own docstrings mentioning the pattern), and the four files
+    that residual named all pass alone.
+
+    Latency, not a live red: no pytest-randomly and no pytest-xdist are installed,
+    so collection order is deterministic and single-process, and THIS file sorts
+    before both offenders ('.' 0x2E < '_' 0x5F), absorbing the warm-up for them in
+    a full-gate run. The class was one collection-order change away from live.
+    """
+    job = ctx.jobs.get(job_id)
+    assert job is not None, f"job {job_id} is unknown to the registry"
+    assert job.status is JobStatus.DONE, (
+        f"job {job_id} did not finish cleanly: status={job.status.value} error={job.error!r}"
+        " -- join() gave up silently; widen the deadline or fix the handler"
+    )
+
+
 def _transcribe_sync(services: Services, ctx: RpcContext, vid: str) -> None:
-    services.transcribe_start({"videoId": vid}, ctx)
+    started = services.transcribe_start({"videoId": vid}, ctx)
     # Wait for the (fake-backed, deterministic) transcribe job to COMPLETE rather
     # than racing an arbitrary wall-clock deadline: a fixed 5 s join is fragile
     # under the full --cov suite (coverage instrumentation + GIL contention from
@@ -384,7 +427,14 @@ def _transcribe_sync(services: Services, ctx: RpcContext, vid: str) -> None:
     # is not persisted yet -> captions.cues returns []). A generous bound keeps it
     # CI-safe while removing that timing flake. (The job itself returns in well
     # under a second; this only widens the safety margin.)
+    #
+    # MEASURED: "well under a second" is true only from the SECOND call onward.
+    # The first transcribe of a process pays a one-time warm-up on the job thread
+    # -- 6.096s vs 0.026s for the next one, and 11.39s under the coverage gate.
+    # This helper's first caller is therefore the 3rd slowest test of 7752, which
+    # is why THIS deadline (not the sibling tests') is the one that matters.
     ctx.jobs.join(timeout=60)
+    _assert_job_done(ctx, started["jobId"])
 
 
 def test_subtitles_generate_then_edit_then_export(
