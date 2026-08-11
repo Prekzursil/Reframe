@@ -1808,10 +1808,15 @@ class TestRenderHandler:
     def test_two_bundles_differing_only_in_the_backend_report_no_affected_shot(self, tmp_path):
         # REFUTES the SUFFICIENCY of the two clauses LruAnalysisCache.find shipped as
         # "what is EXECUTABLE". Both hold here and there is still no misreport, because
-        # `affected` diffs PLAN CONTENT and build_bundle never reads diarize_backend: two
-        # entries under the same layout flags carry byte-identical plans, so falling back
-        # to the OTHER entry costs nothing. Clause 3 (the returned bundle's plan must
-        # actually DIFFER) is what the two clauses were missing.
+        # `affected` diffs PLAN CONTENT and build_bundle reads only (analysis, aspect,
+        # allow_split, allow_composite) — the backend reaches a plan ONLY via the analysis
+        # it produced. This service injects ONE analysis for both calls, so the two
+        # bundles' plans are byte-identical and falling back to the other entry costs
+        # nothing. SCOPED: that identical-analysis condition is the point of the witness,
+        # not a claim that two real diarizers would agree (they normally would not). One
+        # witness is enough — a necessary-and-sufficient claim dies to a single case where
+        # the clauses hold and the consequence does not. Clause 3 (the returned bundle's
+        # plan must actually DIFFER) is what the two clauses were missing.
         reg, _ = _registry()
         cache = ra.LruAnalysisCache()
         svc, _b = _service(tmp_path, analysis=_two_talker_analysis(concurrent=3), cache=cache)

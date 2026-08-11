@@ -281,10 +281,22 @@ class LruAnalysisCache:
         as "what is EXECUTABLE", i.e. as the trigger. They are NECESSARY and NOT
         SUFFICIENT. ``affected`` is a diff of PLAN CONTENT
         (:func:`~media_studio.features.reframe_override.affected_shot_indices` over
-        ``bundle.plan``), not of cache entries, and :func:`build_bundle` never reads
-        ``diarize_backend`` — so two entries under the SAME layout flags and DIFFERENT
-        backends carry byte-identical plans and there is no misreport to have. MEASURED:
-        bundles cached at ``(True, True, "a")`` and ``(True, True, "b")``, the caller
+        ``bundle.plan``), not of cache entries, and :func:`build_bundle` reads only
+        ``(analysis, aspect, allow_split, allow_composite)`` — never ``diarize_backend``,
+        which can reach a plan ONLY through the
+        :class:`~media_studio.features.reframe_multispeaker.ShotAnalysis` it produced. So
+        two entries whose ANALYSES AGREE carry byte-identical plans however their backend
+        labels differ, and there is no misreport to have. SCOPED, because the sentence
+        this replaces said "two entries under the SAME layout flags and DIFFERENT backends
+        carry byte-identical plans" full stop, which is wider than the code: two genuinely
+        different production diarizers normally produce DIFFERENT analyses and therefore
+        different plans, so how often this arm is reached in production is UNVERIFIED —
+        the settling experiment is two real diarizer backends over one clip, comparing the
+        plans their bundles carry. The SUFFICIENCY question does not depend on that
+        frequency: one witness where clauses 1+2 both hold and ``affected == []`` refutes
+        them as a trigger, and the witness below is that. MEASURED:
+        bundles cached at ``(True, True, "a")`` and ``(True, True, "b")`` over ONE
+        injected analysis, the caller
         rendering ``"a"``'s plan with ``diarizeBackend="x"`` — clause 1 holds (the built
         key ``(True, True, "x")`` is resident under no entry), clause 2 holds (this
         method hands back the ``"b"`` entry), the two plans compare EQUAL, and
