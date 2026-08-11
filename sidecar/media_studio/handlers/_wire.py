@@ -197,10 +197,26 @@ def _tier_readiness_items(models_present: dict[str, bool], *, offline: bool) -> 
 
     ``ready`` when every member weight is installed; ``needsDownload`` (with an
     ``assets.ensure`` action over the missing, manifest-KNOWN asset names) when a
-    weight is missing online AND at least one is ensurable; ``unavailable`` when a
-    weight is missing but Offline mode is on (download blocked) OR none of the
-    missing weights map to a registered asset yet (B1: emit no un-ensurable name,
-    no false ``ready``).
+    weight is missing online AND at least one is ensurable; ``unavailable`` when
+    none of the missing weights map to a registered asset yet OR Offline mode
+    blocks an otherwise-downloadable one (B1: emit no un-ensurable name, no false
+    ``ready``).
+
+    REASON PRECEDENCE — "not registered" OUTRANKS "offline", the same order
+    ``_capabilities._feature_item`` uses. Both produce ``unavailable``, so only the
+    note differs, but the note is the part the user acts on. Checking ``offline``
+    first was a live defect: :func:`_missing_weights_phrase` ALREADY ends in
+    "(not yet available for download)" when nothing is ensurable, so the offline
+    branch appended a second, contradictory clause and shipped
+    "missing model weights (not yet available for download) (Offline mode blocks
+    downloads)" — one string telling the user both that no download exists and
+    that their Offline setting is what is stopping it. Measured on a DEFAULT cold
+    start with Offline on: every asset behind tier1-multimodal and tier2-vlm is
+    de-registered pre-B4, so ``ensurable`` is always empty and BOTH of those rows
+    always rendered that self-contradiction, in the same ``readiness.summary``
+    payload as the feature rows (``library_ops.py:656`` + ``:664``). The Offline
+    note is narrowed to the case where a real, ensurable asset exists and only
+    connectivity is in the way — not deleted.
     """
     items: list[dict[str, Any]] = []
     for tier_id, label, components in _READINESS_TIERS:
@@ -209,12 +225,12 @@ def _tier_readiness_items(models_present: dict[str, bool], *, offline: bool) -> 
             continue
         ensurable = _missing_tier_assets(components, models_present)
         blocked = _missing_weights_phrase(ensurable)
-        if offline:
+        if not ensurable:
+            items.append(_readiness_item(tier_id, label, "unavailable", blocked, None))
+        elif offline:
             items.append(
                 _readiness_item(tier_id, label, "unavailable", f"{blocked} (Offline mode blocks downloads)", None)
             )
-        elif not ensurable:
-            items.append(_readiness_item(tier_id, label, "unavailable", blocked, None))
         else:
             action = {"kind": "assets.ensure", "assets": ensurable}
             items.append(_readiness_item(tier_id, label, "needsDownload", blocked, action))

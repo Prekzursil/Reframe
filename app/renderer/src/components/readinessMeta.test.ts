@@ -63,6 +63,20 @@ describe('readinessHint', () => {
   it('falls back to "" for an unknown value (defensive)', () => {
     expect(readinessHint('mystery' as ReadinessStatus)).toBe('');
   });
+
+  // A GENERIC hint must not assert a CAUSE. ReadinessBadge.tsx:45 prepends it to the row's own
+  // `blockedBy`, so a guessed cause here is stated about every unavailable row — and for any row
+  // whose real reason is different, it tells the user their Offline setting is to blame when it
+  // is not. Measured on lip-sync: `blockedBy` was clean, and the COMPOSED tooltip still said
+  // "download blocked offline". Pinned per-status rather than as a blanket scan so a legitimate
+  // future mention (e.g. in `needsDownload`, where it IS the cause) is not forbidden.
+  it('the generic unavailable hint asserts no cause', () => {
+    const hint = readinessHint('unavailable' as ReadinessStatus).toLowerCase();
+    expect(hint).not.toContain('offline');
+    expect(hint).not.toContain('download');
+    // Control: the status where a download IS the cause may say so, and does.
+    expect(readinessHint('needsDownload' as ReadinessStatus).toLowerCase()).toContain('download');
+  });
 });
 
 describe('label maps are complete', () => {

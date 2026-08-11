@@ -30,7 +30,23 @@ export const READINESS_HINT: Record<ReadinessStatus, string> = {
   needsDownload: 'Needs a one-time model download before it can run.',
   needsKey: 'Routed to a cloud provider that has no API key yet — add one to enable it.',
   needsConsent: 'Has a key but needs your consent to send data to the cloud provider.',
-  unavailable: 'Not available here (download blocked offline, or no runnable path).',
+  // NO CAUSE HERE, deliberately. This string is GENERIC — it is shown for every `unavailable`
+  // row — and `ReadinessBadge.tsx:45` PREPENDS it to that row's specific `blockedBy`. It used to
+  // read "(download blocked offline, or no runnable path)", which guesses a cause it cannot know
+  // and, for any row whose real reason is something else, tells the user their Offline setting is
+  // to blame when it is not.
+  //
+  // Measured on the lip-sync row, whose own `blockedBy` is clean (probe: contains "offline" ->
+  // False): the COMPOSED tooltip was "Not available here (download blocked offline, or no
+  // runnable path). lip-sync is off in this build and cannot be switched on from the app; ..."
+  // -> contains "offline" -> True. That is the same defect class `tts/_wire.py:200-219` records
+  // itself as having removed (one string telling the user both that no download exists AND that
+  // their Offline setting is stopping it); the fix cleaned the duplication inside `blockedBy`
+  // and this generic prefix put a weaker version straight back.
+  //
+  // A row whose cause really IS a blocked download should say so in its OWN `blockedBy`, where
+  // it is true, rather than have every sibling row assert it. Pinned by readinessMeta.test.ts.
+  unavailable: 'Not available here.',
 };
 
 /** Map a readiness status to its label (unknown -> the raw status, defensive). */
