@@ -204,9 +204,19 @@ def test_newly_declared_keys_are_modeled():
     `silenceTrim` as the probes): the old assertion fired on a COMPLETE migration —
     both sides landed, nothing drifted — so the suite punished exactly the progress
     the contract exists to enable. The half it was really reaching for (store and
-    contract must not disagree) is now enforced, and enforced more widely, by
+    contract must not disagree) is now enforced by
     ``test_declared_settings_defaults_match_the_store`` below, whose RED conditions
     are pinned by ``test_default_parity_rule_goes_red_on_*``.
+
+    REFUTED wording, kept so it is not re-derived: this used to read "enforced, and
+    enforced more widely". Measured against the live registry 2026-08-11 — schema
+    properties 20, ``DEFAULT_SETTINGS`` 22, intersection 14, minus the 2 nested-block
+    exemptions = **12 keys checked**, and ``set(checked) == set(_STATIC_DEFAULT_KEYS)``
+    exactly (symmetric difference empty both ways). The rule's own failure message prints
+    ``(12 keys checked)``. So the replacement is not wider TODAY; it is the same 12 keys
+    obtained by computation instead of enumeration. The forward-looking claim at
+    ``_default_parity_drift`` ("the checked set grows with the tree") is the true one and
+    is where the value actually is.
     """
     props = registry.settings_schema()["properties"]
     missing = [key for key in _NEWLY_DECLARED_KEYS if key not in props]
@@ -225,6 +235,80 @@ def _default_parity_drift(
     nowhere. This walks ``schema.properties ∩ store`` instead, so the checked set
     grows with the tree. ``_STATIC_DEFAULT_KEYS`` is kept as a FLOOR by the caller —
     a computed set that silently shrank to nothing would otherwise pass vacuously.
+
+    That "grows with the tree" claim is forward-looking and is the whole value here; it
+    is NOT a claim that the checked set is wider than the hand list today. Measured
+    2026-08-11: schema properties 20 ∩ store 22 = 14, minus the 2 nested-block
+    exemptions = 12 checked, which is exactly ``set(_STATIC_DEFAULT_KEYS)``.
+
+    THREE RESIDUALS, measured the same day by calling this function against mutated
+    inputs, disclosed here rather than in a footer because each bounds the sentence above.
+    Three FOUND by that probe — the list is not a proof that there are only three, and both
+    2 and 3 below carry the record of having been stated wider than their evidence on the
+    first pass:
+
+    1. It still punishes forward progress, one class narrower than the assertion W38
+       removed. A COMPLETE, correct migration of a THIRD nested block — declared
+       ``{"type": "object"}`` in the schema, materialised in the store, contract default
+       ``None`` = absent — reports drift (measured: ``{'zzNewBlock': (None, {'a': 1})}``)
+       and goes RED until ``_NESTED_BLOCK_KEYS`` is hand-edited to add it. Settling change:
+       exempt by SCHEMA TYPE (``props[key]["type"] == "object"``) instead of by name, which
+       also removes the hand list this drift-check would then be waiting on.
+    2. Nested-block CONTENTS are dropped whole by this function — but the exposure is on
+       the CONTRACT side, and the first version of this residual had it backwards. REFUTED
+       wording AND refuted evidence, both kept rather than deleted: it read "the five
+       sub-properties ... carry the same drift exposure the scalars had before W38", and
+       offered ``DEFAULT_SETTINGS["autosave"]["debounceMs"] = "not-an-int"`` -> ``{}`` as
+       the demonstration. That is the most-caught mutation of the set — measured over the
+       whole suite it goes red in THREE places, starting with
+       ``test_settings_schema_validates_real_get_payload`` (earlier in this module), which
+       calls ``registry.validate_settings_object(DEFAULT_SETTINGS)`` over a schema that
+       REJECTS a string there. The residual's own probe demonstrated a hole that does not
+       exist.
+       Re-measured 2026-08-11 by running the WHOLE sidecar suite once per mutation: the
+       STORE side is guarded too. ``autosave.debounceMs`` -> ``999999``, ``autosave.enabled``
+       -> ``False`` and ``autosave.debounceMs`` DELETED each fail
+       ``test_settings_store.py::test_qol_defaults_present_exact`` +
+       ``::test_qol_keys_round_trip``; ``exportDefaults.nleFps`` -> ``0`` fails
+       ``::test_qol_defaults_present_exact`` + ``::test_export_defaults_exact_acceptance`` +
+       ``::test_autosave_partial_set_round_trips``. Those tests pin both blocks as exact
+       dicts. Control: the same suite with no mutation is all-green, so the reds are the
+       mutations and not the harness.
+       What IS unguarded is CONTRACT-vs-store parity inside a block. ``contract/spec.py``
+       declares ``Autosave.debounceMs = 1500`` / ``ExportDefaults.nleFps = 30`` and
+       ``media_studio.settings_store`` declares the same numbers again, and nothing compares
+       the two copies: the generated schema for a nested block carries sub-property TYPES
+       only, with no ``default`` key at all (measured), and
+       ``registry.settings_defaults()["autosave"]`` is ``None``. Drifting the CONTRACT copy
+       to 2000 leaves this function at ``{}``, the schema byte-identical and
+       ``validate_settings_object`` ACCEPTING, and no test reads those dataclass defaults.
+       Detector control for that reading: the first attempt patched the class attribute
+       only, which a ``@dataclass`` ignores — ``spec.Autosave()`` still read 1500, so that
+       run measured nothing and was discarded; the numbers above come from patching
+       ``__init__.__defaults__``, asserted to have taken effect before anything was read.
+       Settling change: recurse one level into an exempt block and compare the contract
+       sub-field defaults against the store's materialised values.
+    3. The set is an INTERSECTION, so it drops keys in BOTH directions — 14 of the 28-key
+       union, not the 6 first disclosed. REFUTED wording, kept rather than deleted: this
+       residual originally read "a contract-only default is invisible ... Six keys are
+       schema-only today", which quantified ONE side of an intersection while presenting
+       itself as the whole loss. Re-measured 2026-08-11: schema-only = 6
+       (``captionSpeakerLabels``, ``captionStyle``, ``hookTitle``, ``removeFillers``,
+       ``silenceTrim``, ``stabilize``), all six with contract default ``None`` (measured,
+       not assumed) — which is why nothing is wrong on that side right now, and why none of
+       them would be caught if that changed. Store-only = 8, MORE than the six disclosed
+       (``asrVocabulary``, ``brandCaptionTemplate``, ``brandFontFamily``, ``brandLogoPath``,
+       ``consent``, ``providers``, ``routing``, ``savePresets``) — each equally dropped
+       (measured: mutating ``asrVocabulary`` to a sentinel returns ``{}``), and unlike the
+       schema-only six they are not modelled by the contract at all, so
+       ``test_newly_declared_keys_are_modeled`` above polices only the 5 it names by hand.
+       Settling change, one change covering both directions: walk the UNION, treat
+       "declared non-None contract default, absent from the store" as drift, and treat
+       "materialised by the store, declared nowhere in the schema" as unmodelled.
+
+    Detector control for the two ``{}`` readings above: residual 1 shows this same function
+    DOES emit drift on mutated input, and ``test_default_parity_rule_goes_red_on_a_scalar_drift``
+    pins the scalar direction — so the empty results are real holes, not a dead probe.
     """
     props = schema["properties"]
     assert isinstance(props, dict)
