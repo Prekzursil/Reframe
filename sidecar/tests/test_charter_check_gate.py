@@ -38,11 +38,11 @@ coverage number.
 from __future__ import annotations
 
 import importlib.util
-import re
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHARTER_CHECK_PY = REPO_ROOT / ".quality" / "charter_check.py"
@@ -226,10 +226,34 @@ def test_disclosed_residual_never_adds_a_phantom_slug(shape: str, charter_check:
 # invisible: the charter would keep advertising a checker that no longer runs, which is
 # the same charter-stops-meaning-anything failure the rest of this module exists to catch.
 #
-# Parsed structurally for the same reason the W30 fix went structural: a substring search
-# would be satisfied by the several COMMENTS in that file that name these hooks by id.
-PRECOMMIT_HOOK_ID = re.compile(r"^\s+-\s+id:\s*(?P<id>[A-Za-z0-9][\w.-]*)")
-PRECOMMIT_ENTRY = re.compile(r"^\s+entry:\s*(?P<entry>\S.*?)\s*$")
+# Parsed with `yaml.safe_load` — the loader pre-commit itself uses — for the same reason
+# the W30 fix went structural.
+#
+# REFUTED wording, kept so it is not re-derived: this comment first read "a substring search
+# would be satisfied by the several COMMENTS in that file that name these hooks by id".
+# Measured over the real file: exactly ONE comment line names exactly ONE of the three ids
+# (`.pre-commit-config.yaml:79`, "Same reasoning as docs-check above"), and
+# `reachability-check` / `electron-hardening-check` appear in NO comment at all — so "the
+# several COMMENTS", plural both ways, is false. The decision to parse structurally is still
+# right, for a reason that sentence did not give: every hook's own `name:` value repeats its
+# id verbatim (`:72`, `:89`, `:101`), so a substring search for an id is satisfied by the
+# hook's LABEL rather than by its declaration.
+#
+# REFUTED implementation, likewise recorded: the first structural version was a pair of
+# line-positional regexes, and an adversarial review measured it wrong in BOTH directions.
+#   * `entry:` captured the raw remainder of the line INCLUDING a trailing ` #` comment,
+#     while the assertion below is a containment test — so `entry: true  # python
+#     .quality/docs_check.py` was GREEN while pre-commit executed `true`. That is the W30
+#     use-vs-mention defect in the ENTRY position, committed by the fix written to close it
+#     in the ID position (`.quality/docs_check.py:33-37` records the same class).
+#   * `id:` was read positionally, so a hook whose keys were reordered (legal — YAML mapping
+#     keys are unordered) reported as MISSING, a folded `entry: >-` reported its entry as
+#     `">-"`, and a `- id: ghost-check` nested under `args:` registered as a declared hook.
+# `ENTRY_HOLE_VECTORS` (3), `PARSER_FALSE_RED_VECTORS` (2) and the `nested args:` mention
+# vector (1) pin six vectors between them. Measured by swapping this loader back out for
+# the retired regex and re-running: all six go RED against the regex and GREEN against the
+# loader, so they discriminate. The `entry: key` mention vector does NOT — it behaves
+# identically under both — and says so where it is declared.
 
 # hook id -> the script its `entry:` must invoke.
 GATE1_LOCAL_HOOKS = {
@@ -240,67 +264,169 @@ GATE1_LOCAL_HOOKS = {
 
 
 def parse_precommit_hooks(text: str) -> dict[str, str]:
-    """id -> entry, for every hook declared as a real `- id:` sequence item.
+    """id -> entry, for every hook really declared under ``repos[].hooks[]``.
 
     Scope, so this is not read as more: it proves the hook is DECLARED with an entry that
     names the expected script. It does NOT prove pre-commit executes it — `stages:`,
     `always_run`, and the top-level `exclude:` are not modelled here, and no pre-commit
-    process is spawned (this suite is hermetic and offline).
+    process is spawned (this suite is hermetic and offline). A non-string `entry:` (`true`,
+    a list, absent) normalises to `""`, which FAILS the containment assertion below rather
+    than passing it; that is the direction a neutered hook must fall in.
     """
+    document = yaml.safe_load(text)
     hooks: dict[str, str] = {}
-    current: str | None = None
-    for line in text.splitlines():
-        hook = PRECOMMIT_HOOK_ID.match(line)
-        if hook is not None:
-            current = hook.group("id")
-            hooks.setdefault(current, "")
+    if not isinstance(document, dict):
+        return hooks
+    repos = document.get("repos")
+    if not isinstance(repos, list):
+        return hooks
+    for repo in repos:
+        if not isinstance(repo, dict):
             continue
-        entry = PRECOMMIT_ENTRY.match(line)
-        if entry is not None and current is not None:
-            hooks[current] = entry.group("entry")
+        declared = repo.get("hooks")
+        if not isinstance(declared, list):
+            continue
+        for hook in declared:
+            if not isinstance(hook, dict):
+                continue
+            hook_id = hook.get("id")
+            if not isinstance(hook_id, str):
+                continue
+            entry = hook.get("entry")
+            hooks[hook_id] = entry if isinstance(entry, str) else ""
     return hooks
+
+
+def gate1_hook_violations(text: str) -> list[str]:
+    """Exactly the failures the assertion below reports, as data.
+
+    Shared so the both-states controls pin the REAL verdict instead of re-implementing it —
+    a control that drifts from the assertion it guards proves nothing about the assertion.
+    """
+    hooks = parse_precommit_hooks(text)
+    problems = [f"missing hook {hook_id}" for hook_id in sorted(set(GATE1_LOCAL_HOOKS) - set(hooks))]
+    problems += [
+        f"hook {hook_id!r} no longer runs {script} (entry is {hooks[hook_id]!r})"
+        for hook_id, script in sorted(GATE1_LOCAL_HOOKS.items())
+        if hook_id in hooks and script not in hooks[hook_id]
+    ]
+    return problems
 
 
 def test_gate1_local_hook_ids_are_declared_in_precommit_config() -> None:
     """The three stdlib checkers the gate-1 charter row names are really wired."""
-    hooks = parse_precommit_hooks(PRECOMMIT_CONFIG.read_text(encoding="utf-8"))
-    missing = sorted(set(GATE1_LOCAL_HOOKS) - set(hooks))
-    assert not missing, (
-        f"QUALITY-CHARTER.md gate 1 names these, .pre-commit-config.yaml does not declare them: {missing}"
-    )
-    for hook_id, script in GATE1_LOCAL_HOOKS.items():
-        assert script in hooks[hook_id], f"hook {hook_id!r} no longer runs {script} (entry is {hooks[hook_id]!r})"
+    problems = gate1_hook_violations(PRECOMMIT_CONFIG.read_text(encoding="utf-8"))
+    assert not problems, f"QUALITY-CHARTER.md gate 1 names checkers .pre-commit-config.yaml does not run: {problems}"
 
 
 def test_the_hook_id_parser_finds_known_present_ids() -> None:
     """Detector control: the parser must find ids it is known to be pointed at.
 
-    A regex that matched nothing would fail the assertion above as "missing hook" — a
+    A parser that found nothing would fail the assertion above as "missing hook" — a
     loud but WRONG diagnosis, pointing at the config when the probe is what broke. Pin the
     positive case on five unrelated hooks so a parser regression is named as such.
     """
     hooks = parse_precommit_hooks(PRECOMMIT_CONFIG.read_text(encoding="utf-8"))
     assert {"ruff", "ruff-format", "oxlint", "biome-format", "gitleaks"} <= set(hooks), sorted(hooks)
+    assert hooks["docs-check"] == "python .quality/docs_check.py", hooks["docs-check"]
+
+
+# The real `docs-check` entry, and the shapes that neuter the hook while leaving the real
+# command visible in a trailing YAML comment. pre-commit runs the value BEFORE the ` #`;
+# the retired regex captured the whole line, so all three were GREEN.
+REAL_DOCS_ENTRY = "entry: python .quality/docs_check.py"
+ENTRY_HOLE_VECTORS = {
+    "disabled to echo, real command in the comment": (
+        "entry: echo  # python .quality/docs_check.py (disabled, see the tracking issue)"
+    ),
+    "neutered to a no-op, real command in the comment": "entry: true  # python .quality/docs_check.py",
+    "renamed, OLD name left in the comment": "entry: python .quality/docs_check_v2.py  # was .quality/docs_check.py",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(ENTRY_HOLE_VECTORS), ids=sorted(ENTRY_HOLE_VECTORS))
+def test_a_script_named_only_in_a_trailing_comment_is_caught(shape: str) -> None:
+    """Both-states control for the ENTRY half: a MENTION must not satisfy the entry.
+
+    The hook id survives in every shape, so the id half of the assertion stays green; only
+    the command changes. This is the realistic way a gate-1 checker stops running — a rename
+    that leaves the old path in a comment, or a temporary `true`/`echo` that outlives its
+    tracking issue — and it is the shape the retired line-positional parser could not see.
+    """
+    real = PRECOMMIT_CONFIG.read_text(encoding="utf-8")
+    mutated = real.replace(REAL_DOCS_ENTRY, ENTRY_HOLE_VECTORS[shape])
+    assert mutated != real, f"anchor {REAL_DOCS_ENTRY!r} no longer exists in .pre-commit-config.yaml"
+    assert "docs-check" in parse_precommit_hooks(mutated), "the mutation must neuter the entry, not the id"
+    assert gate1_hook_violations(mutated), f"{shape} left the gate GREEN"
+
+
+# Legal rewrites that are the SAME configuration to pre-commit. anchor -> replacement.
+PARSER_FALSE_RED_VECTORS = {
+    "folded block scalar entry": (
+        "entry: python .quality/reachability_check.py",
+        "entry: >-\n          python .quality/reachability_check.py",
+    ),
+    "id: written after entry: in the same hook": (
+        "      - id: docs-check\n"
+        "        name: docs-check (SSOT anti-drift R1-R5)\n"
+        "        entry: python .quality/docs_check.py\n",
+        "      - name: docs-check (SSOT anti-drift R1-R5)\n"
+        "        entry: python .quality/docs_check.py\n"
+        "        id: docs-check\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(PARSER_FALSE_RED_VECTORS), ids=sorted(PARSER_FALSE_RED_VECTORS))
+def test_semantically_identical_yaml_does_not_go_red(shape: str) -> None:
+    """The over-tightening direction: a legal rewrite must not be reported as a broken hook.
+
+    YAML mapping keys are unordered and a folded scalar is just a wrapped string, so both
+    shapes below run exactly what the real file runs. The retired regex reported the first as
+    ``reachability-check no longer runs ... (entry is '>-')`` and the second as ``missing hook
+    docs-check`` — loud, and pointing at the config when the probe was what broke.
+    """
+    anchor, rewrite = PARSER_FALSE_RED_VECTORS[shape]
+    real = PRECOMMIT_CONFIG.read_text(encoding="utf-8")
+    assert anchor in real, f"anchor for {shape} no longer exists in .pre-commit-config.yaml"
+    problems = gate1_hook_violations(real.replace(anchor, rewrite))
+    assert not problems, f"{shape} is the same config to pre-commit, but the parser reports: {problems}"
 
 
 @pytest.mark.parametrize(
-    "mention",
+    ("mention", "entry_owner_mutated"),
     [
-        "      # - id: ghost-check\n",
-        "  # the ghost-check hook was removed, see the tracking issue\n",
-        "        name: ghost-check (a hook NAME is not an id)\n",
-        "        entry: python .quality/ghost_check.py\n",
+        ("      # - id: ghost-check\n", False),
+        ("  # the ghost-check hook was removed, see the tracking issue\n", False),
+        ("        name: ghost-check (a hook NAME is not an id)\n", False),
+        ("        entry: python .quality/ghost_check.py\n", True),
+        ("        args:\n          - --config\n          - id: ghost-check\n", False),
     ],
-    ids=["commented sequence item", "prose comment", "name: key", "entry: key"],
+    ids=["commented sequence item", "prose comment", "name: key", "entry: key", "nested args: sequence item"],
 )
-def test_a_mentioned_hook_id_is_not_a_declared_hook(mention: str) -> None:
+def test_a_mentioned_hook_id_is_not_a_declared_hook(mention: str, entry_owner_mutated: bool) -> None:
     """Both-states control: a MENTION must not satisfy the assertion above.
 
-    This is the W30 defect in its pre-commit form. Each vector below is appended to the
-    real config; none may make `ghost-check` appear as a declared hook.
+    This is the W30 defect in its pre-commit form. Each vector is appended to the real
+    config; none may make `ghost-check` appear as a declared hook.
+
+    The second column exists because the `entry:` vector passed for the WRONG reason: an
+    `entry:` appended at hook-key indentation cannot create a hook, it silently gives the
+    LAST declared hook (`gitleaks`, which declares no `entry:` of its own) that command. So
+    "ghost-check is absent" was a tautology there; asserting the side effect makes it a
+    measurement. Scope of that row, measured and stated so it is not read as more: BOTH the
+    retired regex and this loader reassign `gitleaks` identically, so it pins behaviour and
+    does NOT discriminate between the two parsers. The `args:` vector is the one that does —
+    it is the shape a line-positional parser got wrong in the other direction, registering
+    `ghost-check` as a declared hook.
     """
-    text = PRECOMMIT_CONFIG.read_text(encoding="utf-8") + mention
-    assert "ghost-check" not in parse_precommit_hooks(text)
+    real = PRECOMMIT_CONFIG.read_text(encoding="utf-8")
+    before = parse_precommit_hooks(real)
+    after = parse_precommit_hooks(real + mention)
+    assert "ghost-check" not in after
+    assert sorted(after) == sorted(before), "a mention must not change the DECLARED hook set"
+    mutated = {key for key in after if before[key] != after[key]}
+    assert mutated == ({"gitleaks"} if entry_owner_mutated else set()), mutated
 
 
 def test_removing_a_hook_id_block_is_caught() -> None:

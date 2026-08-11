@@ -98,10 +98,11 @@ tree, and github-actions); that is supply-chain hygiene, not part of the 6-gate 
   packs) does not admit today.
 - **Electron hardening is enforced from the packaging config, and Electronegativity is
   deliberately NOT wired (W66).** `.quality/electron_hardening_check.py` asserts (e1)
-  `electron-builder.yml` declares an `electronFuses:` header line **and** that each of the
-  eight required fuses appears with its required value — ASAR integrity +
-  `onlyLoadAppFromAsar` ON, `NODE_OPTIONS`/`--inspect` OFF, and `runAsNode` pinned **true**
-  because the caption render path spawns the Electron exe as plain Node — and (e2)
+  `electron-builder.yml` declares `asar: true`, a NON-EMPTY top-level `electronFuses:`
+  block, and each of the eight required fuses with its required value **inside that block,
+  at every occurrence** — ASAR integrity + `onlyLoadAppFromAsar` ON, `NODE_OPTIONS`/
+  `--inspect` OFF, and `runAsNode` pinned **true** because the caption render path spawns
+  the Electron exe as plain Node — and (e2)
   `app/main/main.ts` still declares `contextIsolation`/`nodeIntegration`/`sandbox`, with no
   `app/main/**` file re-opening the renderer via `webSecurity: false`. e2 exists because of
   a measured overclaim caught while writing this very note: `app/main/security.test.ts`
@@ -111,20 +112,28 @@ tree, and github-actions); that is supply-chain hygiene, not part of the 6-gate 
   happens on a shared runner is the "green gate that was never seen red" failure this
   charter exists to prevent. Revisit it as a pinned devDependency once someone can run it
   locally first.
-  **Scope of e1, stated so it is not read as more — an earlier wording here said the gate
-  asserts `electron-builder.yml` "declares the whole `electronFuses` block", and that is
-  REFUTED.** Measured 2026-08-11 by mutating the real yml and calling `check_fuses`
-  directly: the gate proves the `electronFuses:` HEADER line exists, then matches each fuse
-  at two-space indentation **anywhere in the file**, reading only the FIRST occurrence. So
-  (a) re-homing all eight fuses under a different top-level key and leaving `electronFuses:`
-  empty is CLEAN, over a build that flips zero fuses, and (b) a second, contradicting
-  `enableEmbeddedAsarIntegrityValidation: false` further down is CLEAN. Both are latent, not
-  live — today every fuse is inside the block, declared once. Detector control for that pair
-  of zeroes: deleting a fuse line outright, and commenting out the header, are each CAUGHT,
-  so the two CLEAN readings are the gate's behaviour and not a broken probe. **This
-  paragraph tightens when PR #409 lands** — it adds block-slicing plus an every-occurrence
-  walk, at which point "declares an `electronFuses:` block containing every key" becomes
-  true and this scope note should be replaced by that sentence.
+  **TWO earlier wordings of the e1 sentence above are REFUTED, recorded rather than
+  deleted.** (1) "declares the whole `electronFuses` block" was written against the
+  pre-#409 gate, which proved only that the HEADER line existed and then matched fuses
+  anywhere in the file, first occurrence only — wider than the code it described.
+  (2) Its replacement, drafted 2026-08-11 against branch base `81a04965`, said the gate
+  asserts a header line **and** the eight fuse values, and stated as measured fact that
+  re-homing all eight fuses under another top-level key with `electronFuses:` left empty
+  was CLEAN, that a second contradicting `enableEmbeddedAsarIntegrityValidation: false`
+  was CLEAN, and that "this paragraph tightens when PR #409 lands". PR #409 had ALREADY
+  merged (`60f1a43e`, 2026-08-11T02:43:13Z — fourteen minutes after that commit), so the
+  wording landed false the moment it was written. Re-measured against `origin/main` by
+  calling `check_fuses` on the real yml plus mutations: BOTH of those mutations are now
+  CAUGHT (`has an EMPTY electronFuses: block — it flips nothing`; `fuse
+  enableEmbeddedAsarIntegrityValidation is false, must be true`), because #409 added
+  `fuses_block()` block-slicing, an explicit empty-block rejection, and a `finditer`
+  every-occurrence walk. Both wordings ALSO omitted the third assertion the checker makes,
+  `asar: true` (`_ASAR_TRUE_RE`, asserted identically at both revisions — mutating it to
+  `false` is CAUGHT before and after). Detector control for the flipped pair: the
+  unmutated yml is CLEAN, and a deleted fuse line and a commented-out header are each
+  CAUGHT, at BOTH revisions — so the difference is the gate change, not a broken probe.
+  Standing lesson, not a to-do: a dated measurement taken against an OPEN PR expires the
+  moment that PR merges. Re-probe `origin/main` before quoting gate behaviour here.
   **What is NOT proven by this gate:** it reads CONFIG, so it proves the fuses are
   *declared*, not that the bits are flipped in a built exe. Settling experiment:
   `npx electron-builder --config ../electron-builder.yml --win`, then
