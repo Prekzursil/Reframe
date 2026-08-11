@@ -575,7 +575,9 @@ export const client = {
    * module-level accessor (`client.ts:99-106`) that a test cannot substitute.
    * Method-reachable and wrapper-reachable are different claims; only the first
    * one holds here. See `docs/wiring/WIRING-TRANSPORTS.md` for the measured
-   * inventory of all five transports and the migration options.
+   * inventory of all seven transports and the migration options. (Was "five" — wrong on the day it
+   * shipped, in the one file this whole exercise exists to de-overclaim. The doc it points at says
+   * seven at :1, :6, :181 and in the table at :186-194.)
    *
    * `replace` and `strip` are offered for a `kind: 'dub'` row ONLY. Both branch on
    * `kind` sidecar-side, and for an ORIGINAL both re-mux the whole container into

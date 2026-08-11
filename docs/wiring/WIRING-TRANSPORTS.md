@@ -1,5 +1,35 @@
 # Renderer to sidecar: the seven RPC transports, measured — and a proposal
 
+> **Status:** ACTIVE
+
+> ## ⚠ FOUR VERIFIER FINDINGS ARE NOT YET APPLIED — read this before citing §4 or §7
+>
+> This document's adversarial verifier returned `mergeable: false`. Two of its six items are fixed
+> (the red `docs_check` gate, and a "five transports" count in `client.ts` that should read seven).
+> **Four are NOT, and they are recorded here rather than left for a reader to trip over.** The
+> orchestrator ran out of session to re-derive them; each names its own settling experiment.
+>
+> 1. **§4's T4 row and note (`:191`, `:200-203`) are WRONG — do not cite them.** The T4 regex
+>    cannot span a TypeScript generic type argument, so `rpc<RevealResult>('library.reveal', …)`
+>    is invisible to it. The row claims 10 sites / 5 files and says app-level T4 is "5 sites in 4
+>    files … all of them `settings.set` or job polling". The verifier measured **32 sites / 11
+>    files** repo-wide, **14 inside this document's own four named files**, with
+>    `features/lineageActionsClient.ts` alone holding 7 — all `library.*`, not settings or polling.
+>    T6 and T7 look right; T4 does not. **Re-run every §4 row with a generic-aware matcher.**
+> 2. **The preamble contradicts §2 about the detectors.** `:10-11` says their "full source is
+>    quoted in §2" and the numbers are reproducible; `:63-65` says they are NOT committed; `:344-345`
+>    says they were deleted before commit. Pick one — §2's version is the true one.
+> 3. **§7's "Enough to re-derive every number above" (`:313`) is too wide.** §7 specifies only the
+>    wrapper-reachability algorithm. The verifier re-derived the reachability numbers from it
+>    exactly and could NOT re-derive any T4-T7 transport row.
+> 4. **§2's slice enumeration (`:46-48`) is incomplete.** It names `savePresets`(4) + `paths`(1) +
+>    `library`(3) = 8 against §1's "+9". The headline 9 is CORRECT; the missing 9th is
+>    `shorts.thumbnail` via `useShortThumbnail.ts` (slice passed at `views/Shorts.tsx:309`), a
+>    receiver §7:334 already names.
+>
+> The **wrapper-reachability numbers (§1, §2, §7) are the ones the verifier re-derived and
+> confirmed** — those are safe to cite. The transport-inventory rows are not.
+
 Measured 2026-08-11 against `81a04965`. This document exists because W62 shipped a
 headline overclaim (`client.ts` asserted "every method here has a REAL caller" directly
 above an object with none) and the investigation found the overclaim was a symptom: the
