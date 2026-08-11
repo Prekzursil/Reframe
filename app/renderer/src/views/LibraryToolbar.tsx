@@ -57,32 +57,81 @@ export function LibraryToolbar({
   // every remount of the view. Adversarial review refuted that as a regression; a
   // count of 0 with the listing outstanding is "unknown", not "empty".
   //
-  // DISCLOSED COST of that disjunct, on a library that resolves EMPTY: `loading`
-  // is unconditionally true while the listing is in flight, so this strip MOUNTS
-  // above the skeleton and then UNMOUNTS when `{videos: []}` lands — a flash of a
-  // live, ENABLED "Search videos" box on a library that has nothing, followed by a
-  // collapse of this strip's own box. Neither behaviour this gate replaced had
-  // that transient: the pre-W54 strip was always mounted, and the `videoCount > 0`
-  // first attempt was never mounted while loading. It is new here, and it is the
-  // reason this paragraph exists.
+  // DISCLOSED COST of that disjunct, whenever the listing TERMINATES with the count
+  // still 0: `loading` is unconditionally true while it is in flight, so this strip
+  // MOUNTS above the skeleton and then UNMOUNTS the moment `loading` goes false with
+  // `videoCount` still 0 — a flash of a live, ENABLED "Search videos" box on a
+  // library that has nothing, followed by a collapse of this strip's own box.
+  //
+  // That covers TWO paths, not one. An empty resolve, and a FAILED listing: the catch
+  // arm sets `error` and leaves `videos` as `[]` (Library.tsx:227-230), so a rejection
+  // reaches the identical `loading=false, videoCount=0` state. The failure path is
+  // strictly worse — the first-run poster is suppressed under an error
+  // (Library.tsx:637-648), so nothing backfills the collapsed box — and it recurs on
+  // every return to the tab for as long as the failure persists. Both are pinned, by
+  // Library.test.tsx "flashes the toolbar over the skeleton before dropping it on an
+  // empty library" and "...on a FAILED listing".
+  //
+  // Only the mount->unmount SEQUENCE is new here. The enabled-over-zero-rows STATE was
+  // already disclosed and deliberately chosen before this change, at
+  // LibraryToolbar.test.tsx:142-161, which gives the reason — library-shell.css defines
+  // no `:disabled` rule for these two controls (its only one is
+  // `.capabilities-chip__toggle:disabled`, :44) so a `disabled` box would look identical
+  // to a live one, i.e. looks-live-but-is-dead — and pins `search.disabled === false` at
+  // :159. `disabled={loading}` would therefore mute the enabled half of this transient
+  // at the price of reversing that merged decision and reddening its test: out of THIS
+  // change's scope, not impossible. Recorded so a future reader knows which half is
+  // still open and that the other one is a choice, not an oversight.
   //   - That the DOM sequence OCCURS: almost certain (90-99%) — it is the direct
-  //     reading of this expression, and Library.test.tsx "flashes the toolbar over
-  //     the skeleton before dropping it on an empty library" drives both edges in
-  //     one render and pins them.
+  //     reading of this expression, and the two Library.test.tsx cases named above
+  //     drive both edges of both paths in one render each and pin them.
   //   - That it is PERCEPTIBLE, and the magnitude of the collapse: UNVERIFIED.
   //     It depends on `library.list` latency, and the box is token-driven
   //     (`--space-4` / `--control-pad-input` / `--type-body-size`,
   //     components/library-shell.css:87-114), so no figure is asserted here.
   //     jsdom has neither layout nor real timing, so NO test in this repo's unit
-  //     suite can settle it. Settling experiment: a Playwright `boundingBox()` of
-  //     `.library__empty` sampled across the resolve against a seeded-EMPTY data
-  //     root — a y-shift is the collapse, no y-shift refutes it.
+  //     suite can settle it. Settling experiment, in Playwright against a
+  //     seeded-EMPTY data root: sample `boundingBox().y` of `.library__loading`
+  //     while the listing is in flight and of `.library__empty` after it resolves.
+  //     Those two are the ARMS OF ONE ternary slot (Library.tsx:615/637/649), so
+  //     they hold the same position in the flow and `y(loading) - y(empty)` IS the
+  //     collapse. The magnitude alone needs a single sample and no diff:
+  //     `boundingBox().height` of `.library-toolbar` while it is still mounted.
+  //     REQUIRED both-states control before either reading is trusted — run the
+  //     probe first with this gate forced to `true` (strip never unmounts) and
+  //     confirm the delta reads 0 THERE; a probe that cannot go non-zero in the
+  //     true state and zero in the false one is measuring nothing.
   //
-  // Kept deliberately. The count is unknowable before the RPC resolves, so no gate
-  // reading only `videoCount`/`loading` can avoid it — the choice is WHICH path
-  // pays. This trades a first-run-only flicker on an empty library against a shift
-  // on EVERY return to a non-empty Library tab (App.tsx renderRoute() remounts the
-  // view with `videos` reset to []), which is by far the commoner path.
+  // Kept deliberately — but NOT because nothing else is possible. `showFilters = true`
+  // (the pre-W54 always-mounted strip) avoids this transient outright. Every escape
+  // reinstates a cost this gate exists to remove: `true` puts an enabled search box
+  // PERMANENTLY over a zero-row library (the W54 defect at :48-51), and `videoCount > 0`
+  // alone reinstates the first-paint shift refuted at :53-58. So no gate reading only
+  // `videoCount`/`loading` can avoid the mount->unmount SEQUENCE *without* one of those
+  // — the count is unknowable before the RPC resolves, and the choice is WHICH path
+  // pays.
+  //
+  // The trade is per-remount on BOTH sides, so the asymmetry is a POPULATION one, not a
+  // frequency one. `renderRoute()` returns <Library> only in the library case
+  // (App.tsx:491, :532-548, called at :598), and Library.tsx:171-172 re-initialises
+  // `videos=[]` / `loading=true` on every mount, so the flicker recurs on every entry
+  // while the library is EMPTY exactly as the shift would recur on every entry once it
+  // is NOT — and batch remove can return a populated library to empty. Kept because
+  // non-empty is the permanent state and empty is the transient one.
+  //
+  // REFUTED WORDINGS, recorded rather than deleted (adversarial review, W5). Each was
+  // wider than its evidence while the code was correct; the scoped versions are above.
+  //   * "on a library that resolves EMPTY" — missed the rejection path.
+  //   * "It is new here" (of the whole transient) — only the sequence is new.
+  //   * "no gate reading only `videoCount`/`loading` can avoid it" — false as an
+  //     unqualified universal; `showFilters = true` avoids it.
+  //   * "a first-run-only flicker" — nothing distinguishes a first mount from a
+  //     remount, so it is per-entry-while-empty, not once.
+  //   * settling experiment "a `boundingBox()` of `.library__empty` across the
+  //     resolve" — structurally incapable, and it would have answered "no y-shift" in
+  //     BOTH states: `.library__empty` does not exist while the listing is in flight,
+  //     so there is no before-sample to diff, and running it would have recorded this
+  //     very disclosure as REFUTED.
   const showFilters = videoCount > 0 || loading;
   const showBatch = selectedCount > 0;
   // Nothing to show -> no strip. `.library-toolbar` carries its own padding
