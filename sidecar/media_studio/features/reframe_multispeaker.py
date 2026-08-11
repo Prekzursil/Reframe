@@ -1662,10 +1662,12 @@ def segment_is_reusable(
     mutating the return to ``recorded > 0 and ...`` was provably indistinguishable on
     every call that suite made — a GREEN mutant by enumeration, not by sampling. That
     same enumeration is the detector control: the nine ``4096`` grants are exactly what
-    a ``recorded != 4096`` mutant would flip, so the harness could see a grant->deny
-    change and simply never saw the zero one. BOTH-STATES on the fix: with the test
-    added, the ``recorded > 0`` mutant reddens it and nothing else
-    (1 failed / 297 passed across this module and ``test_reframe_multispeaker.py``).
+    a ``recorded != 4096`` mutant would flip, and one of them is asserted directly by
+    ``test_a_matching_row_and_size_is_reusable`` — so the harness CAN see a grant->deny
+    change and simply never saw the zero one. BOTH-STATES on the fix: with the new test
+    added, the ``recorded > 0`` mutant reddens it and nothing else — 1 failed / 297
+    passed over ``test_reframe_analyze.py`` + ``test_reframe_multispeaker.py``, the two
+    test modules that reach this function.
 
     HONEST SCOPE: a size match is not a proof of content. A corruption that
     preserves the byte count exactly (an in-place overwrite of the same length)
@@ -2220,11 +2222,13 @@ class MultiSpeakerReframeEngine:
              reports ``reencoded == ()`` with ONE ffmpeg pass (concat only); with the
              writer's probe seeing 4096 the same next render reports ``reencoded == (0,)``
              with TWO passes, so the ``()`` is not a probe stuck at one answer. Pinned by
-             ``test_a_fresh_rows_size_is_measured_after_the_rename_not_carried``. No size
-             check can close it — the measurement and the concat cannot be made
-             simultaneous — so the settling experiment is not a fix but a bound: hash (or
-             re-measure) each piece at the instant :func:`_write_concat` consumes it and
-             compare against what the manifest is about to publish.
+             ``test_a_fresh_rows_size_is_measured_after_the_rename_not_carried``. No
+             post-hoc size check CLOSES it — every probe is itself a check-then-use, so a
+             truncation can always land after the last one — which is why the settling
+             experiment is a NARROWING rather than a fix: hash (or re-measure) each piece
+             at the instant :func:`_write_concat` consumes it and publish THAT, so the
+             recorded size can only ever describe the bytes this render actually
+             concatenated.
 
         Returns ``(out_path, reencoded_shot_indices)``.
         """

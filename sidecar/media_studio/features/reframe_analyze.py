@@ -293,8 +293,11 @@ class LruAnalysisCache:
         Its detector control is the same shape with the two bundles differing in a
         LAYOUT flag, where the plans do differ and ``affected == [0]``
         (``test_two_bundles_each_non_default_on_a_different_flag_also_report_one``).
-        Clause 2 is kept because it IS necessary: it is the entry-identity half that
-        clause 3 then tests for content.
+        Clause 2 is IMPLIED by clause 3 (were the returned entry the caller's own, its
+        plan would be the caller's baseline and clause 3 could not hold), so it carries
+        no independent information and is kept only because it names the MECHANISM —
+        the fallback returning some other entry is how the plans come to differ. Clause
+        1 is independent: it is what makes this method run at all.
 
         Against the wording above: "**≥2 bundles exist** for this ``(video_id,
         aspect)``" is REFUTED as *necessary*. With ``max_entries=1`` the second analysis
