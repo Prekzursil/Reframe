@@ -558,21 +558,33 @@ export const client = {
    * `tracks.audio.*` — the container-level audio-track surface
    * (`sidecar/media_studio/features/tracks_audio.py`).
    *
-   * W62 — every method here has a REAL caller; none is a definition-only wrapper:
-   *   * `list` — `features/Dub.tsx` (the Audio-tracks list, also handed to
-   *     `LipSync`) and `features/ShortMaker.tsx` (the export audio picker).
-   *   * `mux` / `replace` / `strip` — the Audio-tracks section of
-   *     `features/Dub.tsx`: Import an audio track, and per-row Replace audio /
-   *     Remove. Until 2026-08-10 those three were wrapped and never called, so the
-   *     panel was read-only display.
+   * W62 — the `tracks.audio.*` METHODS are user-reachable: `features/Dub.tsx`
+   * calls all four over the preload bridge (`bridge.rpc('tracks.audio.list')` at
+   * `Dub.tsx:252`, `.strip` at `:391`, `.replace` at `:407`, `.mux` at `:428`),
+   * and `features/ShortMaker.tsx:314` calls `list` for the export audio picker.
+   * Before 2026-08-10 only `list` was reached and the panel was read-only display.
+   *
+   * REFUTED, kept so the error is not re-made: this comment previously read
+   * "every method here has a REAL caller; none is a definition-only wrapper".
+   * That was false and it was false about the object it sits on. The four
+   * `client.tracksAudio` WRAPPERS below have ZERO production callers — all four,
+   * `list` included. Their only callers are their own unit test
+   * (`lib/rpc.test.ts:456-481`). Every production site uses `bridge.rpc` string
+   * dispatch instead, because `Dub` takes an INJECTABLE `api` prop
+   * (`Dub.tsx:193-200`) while this module reads `window.api` through a fixed
+   * module-level accessor (`client.ts:99-106`) that a test cannot substitute.
+   * Method-reachable and wrapper-reachable are different claims; only the first
+   * one holds here. See `docs/wiring/WIRING-TRANSPORTS.md` for the measured
+   * inventory of all five transports and the migration options.
    *
    * `replace` and `strip` are offered for a `kind: 'dub'` row ONLY. Both branch on
-   * `kind` sidecar-side, and the ORIGINAL branch re-muxes the whole container into
-   * a derived file that it returns but never writes back to the project
-   * (`tracks_audio.py:533-554` / `:578-588`) — so a UI control bound to it would
-   * drop the manifest row while the app kept resolving the untouched source. See
-   * `Dub.canEditAudioTrack`. These wrappers stay unrestricted: the gate belongs to
-   * the affordance, not the transport.
+   * `kind` sidecar-side, and for an ORIGINAL both re-mux the whole container into
+   * a derived sibling file that the project is never re-pointed at — `strip`
+   * returns that path (`tracks_audio.py:588`) while `replace` does not return it
+   * at all (`:554` returns the track row), so a UI control bound to either would
+   * drop or rewrite the manifest row while the app kept resolving the untouched
+   * source. See `Dub.canEditAudioTrack`. These wrappers stay unrestricted: the
+   * gate belongs to the affordance, not the transport.
    */
   tracksAudio: {
     list: (videoId: string): Promise<{ audioTracks: AudioTrack[] }> =>
