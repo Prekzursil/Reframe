@@ -140,16 +140,39 @@ IMPORT_RE = re.compile(
 )
 
 
-def strip_comments(text: str) -> str:
-    """Blank out `//` and `/* */` comments, leaving string literals intact.
+def strip_comments(text: str) -> tuple[str, bool, list[tuple[int, int]]]:
+    """Blank `//` and `/* */` comments. Returns (text, desynced, string_spans).
 
     A character walker rather than a regex, because the two shapes that matter here
     defeat the regex forms: a `//` inside a string literal (`'https://x'`, and every
     `import ... from './x'` line contains quotes) and a `/* */` spanning lines. Each
     removed character is replaced by a space so byte offsets — and therefore any line
     numbering built on them — do not shift.
+
+    TWO HOLES CLOSED 2026-08-11, both of which could MANUFACTURE a phantom import edge and
+    thereby SILENCE a genuinely dead module (u1 going quiet is the failure that matters —
+    this gate exists because W16-W20 shipped mounted nowhere):
+
+    1. String CONTENTS are preserved verbatim — they must be, because an import specifier IS a
+       string literal — and `IMPORT_RE` then ran over them, so
+       `const DOC = "import { d } from './dead';"` in ANY analysed module created the edge.
+       Blanking the contents is NOT the fix: it deletes every specifier and the walker's own
+       no-edges sanity check fires (measured: `reachable=5`). Instead the walk now also returns
+       the SPANS of every string literal, and the caller drops any `IMPORT_RE` match whose
+       `import`/`require` KEYWORD begins inside one. A real import keeps its keyword in code and
+       only its specifier in a string, so it is unaffected.
+
+    2. The walker treats `'` as a string opener wherever it appears, including in JSX TEXT.
+       `Checking what's ready…` therefore opened a string that never closed, and every
+       comment after it in that file stopped being stripped — so a prose comment naming a
+       real sibling module minted an edge. That is not fixable by a character walker without
+       a JSX parser, and this hook is deliberately stdlib-only with no network, so instead it
+       is now DETECTED: a file whose walk ends inside a string is reported as unanalysable
+       and fails the gate loudly. Fail closed, never silently vouch.
     """
     out: list[str] = []
+    spans: list[tuple[int, int]] = []
+    start = -1
     i, n = 0, len(text)
     quote: str | None = None
     while i < n:
@@ -162,10 +185,12 @@ def strip_comments(text: str) -> str:
                 continue
             if ch == quote:
                 quote = None
+                spans.append((start, i))
             i += 1
             continue
         if ch in "'\"`":
             quote = ch
+            start = i
             out.append(ch)
             i += 1
             continue
@@ -183,7 +208,9 @@ def strip_comments(text: str) -> str:
             continue
         out.append(ch)
         i += 1
-    return "".join(out)
+    if quote is not None:  # unterminated at EOF — record the open span so callers see it
+        spans.append((start, n))
+    return "".join(out), quote is not None, spans
 
 
 def tracked_files(root: Path | None = None) -> list[str]:
@@ -250,9 +277,24 @@ def build_graph(files: list[str], read) -> tuple[dict[str, set[str]], list[str]]
     graph: dict[str, set[str]] = {}
     unresolved: list[str] = []
     for rel in sorted(m for m in modules if not is_test_module(m)):
-        text = strip_comments(read(rel))
+        text, desynced, spans = strip_comments(read(rel))
+        if desynced:
+            # The walk ended inside a string, so every comment after that point was NOT
+            # stripped and this file's import set cannot be trusted — in the direction that
+            # SILENCES a dead module. Refuse to vouch for it rather than analyse it anyway.
+            unresolved.append(
+                f"u4 {rel} ends inside an unterminated string literal — the scanner desynced, "
+                f"so its imports cannot be trusted (a bare apostrophe in JSX text does this; "
+                f"use the typographic ’)"
+            )
         deps: set[str] = set()
         for match in IMPORT_RE.finditer(text):
+            # Hole 1 (see strip_comments): the KEYWORD must be code, not string content.
+            # `const DOC = "import { d } from './dead';"` otherwise minted a real edge and
+            # silenced a genuinely dead module. A true import has its keyword outside any
+            # string and only its specifier inside one, so this never drops a real edge.
+            if any(lo < match.start() < hi for lo, hi in spans):
+                continue
             spec = next(g for g in match.groups() if g)
             if not (spec.startswith(".") or spec.startswith(ALIAS_PREFIX)):
                 continue
