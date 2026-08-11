@@ -49,7 +49,7 @@
 // RPCs now have real user entry points". For gaze that is true end to end; for
 // lip-sync it was WIDER THAN THE EVIDENCE and was refuted in review. What landed
 // here is the first CALLER of `tts.lipsync.start`. It is not an executable path in
-// any stock build, for two independent reasons, both measured:
+// any stock build, for three independent reasons, all measured:
 //
 //   1. THE CONTROL IS DISABLED IN EVERY STOCK BUILD. `canStart` requires
 //      `enabled === true`, `lipSyncEnabled` defaults to `False`
@@ -70,6 +70,21 @@
 //      (`lipsync.py:239-254`, called at `:699`) RAISES inside the job. Wiring that
 //      is the sibling sidecar lane's work — `handlers/composition.py` belongs to
 //      another live lane this wave and is deliberately untouched here.
+//   3. THE RE-LIP ENGINE ENVIRONMENT IS NOT PROVISIONED. Added after review: this
+//      file enumerated reasons 1 and 2 but never named the third gate, which is
+//      the one no amount of wiring fixes. `SubprocessLipSyncBackend.relip`
+//      (`lipsync.py:456-465`) needs the `latentsync-env` environment, and that name
+//      is deliberately NOT a registered manifest asset (`lipsync.py:277-296`), so
+//      `assets.ensure` cannot install it and no install PROFILE can supply it.
+//      Measured: `registry_snapshot()` does not contain it, while `chatterbox-env`
+//      — the same `kind=env` category — IS registered, so the absence is a real gap
+//      and not a category limitation. Consequence for the ORDER of the remaining
+//      work: wiring the face-box probe (reason 2) first would only move the raise
+//      from gate 2 to gate 3. The env must be provisioned first, and even then the
+//      probe is still required. The sidecar surfaces this in `readiness.summary` as
+//      a `lipsync` capability row that is `hard_blocked` — permanently
+//      `unavailable`, never `ready`, precisely so provisioning the env alone cannot
+//      make anything claim the feature works.
 //
 // So: correctly scoped, W20 adds the call site, the four fail-closed gates and the
 // disclosure; it does NOT make lip-sync runnable. Do not read "reachable" as

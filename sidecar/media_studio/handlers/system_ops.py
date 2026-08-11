@@ -562,8 +562,10 @@ def _installed_asset_names(self: Services, settings: dict[str, Any]) -> set[str]
     """The set of installed WU-C2 capability assets (read-only probe).
 
     Resolves installed-state for exactly the ``_capabilities.capability_asset_names``
-    set (the reframe tracker + the on-demand saliency/scene weights) so
-    ``readiness.summary`` can roll the feature-capability family up. A de-registered
+    set (the reframe tracker, the on-demand saliency/scene weights, and the re-lip
+    env) so ``readiness.summary`` can roll the feature-capability family up. A
+    hard-blocked feature's asset is probed like any other and simply never changes
+    its row — the flag, not the probe, is what keeps it unavailable. A de-registered
     capability asset is skipped (never probed); fail-open per asset. Read-only: it
     only asks ``installed_path`` (an ``is_file`` check), so it NEVER creates the data
     dir — the read-only summary invariant holds.

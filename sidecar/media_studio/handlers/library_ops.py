@@ -655,9 +655,11 @@ def readiness_summary(self: Services, params: dict[str, Any], ctx: RpcContext) -
     providers = self.providers_list(params, ctx)["providers"]
     items = _tier_readiness_items(models_present, offline=offline)
     items.extend(_function_readiness_items(settings, providers))
-    # WU-C2: the per-feature capability family (reframe invariant + the on-demand
-    # saliency/scene enhancements) rides the SAME roll-up so each feature's
-    # point-of-use "Needs download -> [button]" state renders through the existing
-    # ReadinessRollup without a parallel readiness system.
+    # WU-C2: the per-feature capability family (the reframe invariant, the on-demand
+    # saliency/scene enhancements, and the hard-blocked lipsync row) rides the SAME
+    # roll-up so each feature's point-of-use "Needs download -> [button]" state
+    # renders through the existing ReadinessRollup without a parallel readiness
+    # system. Both families land in ONE ``items`` array, so they must agree on
+    # reason precedence — see ``_feature_item`` / ``_tier_readiness_items``.
     items.extend(_capabilities.feature_readiness_items(self._installed_asset_names(settings), offline=offline))
     return {"items": items}
