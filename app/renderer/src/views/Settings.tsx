@@ -9,11 +9,16 @@
 // strip, the active-panel switch, and the a11y wiring all derive from that array,
 // so a new section needs no edits to the switch logic.
 //
-// Sub-sections this WU:
-//   * models    — the existing Phase-8 "Models & System" panel (lazy),
-//   * providers — NEW "Providers & Keys" placeholder (real empty-state; later
-//                 WUs wire components/ProviderKeyRow + AddKeyRow here),
-//   * health    — the existing app-global System Health diagnostic screen.
+// `SETTINGS_SECTIONS` is therefore the SSOT for which sub-sections exist; read it,
+// not a list here. This header used to carry its own three-entry list describing
+// `providers` as a "NEW placeholder (real empty-state; later WUs wire
+// components/ProviderKeyRow + AddKeyRow here)". By then the array held EIGHT
+// sections and the wiring was DONE — <ProvidersKeys> is imported and rendered
+// below, and ProvidersKeys.tsx / ProviderKeyRow.tsx / AddKeyRow.tsx all exist. A
+// false "this is a stub" disclosure is worse than a stale one: it tells a reader a
+// shipped feature is unbuilt, so the next WU either rebuilds it or skips reviewing
+// it. The list is gone rather than corrected, because a duplicated enumeration next
+// to its own source is what produced the false claim in the first place.
 import React, {
   Suspense,
   lazy,
@@ -223,7 +228,7 @@ export interface SettingsProps {
   initialSection?: string;
 }
 
-/** The Settings view: a sub-tabbed area over Models, Providers, and Health. */
+/** The Settings view: a sub-tabbed area over every `SETTINGS_SECTIONS` entry. */
 export function Settings({ initialSection }: SettingsProps): React.ReactElement {
   const known = SETTINGS_SECTIONS.some((s) => s.id === initialSection);
   const [active, setActive] = useState(

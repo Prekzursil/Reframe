@@ -63,7 +63,10 @@ lookup once a proxy exists), and it makes proxy pickup automatic — after a
 `mstream://media/<id>` URL transparently streams the cached proxy. The UI only
 needs to reload the video element (set `src` again or call `load()`).
 
-## 2. `sidecar/media_studio/handlers.py` — register the A2 methods
+## 2. `sidecar/media_studio/handlers/composition.py` — register the A2 methods
+
+> **Path corrected** — `handlers.py` was deleted in `c12400c4`; `register_all` now
+> lives in `handlers/composition.py`. See the note in `docs/wiring/WIRING-T1.md` §1.
 
 In the imports block:
 
@@ -95,7 +98,13 @@ proxies cache at `%APPDATA%/media-studio/proxies` (same
 module enters any job body (A6 lesson 1 checked: nothing to add to
 `_preimport_native_modules`).
 
-## 4. `app/renderer/src/lib/rpc.ts` — optional typed surface
+## 4. `app/renderer/src/lib/rpc/schemas.ts` — optional typed surface
+
+> **Path corrected** — `lib/rpc.ts` was split into `lib/rpc/client.ts` (runtime +
+> `client`) and `lib/rpc/schemas.ts` (the §3 data interfaces). The block below is an
+> `export interface` plus comments, so it belongs in `schemas.ts`; the `client.media.*`
+> wrappers that call these methods live in `client.ts`. See
+> `docs/wiring/WIRING-T1.md` §2.
 
 If the typed client mirrors methods, add:
 

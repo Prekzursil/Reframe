@@ -13,7 +13,7 @@ Synthesized from: 15-agent audit + competitor redo + live visual audit. Owner gr
 ## Waves (execution order)
 
 ### Wave 0 — De-risk foundation (keystone-first)
-- **Schema-first generated RPC contract + typed `Settings`** (retires the 123-method hand-mirror, stale CONTRACTS.md, key-injection allowlist, untyped-settings silent-no-op — one source of truth both sides generate from).
+- **Schema-first generated RPC contract + typed `Settings`** (retires the hand-mirrored method surface, stale CONTRACTS.md, key-injection allowlist, untyped-settings silent-no-op — one source of truth both sides generate from). *The surface size deliberately is NOT stated here: this line said `123-method` until 2026-08-11, which was 73% of the real count and is the exact literal Wave 0's own eng-day estimate was mis-sized from. It is measured and test-pinned in `docs/rpc-contract-v2.md` §1; read it there.*
 - Sidecar-crash → terminal job event (no more forever-spinning job UI).
 - Real cancel + process-tree teardown (Popen+should_cancel on reframe; Job Object/taskkill /T).
 - Extend osv gate to torch/GPU/chatterbox lockfiles + unify torch → 2.11.
