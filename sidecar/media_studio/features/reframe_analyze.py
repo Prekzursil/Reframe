@@ -64,13 +64,15 @@ golden run on real footage.
   list and that docstring; it is restored here so it cannot silently vanish again.
 * An on-disk :class:`AnalysisStore` is still the DECLARED-OPTIONAL half of WU-E2, so
   a sidecar restart loses the cache and the next ``reframe.render`` refuses loudly.
-* ``app/renderer/src/features/ReframeCorrect.tsx:19-21`` states that "the registered
-  reframe surface really is exactly four methods
-  (``sidecar/tests/test_handlers_rpc_surface.py:118-121``)". After this WU the
-  surface is SIX and that citation's line range moved. This lane is sidecar-only and
-  correctly must not edit ``app/``, so this is a HAND-OFF for the lane that owns the
-  renderer, not a defect here. It is a ``//`` comment, so no false statement reaches
-  the UI.
+* ~~``ReframeCorrect.tsx`` still claims the reframe surface is "exactly four methods"~~ —
+  **CLOSED by db61ea6e (2026-08-10), before this lane's base.** Removed rather than left
+  standing, because the bullet was FALSE and advertised a hand-off that does not exist:
+  ``ReframeCorrect.tsx:20-29`` now says the opposite ("That is now FALSE and is retracted in
+  turn"), enumerates the SIX names, and has already dropped the ``:118-121`` range — citing
+  the file rather than a range, for exactly this reason. ``merge-base --is-ancestor`` puts
+  db61ea6e before 81a04965, so nothing here was ever outstanding. Recorded rather than
+  silently deleted: the bullet was inherited, not written by this lane, but this lane rewrote
+  bullet 1 of the same list and left this one false, which is squarely its remit.
 * The layout flags reach a trace only through ``reframe.analyze``; the shipped
   ``shortmaker`` export path still cannot honour them (see
   :func:`~media_studio.features.reframe_multispeaker.build_trace`).
