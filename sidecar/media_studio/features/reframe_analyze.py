@@ -57,6 +57,19 @@ golden run on real footage.
   ``test_omitting_the_flags_can_report_an_unedited_shot``, a name that greps to ZERO
   hits — and it re-asserted, in the citation itself, the very "omitting the flags"
   precondition the line above had just narrowed away from.
+  COMPLETED 2026-08-11 — this bullet disclosed only the OVER-report direction ("names a
+  shot the caller did not edit"). The symmetric UNDER-report — ``affected`` MISSING a shot
+  the caller did edit, reachable the same way when the fallback lands on a bundle whose
+  plan already carries the caller's edit — went undisclosed, so a reader could take the
+  set as a lower bound. It is not; it is neither bound. The "never wrong pixels" half
+  holds in BOTH directions, and that is measured rather than argued: after ``affected`` is
+  computed in :meth:`ReframeAnalyzeService.render` it is referenced at exactly two sites —
+  a progress STRING (``f"re-rendering {len(affected)} changed shot(s)"``) and the reported
+  METADATA (``{"affected": list(affected)}``). The engine call receives ``affected_only``,
+  a **bool**, never the set, so :meth:`MultiSpeakerReframeEngine.render_shot_plan` cannot
+  be steered by a wrong set in either direction; it decides reuse from the on-disk
+  manifest. So both directions cost a wrong count and a wrong reported field, never wrong
+  output — a completeness gap in this disclosure, not an overclaim in the code.
 * ``reframe.render`` runs NO availability / offline gate. Reviewed 2026-08-10 and
   kept: it loads no model and reaches no network, so neither gate has anything to
   check — the reasoning and the settling experiment are on :meth:`ReframeAnalyzeService.render`.
@@ -629,9 +642,20 @@ class ReframeAnalyzeService:
         wraps ANY runner exception in :class:`~media_studio.features.reframe_multispeaker.MultiSpeakerRenderError`,
         which the job layer surfaces as a failed job rather than a crash. (Cited by
         SYMBOL: this sentence carried ``reframe_multispeaker.py:2204-2211``, correct at
-        ``origin/main`` and INVALIDATED by the ~140-line insertion the same commit made
+        ``fe4b0a8b`` and INVALIDATED by the ~140-line insertion the same commit made
         earlier in that file — the range now lands in unrelated code. A same-file line
-        range is the one citation form this programme has already broken twice.)
+        range is the one citation form this programme has already broken twice.
+        CORRECTED 2026-08-11 — this parenthetical anchored that claim to ``origin/main``,
+        a MOVING ref, so the sentence warning against a fragile citation form used one
+        itself. A ref that advances cannot preserve a statement about a fixed past state,
+        and it had already stopped being true. Re-measured from the STORED BLOB at four
+        revisions (``git cat-file -p <rev>:<path>``, never the worktree), the enclosing
+        symbol at :2204 is ``_run_pass`` at ``fe4b0a8b`` — the intended target, and the
+        lines there are exactly the ``raise MultiSpeakerRenderError`` wrapping this
+        sentence describes — but ``_write_shot_manifest`` at ``origin/main`` and
+        ``render_shot_plan`` at both ``654f049d`` and HEAD. Three different wrong symbols
+        across four revisions: the range has been wrong in four distinct ways, which is
+        the measured EVIDENCE for citing by symbol rather than a restatement of it.)
         UNVERIFIED at the UX level — whether that message names ffmpeg clearly enough
         for a user to act on is not measured here; the settling experiment is a render
         with ffmpeg renamed away, asserting on the job's error text.
