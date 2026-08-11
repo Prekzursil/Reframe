@@ -224,8 +224,16 @@ caption-style presets with visual `Aa` previews.
 > scope that yields the stated pair is the literal one written above — every tracked `.ts`/`.tsx`
 > under `app/` with `.test.` excluded, which keeps `app/e2e/*.spec.ts` and `app/vitest.config.ts`
 > in. Enumerated glob-free (`git ls-tree -r` + `git cat-file --batch`, filtering in code) rather
-> than by pathspec, because `git grep -- 'app/**/*.ts'` silently misses `app/vitest.config.ts` and
-> reads 21 instead of 25 — a glob artifact that would have looked like a doc defect. Measured:
+> than by pathspec, because `git grep -- 'app/**/*.ts'` silently drops `app/vitest.config.ts` and
+> reads **23** instead of 25 — git pathspec needs `:(glob)` magic for `**`, and
+> `:(glob)app/**/*.ts` does read 25. (**REFUTED, kept: this sentence first said "reads 21".** It
+> paired a one-file cause with a three-file number — 21 comes only from `app/main/*.ts`, which
+> additionally drops `app/e2e/preview.spec.ts` and `app/e2e/visual/_visualSetup.ts`, two files
+> the scope sentence above explicitly keeps IN. `app/vitest.config.ts` holds 2 occurrences, so
+> the route it does drop reads 25 − 2 = 23. That is verbatim the failure this paragraph refutes
+> above — "a pair stitched from two scopes is a detector failure, not a control" — committed
+> inside the sentence certifying that the fix for it reproduces. The verdict figures are
+> untouched: 0 / 3 / 3 and 25 / 25 / 25 both reproduce.) Measured:
 > matcher 0 / 3 / 3 occurrences and `BrowserWindow` 25 / 25 / 25 across `5d99bd2e^` / `5d99bd2e` /
 > HEAD. The both-states property therefore holds, and the known-present control is flat across all
 > three revisions, which is the property that proves the file walk did not change under it.
