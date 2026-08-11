@@ -23,7 +23,7 @@ import pytest
 from media_studio import library as _library
 from media_studio.features import shorts as _shorts
 from media_studio.handlers import Services
-from media_studio.jobs import JobRegistry
+from media_studio.jobs import JobRegistry, JobStatus
 from media_studio.protocol import ErrorCode, RpcContext, RpcError
 
 
@@ -100,9 +100,34 @@ def _add_video(services: Services, video_file: Path) -> str:
 
 
 def _make_track(services: Services, ctx: RpcContext, video_file: Path) -> tuple[str, str]:
+    """Transcribe, then generate a track from the transcript.
+
+    The SECOND file found by review to carry the same first-caller-pays defect as
+    test_handlers_phase8.py (see test_handlers_extra.py::_make_track for the full
+    write-up and the corrected population count -- 107 sites across 22 files, not
+    the "~40 across 4" this lane's residual guessed).
+
+    Reproduced independently on a LOADED box, running this file ALONE under the
+    gate's real configuration (`--cov=media_studio --cov=contract --cov-branch`):
+        5.17s call tests/test_handlers_captions_export.py::test_translate_bilingual_adds_stacked_track
+        FAILED ... 1 failed, 12 passed in 36.90s
+    The 5s bound below expired before the one-time transcribe warm-up finished, so
+    nothing was persisted and the failure surfaced downstream as
+    `RpcError: video <id> has no transcript yet (run transcribe.start first)`.
+
+    Latent, not live, for the same reason as the sibling: collection order is
+    deterministic (no pytest-randomly, no pytest-xdist) and test_handlers.py sorts
+    first and absorbs the warm-up. Correctness must not rest on filename sort order.
+    """
     vid = _add_video(services, video_file)
-    services.transcribe_start({"videoId": vid}, ctx)
-    ctx.jobs.join(timeout=5)
+    started = services.transcribe_start({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=60)
+    job = ctx.jobs.get(started["jobId"])
+    # join() gives up silently at its deadline, and error/cancel set the same done
+    # event as success, so without this the three are indistinguishable.
+    assert job is not None and job.status is JobStatus.DONE, (
+        f"transcribe job did not finish cleanly: {job and job.status.value} err={job and job.error!r}"
+    )
     track_id = services.subtitles_generate({"videoId": vid}, ctx)["track"]["id"]
     return vid, track_id
 

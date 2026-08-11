@@ -1281,6 +1281,130 @@ describe('Library first-run honesty + control gating (W53/W54)', () => {
     expect(container.querySelector('.library__empty')).not.toBeNull();
     expect(container.querySelector('.library-toolbar')).toBeNull();
   });
+
+  // The SEQUENCE, which the two tests above only cover as separate halves: the one
+  // above resolves NON-empty so it never reaches the drop, and the one below it
+  // uses `mockResolvedValueOnce` so it never observes the in-flight state. On a
+  // library that resolves EMPTY the W54 gate does BOTH in one render — `loading`
+  // holds the strip up over the skeleton, then `{videos: []}` takes it away. That
+  // SEQUENCE is new (the pre-W54 strip was always mounted; the `videoCount > 0`
+  // first attempt was never mounted while loading), it is disclosed at the gate
+  // itself (LibraryToolbar.tsx `showFilters`), and it is kept: the count is
+  // unknowable before the RPC resolves, so the only question is which path pays.
+  //
+  // SCOPE: this asserts the DOM sequence ONLY, on the EMPTY-RESOLVE path. It cannot
+  // assert that the collapse is VISIBLE, or how large it is — jsdom has no layout
+  // engine, which the rect assertion below MEASURES rather than assumes. The gate
+  // also fires on a FAILED listing; that is the separate case below, because the
+  // earlier scoping of this transient to "a library that resolves EMPTY" was refuted
+  // as too narrow. Settling experiment for the perceptibility question: sample
+  // boundingBox().y of `.library__loading` in flight vs `.library__empty` after —
+  // the two arms of one ternary slot (Library.tsx:615/637/649), so the delta IS the
+  // collapse — and control it against the gate forced to `true`, where it must read
+  // 0. The earlier wording ("a boundingBox() of `.library__empty` sampled across the
+  // resolve") is REFUTED and kept here as the record: `.library__empty` does not
+  // exist while the listing is in flight, so it has no before-sample and would have
+  // reported "no y-shift" in both the true and the false state.
+  it('flashes the toolbar over the skeleton before dropping it on an empty library', async () => {
+    let settle: (r: { videos: Video[] }) => void = () => {};
+    rpcMock.mockReturnValueOnce(
+      new Promise<{ videos: Video[] }>((resolve) => {
+        settle = resolve;
+      }),
+    );
+    await act(async () => {
+      root.render(<Library onOpen={() => {}} />);
+    });
+
+    // Edge 1 — in flight over what will turn out to be an empty library: skeleton
+    // rows AND a live, ENABLED search box for zero rows. `disabled` is asserted
+    // explicitly because "an enabled control over nothing" is the claim; a merely
+    // present-but-inert box would be a different (milder) transient.
+    //
+    // This line PINS CURRENT BEHAVIOUR; it is not a requirement that the box be
+    // enabled. The enabled choice is owned and justified elsewhere
+    // (LibraryToolbar.test.tsx:142-161), and that suite already asserts the same thing at
+    // :159. SCOPED: the looks-live-but-is-dead reason applies to the SEARCH INPUT only —
+    // `styles/controls.css:76-80` is a global `select:disabled` rule (muted, 60% opacity,
+    // not-allowed), imported at App.tsx:96, so a disabled sort SELECT does signal. See the
+    // comment at LibraryToolbar.tsx for the full derivation. If a future change decides to add
+    // `disabled={loading}`, this assertion is EXPECTED to go red: flip it there and
+    // here together, and do not read the test name as saying the flash is wanted.
+    expect(container.querySelector('.library__loading')).not.toBeNull();
+    const during = container.querySelector('.library-toolbar') as HTMLElement;
+    expect(during).not.toBeNull();
+    const search = container.querySelector('.library-toolbar__search') as HTMLInputElement;
+    expect(search).not.toBeNull();
+    expect(search.disabled).toBe(false);
+
+    // Detector control for the SCOPE note above: jsdom reports a zero-height box
+    // for a node that is unambiguously present, so "no layout engine here" is
+    // measured, not remembered. A failure here means jsdom grew layout and the
+    // perceptibility question became answerable in-suite — read the note, don't
+    // just delete the line.
+    expect(during.getBoundingClientRect().height).toBe(0);
+
+    await act(async () => {
+      settle({ videos: [] });
+    });
+    await flush();
+
+    // Edge 2 — empty landed: the strip is GONE, not merely re-rendered, and the
+    // first-run poster is what replaces it. Node identity mirrors the
+    // "cannot shift" test above, where the same node surviving is the property.
+    expect(container.querySelector('.library__loading')).toBeNull();
+    expect(container.querySelector('.library__empty')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar')).toBeNull();
+    expect(container.contains(during)).toBe(false);
+  });
+
+  // The FAILURE half of the same edge, which the empty-resolve test above cannot
+  // reach. Adversarial review REFUTED the earlier scoping of this transient to "a
+  // library that resolves EMPTY": the gate fires on `loading` going false with the
+  // count still 0, and a REJECTED `library.list` lands in exactly that state —
+  // Library.tsx:227-230 sets `error` and leaves `videos` as `[]`. So the flash + collapse
+  // are NOT specific to an empty resolve, and on this path they are worse: the first-run
+  // poster is suppressed under an error (Library.tsx:637-648), so unlike the empty case
+  // nothing takes the collapsed strip's place. Because the view remounts on every tab
+  // switch (App.tsx renderRoute(), :532-548 called at :598) and `refresh` re-runs, this
+  // repeats on every return to the Library for as long as the listing keeps failing.
+  it('flashes the toolbar over the skeleton before dropping it on a FAILED listing', async () => {
+    let fail: (err: Error) => void = () => {};
+    rpcMock.mockReturnValueOnce(
+      new Promise<{ videos: Video[] }>((_resolve, reject) => {
+        fail = reject;
+      }),
+    );
+    await act(async () => {
+      root.render(<Library onOpen={() => {}} />);
+    });
+
+    // Edge 1 — indistinguishable from the empty-resolve case: skeleton rows under an
+    // already-mounted strip with a live, enabled search box. Nothing yet says which
+    // way the listing will end, which is the whole reason `loading` holds the strip up.
+    expect(container.querySelector('.library__loading')).not.toBeNull();
+    const during = container.querySelector('.library-toolbar') as HTMLElement;
+    expect(during).not.toBeNull();
+    const search = container.querySelector('.library-toolbar__search') as HTMLInputElement;
+    expect(search).not.toBeNull();
+    expect(search.disabled).toBe(false);
+
+    await act(async () => {
+      fail(new Error('sidecar down'));
+    });
+    await flush();
+
+    // Precondition guard: the rejection really reached `refresh` (not a mock slip), so
+    // a green result cannot come from the promise never settling.
+    expect(container.querySelector('.library__error')?.textContent).toContain('sidecar down');
+
+    // Edge 2 — the strip is GONE and, unlike the empty resolve, nothing replaces it:
+    // `.library__empty` is suppressed by the error arm, so the collapse is unbackfilled.
+    expect(container.querySelector('.library__loading')).toBeNull();
+    expect(container.querySelector('.library__empty')).toBeNull();
+    expect(container.querySelector('.library-toolbar')).toBeNull();
+    expect(container.contains(during)).toBe(false);
+  });
 });
 
 describe('Library multi-select + batch actions (v1.5 §4)', () => {

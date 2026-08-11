@@ -131,7 +131,7 @@ export function ReadinessRollup({
       ) : items === null ? (
         // Reuse JobQueue's skeleton/empty convention while in flight.
         <div className="jobqueue__empty" aria-busy="true">
-          Checking what's ready…
+          Checking what’s ready…
         </div>
       ) : items.length === 0 ? (
         <div className="readiness-rollup__empty">Nothing to report.</div>

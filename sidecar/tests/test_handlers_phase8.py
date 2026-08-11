@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from media_studio import handlers
 from media_studio.handlers import Services
-from media_studio.jobs import JobRegistry
+from media_studio.jobs import JobRegistry, JobStatus
 from media_studio.protocol import ErrorCode, RpcContext, RpcError
 
 
@@ -165,8 +165,35 @@ def _add_video(services: Services, video_file: Path) -> str:
 
 
 def _transcribe_sync(services: Services, ctx: RpcContext, vid: str) -> None:
-    services.transcribe_start({"videoId": vid}, ctx)
-    ctx.jobs.join(timeout=5)
+    """Run a transcribe job to completion.
+
+    The 5s deadline this used to carry FAILED DETERMINISTICALLY whenever this file
+    was the first to transcribe in a process -- `pytest tests/test_handlers_phase8.py`
+    alone, reproduced: test_phase8_select_runs_job_and_caches took 5.40s against
+    the 5s bound. It is green in the full gate only because `test_handlers.py`
+    sorts earlier and absorbs the cost, i.e. the suite was passing on collection
+    order, not on correctness.
+
+    MEASURED cause: the FIRST transcribe of a process does a one-time warm-up ON
+    THE JOB THREAD -- inside exactly the window this deadline covers -- at 6.096s
+    versus 0.026s for the second call in the same process (234x). 60s matches the
+    bound test_handlers.py already had to adopt for the same reason.
+
+    This file is NOT the only sibling, and an earlier version of this lane implied
+    it was. Review re-ran the settling experiment across all 22 tracked test files
+    holding a `join(timeout=5)` (105 real call sites, not the "~40" first guessed) and
+    found two more with the identical defect: test_handlers_extra.py::_make_track
+    and test_handlers_captions_export.py::_make_track, both fixed on this branch.
+    """
+    started = services.transcribe_start({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=60)
+    job = ctx.jobs.get(started["jobId"])
+    # join() gives up silently at its deadline and error/cancel set the same done
+    # event as success (jobs.py:770-811, 860-864), so without this the three are
+    # indistinguishable and surface only as a confusing downstream assertion.
+    assert job is not None and job.status is JobStatus.DONE, (
+        f"transcribe job did not finish cleanly: {job and job.status.value} err={job and job.error!r}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -465,9 +492,32 @@ def test_phase8_select_runs_job_and_caches(tmp_path: Path, video_file: Path) -> 
     _transcribe_sync(svc, ctx, vid)
     out = svc.phase8_select({"videoId": vid, "prompt": "best", "controls": {}, "tier": 2}, ctx)
     assert "jobId" in out
-    ctx.jobs.join(timeout=5)
+    ctx.jobs.join(timeout=60)
     done = [e for e in ctx.events if e[0] == "done"]  # type: ignore[attr-defined]
-    result = done[-1][2]
+    # Select the select-job's OWN done event by job id, not by position. `done[-1]`
+    # silently read the wrong job the moment the transcribe above outran its
+    # deadline and landed its own done event last: the observed failure was
+    # `assert 'candidates' in {'transcript': ...}` -- the transcribe result, not a
+    # missing field. Keying on the id makes the wrong-job case impossible rather
+    # than merely unlikely.
+    #
+    # The two-arg `next(...)` default and the assert below are NOT decoration --
+    # REFUTED IN REVIEW: the first version of this line was a bare
+    # `next(e[2] for e in done if e[1] == out["jobId"])`, which, in the very hunk
+    # whose stated purpose was to delete message-less failures, introduced one. The
+    # transcribe job above got a DONE guard; this select job had none, so if it
+    # missed its deadline the generator was exhausted and the test died on a bare
+    # `E StopIteration` -- no job id, no status, no payload. That was measurably
+    # WORSE than the `done[-1]` code it replaced, which at least printed the
+    # offending payload (`assert 'candidates' in {'transcript': ...}`) -- literally
+    # the diagnostic that root-caused this bug. Reproduced with a mutant that
+    # reverted ONLY this deadline to 0.001s while leaving the transcribe guard
+    # intact: `E StopIteration`, naming nothing.
+    result = next((e[2] for e in done if e[1] == out["jobId"]), None)
+    assert result is not None, (
+        f"select job {out['jobId']} never emitted a done event"
+        f" (saw {[e[1] for e in done]}) -- join() gave up silently at its deadline"
+    )
     assert "candidates" in result
     assert vid in svc._selection_cache  # cached for a later shortmaker.export
 
