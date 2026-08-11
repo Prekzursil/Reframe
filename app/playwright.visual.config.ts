@@ -27,7 +27,43 @@ export default defineConfig({
   // sequentially, so parallelism would only add render jitter.
   fullyParallel: false,
   workers: 1,
-  reporter: [['list']],
+  // ── WHY THIS SUITE DOES NOT USE THE DEFAULT `test-results/` ────────────────
+  // A visual failure is only actionable if you can SEE the `-actual.png` /
+  // `-diff.png` Playwright writes beside the baseline. Those land in `outputDir`,
+  // which BOTH this config and playwright.config.ts previously left at the
+  // Playwright default — resolving to the SAME `app/test-results/` for both.
+  //
+  // Playwright REMOVES outputDir at the start of every run. MEASURED locally
+  // (planted two marker files under app/test-results/, ran a second Playwright
+  // invocation whose outputDir pointed at the same directory, exit 0 / 1 passed):
+  // marker present BEFORE = true, present AFTER = false — the whole subtree was
+  // deleted. So any LATER Playwright step in the same CI job silently destroys
+  // this suite's failure images before the upload at the end of the job.
+  //
+  // That is not hypothetical. Actions run 31445248586: step "E2E GUI — VISUAL
+  // screenshot-diff + A11Y" went red (18 passed, 1 failed —
+  // `workspace-preview-win32.png`), then the later `installed-app` step ran
+  // (it carries `!cancelled()`, so an earlier red does not skip it) with
+  // playwright.config.ts and wiped app/test-results/. The uploaded
+  // `e2e-gui-playwright-report-windows-latest` artifact therefore contained ZERO
+  // png files — only two `error-context.md`, both from `installed-app`. The
+  // visual regression was undiagnosable without re-running it locally.
+  //
+  // A dedicated sibling directory is untouched by any other config's cleanup.
+  outputDir: './test-results-visual',
+  // The `list` reporter is what the CI log shows; the `html` reporter is what
+  // makes a red diff DIAGNOSABLE — for a toHaveScreenshot failure it embeds the
+  // expected/actual/diff triple as attachments COPIED into its own folder, so the
+  // report stays complete even if outputDir is later removed.
+  //
+  // It is written INSIDE `app/playwright-report/` on purpose: e2e.yml's existing
+  // "Upload Playwright report" step already uploads that whole tree with
+  // `if: always()`, so this becomes diagnosable with NO workflow change — and
+  // nothing else wipes it (playwright.config.ts configures no html reporter, and
+  // a reporter only cleans its own outputFolder). The `visual/` segment keeps it
+  // namespaced so a future GUI-suite report can sit beside it.
+  // `open: 'never'` so a local red run does not try to spawn a browser.
+  reporter: [['list'], ['html', { outputFolder: 'playwright-report/visual', open: 'never' }]],
   use: {
     trace: 'off',
   },
