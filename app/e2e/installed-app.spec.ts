@@ -216,6 +216,21 @@ test.describe('INSTALLED build — first run to working pipeline (W-A + W41)', (
   test.skip(INSTALLED === '', SKIP_REASON);
 
   test.beforeAll(async () => {
+    // THE HOOK'S OWN TIMEOUT, not the test's. Without this the suite could never go green on a
+    // COLD install: this file defines COLD_TIMEOUT_MS (default 900 s, and e2e.yml passes
+    // RF_E2E_COLD_TIMEOUT_MS=1200000) for exactly this wait, but Playwright bounds a beforeAll
+    // hook at its own 120 s default and that fires FIRST. `test.setTimeout()` inside beforeAll
+    // sets the HOOK timeout.
+    //
+    // MEASURED, not guessed: Actions run 31451957732 step 28, on `main`, with the installed
+    // build. The hook aborted at 02:33:32 -> 02:35:33 with `"beforeAll" hook timeout of
+    // 120000ms exceeded`, and all FOUR real tests below reported `-` (skipped). That is why the
+    // installed-build arm had never been observed green — the launch never got to run.
+    //
+    // The slack is for the launch + firstWindow() round trip on top of the bootstrap wait; the
+    // cold budget itself stays env-tunable so a slow runner is a config change, not an edit.
+    test.setTimeout(COLD_TIMEOUT_MS + 120_000);
+
     built = findBuiltApp();
     // findBuiltApp fails loud on a bad path, so reaching here means the tree
     // parsed. Re-assert the two properties the rest of the suite depends on.
