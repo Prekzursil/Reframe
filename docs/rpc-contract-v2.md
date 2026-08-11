@@ -95,6 +95,33 @@ remember to edit in lock-step. That is the definition of drift-prone.
 >   divergence runs — behind vs. ahead of main; only blob inequality was measured.)
 >   So this residual is real, and nothing under `docs/**` guards it. Settling
 >   experiment: re-run that detector after those branches land.
+> - **Independently re-measured at `81a04965` by a second pass that did not write the
+>   numbers above, because the pass that did write them lost its verifier before it
+>   returned a verdict.** Every figure in the table reproduced. Method, so the reading can
+>   be reproduced or refuted rather than trusted: each probe was run against the STORED
+>   BLOB (`git cat-file -p <rev>:<path>`), never the working tree, so a CRLF working copy
+>   cannot move a line count; and each was given a known-present control that had to fire
+>   before a count was believed. Row 4 was taken four mechanically different ways — `\n`
+>   bytes in the blob, `splitlines()` on the decoded blob, `splitlines()` on the working
+>   tree, and `git diff --numstat` against the empty blob — all four agree on `1521`, and
+>   the blob holds zero `CR` bytes. Row 3 was taken three ways (raw substring membership,
+>   backtick-opened span, word boundary) and all three agree on `45`. Row 1's split is
+>   `134` inline literals plus seven names reachable only through `BROLL_METHODS`. Row 5's
+>   two entry lists were counted by regex and again by a line walk between the fences.
+>   Row 2's registrations are all distinct — no name is registered twice.
+> - **The `1235` a refuting reader still sees is not live.** At `fde9d61b` the row-4 cell
+>   did read `1235`, and the paragraph that then claimed "every count above is measured"
+>   left it as unchanged context — a real defect, and the refutation was correct against
+>   that commit. `200de40d` replaced the cell. At `81a04965` the only surviving occurrence
+>   of that literal in this file is inside the REFUTED record two bullets above, which is
+>   where a retired figure is supposed to live.
+> - **The residual detector re-run, with its control.** The `~?\d{3}`-modifying-
+>   `methods?`/`handlers` matcher was rebuilt from this bullet's own description, confirmed
+>   to fire on the known-present `123-method` string, and run over `docs/**` at
+>   `81a04965`: **six** hits, and the split is exactly the one claimed — four quotations
+>   (`plans/v1.5/PROGRAM.md`, `plans/v1.5/flagship-transcript-editing.md`, and the two in
+>   this bullet) and two live disagreements (`plans/v1.5/competitor-matrix-2026-08.md`,
+>   `plans/v1.5/flagship-auto-broll.md`). The residual is real and unchanged.
 > - **The pin's cost, disclosed because it lands on other branches:** registering one
 >   new method changes the live count, so any branch that adds a `reg(...)` / `@method`
 >   must also update ONE line here and one in the migration plan, or its own `gate:3`

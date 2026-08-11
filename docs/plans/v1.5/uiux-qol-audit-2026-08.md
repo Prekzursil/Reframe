@@ -202,7 +202,15 @@ caption-style presets with visual `Aa` previews.
 > **The control this paragraph carried before was fabricated, and is REFUTED:** it paired
 > `BrowserWindow` **25×** with **11** alternation hits, and *no single scope yields both* — 25 requires
 > tests EXCLUDED (with tests the same matcher counts 41), while 11 requires them INCLUDED (without
-> tests it is 3). 8 of those 11 sit in `appMenu.test.ts`, and its `accelerator` matches assert the
+> tests it is 3). 9 of those 11 sit in `appMenu.test.ts` — **REFUTED, this said 8**: re-measured at
+> `81a04965` the with-tests reading is 11 matching LINES (12 occurrences), of which the two
+> non-test lines are `appMenu.ts` and `main.ts` and the remaining **nine** are all in
+> `appMenu.test.ts` (`:6 :11 :84 :85 :88 :90 :93 :145 :146`); the last two are the
+> `expect(src).toMatch(/Menu\.setApplicationMenu\(/)` pair, which an `accelerator`-only reading
+> misses. The correction does not move the verdict — it makes the arithmetic close. Note the two
+> units in this sentence are not the same: `3` counts OCCURRENCES (on 2 lines) and `11` counts
+> LINES. The refutation stands under either unit, because the 25-scope yields 3/2 and never 11.
+> Its `accelerator` matches assert the
 > attribute's ABSENCE (`:93 expect(item.accelerator).toBeUndefined()`) — cited as evidence of a
 > non-empty production reading while asserting the opposite. A pair stitched from two scopes is a
 > detector failure, not a control. Consequences below: **C2 and H1 are fixed** (no `Edit` menu at all — the items are
@@ -211,6 +219,16 @@ caption-style presets with visual `Aa` previews.
 > `accelerator` on any item (an explicit one overrides the role's per-platform default), so the app
 > still adds no `Ctrl+O`/`Ctrl+,`/`Ctrl+E` of its own. The observation is preserved rather than
 > rewritten: this is an audit of a dated build, and the finding is what triggered the fix.
+>
+> **Re-verified independently at `81a04965`.** The replacement control reproduces exactly. The
+> scope that yields the stated pair is the literal one written above — every tracked `.ts`/`.tsx`
+> under `app/` with `.test.` excluded, which keeps `app/e2e/*.spec.ts` and `app/vitest.config.ts`
+> in. Enumerated glob-free (`git ls-tree -r` + `git cat-file --batch`, filtering in code) rather
+> than by pathspec, because `git grep -- 'app/**/*.ts'` silently misses `app/vitest.config.ts` and
+> reads 21 instead of 25 — a glob artifact that would have looked like a doc defect. Measured:
+> matcher 0 / 3 / 3 occurrences and `BrowserWindow` 25 / 25 / 25 across `5d99bd2e^` / `5d99bd2e` /
+> HEAD. The both-states property therefore holds, and the known-present control is flat across all
+> three revisions, which is the property that proves the file walk did not change under it.
 
 Two independent signals: (a) `app/main/main.ts:13` imports `app, BrowserWindow, ipcMain, net,
 safeStorage, session, shell` — **no `Menu`**, and no `setApplicationMenu`/`buildFromTemplate`/`accelerator`
@@ -311,6 +329,22 @@ actionable, and its Download button sits at the far right edge where the Jobs sl
 > The three stale line numbers are a *class*, not three typos: a line number in prose rots on the next
 > edit above it, and nothing checks it. The same four confirm-site comments in the source carry the same
 > stale anchors — see the residual list in this unit's report; they are outside this lane's file scope.
+>
+> **Re-verified independently at `81a04965`, and this is the sharper of the two controls.** Every
+> figure reproduces: naive matcher `0 / 0` at `a44ba906`'s parent and at HEAD (it measures nothing,
+> as claimed); cast-aware matcher **6 → 0**, the six being `features/ExportPresetsPanel.tsx` ×2,
+> `features/Tracks.tsx`, `features/useShortsGallery.ts`, `views/Library.tsx`, `views/Shorts.tsx` —
+> six sites across the same five files as the five production imports, so the two figures do
+> reconcile; `useConfirm` raw occurrences 17 across 7 files; import statements 6, of which 5
+> production. A `useState` control reads 530 / 532 / 597 across the three revisions, so the file
+> walk was alive in the broken state too — without that, a `0` pre-fix could not be told from an
+> empty walk. And a caution earned the hard way in the re-verification: the cast-aware matcher must
+> be built from the ACTUAL pre-fix bytes. My first attempt used `[^)]{0,80}` between `globalThis`
+> and `.confirm`, which cannot cross the parens inside the cast type
+> `{ confirm?: (m: string) => boolean }`, so it read **0 pre-fix** and briefly looked like a
+> refutation of this paragraph. It was a broken matcher of mine — the same failure class this
+> paragraph documents, reproduced while checking it. The matcher that works is the plain
+> `\.confirm\?\.\(`.
 
 Confirmations exist. `app/renderer/src/views/Library.tsx:470-483` calls `globalThis.confirm(...)` before
 `shorts.delete`, and its comment records that this surface was *the* unguarded one because "four separate
