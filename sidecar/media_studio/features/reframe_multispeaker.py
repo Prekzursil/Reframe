@@ -1656,9 +1656,21 @@ def segment_is_reusable(
     most surprising assertion in this docstring was the one thing no test could redden,
     while the lane's own standard (cite a live test, not a deleted probe) was applied
     elsewhere. Measured over the sidecar suite AS IT STOOD BEFORE that test existed, by
-    wrapping this function and counting every call it received: 75 calls, 8 distinct
+    wrapping this function and counting every call it received — **at ``654f049d``**, by the
+    lane that wrote this line: 75 calls, 8 distinct
     ``(recorded, measured, result)`` triples, and exactly ONE granting triple —
-    ``(4096, 4096, True)``, nine times. ZERO granting triples had ``recorded == 0``, so
+    ``(4096, 4096, True)``, nine times.
+    ANCHORED 2026-08-11 — the figures above previously named no commit, which made them
+    unreproducible in the one way that matters: a reader at HEAD re-runs the enumeration,
+    gets different numbers (this lane's own new test adds calls to the very function being
+    counted), and reasonably concludes the docstring is lying. It is not; it was measured
+    against a different tree. The commit is now named, so the measurement can be re-derived
+    where it was taken — check out ``654f049d`` and wrap this function across
+    ``test_reframe_analyze.py`` + ``test_reframe_multispeaker.py``, the two modules that
+    reach it. Stated as ATTRIBUTED rather than re-verified: the anchoring commit was
+    confirmed to exist and to be the scope-three-docstrings change, but the enumeration
+    itself has not been re-run here, and a figure that drifts by design should not be
+    quoted as if it were re-measured today. ZERO granting triples had ``recorded == 0``, so
     mutating the return to ``recorded > 0 and ...`` was provably indistinguishable on
     every call that suite made — a GREEN mutant by enumeration, not by sampling. That
     same enumeration is the detector control: the nine ``4096`` grants are exactly what
