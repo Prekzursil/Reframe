@@ -116,11 +116,11 @@ def _make_track(services: Services, ctx: RpcContext, video_file: Path) -> tuple[
     wrong about it twice over. That residual said "~40 other join(timeout=5) sites
     exist ... (test_ai_job.py, test_assets.py, test_handlers.py,
     test_handlers_budget_preflight.py) ... likely (55-80%) at least one more is"
-    order-dependent. MEASURED: there are 107 occurrences across 22 tracked test
+    order-dependent. MEASURED: there are 105 real call sites across 22 tracked test
     files (2.7x the guess), all four files it named pass alone, and the two that do
     NOT were not on its list. This is one of them.
 
-    Reproduced independently, deterministically, running this file ALONE under the
+    Reproduced independently on a LOADED box, running this file ALONE under the
     gate's real configuration (`--cov=media_studio --cov=contract --cov-branch`,
     which roughly doubles the warm-up):
         5.03s call tests/test_handlers_extra.py::test_subtitles_edit_requires_cues_list

@@ -401,7 +401,8 @@ def _assert_job_done(ctx: RpcContext, job_id: str) -> None:
     passed). All three are fixed on this branch; see those two helpers' docstrings.
     The related residual that guessed "~40 other join(timeout=5) sites ... likely
     at least one more is [order-dependent]" is also corrected: two independent
-    scans count 107 occurrences across 22 tracked test files, and the four files
+    scans count 105 real call sites across 22 tracked test files (a raw line match
+    returns 108; 3 of those are this branch's own docstrings mentioning the pattern), and the four files
     that residual named all pass alone.
 
     Latency, not a live red: no pytest-randomly and no pytest-xdist are installed,

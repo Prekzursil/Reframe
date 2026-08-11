@@ -181,7 +181,7 @@ def _transcribe_sync(services: Services, ctx: RpcContext, vid: str) -> None:
 
     This file is NOT the only sibling, and an earlier version of this lane implied
     it was. Review re-ran the settling experiment across all 22 tracked test files
-    holding a `join(timeout=5)` (107 occurrences, not the "~40" first guessed) and
+    holding a `join(timeout=5)` (105 real call sites, not the "~40" first guessed) and
     found two more with the identical defect: test_handlers_extra.py::_make_track
     and test_handlers_captions_export.py::_make_track, both fixed on this branch.
     """

@@ -107,7 +107,7 @@ def _make_track(services: Services, ctx: RpcContext, video_file: Path) -> tuple[
     write-up and the corrected population count -- 107 sites across 22 files, not
     the "~40 across 4" this lane's residual guessed).
 
-    Reproduced independently, deterministically, running this file ALONE under the
+    Reproduced independently on a LOADED box, running this file ALONE under the
     gate's real configuration (`--cov=media_studio --cov=contract --cov-branch`):
         5.17s call tests/test_handlers_captions_export.py::test_translate_bilingual_adds_stacked_track
         FAILED ... 1 failed, 12 passed in 36.90s
