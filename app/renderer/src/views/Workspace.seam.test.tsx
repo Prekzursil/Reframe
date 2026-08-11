@@ -27,6 +27,15 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
+// This file drives React through `act` but was the ONE renderer suite that never
+// declared the act environment (64 other renderer test files do, e.g.
+// views/Caption.test.tsx:8). Without it every render logged
+// "Warning: The current testing environment is not configured to support act(...)"
+// and React's own not-wrapped-in-act detector was disabled, so a stray update
+// escaping the act queue could not be surfaced. Measured: the isolated run emitted
+// that warning on every mount before this line existed, and zero after.
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+
 beforeAll(() => {
   Object.defineProperty(HTMLMediaElement.prototype, 'load', {
     configurable: true,
@@ -69,6 +78,11 @@ vi.mock('../lib/rpc', () => ({
 // under parallel load, not a behaviour change. UNVERIFIED whether CI's Linux
 // runner ever crosses that cliff — settled by dropping this mock and reading the
 // gate-tests-coverage vitest step; the stub is correct either way.
+//
+// That diagnosis held up: the cliff was transform cost, and it is now removed
+// from the per-test budget wholesale by the warming beforeAll below rather than
+// only trimmed by this one stub. The stub still earns its place (it keeps a panel
+// this suite never opens out of the warm set at all).
 vi.mock('../features/TranscriptEditor', () => ({ default: () => <div /> }));
 
 import { Workspace } from './Workspace';
@@ -101,6 +115,43 @@ const wireTrack: SubtitleTrack = {
   ],
 };
 
+// ─── why the lazy chunks are warmed HERE and not inside each test ────────────
+//
+// THE 5000ms FLAKE, MEASURED (not inferred). Every case below used to open with
+// its own `await import('../features/X')`. That call is a vite-node module
+// transform+load over a server SHARED with every other parallel worker, and
+// whichever test file requests a given panel FIRST in a run pays its whole cold
+// graph — so the cost is order- and load-dependent, not a property of the test.
+// Instrumenting each phase across five full-suite runs (`vitest run`, default
+// 5000ms) measured that same single call at 5.3ms in one run and 2972.7ms in
+// another, a 560x spread. In the worst run the Subtitles case finished in
+// 4205ms of its 5000ms budget with 2972.7ms of that — 71% — spent inside that
+// one import, before its first assertion. The assertion work itself never
+// exceeded 630ms (render 17-161ms, flush 125-889ms) in any run.
+//
+// So this is QUEUED WORK, not a hang: nothing here waits on an unbounded
+// condition (a bounded import, one render, a bounded count of macrotask turns —
+// see flushUntil), and the file passes at --testTimeout=30000. Warming the
+// panels once in a hook moves
+// that variable scaffolding cost OUT of the per-test budget, which is the point:
+// the 5000ms default then still guards the BEHAVIOUR under test (sub-second)
+// instead of being blanket-widened until it can no longer catch a real hang.
+// The hook carries its own explicit budget because the cost it absorbs is real.
+beforeAll(async () => {
+  await Promise.all([
+    import('../features/Subtitles'),
+    import('../features/Gaze'),
+    import('../features/Dub'),
+    import('../features/BrollPanel'),
+    import('../features/Speed'),
+  ]);
+  // 60s, not the 10000ms default hookTimeout: instrumenting this hook measured
+  // the five imports at 5015ms cold on this box — already half the default — and
+  // 89-493ms once sibling suites had warmed the same graph. The budget has to
+  // cover the cold case with room, and nothing under test happens in here, so a
+  // wide bound costs no guard strength (unlike widening a per-test timeout).
+}, 60_000);
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -128,23 +179,39 @@ afterEach(() => {
 
 // Real macrotask turns (not just microtasks): the lazy chunk is a genuine dynamic
 // import, so a microtask-only drain can leave the Suspense fallback mounted.
-async function flush(turns = 10): Promise<void> {
-  for (let i = 0; i < turns; i++) {
+//
+// CONDITION-DRIVEN, not a fixed turn count. This was `flush(turns = 10)`: ten
+// unconditional turns per call — twenty in the Subtitles case, which calls it
+// twice — burnt whether or not the DOM had already settled, and MEASURED at
+// 125-889ms per call under full-suite load, which is the entire residual cost of
+// these tests once the chunk warming moved to beforeAll. A fixed count is also a
+// race in BOTH directions: too few turns and the assertion reads a DOM that has
+// not settled (the `expected null not to be null` half of this file's reported
+// flake), too many and a loaded box pays for turns it does not need. Polling the
+// precondition stops at the turn it becomes true, and when it never does the
+// bound is exhausted and the caller's own `expect` fails exactly as before — the
+// assertions are unchanged, only the settling window is.
+async function flushUntil(settled: () => boolean, maxTurns = 50): Promise<void> {
+  for (let i = 0; i < maxTurns; i++) {
     // eslint-disable-next-line no-await-in-loop
     await act(async () => {
       await new Promise((resolve) => {
         setTimeout(resolve, 0);
       });
     });
+    if (settled()) return;
   }
+}
+
+function present(selector: string): () => boolean {
+  return () => container.querySelector(selector) !== null;
 }
 
 describe('Workspace ↔ Subtitles seam', () => {
   it('adopts project.tracks[0] when project.open resolves AFTER the panel mounts', async () => {
-    // Warm the chunk so the losing-race ordering (panel mounts first) is pinned
-    // deterministically instead of left to transform timing.
-    await import('../features/Subtitles');
-
+    // The chunk is already warm (see the warming beforeAll above), so the
+    // losing-race ordering — panel mounts BEFORE project.open resolves — is
+    // pinned deterministically instead of left to transform timing.
     let resolveOpen: (value: { project: Project }) => void = () => undefined;
     rpcMock.mockImplementation((method: string) => {
       if (method === 'project.open') {
@@ -158,7 +225,7 @@ describe('Workspace ↔ Subtitles seam', () => {
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
     });
-    await flush();
+    await flushUntil(present('.subtitles-panel'));
 
     // Preconditions — these are what make the assertion below a genuine red for
     // the DEFECT rather than a setup error: the REAL panel is mounted (not the
@@ -169,7 +236,7 @@ describe('Workspace ↔ Subtitles seam', () => {
     await act(async () => {
       resolveOpen({ project: { ...project, tracks: [wireTrack] } });
     });
-    await flush();
+    await flushUntil(present('.track-meta'));
 
     expect(container.querySelector('.track-meta')).not.toBeNull();
     expect(container.querySelector('.track-meta')?.textContent).toContain('English');
@@ -189,13 +256,12 @@ describe('Workspace ↔ Subtitles seam', () => {
 // than narrowed away.
 describe('Workspace ↔ Gaze seam (W19)', () => {
   it('mounts the REAL Gaze panel on the eye-contact tab', async () => {
-    await import('../features/Gaze'); // warm the lazy chunk (same idiom as above)
-    rpcMock.mockResolvedValue({ project });
+    rpcMock.mockResolvedValue({ project }); // chunk warmed in beforeAll
 
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} initialTab="gaze" />);
     });
-    await flush();
+    await flushUntil(present('.gaze-panel'));
 
     // The real panel, not the Suspense fallback and not a marker div: its own
     // section class plus the ethics gate that only the real component renders.
@@ -213,13 +279,13 @@ describe('Workspace ↔ Gaze seam (W19)', () => {
 
 describe('Workspace ↔ Dub/LipSync seam (W20)', () => {
   it('mounts the REAL lip-sync section inside the Dub tab, disabled by default', async () => {
-    await import('../features/Dub'); // Dub hosts the LipSync section
+    // Dub hosts the LipSync section; its chunk is warmed in beforeAll.
     rpcMock.mockResolvedValue({ project });
 
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} initialTab="dub" />);
     });
-    await flush();
+    await flushUntil(present('.lipsync-section'));
 
     // The reachability half that IS true for W20: the control exists on a surface a
     // user can open. It is DISABLED here — the fake bridge answers `settings.get`
@@ -246,13 +312,12 @@ describe('Workspace ↔ Dub/LipSync seam (W20)', () => {
 // rather than narrowed away or rested on `tsc --noEmit`.
 describe('Workspace ↔ BrollPanel seam (W16-UI)', () => {
   it('mounts the REAL b-roll panel on its tab, with its honesty surfaces present', async () => {
-    await import('../features/BrollPanel'); // warm the lazy chunk (same idiom as above)
-    rpcMock.mockResolvedValue({ project });
+    rpcMock.mockResolvedValue({ project }); // chunk warmed in beforeAll
 
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} initialTab="broll" />);
     });
-    await flush();
+    await flushUntil(present('.broll-panel'));
 
     // The real panel, not the Suspense fallback and not a marker div: its own
     // section class plus the two disclosures only the real component renders.
@@ -298,13 +363,12 @@ describe('Workspace ↔ Speed seam', () => {
     // The point of this test: before v1.5 the re-time engine had no control in
     // ANY panel. Asserting the real panel (not the Suspense fallback) is what
     // proves the door is genuinely reachable from the Workspace.
-    await import('../features/Speed'); // warm the lazy chunk (same idiom as above)
-    rpcMock.mockResolvedValue({ project });
+    rpcMock.mockResolvedValue({ project }); // chunk warmed in beforeAll
 
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} initialTab="speed" />);
     });
-    await flush();
+    await flushUntil(present('.speed-panel'));
 
     const panel = container.querySelector('.speed-panel');
     expect(panel).not.toBeNull();
