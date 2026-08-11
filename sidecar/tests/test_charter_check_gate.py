@@ -38,6 +38,7 @@ coverage number.
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -45,6 +46,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHARTER_CHECK_PY = REPO_ROOT / ".quality" / "charter_check.py"
+PRECOMMIT_CONFIG = REPO_ROOT / ".pre-commit-config.yaml"
 
 # The slugs that quality.yml really declares as step names today. `secrets` is absent on
 # purpose: it rides inside the gate-lint-format pre-commit step (charter_check.COVERED_BY).
@@ -213,6 +215,106 @@ def test_disclosed_residual_never_adds_a_phantom_slug(shape: str, charter_check:
     got = charter_check.parse_workflow_gate_steps(text)
     assert got == expected
     assert not (got - truth), f"{shape} ADDED a phantom slug: {sorted(got - truth)}"
+
+
+# --- the gate-1 local hooks must be DECLARED, not just described ---------------------
+#
+# `charter_check.py` reads QUALITY-CHARTER.md and quality.yml only. The three stdlib
+# checkers the gate-1 charter row names ride INSIDE the pre-commit step, so nothing —
+# not charter_check, not either gate's own test module — asserted that
+# `.pre-commit-config.yaml` still declares them. Deleting a `- id:` block was therefore
+# invisible: the charter would keep advertising a checker that no longer runs, which is
+# the same charter-stops-meaning-anything failure the rest of this module exists to catch.
+#
+# Parsed structurally for the same reason the W30 fix went structural: a substring search
+# would be satisfied by the several COMMENTS in that file that name these hooks by id.
+PRECOMMIT_HOOK_ID = re.compile(r"^\s+-\s+id:\s*(?P<id>[A-Za-z0-9][\w.-]*)")
+PRECOMMIT_ENTRY = re.compile(r"^\s+entry:\s*(?P<entry>\S.*?)\s*$")
+
+# hook id -> the script its `entry:` must invoke.
+GATE1_LOCAL_HOOKS = {
+    "docs-check": ".quality/docs_check.py",
+    "reachability-check": ".quality/reachability_check.py",
+    "electron-hardening-check": ".quality/electron_hardening_check.py",
+}
+
+
+def parse_precommit_hooks(text: str) -> dict[str, str]:
+    """id -> entry, for every hook declared as a real `- id:` sequence item.
+
+    Scope, so this is not read as more: it proves the hook is DECLARED with an entry that
+    names the expected script. It does NOT prove pre-commit executes it — `stages:`,
+    `always_run`, and the top-level `exclude:` are not modelled here, and no pre-commit
+    process is spawned (this suite is hermetic and offline).
+    """
+    hooks: dict[str, str] = {}
+    current: str | None = None
+    for line in text.splitlines():
+        hook = PRECOMMIT_HOOK_ID.match(line)
+        if hook is not None:
+            current = hook.group("id")
+            hooks.setdefault(current, "")
+            continue
+        entry = PRECOMMIT_ENTRY.match(line)
+        if entry is not None and current is not None:
+            hooks[current] = entry.group("entry")
+    return hooks
+
+
+def test_gate1_local_hook_ids_are_declared_in_precommit_config() -> None:
+    """The three stdlib checkers the gate-1 charter row names are really wired."""
+    hooks = parse_precommit_hooks(PRECOMMIT_CONFIG.read_text(encoding="utf-8"))
+    missing = sorted(set(GATE1_LOCAL_HOOKS) - set(hooks))
+    assert not missing, (
+        f"QUALITY-CHARTER.md gate 1 names these, .pre-commit-config.yaml does not declare them: {missing}"
+    )
+    for hook_id, script in GATE1_LOCAL_HOOKS.items():
+        assert script in hooks[hook_id], f"hook {hook_id!r} no longer runs {script} (entry is {hooks[hook_id]!r})"
+
+
+def test_the_hook_id_parser_finds_known_present_ids() -> None:
+    """Detector control: the parser must find ids it is known to be pointed at.
+
+    A regex that matched nothing would fail the assertion above as "missing hook" — a
+    loud but WRONG diagnosis, pointing at the config when the probe is what broke. Pin the
+    positive case on five unrelated hooks so a parser regression is named as such.
+    """
+    hooks = parse_precommit_hooks(PRECOMMIT_CONFIG.read_text(encoding="utf-8"))
+    assert {"ruff", "ruff-format", "oxlint", "biome-format", "gitleaks"} <= set(hooks), sorted(hooks)
+
+
+@pytest.mark.parametrize(
+    "mention",
+    [
+        "      # - id: ghost-check\n",
+        "  # the ghost-check hook was removed, see the tracking issue\n",
+        "        name: ghost-check (a hook NAME is not an id)\n",
+        "        entry: python .quality/ghost_check.py\n",
+    ],
+    ids=["commented sequence item", "prose comment", "name: key", "entry: key"],
+)
+def test_a_mentioned_hook_id_is_not_a_declared_hook(mention: str) -> None:
+    """Both-states control: a MENTION must not satisfy the assertion above.
+
+    This is the W30 defect in its pre-commit form. Each vector below is appended to the
+    real config; none may make `ghost-check` appear as a declared hook.
+    """
+    text = PRECOMMIT_CONFIG.read_text(encoding="utf-8") + mention
+    assert "ghost-check" not in parse_precommit_hooks(text)
+
+
+def test_removing_a_hook_id_block_is_caught() -> None:
+    """Both-states control: the KNOWN-BROKEN state must go red.
+
+    Delete the `- id: electron-hardening-check` line from the real config and the parser
+    must stop reporting it — otherwise the assertion above could never fail.
+    """
+    real = PRECOMMIT_CONFIG.read_text(encoding="utf-8")
+    anchor = "      - id: electron-hardening-check\n"
+    assert anchor in real, "anchor no longer exists in .pre-commit-config.yaml"
+    hooks = parse_precommit_hooks(real.replace(anchor, ""))
+    assert "electron-hardening-check" not in hooks
+    assert "docs-check" in hooks, "the mutation must be surgical, not destroy the whole parse"
 
 
 def test_comment_only_gate_fails_end_to_end(

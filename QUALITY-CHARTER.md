@@ -98,7 +98,8 @@ tree, and github-actions); that is supply-chain hygiene, not part of the 6-gate 
   packs) does not admit today.
 - **Electron hardening is enforced from the packaging config, and Electronegativity is
   deliberately NOT wired (W66).** `.quality/electron_hardening_check.py` asserts (e1)
-  `electron-builder.yml` declares the whole `electronFuses` block — ASAR integrity +
+  `electron-builder.yml` declares an `electronFuses:` header line **and** that each of the
+  eight required fuses appears with its required value — ASAR integrity +
   `onlyLoadAppFromAsar` ON, `NODE_OPTIONS`/`--inspect` OFF, and `runAsNode` pinned **true**
   because the caption render path spawns the Electron exe as plain Node — and (e2)
   `app/main/main.ts` still declares `contextIsolation`/`nodeIntegration`/`sandbox`, with no
@@ -110,6 +111,20 @@ tree, and github-actions); that is supply-chain hygiene, not part of the 6-gate 
   happens on a shared runner is the "green gate that was never seen red" failure this
   charter exists to prevent. Revisit it as a pinned devDependency once someone can run it
   locally first.
+  **Scope of e1, stated so it is not read as more — an earlier wording here said the gate
+  asserts `electron-builder.yml` "declares the whole `electronFuses` block", and that is
+  REFUTED.** Measured 2026-08-11 by mutating the real yml and calling `check_fuses`
+  directly: the gate proves the `electronFuses:` HEADER line exists, then matches each fuse
+  at two-space indentation **anywhere in the file**, reading only the FIRST occurrence. So
+  (a) re-homing all eight fuses under a different top-level key and leaving `electronFuses:`
+  empty is CLEAN, over a build that flips zero fuses, and (b) a second, contradicting
+  `enableEmbeddedAsarIntegrityValidation: false` further down is CLEAN. Both are latent, not
+  live — today every fuse is inside the block, declared once. Detector control for that pair
+  of zeroes: deleting a fuse line outright, and commenting out the header, are each CAUGHT,
+  so the two CLEAN readings are the gate's behaviour and not a broken probe. **This
+  paragraph tightens when PR #409 lands** — it adds block-slicing plus an every-occurrence
+  walk, at which point "declares an `electronFuses:` block containing every key" becomes
+  true and this scope note should be replaced by that sentence.
   **What is NOT proven by this gate:** it reads CONFIG, so it proves the fuses are
   *declared*, not that the bits are flipped in a built exe. Settling experiment:
   `npx electron-builder --config ../electron-builder.yml --win`, then

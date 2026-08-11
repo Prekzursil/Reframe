@@ -51,9 +51,13 @@ changed — never the reverse.
   inside a model-name regex in `advisorMeta.test.ts`, i.e. a mention, not a swap).
 
 - **B-roll is not deferred.** `docs/ROADMAP.md` lists B-roll, emoji/SFX triggers and
-  publishing as "deferred from V1"; `PROGRAM.md` makes local auto-B-roll flagship #3
-  and puts emoji-burst + SFX-on-emphasis in the caption engine. docs/ROADMAP.md is stale
-  at v1.2.0 while `app/package.json` is 1.4.2.
+  publishing as "deferred from V1" (`docs/ROADMAP.md:66`); `PROGRAM.md` makes local
+  auto-B-roll flagship #3 and puts emoji-burst + SFX-on-emphasis in the caption engine.
+  Re-measured 2026-08-11: `docs/ROADMAP.md`'s Release-status list still stops at **v1.2.0**
+  while `app/package.json` is **1.5.0** — so the gap is three minors wide, not one.
+  (An earlier revision of this line asserted `app/package.json` is 1.4.2. That was true when
+  written and is now REFUTED; the version is a moving figure, so treat the dated measurement
+  as the claim and re-run it rather than reading the number as a standing fact.)
 
 ## Two documents were archived, not promoted
 

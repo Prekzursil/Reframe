@@ -204,9 +204,19 @@ def test_newly_declared_keys_are_modeled():
     `silenceTrim` as the probes): the old assertion fired on a COMPLETE migration —
     both sides landed, nothing drifted — so the suite punished exactly the progress
     the contract exists to enable. The half it was really reaching for (store and
-    contract must not disagree) is now enforced, and enforced more widely, by
+    contract must not disagree) is now enforced by
     ``test_declared_settings_defaults_match_the_store`` below, whose RED conditions
     are pinned by ``test_default_parity_rule_goes_red_on_*``.
+
+    REFUTED wording, kept so it is not re-derived: this used to read "enforced, and
+    enforced more widely". Measured against the live registry 2026-08-11 — schema
+    properties 20, ``DEFAULT_SETTINGS`` 22, intersection 14, minus the 2 nested-block
+    exemptions = **12 keys checked**, and ``set(checked) == set(_STATIC_DEFAULT_KEYS)``
+    exactly (symmetric difference empty both ways). The rule's own failure message prints
+    ``(12 keys checked)``. So the replacement is not wider TODAY; it is the same 12 keys
+    obtained by computation instead of enumeration. The forward-looking claim at
+    ``_default_parity_drift`` ("the checked set grows with the tree") is the true one and
+    is where the value actually is.
     """
     props = registry.settings_schema()["properties"]
     missing = [key for key in _NEWLY_DECLARED_KEYS if key not in props]
@@ -225,6 +235,41 @@ def _default_parity_drift(
     nowhere. This walks ``schema.properties ∩ store`` instead, so the checked set
     grows with the tree. ``_STATIC_DEFAULT_KEYS`` is kept as a FLOOR by the caller —
     a computed set that silently shrank to nothing would otherwise pass vacuously.
+
+    That "grows with the tree" claim is forward-looking and is the whole value here; it
+    is NOT a claim that the checked set is wider than the hand list today. Measured
+    2026-08-11: schema properties 20 ∩ store 22 = 14, minus the 2 nested-block
+    exemptions = 12 checked, which is exactly ``set(_STATIC_DEFAULT_KEYS)``.
+
+    THREE RESIDUALS, measured the same day by calling this function against mutated
+    inputs, disclosed here rather than in a footer because each bounds the sentence above:
+
+    1. It still punishes forward progress, one class narrower than the assertion W38
+       removed. A COMPLETE, correct migration of a THIRD nested block — declared
+       ``{"type": "object"}`` in the schema, materialised in the store, contract default
+       ``None`` = absent — reports drift (measured: ``{'zzNewBlock': (None, {'a': 1})}``)
+       and goes RED until ``_NESTED_BLOCK_KEYS`` is hand-edited to add it. Settling change:
+       exempt by SCHEMA TYPE (``props[key]["type"] == "object"``) instead of by name, which
+       also removes the hand list this drift-check would then be waiting on.
+    2. Nested-block CONTENTS are never parity-checked at all. Both exempt blocks are
+       dropped whole, so mutating ``DEFAULT_SETTINGS["autosave"]["debounceMs"]`` to a
+       string returns ``{}`` — the five sub-properties the schema declares across the two
+       blocks (``autosave``: ``enabled``, ``debounceMs``; ``exportDefaults``:
+       ``subtitleFormat``, ``nleFormat``, ``nleFps``) carry the same drift exposure the
+       scalars had before W38. Settling change: recurse one level into an exempt block and
+       compare its declared sub-properties.
+    3. A contract-only default is invisible. The set is an INTERSECTION, so a key declared
+       in the schema with a contract default the store never materialises is silently
+       dropped rather than flagged (measured: ``{}``). Six keys are schema-only today
+       (``captionSpeakerLabels``, ``captionStyle``, ``hookTitle``, ``removeFillers``,
+       ``silenceTrim``, ``stabilize``) and all six have contract default ``None``
+       (measured, not assumed) — which is why nothing is wrong right now, and why none of
+       them would be caught if that changed. Settling change: walk the UNION and treat
+       "declared non-None default, absent from the store" as drift.
+
+    Detector control for the two ``{}`` readings above: residual 1 shows this same function
+    DOES emit drift on mutated input, and ``test_default_parity_rule_goes_red_on_a_scalar_drift``
+    pins the scalar direction — so the empty results are real holes, not a dead probe.
     """
     props = schema["properties"]
     assert isinstance(props, dict)
