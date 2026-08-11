@@ -1068,6 +1068,51 @@ describe('<Dub />', () => {
     expect(rowFor('a2').querySelector('[data-input="replace-audio-path"]')).toBeNull();
   });
 
+  // W62 follow-up — the replace DRAFT must not follow the user from one dub row to another.
+  //
+  // `replacePath` is ONE component-level state shared by every row, the input is controlled by
+  // it, and the only reset lived inside the SUCCESS branch. So typing a path for row A and then
+  // opening row B pre-filled B with A's path and armed its Save — one click sent A's audio file
+  // to B's audioTrackId. The sidecar assigns `track.path = audio_path` and keeps no record of
+  // the previous value, so the pointer to B's correct audio is destroyed and the export plays
+  // A's language under B's label.
+  //
+  // Invisible to every other test here because the shared fixture has exactly ONE dub (a2), so
+  // there is no second row to bleed into. 100% branch coverage cannot see it either: the gap is
+  // a missing STATE COMBINATION, not a missing branch.
+  it('does not carry a typed replace path from one dub row to another', async () => {
+    const twoDubs: AudioTrack[] = [
+      AUDIO_TRACKS[0],
+      AUDIO_TRACKS[1], // a2 — de
+      {
+        id: 'a3',
+        lang: 'ro',
+        name: 'Dub (kokoro, ro)',
+        kind: 'dub',
+        voice: 'af_sarah',
+        path: 'C:/ro.m4a',
+      },
+    ];
+    const { api, calls } = makeBridge({ 'tracks.audio.list': { audioTracks: twoDubs } });
+    await mount(api);
+
+    await act(async () => rowBtn('a2', 'replace-audio').click());
+    pick('[data-input="replace-audio-path"]', 'C:/german-only.wav');
+    expect(rowBtn('a2', 'replace-audio-save').disabled).toBe(false);
+
+    // Switch to the OTHER dub. Its editor must open empty and disarmed.
+    await act(async () => rowBtn('a3', 'replace-audio').click());
+    const input = rowFor('a3').querySelector(
+      '[data-input="replace-audio-path"]',
+    ) as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.value).toBe('');
+    expect(rowBtn('a3', 'replace-audio-save').disabled).toBe(true);
+
+    // And nothing was sent while switching.
+    expect(calls.filter((c) => c.method === 'tracks.audio.replace')).toEqual([]);
+  });
+
   it('keeps the replace editor open with the typed path when the replace fails', async () => {
     const { api, calls } = makeBridge();
     (api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
