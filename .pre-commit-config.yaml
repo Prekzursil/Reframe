@@ -75,6 +75,35 @@ repos:
         pass_filenames: false
         always_run: true
 
+  # --- Gate 1: reachability / dead-module anti-drift (stdlib python, no network) ---
+  # W26. Same reasoning as docs-check above for riding INSIDE gate:1 rather than opening
+  # a `gate-<slug>` step: QUALITY-CHARTER.md rule 2 declares the 6-gate list closed and
+  # the reverse-direction loop in `.quality/charter_check.py` main() would fail a 7th.
+  # Coverage cannot see unreachability — an unmounted module still executes under its own
+  # test — which is why W16-W20 all shipped 100%-covered and mounted nowhere.
+  # The RPC half of W26 needs the LIVE sidecar registry, so it rides gate:3 instead
+  # (sidecar/tests/test_reachability_gate.py); both halves read one allowlist.
+  - repo: local
+    hooks:
+      - id: reachability-check
+        name: reachability-check (W26 dead-module/dead-waiver)
+        entry: python .quality/reachability_check.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  # --- Gate 1: Electron packaging hardening (stdlib python, no network) ---
+  # W66 — the ASAR-integrity + Node-surface fuses declared in electron-builder.yml.
+  # Same gate:1 local-hook reasoning as the two above.
+  - repo: local
+    hooks:
+      - id: electron-hardening-check
+        name: electron-hardening-check (W66 ASAR integrity + Node surface + renderer sandbox)
+        entry: python .quality/electron_hardening_check.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # --- Gate 5: secrets (gitleaks 8.30.1) ---
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1

@@ -168,6 +168,15 @@ _STATIC_DEFAULT_KEYS = (
 # settings.get("...") in shortmaker/refine, so a typo silently returned None.
 _NEWLY_DECLARED_KEYS = ("silenceTrim", "removeFillers", "hookTitle", "stabilize", "captionSpeakerLabels")
 
+# The two settings keys the contract models as a NESTED BLOCK (``Autosave`` /
+# ``ExportDefaults``). Their contract default is ``None`` — meaning "absent", per
+# ``Settings``' partial-merge docstring — while ``DEFAULT_SETTINGS`` materialises the
+# whole block, so comparing the two scalar-style would compare two deliberately
+# different things. Exempt from the default-parity rule below, and the exemption is
+# GUARDED: the rule first asserts each of these really is an ``object`` in the schema,
+# so the waiver cannot be reused to hide a drifted scalar.
+_NESTED_BLOCK_KEYS = ("autosave", "exportDefaults")
+
 
 @pytest.mark.parametrize("key", _STATIC_DEFAULT_KEYS)
 def test_settings_defaults_match_default_settings(key):
@@ -185,11 +194,101 @@ def test_settings_schema_catches_a_wrong_type():
         registry.validate_settings_object({"useCloud": "yes"})  # must be a boolean
 
 
-def test_newly_declared_keys_are_modeled_but_were_undeclared():
+def test_newly_declared_keys_are_modeled():
+    """W38: the invariant is that the 5 keys ARE declared contract fields.
+
+    This test used to also assert ``key not in DEFAULT_SETTINGS``, which froze a
+    TRANSIENT state as an invariant: declaring one of these keys in
+    ``DEFAULT_SETTINGS`` is the correct next migration step, and it made the test go
+    RED. Measured before removal (five states, `defaultTargetJobSize` and
+    `silenceTrim` as the probes): the old assertion fired on a COMPLETE migration —
+    both sides landed, nothing drifted — so the suite punished exactly the progress
+    the contract exists to enable. The half it was really reaching for (store and
+    contract must not disagree) is now enforced, and enforced more widely, by
+    ``test_declared_settings_defaults_match_the_store`` below, whose RED conditions
+    are pinned by ``test_default_parity_rule_goes_red_on_*``.
+    """
     props = registry.settings_schema()["properties"]
-    for key in _NEWLY_DECLARED_KEYS:
-        assert key in props, f"{key!r} should now be a declared settings field"
-        assert key not in DEFAULT_SETTINGS, f"{key!r} was expected to be previously-undeclared"
+    missing = [key for key in _NEWLY_DECLARED_KEYS if key not in props]
+    assert not missing, f"these should be declared settings fields: {missing}"
+
+
+def _default_parity_drift(
+    schema: dict[str, object],
+    declared_defaults: dict[str, object],
+    store_defaults: dict[str, object],
+) -> dict[str, tuple[object, object]]:
+    """The contract-vs-store default drift over EVERY overlapping settings key.
+
+    Computed, not enumerated: ``_STATIC_DEFAULT_KEYS`` above is a hand-written list of
+    12, so a 13th scalar key declared on both sides would have been parity-checked
+    nowhere. This walks ``schema.properties ∩ store`` instead, so the checked set
+    grows with the tree. ``_STATIC_DEFAULT_KEYS`` is kept as a FLOOR by the caller —
+    a computed set that silently shrank to nothing would otherwise pass vacuously.
+    """
+    props = schema["properties"]
+    assert isinstance(props, dict)
+    checked = sorted((set(props) & set(store_defaults)) - set(_NESTED_BLOCK_KEYS))
+    return {
+        key: (declared_defaults.get(key, "<no contract default>"), store_defaults[key])
+        for key in checked
+        if declared_defaults.get(key) != store_defaults[key]
+    }
+
+
+def test_declared_settings_defaults_match_the_store():
+    """Every key both sides declare must agree — including a HALF migration.
+
+    Fires when the store gains a default the contract does not declare (contract
+    still says ``None`` = absent) as well as on a plain value drift, and stays green
+    when both sides land together.
+    """
+    schema = registry.settings_schema()
+    props = schema["properties"]
+    for key in _NESTED_BLOCK_KEYS:
+        assert props[key].get("type") == "object", (
+            f"{key!r} is exempt from default parity only because it is a nested block; "
+            f"it is declared as {props[key].get('type')!r}"
+        )
+    checked = sorted((set(props) & set(DEFAULT_SETTINGS)) - set(_NESTED_BLOCK_KEYS))
+    assert set(_STATIC_DEFAULT_KEYS) <= set(checked), (
+        f"the computed parity set lost hand-pinned keys: {sorted(set(_STATIC_DEFAULT_KEYS) - set(checked))}"
+    )
+    drift = _default_parity_drift(schema, registry.settings_defaults(), dict(DEFAULT_SETTINGS))
+    assert not drift, f"settings default drift ({len(checked)} keys checked): {drift}"
+
+
+def test_default_parity_rule_goes_red_on_a_scalar_drift():
+    """Both-states proof: the rule above is not vacuous (mutate the store value)."""
+    drift = _default_parity_drift(
+        registry.settings_schema(),
+        registry.settings_defaults(),
+        dict(DEFAULT_SETTINGS) | {"defaultTargetJobSize": DEFAULT_SETTINGS["defaultTargetJobSize"] + 1},
+    )
+    assert "defaultTargetJobSize" in drift
+
+
+def test_default_parity_rule_goes_red_on_a_half_migration():
+    """A store-only landing of a newly-declared key is caught (contract still None)."""
+    drift = _default_parity_drift(
+        registry.settings_schema(),
+        registry.settings_defaults(),
+        dict(DEFAULT_SETTINGS) | {"silenceTrim": True},
+    )
+    assert drift == {"silenceTrim": (None, True)}
+
+
+def test_default_parity_rule_stays_green_on_a_full_migration():
+    """The forward-progress case the removed assertion punished must PASS.
+
+    Both sides land ``silenceTrim`` together with the same default -> no drift.
+    """
+    drift = _default_parity_drift(
+        registry.settings_schema(),
+        dict(registry.settings_defaults()) | {"silenceTrim": True},
+        dict(DEFAULT_SETTINGS) | {"silenceTrim": True},
+    )
+    assert not drift
 
 
 # --------------------------------------------------------------------------- #

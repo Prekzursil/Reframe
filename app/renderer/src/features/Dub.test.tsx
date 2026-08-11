@@ -12,10 +12,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import Dub, {
   CONSENT_ATTESTATION_TEXT,
   ENGINES,
+  IMPORTED_AUDIO_TRACK_KIND,
   type AudioTrack,
   type TtsVoice,
   buildDubParams,
   buildSampleAddParams,
+  canEditAudioTrack,
+  canImportAudioTrack,
   dubMediaUrl,
   voicesForEngine,
 } from './Dub';
@@ -160,6 +163,44 @@ describe('CONSENT_ATTESTATION_TEXT', () => {
     expect(CONSENT_ATTESTATION_TEXT).toBe(
       "I own this voice or have the speaker's documented permission to clone it.",
     );
+  });
+});
+
+// W62 — the audio-track EDIT gate. `tracks.audio.replace` / `.strip` are offered
+// only for a dub, because their ORIGINAL branch re-muxes the whole container into
+// a derived file that is returned but never written back to the project
+// (`sidecar/media_studio/features/tracks_audio.py:533-554` / `:578-588`), so the
+// app would keep resolving the untouched source while the manifest row vanished.
+describe('canEditAudioTrack', () => {
+  it('permits a dub and refuses the source recording', () => {
+    expect(canEditAudioTrack({ kind: 'dub' })).toBe(true);
+    expect(canEditAudioTrack({ kind: 'original' })).toBe(false);
+  });
+});
+
+describe('canImportAudioTrack', () => {
+  it('requires all three fields tracks.audio.mux declares required', () => {
+    expect(canImportAudioTrack({ path: 'C:/vo.wav', lang: 'en', name: 'VO' })).toBe(true);
+    // Each of the three is independently blocking — `mux` _require_str's all of
+    // them (`sidecar/media_studio/features/tracks_audio.py:494-497`), so a blank
+    // one must never reach the wire as an INVALID_PARAMS round-trip.
+    expect(canImportAudioTrack({ path: '', lang: 'en', name: 'VO' })).toBe(false);
+    expect(canImportAudioTrack({ path: 'C:/vo.wav', lang: '', name: 'VO' })).toBe(false);
+    expect(canImportAudioTrack({ path: 'C:/vo.wav', lang: 'en', name: '' })).toBe(false);
+    // Whitespace-only is blank.
+    expect(canImportAudioTrack({ path: '  ', lang: ' en ', name: ' VO ' })).toBe(false);
+    expect(canImportAudioTrack({ path: 'C:/vo.wav', lang: '   ', name: 'VO' })).toBe(false);
+    expect(canImportAudioTrack({ path: 'C:/vo.wav', lang: 'en', name: '   ' })).toBe(false);
+  });
+});
+
+describe('IMPORTED_AUDIO_TRACK_KIND', () => {
+  it('is "dub" — an imported track is never registered as the original', () => {
+    // The AI-disclosure badge is withheld ONLY for kind "original"
+    // (AiDisclosure.isAiGeneratedAudioTrack), so letting a user pick the kind
+    // would let them suppress the label. Over-labelling an imported human
+    // recording is the disclosed, recoverable direction (AiDisclosure.tsx:45-58).
+    expect(IMPORTED_AUDIO_TRACK_KIND).toBe('dub');
   });
 });
 
@@ -945,5 +986,215 @@ describe('<Dub />', () => {
     expect(options).not.toContain('a1');
     // Exactly one tracks.audio.list on mount — the child reuses Dub's list.
     expect(calls.filter((c) => c.method === 'tracks.audio.list')).toHaveLength(1);
+  });
+
+  // ------------------------------------------------------------------------
+  // W62 — `tracks.audio.mux` / `.replace` / `.strip` were registered sidecar-side
+  // and wrapped in the typed client but had NO caller anywhere in the renderer,
+  // so the Audio-tracks list was read-only display. These tests pin the three
+  // user actions that make them reachable.
+  // ------------------------------------------------------------------------
+  const rowFor = (id: string): HTMLElement =>
+    container.querySelector(`li[data-audio-track="${id}"]`) as HTMLElement;
+  const rowBtn = (id: string, action: string): HTMLButtonElement =>
+    rowFor(id).querySelector(`[data-action="${action}"]`) as HTMLButtonElement;
+
+  it('offers Remove + Replace on a dub row and neither on the source recording', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    // AUDIO_TRACKS = [a1 kind:'original', a2 kind:'dub'].
+    expect(rowBtn('a2', 'strip-audio')).not.toBeNull();
+    expect(rowBtn('a2', 'replace-audio')).not.toBeNull();
+    expect(rowFor('a1').querySelector('[data-action="strip-audio"]')).toBeNull();
+    expect(rowFor('a1').querySelector('[data-action="replace-audio"]')).toBeNull();
+    // The original row says WHY instead of silently omitting the controls.
+    expect(rowFor('a1').textContent).toContain('Source audio');
+  });
+
+  it('removes a dub track via tracks.audio.strip and re-reads the list', async () => {
+    const { api, calls } = makeBridge({ 'tracks.audio.strip': { path: 'C:/v.mkv' } });
+    await mount(api);
+    await act(async () => rowBtn('a2', 'strip-audio').click());
+    await flush();
+    expect(calls.filter((c) => c.method === 'tracks.audio.strip')).toEqual([
+      { method: 'tracks.audio.strip', params: { videoId: 'v1', audioTrackId: 'a2' } },
+    ]);
+    // The list is re-read so the removed row disappears (mount + post-op refresh).
+    expect(calls.filter((c) => c.method === 'tracks.audio.list')).toHaveLength(2);
+    expect(container.querySelector('.audio-track-message')?.textContent).toContain('Removed');
+  });
+
+  it('surfaces a failed strip and does NOT re-read the list', async () => {
+    const { api, calls } = makeBridge();
+    (api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
+      async (method: string, params?: Record<string, unknown>) => {
+        calls.push({ method, params });
+        if (method === 'tracks.audio.strip') throw new Error('ffmpeg exit 1');
+        if (method === 'tts.voices') return { voices: VOICES };
+        if (method === 'tracks.list') return { tracks: [] };
+        if (method === 'tracks.audio.list') return { audioTracks: AUDIO_TRACKS };
+        return {};
+      },
+    );
+    await mount(api);
+    await act(async () => rowBtn('a2', 'strip-audio').click());
+    await flush();
+    expect(container.querySelector('.audio-track-message')?.textContent).toContain('ffmpeg exit 1');
+    expect(calls.filter((c) => c.method === 'tracks.audio.list')).toHaveLength(1);
+  });
+
+  it('replaces a dub track audio via tracks.audio.replace and closes the editor', async () => {
+    const { api, calls } = makeBridge({
+      'tracks.audio.replace': { audioTrack: AUDIO_TRACKS[1] },
+    });
+    await mount(api);
+    // The editor is closed until the disclosure is opened.
+    expect(rowFor('a2').querySelector('[data-input="replace-audio-path"]')).toBeNull();
+    await act(async () => rowBtn('a2', 'replace-audio').click());
+    expect(rowFor('a2').querySelector('[data-input="replace-audio-path"]')).not.toBeNull();
+    // Save is gated on a non-blank path.
+    expect(rowBtn('a2', 'replace-audio-save').disabled).toBe(true);
+    pick('[data-input="replace-audio-path"]', '  C:/better-dub.wav  ');
+    expect(rowBtn('a2', 'replace-audio-save').disabled).toBe(false);
+    await act(async () => rowBtn('a2', 'replace-audio-save').click());
+    await flush();
+    expect(calls.filter((c) => c.method === 'tracks.audio.replace')).toEqual([
+      {
+        method: 'tracks.audio.replace',
+        params: { videoId: 'v1', audioTrackId: 'a2', path: 'C:/better-dub.wav' },
+      },
+    ]);
+    // Success closes the editor and clears the field.
+    expect(rowFor('a2').querySelector('[data-input="replace-audio-path"]')).toBeNull();
+  });
+
+  it('keeps the replace editor open with the typed path when the replace fails', async () => {
+    const { api, calls } = makeBridge();
+    (api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
+      async (method: string, params?: Record<string, unknown>) => {
+        calls.push({ method, params });
+        if (method === 'tracks.audio.replace') throw new Error('audio file not found');
+        if (method === 'tts.voices') return { voices: VOICES };
+        if (method === 'tracks.list') return { tracks: [] };
+        if (method === 'tracks.audio.list') return { audioTracks: AUDIO_TRACKS };
+        return {};
+      },
+    );
+    await mount(api);
+    await act(async () => rowBtn('a2', 'replace-audio').click());
+    pick('[data-input="replace-audio-path"]', 'C:/missing.wav');
+    await act(async () => rowBtn('a2', 'replace-audio-save').click());
+    await flush();
+    expect(container.querySelector('.audio-track-message')?.textContent).toContain(
+      'audio file not found',
+    );
+    const input = rowFor('a2').querySelector(
+      '[data-input="replace-audio-path"]',
+    ) as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.value).toBe('C:/missing.wav');
+  });
+
+  it('closes the replace editor when the disclosure is toggled off', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    await act(async () => rowBtn('a2', 'replace-audio').click());
+    expect(rowFor('a2').querySelector('[data-input="replace-audio-path"]')).not.toBeNull();
+    await act(async () => rowBtn('a2', 'replace-audio').click());
+    expect(rowFor('a2').querySelector('[data-input="replace-audio-path"]')).toBeNull();
+  });
+
+  it('imports an audio file as a dub track via tracks.audio.mux', async () => {
+    const { api, calls } = makeBridge({
+      'tracks.audio.mux': { audioTrack: AUDIO_TRACKS[1] },
+    });
+    await mount(api);
+    const importBtn = () =>
+      container.querySelector('[data-action="import-audio"]') as HTMLButtonElement;
+    // Gated until ALL THREE required params are present (mux _require_str's each).
+    expect(importBtn().disabled).toBe(true);
+    pick('[data-input="import-audio-path"]', '  C:/my-vo.wav  ');
+    expect(importBtn().disabled).toBe(true);
+    pick('[data-input="import-audio-lang"]', ' ro ');
+    expect(importBtn().disabled).toBe(true);
+    pick('[data-input="import-audio-name"]', ' My voiceover ');
+    expect(importBtn().disabled).toBe(false);
+
+    await act(async () => importBtn().click());
+    await flush();
+    expect(calls.filter((c) => c.method === 'tracks.audio.mux')).toEqual([
+      {
+        method: 'tracks.audio.mux',
+        params: {
+          videoId: 'v1',
+          path: 'C:/my-vo.wav',
+          lang: 'ro',
+          name: 'My voiceover',
+          // NEVER 'original': that would suppress the AI-generated badge.
+          kind: 'dub',
+        },
+      },
+    ]);
+    // A successful import clears the row and re-reads the list.
+    expect(
+      (container.querySelector('[data-input="import-audio-path"]') as HTMLInputElement).value,
+    ).toBe('');
+    expect(calls.filter((c) => c.method === 'tracks.audio.list')).toHaveLength(2);
+  });
+
+  it('keeps the import fields on failure and surfaces a non-Error rejection', async () => {
+    const { api, calls } = makeBridge();
+    (api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
+      async (method: string, params?: Record<string, unknown>) => {
+        calls.push({ method, params });
+        if (method === 'tracks.audio.mux') throw 'plain mux error';
+        if (method === 'tts.voices') return { voices: VOICES };
+        if (method === 'tracks.list') return { tracks: [] };
+        if (method === 'tracks.audio.list') return { audioTracks: AUDIO_TRACKS };
+        return {};
+      },
+    );
+    await mount(api);
+    pick('[data-input="import-audio-path"]', 'C:/my-vo.wav');
+    pick('[data-input="import-audio-lang"]', 'ro');
+    pick('[data-input="import-audio-name"]', 'My voiceover');
+    await act(async () => {
+      (container.querySelector('[data-action="import-audio"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.audio-track-message')?.textContent).toContain(
+      'plain mux error',
+    );
+    expect(
+      (container.querySelector('[data-input="import-audio-path"]') as HTMLInputElement).value,
+    ).toBe('C:/my-vo.wav');
+  });
+
+  it('locks every audio-track control while a dub job is running', async () => {
+    const { api } = makeBridge();
+    await mount(api);
+    // Open the replace editor and fill it BEFORE the job starts, so the Save
+    // button's only remaining reason to be disabled is the job itself.
+    await act(async () => rowBtn('a2', 'replace-audio').click());
+    pick('[data-input="replace-audio-path"]', 'C:/other.wav');
+    expect(rowBtn('a2', 'replace-audio-save').disabled).toBe(false);
+
+    pick('[data-picker="track"]', 't1');
+    await act(async () => {
+      (container.querySelector('[data-action="start-dub"]') as HTMLButtonElement).click();
+    });
+    await flush();
+    expect(rowBtn('a2', 'strip-audio').disabled).toBe(true);
+    expect(rowBtn('a2', 'replace-audio').disabled).toBe(true);
+    // A concurrent replace would race the dub job's own track append, so Save is
+    // locked too even though its path is valid.
+    expect(rowBtn('a2', 'replace-audio-save').disabled).toBe(true);
+    expect(
+      (container.querySelector('[data-input="replace-audio-path"]') as HTMLInputElement).disabled,
+    ).toBe(true);
+    expect(
+      (container.querySelector('[data-action="import-audio"]') as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 });

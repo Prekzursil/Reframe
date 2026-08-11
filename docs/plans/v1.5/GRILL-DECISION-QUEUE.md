@@ -80,7 +80,20 @@ This file is the audit trail — every answer gets appended as it lands.
 
 ## Answers log
 
-### B-1 — Version: **1.4.2**, not 1.5.0 (2026-07-29)
+### B-1 — Version: **1.4.2**, not 1.5.0 (2026-07-29) — SUPERSEDED 2026-08-10 by 1.5.0
+
+> **SUPERSEDED, not deleted.** `app/package.json` now reads **1.5.0**. B-1's mechanics were
+> right and its conclusion has expired: the v1.5 programme is landing, and the ARTIFACT
+> problem it was created to solve had returned in full — `dist/` already holds a built
+> `media-studio-1.4.2-win-x64.exe` (see `distribution-audit-2026-08.md:101`), so another
+> build at 1.4.2 would overwrite it, NSIS would treat the equal version as a repair, and
+> electron-updater would never see it as newer. That is verbatim the failure the paragraph
+> below describes for 1.4.1. The reasoning is kept because its TRAP note is still live and
+> still correct: a find/replace corrupts the WCAG 1.4.1 references and the
+> `updateVerify.test.ts` downgrade FIXTURES. Sites changed: `app/package.json`,
+> `app/package-lock.json` (both), `app/main/brand.test.ts` (the deliberate pin),
+> `CHANGELOG.md` (section renumbered). Dated audit snapshots that RECORD 1.4.2 as a
+> measurement are deliberately untouched.
 
 The tree still declared **1.4.1** — already shipped and tagged `v1.4.1` — so the first local
 build emitted `media-studio-1.4.1-win-x64.exe`, indistinguishable from the installed app. NSIS

@@ -554,6 +554,26 @@ export const client = {
       rpc('tts.dub.start', { ...p }),
   },
 
+  /**
+   * `tracks.audio.*` — the container-level audio-track surface
+   * (`sidecar/media_studio/features/tracks_audio.py`).
+   *
+   * W62 — every method here has a REAL caller; none is a definition-only wrapper:
+   *   * `list` — `features/Dub.tsx` (the Audio-tracks list, also handed to
+   *     `LipSync`) and `features/ShortMaker.tsx` (the export audio picker).
+   *   * `mux` / `replace` / `strip` — the Audio-tracks section of
+   *     `features/Dub.tsx`: Import an audio track, and per-row Replace audio /
+   *     Remove. Until 2026-08-10 those three were wrapped and never called, so the
+   *     panel was read-only display.
+   *
+   * `replace` and `strip` are offered for a `kind: 'dub'` row ONLY. Both branch on
+   * `kind` sidecar-side, and the ORIGINAL branch re-muxes the whole container into
+   * a derived file that it returns but never writes back to the project
+   * (`tracks_audio.py:533-554` / `:578-588`) — so a UI control bound to it would
+   * drop the manifest row while the app kept resolving the untouched source. See
+   * `Dub.canEditAudioTrack`. These wrappers stay unrestricted: the gate belongs to
+   * the affordance, not the transport.
+   */
   tracksAudio: {
     list: (videoId: string): Promise<{ audioTracks: AudioTrack[] }> =>
       rpc('tracks.audio.list', { videoId }),
