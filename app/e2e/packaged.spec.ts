@@ -21,6 +21,7 @@ import { test, expect, _electron as electron, type ElectronApplication } from '@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import {
+  COLD_TIMEOUT_MS,
   SIDECAR_DIR,
   bundledFfmpegPath,
   findBuiltApp,
@@ -50,6 +51,15 @@ test.describe('packaged (shipped binary) E2E', () => {
   const mainLog: string[] = [];
 
   test.beforeAll(async () => {
+    // Same cold-start budget as installed-app.spec.ts, and for the same reason: this hook
+    // launches a REAL package, whose FIRST run does the full bootstrap. It began failing the
+    // moment that bootstrap started genuinely working — before #406 it died fast on a get-pip
+    // sha256 mismatch, so the 120 s default was never reached. MEASURED on Actions run
+    // 31455388644: `"beforeAll" hook timeout of 120000ms exceeded` at packaged.spec.ts:52, with
+    // 20 passed / 1 failed / 4 did not run. `test.setTimeout()` inside beforeAll sets the HOOK
+    // timeout; `electron.launch` needs its own, which is a separate budget again.
+    test.setTimeout(COLD_TIMEOUT_MS + 120_000);
+
     // HARD requirement: a real package must exist (no dev fallback here). Set the
     // flag ONLY around our own resolution and restore it immediately, so it can
     // never leak into preview.spec (same single-worker process) and force IT to
@@ -70,6 +80,7 @@ test.describe('packaged (shipped binary) E2E', () => {
       args: [built.main, '--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
       ...(built.executablePath ? { executablePath: built.executablePath } : {}),
       env: seeded.appEnv,
+      timeout: COLD_TIMEOUT_MS,
     });
     const proc = app.process();
     proc.stdout?.on('data', (d: Buffer) => mainLog.push(d.toString()));

@@ -87,6 +87,27 @@ export const DIST_DIR = join(REPO_ROOT, 'dist');
 export const APP_EXE_ENV = 'RF_E2E_APP_EXE';
 
 /**
+ * How long a COLD first run may take before the app is expected to answer.
+ *
+ * Default 15 minutes. The documented estimate is ~3 minutes
+ * (`FirstRunSetup.SETUP_ESTIMATE_MIN`) but that is a warm-network figure for a developer box.
+ * A non-numeric or non-positive value falls back to the default rather than silently becoming
+ * 0 — a 0 would make every wait vacuous and the tests meaningless.
+ *
+ * LIVES HERE, not in a spec, because BOTH `installed-app.spec.ts` and `packaged.spec.ts` launch
+ * a real package whose first run does the bootstrap, and they were drifting: the value was
+ * defined in one spec while the other silently used Playwright's defaults. Duplicating a value
+ * across N places is the shape that produced the get-pip pin/artifact mismatch (#406), where a
+ * rotation updated two of the three places a comment said to keep in sync.
+ *
+ * Tunable via `RF_E2E_COLD_TIMEOUT_MS`; `e2e.yml:687` passes 1200000 for the installed leg.
+ */
+export const COLD_TIMEOUT_MS = ((): number => {
+  const parsed = Number(process.env.RF_E2E_COLD_TIMEOUT_MS ?? '');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 900_000;
+})();
+
+/**
  * What the launched app boots: the args + (for a real package) the executable
  * path, plus whether we are pointing at a PACKAGED artifact or the dev build.
  */

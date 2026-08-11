@@ -47,6 +47,25 @@ per-file authority table for that corpus; this section is the tree-wide statemen
 | r2 | every `docs/**` / `reports/**` path cited by tracked source resolves | `ssot-allow:` on the same line |
 | r3 | every live authority doc is linked from this file | no |
 | r4 | no `.gitignore`-matched path is cited by tracked source | `ssot-allow:` on the same line |
+| r5 | no tracked doc that lives in a SUBDIRECTORY is cited by bare basename | `ssot-allow:` on the same line |
+
+**r5 was missing from this table until 2026-08-11.** `docs_check.py`'s own header says r5 was
+added "because r1-r4 could not see the drift this gate's own commit created"; the gate has
+printed `r1=0 r2=0 r3=0 r4=0 r5=0` on every run since, so a reader comparing this table against
+the gate's output would have found a fifth counter the map did not mention. Measured at
+`81a04965`: `python .quality/docs_check.py` exits 0 and prints `authority-docs=93
+citing-files-scanned=1122 waivers-applied=9 ambiguous-bare=10 r1=0 r2=0 r3=0 r4=0 r5=0`.
+
+> **REFUTED, kept rather than deleted: this paragraph first called the omission "the exact
+> defect r5 exists to catch".** It is not, and r5 itself is the disproof. r5's rule — the one
+> in the row above, and in `docs_check.py`'s rule list — is *"No tracked doc that lives in a
+> SUBDIRECTORY is cited by bare basename"*; a missing markdown table row is not a citation at
+> all. Run at `81a04965`, where this table stopped at r4, the gate reports `r5=0` and `EXIT=0`
+> (output quoted above, measured in a detached worktree at that rev): the omission was
+> invisible to r5, so r5 cannot be the rule that catches it. What is true is the weaker,
+> META statement the header actually makes — this is the same *class* r5 was born from, a
+> gate's own commit creating drift its rules cannot see — and that class is why the omission
+> is worth recording, not because any counter would have gone red.
 
 A waiver must state its reason on the same line and is greppable
 (`git grep "ssot-allow:"`), matching the charter's rule-4 suppression idiom.
@@ -59,18 +78,21 @@ and reverts. Run it after any change to `docs_check.py`.
 
 ## The SSOT pointers
 
-The five facts that get contradicted most often, and the one place each is decided.
+The eight facts that get contradicted most often, and the one place each is decided.
+(**REFUTED wording, kept so the correction is visible:** this line read *"The five facts"*
+while the table below it carried eight rows. Counted at `81a04965`; re-count the rows, do not
+re-copy this number.)
 
 | subject | the ONLY source | enforcer |
 |---|---|---|
 | coverage numbers | [`.coverage-thresholds.json`](../.coverage-thresholds.json) — 100% lines/branches/functions/statements on both sides | `.github/workflows/quality.yml` gate:3 + `app/vitest.config.ts`. The JSON is the **declaration**; those two are the **enforcement**. |
 | the app version | `app/package.json` | `electron-builder.yml` derives the artifact name from it |
-| the RPC wire contract | `sidecar/contract/spec.py` (machine) + [`rpc-contract-v2.md`](rpc-contract-v2.md) (doctrine) | `register_all` at `sidecar/media_studio/handlers/composition.py:71` |
+| the RPC wire contract | `sidecar/contract/spec.py` (machine) + [`rpc-contract-v2.md`](rpc-contract-v2.md) (doctrine) | `sidecar/media_studio/handlers/composition.py` :: `register_all` |
 | design-token VALUES | `app/renderer/src/styles/tokens.css` | `tokens.conformance.test.ts`; [`design-system.md`](design-system.md) is the portable human spec |
 | gate composition + tool pins | [`QUALITY-CHARTER.md`](../QUALITY-CHARTER.md) | `.quality/charter_check.py` |
 | provider catalog + free tiers | `sidecar/media_studio/models/catalog.py` | [`providers/`](providers/SETUP.md) is a human mirror, never the source |
 | model URLs, commits, sha256 pins | `sidecar/media_studio/assets/manifest.py` | — |
-| the chatterbox env pin list | `sidecar/media_studio/features/tts/chatterbox.py` :: `CHATTERBOX_REQUIREMENTS` | `assets/manager.py:617` compares against the tuple; the `.txt` mirrors IT |
+| the chatterbox env pin list | `sidecar/media_studio/features/tts/chatterbox.py` :: `CHATTERBOX_REQUIREMENTS` | `sidecar/tests/test_runtime_setup.py` :: `TestShippedRequirementFiles::test_chatterbox_requirements_file_mirrors_the_code_tuple_exactly` asserts the `.txt` and the tuple are identical lists; the `.txt` mirrors the tuple. (**REFUTED, kept: this cell cited `assets/manager.py:617` as the comparison site.** Wrong on line, file and mechanism — at `81a04965` that line is `def installed_path(...)`, and `CHATTERBOX_REQUIREMENTS` does not occur anywhere in `assets/manager.py`. Absence controlled: in the same read `installed_path` fires 4× and case-insensitive `chatterbox` 15×, so the walk was alive. This is a SECOND live instance of the rot class the row above was fixed for, in the same table — the re-verification pass that fixed that one disclosed only one surviving instance, which was narrower than its own evidence.) |
 
 ## Repo root
 
@@ -127,8 +149,29 @@ The five facts that get contradicted most often, and the one place each is decid
 
 ## Wiring — `§`-numbered unit contracts
 
-28 tracked source files cite these by bare `§` id (e.g. `app/main/main.ts` `// ---- WIRING-T5 §2`),
-so the ids survive the move out of the repo root; this entry is how they stay findable.
+Tracked source cites these by bare `§` id (e.g. `app/main/main.ts` `// ---- WIRING-T5 §2`), so
+the ids survive the move out of the repo root; this entry is how they stay findable. Measured at
+`81a04965` over every tracked non-`docs/`, non-`reports/` file: **11** carry a bare
+`WIRING-<id> §` citation, **26** cite a `docs/wiring/…md` path instead, and **38** mention a
+`WIRING-` id in any form.
+
+> **REFUTED: this line read "28 tracked source files".** No probe yields 28 — not the bare-id
+> form (11), not the path form (26), not the union (36), not any mention (38). The literal was
+> already wrong when it was written in `6ae972c1`, where the same three probes — run in the same
+> tracked non-`docs/`, non-`reports/` scope that yields the `11` above — read 11 / **18** / 30.
+> (**REFUTED, kept: this sentence first said `11 / 30 / 30`.** The middle figure was wrong by 12
+> and carried no UNVERIFIED tag while the three figures one line above did. `30` is a real
+> number, but off the wrong revision *and* the wrong scope: measured, it is the path-form count
+> at `81a04965` over ALL tracked files, `docs/` included. That it reached this sentence by being
+> copied from that adjacent cell is an inference, **likely (55-80%)** — the measurement is the
+> `30`/`18` mismatch, not the copy. The verdict is untouched: at `6ae972c1` no probe yields 28
+> either — 11 / 18 / 30, union 29.)
+> The detector used here is controlled BOTH ways: it fires on this entry's own example string
+> `// ---- WIRING-T5 §2`, and it does **not** fire on `docs/wiring/WIRING-T5.md §2`, so the
+> bare-id and path forms cannot contaminate each other. **UNVERIFIED and unpinned:** nothing
+> recomputes these three counts, so they rot exactly the way `28` did — settling experiment:
+> re-run that pair of matchers, or extend `sidecar/tests/test_contract_parity.py`'s
+> derive-the-number pattern to this entry.
 
 | file | unit |
 |---|---|
@@ -144,7 +187,7 @@ so the ids survive the move out of the repo root; this entry is how they stay fi
 | file | charter |
 |---|---|
 | [`validation/v15-audit-ledger.md`](validation/v15-audit-ledger.md) | the only audit SSOT: 225 findings actually checked (131 CONFIRMED + 94 REFUTED). Its headline lesson is *volume is not evidence*. |
-| `validation/v15-audit-ledger-unverified.md.gz` | the only home of the 2348 unchecked findings. Kept separate on purpose: merging them makes a claim and a verified finding look alike. |
+| `validation/v15-audit-ledger-unverified.md.gz` | the only home of the FULL recovered finding set — **2618** deduped findings (its own provenance block: `critical 56 / high 831 / medium 1219 / low 512`, which sums to 2618), of which only the 225 above carry a verdict. Kept separate on purpose: merging them makes a claim and a verified finding look alike. **REFUTED: this cell read "the 2348 unchecked findings"** — wrong twice. The string `2348` does not occur anywhere in the archive, and the archive is not the *unchecked* subset: it is the whole deduped set. Second signal: the decompressed file carries 2648 `###` headings; the 30-heading excess over 2618 is UNVERIFIED (settling experiment: classify those headings — the prose-artifact sections at the tail also use `###`). |
 | `validation/tools/` | the only regeneration recipe for the above (`extract_ledger.py`, `join_verdicts.py`, `join_by_agentid.py`), plus `verify_ssot_claims.py` (the drift verifier) and `probe_dependency_pin.py`. |
 | [`../reports/PHASE8-SOTA-MANIFEST.md`](../reports/PHASE8-SOTA-MANIFEST.md) | the only source of the 15-component SOTA table that `features/system_advisor.py:86-88` mirrors. **Unguarded mirror** — R3 wants a conformance test here. |
 
@@ -163,7 +206,7 @@ so the ids survive the move out of the repo root; this entry is how they stay fi
 | [`build/RUN-CHECKLIST.md`](build/RUN-CHECKLIST.md) | the only run procedure. **DRAFT** — its pins are stale against `sidecar/pyproject.toml`; rewrite pending. |
 | [`build/COMPLETENESS-REPORT.md`](build/COMPLETENESS-REPORT.md) | superseded and wrong at the headline, kept because `HIGH-1` / `HIGH-3` finding ids are cited by five live source files. |
 | [`build/INTEGRATION-REPORT.md`](build/INTEGRATION-REPORT.md) | same — header, do not delete. |
-| [`build/DESIGN-DIRECTION.md`](build/DESIGN-DIRECTION.md) | superseded by `design-system.md`; 9 of its 14 palette values contradict `tokens.css`. Merge-and-archive is tracked as phase-2 item 2.7, not done. |
+| [`build/DESIGN-DIRECTION.md`](build/DESIGN-DIRECTION.md) | superseded by [`design-system.md`](design-system.md); **9** of the **16** palette values it states contradict `tokens.css`. **DOUBLY REFUTED, both wordings kept.** (1) The cell originally read *"9 of its 14"*. (2) A re-verification pass then rewrote it to *"**8** of its 14 … **REFUTED: this cell said 9 of 14.** The `14` is right (6 surface + 4 text + 1 accent + 3 status); the `9` is not"* — **that correction was inverted and is itself REFUTED: the `9` was right and the `14` was wrong.** Measured by TOKEN NAME at `81a04965` against the stored blobs, `## Palette (exact values)` names **15** tokens carrying an exact value, plus the accent written with no token name (`#f2a33c`, which `tokens.css` carries as `--accent`) = 16 values. Nine disagree: the six `--surface-*`, **`--edge`** (`rgba(255,255,255,0.07)` vs `rgba(255, 255, 255, 0.09)`), `--text-muted` and `--text-faint`. Six agree: `--edge-strong`, `--text-primary`, `--text-secondary`, the three `--status-*`. The "14" is reached only by dropping `--edge` and `--edge-strong`, which are named with exact values in the prose two lines under the surface table rather than in it — and `--edge` is the ninth disagreement, so dropping it is what turned 9 into 8. Enumeration basis, stated so the `16` can be checked rather than trusted: one value per named token plus the accent, the same basis the original `14` used. The section also prints three further accent shades and two washes, which no reading here counted; on the widest basis it states 21 colour values. Detector note, because the first pass here was a detector failure and not a finding: my initial pairer emitted a bogus `---` token from the table separator and silently dropped `--surface-deep`; the reading above comes from a line-oriented pairer that refuses to print a tally unless it first finds every hand-checked token. Merge-and-archive is tracked as phase-2 item 2.7, not done. |
 
 ## Archive
 

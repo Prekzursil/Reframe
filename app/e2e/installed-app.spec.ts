@@ -102,6 +102,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   APP_EXE_ENV,
+  COLD_TIMEOUT_MS,
   DIST_DIR,
   REPO_ROOT,
   SIDECAR_DIR,
@@ -116,19 +117,10 @@ import {
 /** The installed app to drive; empty means "skip this whole suite". */
 const INSTALLED = process.env[APP_EXE_ENV]?.trim() ?? '';
 
-/**
- * How long the COLD first-run bootstrap may take before the pipeline is expected
- * to answer. Default 15 minutes: the documented estimate is ~3 minutes
- * (`FirstRunSetup.SETUP_ESTIMATE_MIN`) but that is a warm-network figure for a
- * developer box, and this window has never been measured on a CI runner —
- * UNVERIFIED, which is exactly why it is env-tunable rather than hardcoded. A
- * non-numeric or non-positive value falls back to the default rather than
- * silently becoming 0 (a 0 would make the wait vacuous and the test meaningless).
- */
-const COLD_TIMEOUT_MS = ((): number => {
-  const parsed = Number(process.env.RF_E2E_COLD_TIMEOUT_MS ?? '');
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 900_000;
-})();
+// COLD_TIMEOUT_MS moved to fixtures.ts (2026-08-11) so packaged.spec.ts shares one value: it
+// launches a real package too and was silently using Playwright's defaults. Still env-tunable
+// via RF_E2E_COLD_TIMEOUT_MS. The window remains UNVERIFIED on a CI runner — the settling
+// experiment is a dispatch that gets all the way through a cold first run.
 
 const SKIP_REASON =
   `${APP_EXE_ENV} is not set, so there is no installed app to drive. Set it to the ` +
@@ -216,6 +208,21 @@ test.describe('INSTALLED build — first run to working pipeline (W-A + W41)', (
   test.skip(INSTALLED === '', SKIP_REASON);
 
   test.beforeAll(async () => {
+    // THE HOOK'S OWN TIMEOUT, not the test's. Without this the suite could never go green on a
+    // COLD install: this file defines COLD_TIMEOUT_MS (default 900 s, and e2e.yml passes
+    // RF_E2E_COLD_TIMEOUT_MS=1200000) for exactly this wait, but Playwright bounds a beforeAll
+    // hook at its own 120 s default and that fires FIRST. `test.setTimeout()` inside beforeAll
+    // sets the HOOK timeout.
+    //
+    // MEASURED, not guessed: Actions run 31451957732 step 28, on `main`, with the installed
+    // build. The hook aborted at 02:33:32 -> 02:35:33 with `"beforeAll" hook timeout of
+    // 120000ms exceeded`, and all FOUR real tests below reported `-` (skipped). That is why the
+    // installed-build arm had never been observed green — the launch never got to run.
+    //
+    // The slack is for the launch + firstWindow() round trip on top of the bootstrap wait; the
+    // cold budget itself stays env-tunable so a slow runner is a config change, not an edit.
+    test.setTimeout(COLD_TIMEOUT_MS + 120_000);
+
     built = findBuiltApp();
     // findBuiltApp fails loud on a bad path, so reaching here means the tree
     // parsed. Re-assert the two properties the rest of the suite depends on.
@@ -239,10 +246,19 @@ test.describe('INSTALLED build — first run to working pipeline (W-A + W41)', (
       'exactly one MEDIA_STUDIO_* key may reach the installed app: the seeded data root',
     ).toEqual(['MEDIA_STUDIO_CONFIG_DIR']);
 
+    // THE THIRD TIMEOUT ON THIS PATH, and each one only became visible after the previous was
+    // removed. `electron.launch` has its OWN budget, separate from the test timeout and from the
+    // beforeAll hook timeout above; at its default it aborted with `electron.launch: Timeout
+    // 180000ms exceeded` while the app was still bootstrapping. MEASURED on Actions run
+    // 31455388644: the captured stderr shows `[bootstrap] adopted the installer's default
+    // profile` and the asset manifest registering assets — i.e. the run was PROGRESSING, and
+    // there was no sha256 mismatch, so #406 held. A cold first run genuinely exceeds 3 minutes
+    // because it builds the env and installs packages.
     app = await electron.launch({
       args: [built.main, '--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
       ...(built.executablePath ? { executablePath: built.executablePath } : {}),
       env: appEnv,
+      timeout: COLD_TIMEOUT_MS,
     });
     const proc = app.process();
     proc.stdout?.on('data', (d: Buffer) => mainLog.push(d.toString()));
