@@ -673,7 +673,19 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
                   type="button"
                   className="secondary"
                   data-action="replace-audio"
-                  onClick={() => setReplaceFor(replaceFor === t.id ? '' : t.id)}
+                  // Clearing the draft here is load-bearing, not tidiness. `replacePath` is ONE
+                  // component-level state shared by every row and the input below is controlled
+                  // by it, while the only other reset (:414-415) sits inside the SUCCESS branch.
+                  // Without this, typing a path for row A and then opening row B pre-filled B
+                  // with A's path AND armed its Save, so one click sent A's file to B's
+                  // audioTrackId — and `tracks_audio.py` assigns `track.path = audio_path`
+                  // keeping no record of the previous value, so B's correct audio pointer was
+                  // destroyed and the export played A's language under B's label. Pinned by
+                  // "does not carry a typed replace path from one dub row to another".
+                  onClick={() => {
+                    setReplaceFor(replaceFor === t.id ? '' : t.id);
+                    setReplacePath('');
+                  }}
                   disabled={audioLocked}
                 >
                   Replace audio…
