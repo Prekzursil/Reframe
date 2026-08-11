@@ -64,13 +64,15 @@ golden run on real footage.
   list and that docstring; it is restored here so it cannot silently vanish again.
 * An on-disk :class:`AnalysisStore` is still the DECLARED-OPTIONAL half of WU-E2, so
   a sidecar restart loses the cache and the next ``reframe.render`` refuses loudly.
-* ``app/renderer/src/features/ReframeCorrect.tsx:19-21`` states that "the registered
-  reframe surface really is exactly four methods
-  (``sidecar/tests/test_handlers_rpc_surface.py:118-121``)". After this WU the
-  surface is SIX and that citation's line range moved. This lane is sidecar-only and
-  correctly must not edit ``app/``, so this is a HAND-OFF for the lane that owns the
-  renderer, not a defect here. It is a ``//`` comment, so no false statement reaches
-  the UI.
+* ~~``ReframeCorrect.tsx`` still claims the reframe surface is "exactly four methods"~~ —
+  **CLOSED by db61ea6e (2026-08-10), before this lane's base.** Removed rather than left
+  standing, because the bullet was FALSE and advertised a hand-off that does not exist:
+  ``ReframeCorrect.tsx:20-29`` now says the opposite ("That is now FALSE and is retracted in
+  turn"), enumerates the SIX names, and has already dropped the ``:118-121`` range — citing
+  the file rather than a range, for exactly this reason. ``merge-base --is-ancestor`` puts
+  db61ea6e before 81a04965, so nothing here was ever outstanding. Recorded rather than
+  silently deleted: the bullet was inherited, not written by this lane, but this lane rewrote
+  bullet 1 of the same list and left this one false, which is squarely its remit.
 * The layout flags reach a trace only through ``reframe.analyze``; the shipped
   ``shortmaker`` export path still cannot honour them (see
   :func:`~media_studio.features.reframe_multispeaker.build_trace`).
@@ -263,8 +265,91 @@ class LruAnalysisCache:
         give ``affected=[0]`` for an untouched plan
         (``test_two_bundles_each_non_default_on_a_different_flag_also_report_one``),
         against ``affected=[]`` when the flags are passed
-        (``test_the_layout_flags_select_the_exact_cached_bundle``). The workaround is
-        unchanged: pass the three identity params.
+        (``test_the_layout_flags_select_the_exact_cached_bundle``).
+
+        SCOPED 2026-08-11 (third pass) — that three-clause precondition is still wider
+        than the code in one clause and narrower in another. What is EXECUTABLE is three
+        clauses:
+
+        1. the key the CALL BUILDS — ``(video_id, aspect, allowSplit|True,
+           allowComposite|True, diarizeBackend|None)``, assembled in
+           :meth:`ReframeAnalyzeService.render` — is resident under no cache entry, so
+           its ``get(key) or find(...)`` falls through to here; AND
+        2. the most-recently-USED resident entry for ``(video_id, aspect)`` is not the
+           bundle the caller's plan derives from; AND
+        3. that entry's PLAN differs from the one the caller's edit derives from.
+
+        REFUTED 2026-08-11 (fourth pass) — clause 3 was MISSING, and clauses 1+2 shipped
+        as "what is EXECUTABLE", i.e. as the trigger. They are NECESSARY and NOT
+        SUFFICIENT. ``affected`` is a diff of PLAN CONTENT
+        (:func:`~media_studio.features.reframe_override.affected_shot_indices` over
+        ``bundle.plan``), not of cache entries, and :func:`build_bundle` reads only
+        ``(analysis, aspect, allow_split, allow_composite)`` — never ``diarize_backend``,
+        which can reach a plan ONLY through the
+        :class:`~media_studio.features.reframe_multispeaker.ShotAnalysis` it produced. So
+        two entries whose ANALYSES AGREE carry byte-identical plans however their backend
+        labels differ, and there is no misreport to have. SCOPED, because the sentence
+        this replaces said "two entries under the SAME layout flags and DIFFERENT backends
+        carry byte-identical plans" full stop, which is wider than the code: two genuinely
+        different production diarizers normally produce DIFFERENT analyses and therefore
+        different plans, so how often this arm is reached in production is UNVERIFIED —
+        the settling experiment is two real diarizer backends over one clip, comparing the
+        plans their bundles carry. The SUFFICIENCY question does not depend on that
+        frequency: one witness where clauses 1+2 both hold and ``affected == []`` refutes
+        them as a trigger, and the witness below is that. MEASURED:
+        bundles cached at ``(True, True, "a")`` and ``(True, True, "b")`` over ONE
+        injected analysis, the caller
+        rendering ``"a"``'s plan with ``diarizeBackend="x"`` — clause 1 holds (the built
+        key ``(True, True, "x")`` is resident under no entry), clause 2 holds (this
+        method hands back the ``"b"`` entry), the two plans compare EQUAL, and
+        ``affected == []``, which is correct
+        (``test_two_bundles_differing_only_in_the_backend_report_no_affected_shot``).
+        Its detector control is the same shape with the two bundles differing in a
+        LAYOUT flag, where the plans do differ and ``affected == [0]``
+        (``test_two_bundles_each_non_default_on_a_different_flag_also_report_one``).
+        Clause 2 is IMPLIED by clause 3 (were the returned entry the caller's own, its
+        plan would be the caller's baseline and clause 3 could not hold), so it carries
+        no independent information and is kept only because it names the MECHANISM —
+        the fallback returning some other entry is how the plans come to differ. Clause
+        1 is independent: it is what makes this method run at all.
+
+        Against the wording above: "**≥2 bundles exist** for this ``(video_id,
+        aspect)``" is REFUTED as *necessary*. With ``max_entries=1`` the second analysis
+        EVICTS the caller's own bundle, leaving exactly ONE resident entry
+        ``(False, True, None)``, and the untouched plan still reports ``affected=[0]``
+        (``test_one_resident_bundle_that_is_not_the_callers_still_reports_one``); its
+        BOTH-STATES control — the same one-entry cache holding only the caller's own
+        analysis — reports ``affected=[]``
+        (``test_one_resident_bundle_that_is_the_callers_reports_none``), so that ``[0]``
+        is not a probe stuck at one answer. And "the **DEFAULTED** key
+        ``(True, True, None)``" is too NARROW: with the caller PASSING
+        ``diarizeBackend="x"`` against bundles cached under ``"a"`` and ``"b"``, the
+        built key ``(True, True, "x")`` misses both and ``affected=[0]`` again
+        (``test_passing_an_identity_value_no_cached_bundle_carries_misreports``).
+
+        So the workaround is narrower than "pass the three identity params": pass the
+        SAME values ``reframe.analyze`` was called with AND have that entry still
+        RESIDENT — that PAIR is what makes :meth:`get` hit exactly. Passing a value no
+        cached bundle carries lands here just the same.
+
+        REFUTED 2026-08-11 (fourth pass) — the residency half was missing, and the
+        prescription shipped as unconditional ("pass the SAME values ``reframe.analyze``
+        was called with, which is what makes :meth:`get` hit exactly") thirteen lines
+        under the very eviction scenario that breaks it. Once the caller's own
+        :class:`AnalysisKey` has been evicted, :meth:`get` misses even for the exact
+        values ``analyze`` was called with, this fallback runs, and the misreport is
+        back. NOT a ``max_entries=1`` artifact: :data:`DEFAULT_CACHE_ENTRIES` is 4 and
+        :class:`AnalysisKey` carries ``video_id``, so the bound is GLOBAL across clips
+        and four further analyses in one session evict it. MEASURED at the SHIPPED
+        default with the prescription followed verbatim
+        (``allowComposite=False, diarizeBackend="a"``): 0 further analyses ->
+        ``affected=[]``; 3 further -> ``affected=[]`` (cache full, caller's entry still
+        resident); 4 further -> the caller's entry is evicted and ``affected=[0]``. The
+        first two are the controls, so that ``[0]`` is the eviction and not a probe
+        stuck at one answer
+        (``test_the_prescribed_exact_values_still_miss_once_the_callers_entry_is_evicted``).
+        Under eviction there is NO caller-side workaround at all — only a larger cache
+        or a fresh ``reframe.analyze``.
         """
         for key in reversed(self._items):
             if key.video_id == video_id and key.aspect == aspect:

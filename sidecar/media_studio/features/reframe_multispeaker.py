@@ -1598,8 +1598,11 @@ def recorded_segment_bytes(row: Mapping[str, Any]) -> int | None:
     included** — so a row recording ``0`` over a 0-byte file on disk satisfies the
     bytes half and its (unusable) segment is reused. That is deliberate here (this
     function answers "did the row record a size", not "is that size plausible") and
-    it is why :func:`segment_is_reusable` no longer claims to fail closed in *every*
-    degenerate direction. UNVERIFIED whether a 0-byte segment is reachable at all:
+    it is why :func:`segment_is_reusable` scopes its fail-closed claim to FOUR
+    directions rather than *every* one. (That was ASPIRATIONAL when written — the
+    sibling below still read "FAIL-CLOSED in every degenerate direction" until
+    2026-08-11, so the two made incompatible claims in the same file.) UNVERIFIED
+    whether a 0-byte segment is reachable at all:
     it needs the ffmpeg runner to exit 0 having written nothing, which was not
     reproduced; reachability judged **remote (1-20%)** on that evidence, and the
     failure would be a LOUD concat error rather than silent corruption. Settling
@@ -1628,12 +1631,43 @@ def segment_is_reusable(
     * the BYTES half — the size ``row`` published must equal the size measured on
       disk RIGHT NOW.
 
-    FAIL-CLOSED in every degenerate direction: no row, no usable recorded size, and
-    no measurable file (``measured_bytes is None``, which is also how a VANISHED
-    segment presents, so this subsumes the old ``exists`` seam) each deny reuse.
-    The absent-vs-absent case is called out because it is the trap: comparing an
-    unrecorded size to an unmeasurable file would compare ``None`` to ``None`` and
-    license reuse of a segment that is not even there.
+    FAIL-CLOSED in FOUR degenerate directions, each measured to deny reuse: no row;
+    no usable recorded size (absent key / ``null`` / ``str`` / ``float`` / ``bool`` /
+    negative — :func:`recorded_segment_bytes` owns that set); no measurable file
+    (``measured_bytes is None``, which is also how a VANISHED segment presents, so
+    this subsumes the old ``exists`` seam); and a size MISMATCH in either direction
+    (a shrunk stump or a grown file). The absent-vs-absent case is called out
+    because it is the trap: comparing an unrecorded size to an unmeasurable file
+    would compare ``None`` to ``None`` and license reuse of a segment that is not
+    even there.
+
+    REFUTED 2026-08-11 — this paragraph read "FAIL-CLOSED in every degenerate
+    direction", which is wider than the code and contradicted its own sibling
+    :func:`recorded_segment_bytes` just above, which already said otherwise.
+    ZERO is NOT closed: a row recording ``0`` over a 0-byte file satisfies the bytes
+    half and reuse is GRANTED — pinned by
+    ``test_a_zero_byte_row_over_a_zero_byte_file_is_still_reusable`` against the
+    ``4096 == 4096`` health control beside it, so the grant is not a probe stuck at one
+    answer. Reachability of a 0-byte segment, and the experiment that would settle it,
+    are recorded on :func:`recorded_segment_bytes`, which owns that decision.
+
+    CORRECTED 2026-08-11 — the sentence above cited "enumerating fourteen cases against
+    this function". That enumeration was a scratch probe that no longer exists, so the
+    most surprising assertion in this docstring was the one thing no test could redden,
+    while the lane's own standard (cite a live test, not a deleted probe) was applied
+    elsewhere. Measured over the sidecar suite AS IT STOOD BEFORE that test existed, by
+    wrapping this function and counting every call it received: 75 calls, 8 distinct
+    ``(recorded, measured, result)`` triples, and exactly ONE granting triple —
+    ``(4096, 4096, True)``, nine times. ZERO granting triples had ``recorded == 0``, so
+    mutating the return to ``recorded > 0 and ...`` was provably indistinguishable on
+    every call that suite made — a GREEN mutant by enumeration, not by sampling. That
+    same enumeration is the detector control: the nine ``4096`` grants are exactly what
+    a ``recorded != 4096`` mutant would flip, and one of them is asserted directly by
+    ``test_a_matching_row_and_size_is_reusable`` — so the harness CAN see a grant->deny
+    change and simply never saw the zero one. BOTH-STATES on the fix: with the new test
+    added, the ``recorded > 0`` mutant reddens it and nothing else — 1 failed / 297
+    passed over ``test_reframe_analyze.py`` + ``test_reframe_multispeaker.py``, the two
+    test modules that reach this function.
 
     HONEST SCOPE: a size match is not a proof of content. A corruption that
     preserves the byte count exactly (an in-place overwrite of the same length)
@@ -1681,11 +1715,20 @@ def shot_manifest_payload(
     permanently blind for that clip. Pinned by
     ``test_a_reused_shots_row_republishes_the_size_reuse_was_granted_against``.
 
-    HONEST SCOPE: this closes the PERSISTENCE half only. A truncation landing inside
-    the same window still reaches THIS render's concat, because the bytes were proven
-    at plan time and the concat happens later; that window is a TOCTOU no size check
-    can close. What is now guaranteed is that the bad state does not become the
-    recorded truth — the next render re-encodes the shot.
+    HONEST SCOPE: this closes the PERSISTENCE half FOR A REUSED ROW ONLY. A truncation
+    landing inside the same window still reaches THIS render's concat, because the bytes
+    were proven at plan time and the concat happens later; that window is a TOCTOU no
+    size check can close. For a REUSED row the bad state does not become the recorded
+    truth — the next render re-encodes the shot.
+
+    REFUTED 2026-08-11 — that last sentence shipped unqualified ("What is now guaranteed
+    is that the bad state does not become the recorded truth"), and a FRESHLY-ENCODED row
+    refutes it: its size is not carried, it is measured HERE by ``size``, and the caller
+    invokes this only AFTER the ``os.replace`` and AFTER the concat pass, so a truncation
+    in that window IS published as the new authoritative size and every later render
+    matches the stump. MEASURED both ways in
+    ``test_a_fresh_rows_size_is_measured_after_the_rename_not_carried``. Tracked as
+    residual 4 on :meth:`MultiSpeakerReframeEngine.render_shot_plan`.
     """
     return {
         "version": SHOT_MANIFEST_VERSION,
@@ -2097,19 +2140,95 @@ class MultiSpeakerReframeEngine:
           cache path, a user editing the cache) was still trusted, because reuse bound
           no size or hash to the row and ended in a bare ``exists()``.
 
-          CLOSED 2026-08-10 by the v2->v3 manifest bump: every row now publishes its
-          segment's byte size and :func:`segment_is_reusable` re-measures the file at
-          plan time, so a truncated piece is re-encoded instead of concat-copied. The
-          settling experiment named here ("add the segment's byte size to the manifest
-          row and re-run the truncate-then-rerender probe") WAS RUN, in both states —
-          see ``test_a_truncated_cached_segment_is_re_encoded_end_to_end`` and its
-          intact-file control in ``sidecar/tests/test_reframe_analyze.py``.
+          CLOSED 2026-08-11 by ``2756afb4`` ("close the truncated-segment reuse hole,
+          both halves"), which took BOTH of:
 
-          RESIDUAL, deliberately not closed: a size match is not a content proof, so a
-          corruption that preserves the byte count exactly still reuses. UNVERIFIED
-          whether that occurs on this path; settling experiment on
-          :func:`segment_is_reusable`. A content hash would close it at the cost of
-          re-reading every cached segment on every render.
+          * the PLAN-TIME half — every row publishes its segment's byte size and
+            :func:`plan_shot_segments` re-measures the file AT PLAN TIME, handing that
+            size to :func:`segment_is_reusable`, which denies reuse on any mismatch, so
+            a truncated piece is re-encoded instead of concat-copied. The settling
+            experiment named here ("add the segment's byte size to the manifest row and
+            re-run the truncate-then-rerender probe") WAS RUN, in both states — see
+            ``test_a_truncated_cached_segment_is_re_encoded_end_to_end`` and its
+            intact-file control in ``sidecar/tests/test_reframe_analyze.py``.
+
+            REFUTED 2026-08-11 — this bullet shipped ":func:`segment_is_reusable`
+            re-measures the file before granting reuse", and the edit that produced it
+            also DELETED the words "at plan time", which is the only anchor residual 2
+            below depends on. Wrong twice: that function takes no path at all
+            (``row`` / ``decision`` / ``measured_bytes``) and never calls ``size`` — it
+            compares an int it was handed. MEASURED: ``inspect.signature`` shows no path
+            parameter; ``size(`` does not appear in its body while it DOES appear in
+            :func:`plan_shot_segments` (the detector control, same matcher); and it
+            returns ``True`` for a row / measured pair whose path is not on disk at all.
+            The measurement seam is named where it lives — :func:`plan_shot_segments`'s
+            own docstring records that ``size`` replaced an ``exists`` seam, and that is
+            the call site;
+          * the PERSISTENCE half — a REUSED row republishes
+            :attr:`ShotSegment.measured_bytes` rather than being re-measured after the
+            render (:func:`shot_manifest_payload`). MUTATION-MEASURED: replacing that
+            carry with a plain ``size(seg.path)`` publishes the stump (``bytes`` 3
+            against a proven 4096) and reddens
+            ``test_a_reused_shots_row_republishes_the_size_reuse_was_granted_against``
+            while both plan-time tests above stay GREEN. The halves are independent,
+            so the manifest bump ALONE does not durably close the hole.
+
+          CORRECTED 2026-08-11 — this paragraph credited "the v2->v3 manifest bump"
+          alone, dated 2026-08-10. The v2->v3 bump of THAT date is ``f5ed3f86``, which
+          ``git merge-base --is-ancestor`` puts OFF the shipped history — it never
+          reached ``origin/main``. On the shipped chain the immediate parent
+          ``fe4b0a8b`` still carries v2 with no byte sizes and no carry, and both
+          arrive together in ``2756afb4``, authored 2026-08-11.
+
+          RESIDUALS, deliberately not closed — FOUR, where this list used to enumerate
+          one and so read as complete (and then THREE, which was still not):
+
+          1. EQUAL-LENGTH corruption: a size match is not a content proof, so an
+             in-place overwrite of the same length still reuses. UNVERIFIED whether that
+             occurs on this path; settling experiment on :func:`segment_is_reusable`. A
+             content hash would close it at the cost of re-reading every cached segment
+             on every render.
+          2. The PLAN-TIME -> CONCAT window: the bytes are proven when
+             :func:`plan_shot_segments` runs, and the concat pass happens later in this
+             same method over EVERY segment path (``_write_concat`` is fed reused and
+             fresh alike), so a truncation landing in between still reaches THIS
+             render's output — a TOCTOU no size check can close. Executed as the first
+             half of ``test_a_reused_shots_row_republishes_the_size_reuse_was_granted_against``,
+             whose segment is truncated right after the plan-time probe and is still
+             reused (``reencoded == ()``). What is guaranteed FOR A REUSED ROW — and
+             only for a reused row — is that the bad state does not become the recorded
+             truth, so the NEXT render re-encodes the shot; that half is on
+             :func:`shot_manifest_payload` — which is where this residual was disclosed,
+             and this list was not. Residual 4 is the fresh-row half that sentence
+             silently excluded.
+          3. ZERO bytes: ``0 == 0`` satisfies the bytes half, so a row recording ``0``
+             over a 0-byte file reuses an unusable segment (measured on
+             :func:`segment_is_reusable`). Reachability judged **remote (1-20%)** and
+             its settling experiment named on :func:`recorded_segment_bytes` — again,
+             disclosed there and not here.
+          4. The RENAME -> MANIFEST-WRITE window on a FRESHLY-ENCODED row: the SAME
+             laundering outcome the persistence half closed for reused rows, reached by
+             a fourth path. REFUTED 2026-08-11 — residual 2 shipped the unqualified
+             "What IS guaranteed is that the bad state does not become the recorded
+             truth", and a fresh row is the counterexample. A fresh row's size is not
+             carried; it is MEASURED by :func:`shot_manifest_payload` as
+             ``size(seg.path)``, and that write happens at the END of this method, AFTER
+             the ``os.replace`` that publishes the piece and AFTER the concat pass. A
+             truncation landing in that window IS recorded as the new authoritative
+             size, and every later render then measures the stump, matches the stump and
+             concat-copies it forever. MEASURED both states on a first render with no
+             manifest, one probe returning ``None`` at plan time: with the writer's probe
+             seeing 3 the row publishes ``bytes`` 3 and the NEXT render over that manifest
+             reports ``reencoded == ()`` with ONE ffmpeg pass (concat only); with the
+             writer's probe seeing 4096 the same next render reports ``reencoded == (0,)``
+             with TWO passes, so the ``()`` is not a probe stuck at one answer. Pinned by
+             ``test_a_fresh_rows_size_is_measured_after_the_rename_not_carried``. No
+             post-hoc size check CLOSES it — every probe is itself a check-then-use, so a
+             truncation can always land after the last one — which is why the settling
+             experiment is a NARROWING rather than a fix: hash (or re-measure) each piece
+             at the instant :func:`_write_concat` consumes it and publish THAT, so the
+             recorded size can only ever describe the bytes this render actually
+             concatenated.
 
         Returns ``(out_path, reencoded_shot_indices)``.
         """
