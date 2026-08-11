@@ -99,37 +99,101 @@ def webpref_line_re(key: str) -> re.Pattern[str]:
     return re.compile(rf"^\s+{re.escape(key)}:[ \t]*(?P<value>true|false),?[ \t]*(?://.*)?$", re.MULTILINE)
 
 
+def webpref_any_re(key: str) -> re.Pattern[str]:
+    """Same line shape, but ANY value — used to catch what `webpref_line_re` cannot evaluate.
+
+    `webpref_line_re` only matches a boolean LITERAL. For a required key that fails closed (no
+    match reads as "no longer declares"). For a BANNED key it failed OPEN: `webSecurity:
+    isDev ? false : true` simply did not match and was silently allowed. This pattern sees the
+    line regardless of the value so the caller can refuse what it cannot prove.
+    """
+    return re.compile(rf"^\s+{re.escape(key)}:[ \t]*(?P<value>[^\n]+?)[ \t]*(?://.*)?$", re.MULTILINE)
+
+
+def fuses_block(text: str) -> str | None:
+    """The BODY of the top-level ``electronFuses:`` block, or None if there is none.
+
+    A block is its header line plus every following line that is blank or indented; it ends at
+    the next column-0 non-blank line. Slicing matters: the previous version proved only that the
+    HEADER existed and then matched fuse lines anywhere in the file, so re-homing all eight fuses
+    under a different top-level key left the gate CLEAN over a build that flips zero fuses.
+    """
+    header = _FUSES_BLOCK_RE.search(text)
+    if header is None:
+        return None
+    lines = text[header.end() :].splitlines()
+    body: list[str] = []
+    for line in lines:
+        if line.strip() and not line[:1].isspace():
+            break
+        body.append(line)
+    return "\n".join(body)
+
+
 def check_fuses(text: str) -> list[str]:
     problems: list[str] = []
-    if not _FUSES_BLOCK_RE.search(text):
+    block = fuses_block(text)
+    if block is None:
         problems.append(f"e1 {BUILDER_YML} declares no `electronFuses:` block — the packaged exe is unhardened")
+        return problems
+    if not block.strip():
+        problems.append(f"e1 {BUILDER_YML} has an EMPTY `electronFuses:` block — it flips nothing")
         return problems
     if not _ASAR_TRUE_RE.search(text):
         problems.append(
             f"e1 {BUILDER_YML} does not set `asar: true` — asar-integrity validation has nothing to validate"
         )
+    # Match INSIDE the block only, and check EVERY occurrence: a second declaration of the same
+    # fuse further down would otherwise be the value that electron-builder actually applies while
+    # the gate reads the first one.
     for key, (want, why) in REQUIRED_FUSES.items():
-        match = fuse_line_re(key).search(text)
-        if match is None:
+        matches = list(fuse_line_re(key).finditer(block))
+        if not matches:
             problems.append(f"e1 {BUILDER_YML} does not declare fuse `{key}` (required {want}: {why})")
-        elif match.group("value") != want:
-            problems.append(f"e1 {BUILDER_YML} fuse `{key}` is {match.group('value')}, must be {want} — {why}")
+            continue
+        for match in matches:
+            if match.group("value") != want:
+                problems.append(f"e1 {BUILDER_YML} fuse `{key}` is {match.group('value')}, must be {want} — {why}")
     return problems
 
 
 def check_webprefs(main_text: str, main_dir_texts: dict[str, str]) -> list[str]:
+    """Every occurrence, and no non-literal escape hatch in the UNSAFE direction.
+
+    Both halves used to call ``.search()``, i.e. the FIRST occurrence per key per file. Measured
+    with both-direction controls: appending a second `new BrowserWindow` with
+    `contextIsolation:false / nodeIntegration:true / sandbox:false` to the real main.ts left the
+    gate CLEAN, while the same block alone produced all three violations; and `webSecurity: true`
+    followed by `webSecurity: false` was CLEAN while `webSecurity: false` alone was caught. One
+    window exists today, so this was latent — but a second window is an ordinary edit and
+    forward-looking pinning is the gate's entire stated value.
+
+    The gate was also ASYMMETRIC in the unsafe direction. A non-literal value fails CLOSED for the
+    required triple (no match -> "no longer declares"), but for a BANNED key no match meant
+    silence, so `webSecurity: isDev ? false : true` passed. A value this gate cannot evaluate is
+    now a violation for the banned keys rather than an exemption.
+    """
     problems: list[str] = []
     for key, want in REQUIRED_WEBPREFS.items():
-        match = webpref_line_re(key).search(main_text)
-        if match is None:
+        matches = list(webpref_line_re(key).finditer(main_text))
+        if not matches:
             problems.append(f"e2 {MAIN_TS} no longer declares `{key}: {want}` in the BrowserWindow webPreferences")
-        elif match.group("value") != want:
-            problems.append(f"e2 {MAIN_TS} declares `{key}: {match.group('value')}`, must be {want}")
+            continue
+        for match in matches:
+            if match.group("value") != want:
+                problems.append(f"e2 {MAIN_TS} declares `{key}: {match.group('value')}`, must be {want}")
     for rel, text in sorted(main_dir_texts.items()):
         for key, banned in _BANNED_WEBPREFS:
-            match = webpref_line_re(key).search(text)
-            if match is not None and match.group("value") == banned:
-                problems.append(f"e2 {rel} sets `{key}: {banned}`, which re-opens the renderer")
+            for match in webpref_line_re(key).finditer(text):
+                if match.group("value") == banned:
+                    problems.append(f"e2 {rel} sets `{key}: {banned}`, which re-opens the renderer")
+            for match in webpref_any_re(key).finditer(text):
+                value = match.group("value").strip().rstrip(",").strip()
+                if value not in ("true", "false"):
+                    problems.append(
+                        f"e2 {rel} sets `{key}: {value}` — not a boolean literal, so this gate "
+                        f"cannot prove it is never {banned}; use a literal"
+                    )
     return problems
 
 
