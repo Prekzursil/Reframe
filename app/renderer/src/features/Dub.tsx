@@ -145,6 +145,51 @@ export function dubMediaUrl(path: string): string {
   return `mstream://media/${encodeURIComponent(`dub:${path}`)}`;
 }
 
+/**
+ * W62 — may this row's audio be edited (`tracks.audio.replace`) or dropped
+ * (`tracks.audio.strip`) from here?
+ *
+ * ONLY a dub. Both RPCs branch on `kind`, and the two branches have very
+ * different contracts:
+ *
+ *   * a DUB's audio is a standalone file, so both ops are pure MANIFEST edits —
+ *     no ffmpeg, nothing else on disk changes
+ *     (`sidecar/media_studio/features/tracks_audio.py:528-532` / `:572-577`);
+ *   * an ORIGINAL is a real container stream, so both ops re-mux the WHOLE
+ *     container into a NEW derived file — and that path is **returned but never
+ *     written back to the project** (`:533-554` / `:578-588` only mutate the
+ *     track row). The app would carry on resolving the untouched source while
+ *     the manifest row vanished, i.e. a control that looks like it edits the
+ *     video and does not.
+ *
+ * So the gate is a deliberate refusal to ship the second shape, not an
+ * oversight. Making original-track editing real needs the sidecar to re-point
+ * the project at the derivative — sidecar work, outside this lane.
+ */
+export function canEditAudioTrack(track: Pick<AudioTrack, 'kind'>): boolean {
+  return track.kind === 'dub';
+}
+
+/**
+ * The `kind` an IMPORTED audio track is registered under. Fixed, never a user
+ * choice: `isAiGeneratedAudioTrack` withholds the AI-generated badge for
+ * exactly one value, `"original"` (`AiDisclosure.tsx:83-85`), so a kind picker
+ * would hand the user a switch that turns the Article-50 label off. Marking an
+ * imported human recording is the disclosed, recoverable error direction —
+ * `AI_AUDIO_BADGE_TITLE` says so in the badge itself (`AiDisclosure.tsx:45-58`).
+ */
+export const IMPORTED_AUDIO_TRACK_KIND = 'dub';
+
+/**
+ * True when the import row carries everything `tracks.audio.mux` demands.
+ * `path`, `lang` and `name` are each `_require_str` on the sidecar
+ * (`sidecar/media_studio/features/tracks_audio.py:494-497`), so a blank one is
+ * gated here rather than sent to earn an INVALID_PARAMS round-trip.
+ */
+export function canImportAudioTrack(fields: { path: string; lang: string; name: string }): boolean {
+  return Boolean(fields.path.trim() && fields.lang.trim() && fields.name.trim());
+}
+
 export interface DubProps {
   videoId: string;
   /** Injectable bridge for tests; defaults to the preload-exposed api. */
@@ -174,12 +219,26 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
   const [message, setMessage] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [result, setResult] = useState<DubDoneResult | null>(null);
+  // W62 audio-track ops (mux / replace / strip). One in-flight flag + one
+  // outcome line for all three: each op re-reads the list on success, so two
+  // overlapping ops would race the refresh.
+  const [audioBusy, setAudioBusy] = useState<boolean>(false);
+  const [audioMessage, setAudioMessage] = useState<string>('');
+  // The id of the track whose "Replace audio" disclosure is open ('' = none).
+  const [replaceFor, setReplaceFor] = useState<string>('');
+  const [replacePath, setReplacePath] = useState<string>('');
+  const [importPath, setImportPath] = useState<string>('');
+  const [importLang, setImportLang] = useState<string>('');
+  const [importName, setImportName] = useState<string>('');
 
   // `engine` is only ever set from the engine <select> whose options ARE ENGINES,
   // so the `?? ENGINES[0]` fallback is defensive.
   /* v8 ignore next */
   const engineOption = useMemo(() => ENGINES.find((e) => e.id === engine) ?? ENGINES[0], [engine]);
   const engineVoices = useMemo(() => voicesForEngine(voices, engine), [voices, engine]);
+  // Every W62 audio-track control is gated on the SAME flag: a dub job in flight
+  // is about to append a track, and a second audio op would race its refresh.
+  const audioLocked = busy || audioBusy;
 
   const refresh = useCallback(async (): Promise<void> => {
     setError('');
@@ -292,6 +351,94 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
       setJobId(null);
     }
   }, [bridge, busy, engine, engineOption.voiceClone, refresh, targetLang, trackId, videoId, voice]);
+
+  /**
+   * Run one audio-track mutation, report its outcome, and re-read the list so
+   * the panel shows the post-op truth. Returns whether it succeeded, so a caller
+   * clears its inputs only on success — a failed op must not eat the path the
+   * user typed. The list is deliberately NOT re-read on failure: nothing changed.
+   *
+   * The outcome rides a local flag and the single `return` sits AFTER the
+   * `finally`, mirroring `startDub` below. A `return` INSIDE a `try` that has a
+   * `finally` adds a completion path v8 counts as a branch and no test can reach
+   * (measured: `Dub.tsx:373` arm 0, the one branch short of the renderer's 100%
+   * gate). Restructuring removes it honestly; a `v8 ignore` would only have
+   * hidden it.
+   */
+  const runAudioOp = useCallback(
+    async (done: string, op: () => Promise<unknown>): Promise<boolean> => {
+      setAudioBusy(true);
+      setAudioMessage('');
+      let ok = false;
+      try {
+        await op();
+        setAudioMessage(done);
+        await refresh();
+        ok = true;
+      } catch (err) {
+        setAudioMessage(err instanceof Error ? err.message : String(err));
+      } finally {
+        setAudioBusy(false);
+      }
+      return ok;
+    },
+    [refresh],
+  );
+
+  const stripTrack = useCallback(
+    async (track: AudioTrack): Promise<void> => {
+      await runAudioOp(`Removed "${track.name}"`, () =>
+        bridge.rpc<{ path: string }>('tracks.audio.strip', {
+          videoId,
+          audioTrackId: track.id,
+        }),
+      );
+    },
+    [bridge, runAudioOp, videoId],
+  );
+
+  const replaceTrackAudio = useCallback(
+    async (track: AudioTrack): Promise<void> => {
+      const path = replacePath.trim();
+      // The Save button is disabled while the path is blank, so this is defensive.
+      /* v8 ignore next */
+      if (!path) return;
+      const ok = await runAudioOp(`Replaced the audio of "${track.name}"`, () =>
+        bridge.rpc<{ audioTrack: AudioTrack }>('tracks.audio.replace', {
+          videoId,
+          audioTrackId: track.id,
+          path,
+        }),
+      );
+      if (ok) {
+        setReplaceFor('');
+        setReplacePath('');
+      }
+    },
+    [bridge, replacePath, runAudioOp, videoId],
+  );
+
+  const importTrack = useCallback(async (): Promise<void> => {
+    const fields = { path: importPath, lang: importLang, name: importName };
+    // The Import button is disabled until all three are filled, so this is defensive.
+    /* v8 ignore next */
+    if (!canImportAudioTrack(fields)) return;
+    const name = fields.name.trim();
+    const ok = await runAudioOp(`Imported "${name}"`, () =>
+      bridge.rpc<{ audioTrack: AudioTrack }>('tracks.audio.mux', {
+        videoId,
+        path: fields.path.trim(),
+        lang: fields.lang.trim(),
+        name,
+        kind: IMPORTED_AUDIO_TRACK_KIND,
+      }),
+    );
+    if (ok) {
+      setImportPath('');
+      setImportLang('');
+      setImportName('');
+    }
+  }, [bridge, importLang, importName, importPath, runAudioOp, videoId]);
 
   const cancel = useCallback(async (): Promise<void> => {
     // The Cancel button renders only while `busy && jobId`, so this guard is
@@ -517,10 +664,126 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
             <span className={`audio-track-kind audio-track-kind--${t.kind}`}>{t.kind}</span>
             {t.voice && <span className="audio-track-voice">{t.voice}</span>}
             {isAiGeneratedAudioTrack(t) && <AiAudioBadge />}
+            {/* W62 — the reachable end of `tracks.audio.replace` / `.strip`.
+                Offered for a dub only; see canEditAudioTrack for why the
+                original-recording branch is deliberately not surfaced. */}
+            {canEditAudioTrack(t) ? (
+              <span className="audio-track-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  data-action="replace-audio"
+                  onClick={() => setReplaceFor(replaceFor === t.id ? '' : t.id)}
+                  disabled={audioLocked}
+                >
+                  Replace audio…
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  data-action="strip-audio"
+                  onClick={() => void stripTrack(t)}
+                  disabled={audioLocked}
+                >
+                  Remove
+                </button>
+              </span>
+            ) : (
+              <span className="audio-track-locked">
+                Source audio — edit it in the video, not here
+              </span>
+            )}
+            {replaceFor === t.id && (
+              <span className="audio-track-replace">
+                <label>
+                  New audio file{' '}
+                  <input
+                    data-input="replace-audio-path"
+                    type="text"
+                    placeholder="C:\\path\\to\\better-dub.wav"
+                    value={replacePath}
+                    onChange={(e) => setReplacePath(e.target.value)}
+                    disabled={audioLocked}
+                  />
+                </label>
+                <button
+                  type="button"
+                  data-action="replace-audio-save"
+                  onClick={() => void replaceTrackAudio(t)}
+                  disabled={audioLocked || !replacePath.trim()}
+                >
+                  Save
+                </button>
+              </span>
+            )}
           </li>
         ))}
       </ul>
       {audioTracks.length === 0 && <p className="audio-track-empty">No audio tracks yet.</p>}
+
+      {/* W62 — the reachable end of `tracks.audio.mux`: register an audio file
+          that was produced elsewhere as a track on this video, so the ShortMaker
+          export picker (fed by the same `tracks.audio.list`) can mux it into a
+          short. `kind` is fixed — see IMPORTED_AUDIO_TRACK_KIND. */}
+      <div className="audio-track-import">
+        <h4>Import an audio track</h4>
+        <p className="audio-track-import-hint">
+          Register an existing audio file (an externally-produced dub or voiceover) as a track on
+          this video. It is marked as AI-generated audio like any non-source track — Reframe errs
+          toward marking.
+        </p>
+        <label>
+          File{' '}
+          <input
+            data-input="import-audio-path"
+            type="text"
+            placeholder="C:\\path\\to\\voiceover.wav"
+            value={importPath}
+            onChange={(e) => setImportPath(e.target.value)}
+            disabled={audioLocked}
+          />
+        </label>
+        <label>
+          Language{' '}
+          <input
+            data-input="import-audio-lang"
+            type="text"
+            placeholder="e.g. ro"
+            value={importLang}
+            onChange={(e) => setImportLang(e.target.value)}
+            disabled={audioLocked}
+          />
+        </label>
+        <label>
+          Name{' '}
+          <input
+            data-input="import-audio-name"
+            type="text"
+            placeholder="e.g. Romanian voiceover"
+            value={importName}
+            onChange={(e) => setImportName(e.target.value)}
+            disabled={audioLocked}
+          />
+        </label>
+        <button
+          type="button"
+          className="secondary"
+          data-action="import-audio"
+          onClick={() => void importTrack()}
+          disabled={
+            audioLocked ||
+            !canImportAudioTrack({ path: importPath, lang: importLang, name: importName })
+          }
+        >
+          Import
+        </button>
+      </div>
+
+      {audioMessage && (
+        <p className="audio-track-message" aria-live="polite">
+          {audioMessage}
+        </p>
+      )}
 
       {/* W20 — lip-sync sits AFTER the track list because it consumes a finished
           dub from it. `audioTracks` is handed down rather than re-fetched, so the

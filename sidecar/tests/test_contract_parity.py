@@ -1,8 +1,10 @@
 """Round-trip PARITY tests for the schema-first RPC contract POC (v1.5).
 
 These prove the GENERATED contract agrees with the hand-written reality it will
-eventually replace, so the generator can be trusted before any of the 123 methods
-is migrated:
+eventually replace, so the generator can be trusted before any of the remaining
+methods is migrated (the live surface is sized in `docs/rpc-contract-v2.md` §1;
+this docstring deliberately states no count, because the literal it used to carry
+is exactly the one that rotted):
 
   * every POC method the contract declares is a REAL registered method;
   * the generated ``needsKeyInjection`` classification matches ``keyBridge.ts``;
@@ -19,6 +21,9 @@ the contract as a standalone package, and never mutates on-disk state (a tmp-dir
 """
 
 from __future__ import annotations
+
+import re
+from pathlib import Path
 
 import pytest
 from contract import generate, registry, spec
@@ -163,6 +168,15 @@ _STATIC_DEFAULT_KEYS = (
 # settings.get("...") in shortmaker/refine, so a typo silently returned None.
 _NEWLY_DECLARED_KEYS = ("silenceTrim", "removeFillers", "hookTitle", "stabilize", "captionSpeakerLabels")
 
+# The two settings keys the contract models as a NESTED BLOCK (``Autosave`` /
+# ``ExportDefaults``). Their contract default is ``None`` — meaning "absent", per
+# ``Settings``' partial-merge docstring — while ``DEFAULT_SETTINGS`` materialises the
+# whole block, so comparing the two scalar-style would compare two deliberately
+# different things. Exempt from the default-parity rule below, and the exemption is
+# GUARDED: the rule first asserts each of these really is an ``object`` in the schema,
+# so the waiver cannot be reused to hide a drifted scalar.
+_NESTED_BLOCK_KEYS = ("autosave", "exportDefaults")
+
 
 @pytest.mark.parametrize("key", _STATIC_DEFAULT_KEYS)
 def test_settings_defaults_match_default_settings(key):
@@ -180,11 +194,101 @@ def test_settings_schema_catches_a_wrong_type():
         registry.validate_settings_object({"useCloud": "yes"})  # must be a boolean
 
 
-def test_newly_declared_keys_are_modeled_but_were_undeclared():
+def test_newly_declared_keys_are_modeled():
+    """W38: the invariant is that the 5 keys ARE declared contract fields.
+
+    This test used to also assert ``key not in DEFAULT_SETTINGS``, which froze a
+    TRANSIENT state as an invariant: declaring one of these keys in
+    ``DEFAULT_SETTINGS`` is the correct next migration step, and it made the test go
+    RED. Measured before removal (five states, `defaultTargetJobSize` and
+    `silenceTrim` as the probes): the old assertion fired on a COMPLETE migration —
+    both sides landed, nothing drifted — so the suite punished exactly the progress
+    the contract exists to enable. The half it was really reaching for (store and
+    contract must not disagree) is now enforced, and enforced more widely, by
+    ``test_declared_settings_defaults_match_the_store`` below, whose RED conditions
+    are pinned by ``test_default_parity_rule_goes_red_on_*``.
+    """
     props = registry.settings_schema()["properties"]
-    for key in _NEWLY_DECLARED_KEYS:
-        assert key in props, f"{key!r} should now be a declared settings field"
-        assert key not in DEFAULT_SETTINGS, f"{key!r} was expected to be previously-undeclared"
+    missing = [key for key in _NEWLY_DECLARED_KEYS if key not in props]
+    assert not missing, f"these should be declared settings fields: {missing}"
+
+
+def _default_parity_drift(
+    schema: dict[str, object],
+    declared_defaults: dict[str, object],
+    store_defaults: dict[str, object],
+) -> dict[str, tuple[object, object]]:
+    """The contract-vs-store default drift over EVERY overlapping settings key.
+
+    Computed, not enumerated: ``_STATIC_DEFAULT_KEYS`` above is a hand-written list of
+    12, so a 13th scalar key declared on both sides would have been parity-checked
+    nowhere. This walks ``schema.properties ∩ store`` instead, so the checked set
+    grows with the tree. ``_STATIC_DEFAULT_KEYS`` is kept as a FLOOR by the caller —
+    a computed set that silently shrank to nothing would otherwise pass vacuously.
+    """
+    props = schema["properties"]
+    assert isinstance(props, dict)
+    checked = sorted((set(props) & set(store_defaults)) - set(_NESTED_BLOCK_KEYS))
+    return {
+        key: (declared_defaults.get(key, "<no contract default>"), store_defaults[key])
+        for key in checked
+        if declared_defaults.get(key) != store_defaults[key]
+    }
+
+
+def test_declared_settings_defaults_match_the_store():
+    """Every key both sides declare must agree — including a HALF migration.
+
+    Fires when the store gains a default the contract does not declare (contract
+    still says ``None`` = absent) as well as on a plain value drift, and stays green
+    when both sides land together.
+    """
+    schema = registry.settings_schema()
+    props = schema["properties"]
+    for key in _NESTED_BLOCK_KEYS:
+        assert props[key].get("type") == "object", (
+            f"{key!r} is exempt from default parity only because it is a nested block; "
+            f"it is declared as {props[key].get('type')!r}"
+        )
+    checked = sorted((set(props) & set(DEFAULT_SETTINGS)) - set(_NESTED_BLOCK_KEYS))
+    assert set(_STATIC_DEFAULT_KEYS) <= set(checked), (
+        f"the computed parity set lost hand-pinned keys: {sorted(set(_STATIC_DEFAULT_KEYS) - set(checked))}"
+    )
+    drift = _default_parity_drift(schema, registry.settings_defaults(), dict(DEFAULT_SETTINGS))
+    assert not drift, f"settings default drift ({len(checked)} keys checked): {drift}"
+
+
+def test_default_parity_rule_goes_red_on_a_scalar_drift():
+    """Both-states proof: the rule above is not vacuous (mutate the store value)."""
+    drift = _default_parity_drift(
+        registry.settings_schema(),
+        registry.settings_defaults(),
+        dict(DEFAULT_SETTINGS) | {"defaultTargetJobSize": DEFAULT_SETTINGS["defaultTargetJobSize"] + 1},
+    )
+    assert "defaultTargetJobSize" in drift
+
+
+def test_default_parity_rule_goes_red_on_a_half_migration():
+    """A store-only landing of a newly-declared key is caught (contract still None)."""
+    drift = _default_parity_drift(
+        registry.settings_schema(),
+        registry.settings_defaults(),
+        dict(DEFAULT_SETTINGS) | {"silenceTrim": True},
+    )
+    assert drift == {"silenceTrim": (None, True)}
+
+
+def test_default_parity_rule_stays_green_on_a_full_migration():
+    """The forward-progress case the removed assertion punished must PASS.
+
+    Both sides land ``silenceTrim`` together with the same default -> no drift.
+    """
+    drift = _default_parity_drift(
+        registry.settings_schema(),
+        dict(registry.settings_defaults()) | {"silenceTrim": True},
+        dict(DEFAULT_SETTINGS) | {"silenceTrim": True},
+    )
+    assert not drift
 
 
 # --------------------------------------------------------------------------- #
@@ -213,3 +317,168 @@ def test_drift_gate_is_not_vacuous(tmp_path, monkeypatch):
     problems = generate.check()
     assert problems, "the drift gate should have flagged the missing artifacts"
     assert any("contract.schema.json" in p for p in problems)
+
+
+# --------------------------------------------------------------------------- #
+# 6. SIZE anti-drift: the migration docs must state the MEASURED size of the
+#    surface, never a hand-copied literal.
+#
+# Why this test exists. Every "123 methods" in the v2 contract docs — including
+# the long-pole `eng-days` estimate that was SIZED from it — was a literal typed
+# once and never re-measured, so it decayed silently as methods were added. The
+# same defect shape as the tab-strip count in #371: a number asserted in prose
+# that no check could see. #371's fix was a test that DERIVES the count from
+# source, so that is the fix here too. A method added without touching the docs
+# now fails gate:3 instead of quietly widening the drift.
+#
+# What the FIRST version of this test did NOT do, and now does. It asserted only
+# that a canonical PHRASE is PRESENT ("<n> live-registered methods"). Presence is
+# not uniqueness: the same two docs carried the live count five and three times
+# respectively, so updating the one phrase the assertion names would have gone
+# green while four stale siblings survived — reproducing #371's duplicated-literal
+# mechanism inside the fix for it. The comment here claimed "one literal per
+# quantity" as a fact; that claim was REFUTED by measurement. It is now an
+# ENFORCED invariant (`test_docs_carry_exactly_one_literal_per_quantity`) rather
+# than an aspiration, and every other mention of a surface size in those two docs
+# was rewritten to be qualitative or to delegate.
+#
+# Cost, stated because it is real and lands on OTHER lanes: registering one new
+# method changes `live`, so any branch that adds a `reg(...)`/`@method` must also
+# update ONE line in each of the two v2 docs or its own `gate:3` goes red. That is
+# the intended trade (a red gate beats silent decay), but it is a coupling this
+# test creates, not a free lunch.
+# --------------------------------------------------------------------------- #
+
+
+def _repo_root() -> Path:
+    """Anchor on root-only markers.
+
+    NOT `parents[2]`: pytest runs with cwd=`sidecar/` (quality.yml gate:3), and
+    `.quality/docs_check.py::_find_root` records what a positional guess cost
+    when a file moved — every relative read missed and the detector blamed the
+    repo for its own relocation.
+    """
+    for cand in Path(__file__).resolve().parents:
+        if (cand / ".git").exists() and (cand / "app/package.json").is_file():
+            return cand
+    raise AssertionError(f"cannot locate the repo root from {__file__}")
+
+
+# ANCHORED on the opening quote of the wire name so only a real dispatch matches:
+# a bare `rpc(` substring also appears in `rpcTimeout`/`onProgress(` tails, and the
+# orchestrator paid for exactly that class of unanchored probe three times today.
+_RPC_CALL_RE = re.compile(r"\brpc(?:<[^>]*>)?\(\s*'([A-Za-z][A-Za-z0-9_.]*)'")
+
+# The SECOND dispatch shape, and the reason this helper is not a one-liner:
+# `rpc(BROLL_METHODS.status)` names its method through an `as const` map declared at
+# `client.ts:252`, which `client.ts:247` puts forward as the PREFERRED pattern ("a
+# call site cannot invent a string"). An inline-literal-only probe is therefore blind
+# to exactly the direction the codebase is migrating toward: it reported `134`, seven
+# short, and — worse — the seven invisible names were also exempt from the
+# `wrappers <= live` dead-wire-name invariant. Resolving the map closes both.
+_RPC_CONST_CALL_RE = re.compile(r"\brpc(?:<[^>]*>)?\(\s*([A-Z][A-Z0-9_]*)\.(\w+)")
+_CONST_MAP_RE = re.compile(r"\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*\{(.*?)\}\s*as const", re.S)
+_CONST_MAP_ENTRY_RE = re.compile(r"(\w+)\s*:\s*'([A-Za-z][A-Za-z0-9_.]*)'")
+
+
+def _client_wrapper_methods() -> set[str]:
+    """Every wire name `app/renderer/src/lib/rpc/client.ts` calls by hand.
+
+    BOTH dispatch shapes: an inline string literal, and a member of an UPPER_SNAKE
+    ``as const`` map. An unresolvable map member is an ERROR, not a silent skip —
+    a probe that quietly drops what it cannot parse is how the count drifted.
+    """
+    text = (_repo_root() / "app/renderer/src/lib/rpc/client.ts").read_text(encoding="utf-8")
+    maps = {name: dict(_CONST_MAP_ENTRY_RE.findall(body)) for name, body in _CONST_MAP_RE.findall(text)}
+    named = set(_RPC_CALL_RE.findall(text))
+    for map_name, key in _RPC_CONST_CALL_RE.findall(text):
+        wire = maps.get(map_name, {}).get(key)
+        assert wire, f"client.ts dispatches rpc({map_name}.{key}) but no `as const` map declares that key"
+        named.add(wire)
+    return named
+
+
+def test_the_count_probes_find_known_present_methods(tmp_path):
+    """Detector control. A zero from a broken matcher must not read as a finding.
+
+    Both probes below are asserted to find methods that are known-present, and the
+    live registry is asserted to be a SUPERSET of the hand-written client (a wrapper
+    for an unregistered method would be a dead wire name — finding #1's failure
+    mode). Without this, `test_docs_state_the_measured_surface_size` could pass on
+    two matching zeros.
+    """
+    wrappers = _client_wrapper_methods()
+    live = _live_methods(tmp_path)
+    assert {"ping", "library.add", "settings.get"} <= wrappers
+    assert {"ping", "library.add", "settings.get"} <= live
+    # A CONSTANT-MAP dispatch must be visible too. `client.ts` also calls
+    # `rpc(BROLL_METHODS.status)`, where the wire name is reached through an
+    # `as const` map — and `client.ts:247` actively recommends that pattern ("a call
+    # site cannot invent a string"). A literal-only probe reported the whole broll
+    # family as absent, under-counting the surface AND silently exempting those names
+    # from the `wrappers <= live` dead-wire check below. Three inline names alone
+    # cannot catch that, because none of them is constant-referenced.
+    assert "broll.status" in wrappers, "the probe is blind to constant-map `rpc(MAP.key)` dispatch"
+    assert wrappers <= live, f"client.ts calls unregistered wire names: {sorted(wrappers - live)}"
+
+
+_V2_DOCS = ("docs/rpc-contract-v2.md", "docs/rpc-contract-v2-migration.md")
+
+
+def _standalone_number_hits(body: str, value: int) -> int:
+    """How many times `value` appears as a whole number (not a digit-slice).
+
+    The lookaround stops `169` matching inside `1169`/`169.5`; it deliberately DOES
+    match inside a code span or a table cell, because that is where the stale
+    siblings lived.
+    """
+    return len(re.findall(rf"(?<![\d.]){value}(?![\d])", body))
+
+
+def test_docs_state_the_measured_surface_size(tmp_path):
+    live = len(_live_methods(tmp_path))
+    wrappers = len(_client_wrapper_methods())
+    root = _repo_root()
+
+    for rel in _V2_DOCS:
+        body = (root / rel).read_text(encoding="utf-8")
+        assert f"{live} live-registered methods" in body, (
+            f"{rel} does not state the measured method count ({live}). "
+            "Re-measure and update the doc; do not adjust this test."
+        )
+
+    body = (root / "docs/rpc-contract-v2.md").read_text(encoding="utf-8")
+    assert f"{wrappers} hand-written `rpc()` wire names" in body, (
+        f"docs/rpc-contract-v2.md does not state the measured client.ts wrapper "
+        f"count ({wrappers}). Re-measure and update the doc; do not adjust this test."
+    )
+
+
+def test_docs_carry_exactly_one_literal_per_quantity(tmp_path):
+    """Presence is not uniqueness — a partial update must NOT be able to pass.
+
+    Measured before this test existed: `169` appeared 5x in the contract doc and 3x
+    in the migration plan, and `134` 3x. Updating only the phrase the assertion
+    above names left the rest stale WITH A GREEN GATE — the #371 duplicated-literal
+    defect, re-created inside the fix for it.
+    """
+    live = len(_live_methods(tmp_path))
+    wrappers = len(_client_wrapper_methods())
+    root = _repo_root()
+
+    for rel in _V2_DOCS:
+        body = (root / rel).read_text(encoding="utf-8")
+        hits = _standalone_number_hits(body, live)
+        assert hits == 1, (
+            f"{rel} states the live method count ({live}) {hits}x; exactly 1 is allowed. "
+            "Keep the canonical sentence and make every other mention qualitative "
+            "(or delegate to it). If the number collides with an unrelated figure, "
+            "reword that figure — do not relax this assertion."
+        )
+
+    body = (root / "docs/rpc-contract-v2.md").read_text(encoding="utf-8")
+    hits = _standalone_number_hits(body, wrappers)
+    assert hits == 1, (
+        f"docs/rpc-contract-v2.md states the client.ts wrapper count ({wrappers}) "
+        f"{hits}x; exactly 1 is allowed. See the sibling assertion for why."
+    )

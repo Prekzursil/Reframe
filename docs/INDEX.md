@@ -120,7 +120,7 @@ The five facts that get contradicted most often, and the one place each is decid
 | file | charter |
 |---|---|
 | [`rpc-contract-v2.md`](rpc-contract-v2.md) | the only wire-contract AUTHORITY doc. |
-| [`rpc-contract-v2-migration.md`](rpc-contract-v2-migration.md) | the only 5→123-method migration path. |
+| [`rpc-contract-v2-migration.md`](rpc-contract-v2-migration.md) | the only POC→whole-surface migration path. States the live method count in **exactly one** place (its header note) and defers to `rpc-contract-v2.md` §1 for the probe that produces it; `test_docs_carry_exactly_one_literal_per_quantity` enforces the "exactly one" half, `test_docs_state_the_measured_surface_size` the "still current" half. The previous wording here — *"deliberately states no method count"* — was **false**: the plan states it three times, and CI actively requires it to state it at least once. |
 | [`design-system.md`](design-system.md) | the only portable spec of the tokens. |
 | [`providers/SETUP.md`](providers/SETUP.md) | human-facing provider setup; mirrors `catalog.py`. |
 | [`providers/MODEL-GUIDE.md`](providers/MODEL-GUIDE.md) | human-facing model picks; mirrors `catalog.py`. |

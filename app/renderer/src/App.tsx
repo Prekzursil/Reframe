@@ -1,6 +1,11 @@
 // App.tsx — the renderer shell + TOP-LEVEL TABBED NAVIGATION (V1 IA §h).
 //
-// The app is organised into the top-level sections (components/TopTabBar.tsx):
+// The `tabs` array below is the SSOT for the top-level sections
+// (components/TopTabBar.tsx renders it). This comment mirrors it in the SAME ORDER
+// and must be re-read against it on any change — it listed only six of the eight
+// while `export` and `deliver` had already shipped, so a reader designing against
+// the header saw an IA the app does not have. Same stale-count class as the #371
+// tab-strip incident, whose count test cannot see prose:
 //   * Library    — the video library home; opening a video routes into the Edit
 //                  section for that video,
 //   * Make Shorts — the novice front door: AI moment-pick + manual intervals +
@@ -10,8 +15,21 @@
 //                  audio…) hosted in the Workspace (views/Edit.tsx),
 //   * Caption    — the v1.5 Caption phase pilot: inspector-over-shared-stage
 //                  caption design + keyboard clip timing for the open video,
+//   * Export     — Phase-5: finishes ONE video as a guarded commit, the only
+//                  irreversible spend/file-writing action (views/Export.tsx);
+//                  terminal success links INTO Deliver,
+//   * Deliver    — the OTHER half of the Export/Deliver split: cross-video / batch
+//                  publish, the platform-preset (aspect) matrix, and the pro-editor
+//                  EDL/CSV handoff (views/Deliver.tsx),
 //   * Director   — the prompt-driven AI video-editing panel (lazy),
-//   * Settings   — Models & System / Providers & Keys / Storage / Health.
+//   * Settings   — a sub-tabbed area; views/Settings.tsx `SETTINGS_SECTIONS` is the
+//                  SSOT for which sub-sections exist (deliberately not re-listed
+//                  here — the duplicate list is what rotted).
+//
+// UNVERIFIED that this comment stays in step: nothing mechanically checks prose
+// against `tabs`, so the only guard is the re-read above. Settling experiment: an
+// App.test.tsx case that parses this block's `*` bullets and asserts one per `tabs`
+// entry, in order — out of scope for the comment-only change that fixed the counts.
 //
 // The active tab is DERIVED from the route (one source of truth), so navigation
 // and the tab strip can never desync. The currently-open Edit video is held in

@@ -741,3 +741,250 @@
   font-size: var(--type-caption-size);
   color: var(--text-secondary);
 }
+
+/* ---- W19 Eye contact (Gaze.tsx) + W20 Lip-sync (LipSync.tsx) ------------------ */
+/* Both panels shipped their whole class vocabulary — 23 names — with NO selector
+   anywhere in the renderer CSS, so they inherited only the shared `.feature-panel`
+   shell (buttons, inputs, focus rings) and every panel-specific surface rendered as
+   unstyled flow content. These rules give them the voice the Dub panel already
+   established rather than inventing a third one: the consent gate is the single
+   warn-coloured element, disclosures are quiet information rails, a produced file
+   is a success rail, and every number is mono + tabular. No new token is added.
+
+   THREE notice meanings, deliberately NOT one colour — and the leading edge always
+   carries the signal for mono / forced-colors readers who do not get the hue (the
+   same reasoning as `.stabilize-panel .stabilize-notice` above):
+     * WARN  — the feature is unavailable here, or the run completed and did
+               NOTHING. Not a failure and not a success; nothing was produced.
+     * ERROR — the sidecar actively REFUSED. A hard stop the operator must resolve.
+     * MUTED — standing information, true in every build (licence terms,
+               prerequisites). Must never read as an alarm. */
+
+.gaze-panel .gaze-unavailable,
+.gaze-panel .gaze-nothing {
+  margin: var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius-sm);
+  background: var(--status-warn-soft);
+  color: var(--status-warn);
+  font-size: var(--type-caption-size);
+}
+
+/* A refusal is the one hard stop on these panels. `--status-error` is the solid
+   FILL red and carries the edge; the text takes `--status-error-text`, the
+   AA-safe tint (styles/tokens.css:80) — never the fill red as a string. */
+.lipsync-section .lipsync-refused {
+  margin: var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--status-error);
+  border-radius: var(--radius-sm);
+  background: var(--status-error-soft);
+  color: var(--status-error-text);
+  font-size: var(--type-caption-size);
+}
+
+/* Standing information: the flag state, the missing prerequisite, and the face-box
+   licence rule that prints in BOTH flag states. Quiet on purpose — the panel
+   already has one alarm and it is the consent gate. */
+.lipsync-section .lipsync-disabled,
+.lipsync-section .lipsync-no-dub,
+.lipsync-section .lipsync-unwired {
+  margin: var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--text-muted);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+}
+
+/* ---- the likeness / face-alteration consent GATE (models/likeness.py) --------- */
+/* Deliberately the same warning rail as `.dub-panel .dub-consent`: this is a
+   commitment the operator makes, not fine print, and the two gates must read as one
+   mechanism. A bare <fieldset> made it look like a footnote. */
+.gaze-panel .gaze-consent {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border: 1px solid var(--status-warn);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+}
+
+.gaze-panel .gaze-consent legend {
+  padding: 0 var(--space-2);
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--type-caption-tracking);
+  color: var(--status-warn);
+}
+
+/* "Whose face is this?" — a real question, so body voice with the input on its own
+   line rather than a squeezed inline field. */
+.gaze-panel .gaze-consent .gaze-consent-subject {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  font-size: var(--type-body-size);
+  color: var(--text-secondary);
+}
+
+/* The attestation is the loudest line in the block — a statement the operator
+   makes, checkbox inline, top-aligned so a wrapped sentence stays readable. */
+.gaze-panel .gaze-consent .gaze-consent-attest {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-weight);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.gaze-panel .gaze-consent .gaze-consent-attest input {
+  margin-top: 0.15em;
+  flex: 0 0 auto;
+}
+
+.gaze-panel .gaze-consent-hint {
+  margin: var(--space-3) 0 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}
+
+/* ---- AI-content disclosure (W21, EU AI Act Art. 50) — the two new surfaces ---- */
+/* Same INFORMATION rail as `.dub-panel .ai-disclosure`: legible and unmissable
+   without competing with the consent gate. Explicitly NOT warn/error coloured — a
+   second alarm on the panel would dilute the one that gates the run. */
+.gaze-panel .gaze-ai-disclosure,
+.lipsync-section .lipsync-ai-disclosure {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--text-muted);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+/* ---- correction strength ------------------------------------------------------ */
+/* `.gaze-strength` is also a `.field`, so components/shell.css:1261 already gives
+   it flex-column + gap + margin; only the readout and the caveat need a voice. */
+
+/* The number being chosen. Mono + tabular so it does not jitter as the slider moves
+   (proportional digits change width between 0.05 and 1.00). Accent because it is
+   the one live value on the panel.
+   SPECIFICITY: `.feature-panel label > span` (components/shell.css:1271) is (0,1,2)
+   and puts every label span in tracked UPPERCASE; this selector is (0,2,0) and wins
+   on class count, but `text-transform` is reset explicitly so the intent survives a
+   future edit to either rule. */
+.gaze-panel .gaze-strength-value {
+  min-width: 3.5ch;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  font-size: var(--type-body-size);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--accent);
+}
+
+/* The caveat is a SENTENCE, so it must escape the tracked-caps label voice.
+   SPECIFICITY, and this one is load-bearing: `.feature-panel .field > span`
+   (components/shell.css:1270) is (0,2,1) and would BEAT a two-class selector, so a
+   `.gaze-panel .gaze-strength-hint` rule at (0,2,0) would lose and the sentence
+   would render in uppercase tracked caps. Three classes = (0,3,0) wins. This is the
+   same specificity trap shell.css:53-63 documents for the focus ring. */
+.gaze-panel .gaze-strength .gaze-strength-hint {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-body-weight);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-faint);
+}
+
+/* ---- the corrected-clip outcome ---------------------------------------------- */
+/* A produced artifact is a success rail, same as a finished dub or mix. */
+.gaze-panel .gaze-outcome {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-success);
+  border-radius: var(--radius-sm);
+  background: var(--status-success-soft);
+}
+
+/* …UNLESS nothing was actually corrected. The panel deliberately reports a run that
+   skipped every frame as a finished job (`Gaze.tsx:584-590`), and dressing that in
+   the success rail would tell the operator a correction happened when the output is
+   effectively the source. `:has()` downgrades the whole block to the warn rail so
+   the container agrees with the notice inside it — the alternative would be a markup
+   change in a component this lane does not own. Precedent for `:has()` in this tree:
+   components/shell.css:357-358, components/library-cards.css:164. */
+.gaze-panel .gaze-outcome:has(.gaze-nothing) {
+  border-left-color: var(--status-warn);
+  background: var(--status-warn-soft);
+}
+
+/* The nothing-corrected notice already carries its own rail above; inside the
+   downgraded block it would be a rail within a rail, so it flattens to plain warn
+   text and lets the container carry the edge. */
+.gaze-panel .gaze-outcome .gaze-nothing {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  border-left: none;
+  background: none;
+}
+
+.gaze-panel .gaze-report {
+  margin: var(--space-3) 0 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+}
+
+/* Each skipped-frame reason on its own line. This is the panel's honesty surface —
+   the correction is partial by design — so the counts must be scannable, not a
+   run-on sentence. */
+.gaze-panel .gaze-skip {
+  display: block;
+  color: var(--text-faint);
+}
+
+/* The consent RECORD. Mono so it reads as a logged fact rather than prose. */
+.gaze-panel .gaze-audit {
+  margin: var(--space-3) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
+
+/* ---- lip-sync: a SUB-section of the Dub panel -------------------------------- */
+/* Mounted inside `.dub-panel` (features/Dub.tsx:529), after the track list, because
+   it consumes a finished dub from it. It needs a visible seam or it reads as more
+   Dub panel — but not a second card, which would imply a separate feature. */
+.lipsync-section {
+  margin: var(--space-6) 0 0;
+  padding: var(--space-5) 0 0;
+  border-top: 1px solid var(--edge);
+}
+
+/* The weights licence. Standing legal text: quiet, and the <code> inside it already
+   takes the mono treatment from `.feature-panel code`. */
+.lipsync-section .lipsync-licence {
+  margin: var(--space-3) 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}
+
+/* Sync confidence sits in the result row next to the output path — a measured
+   number, so mono + tabular, and it must not read as louder than the path itself. */
+.lipsync-section .lipsync-confidence {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}

@@ -5,7 +5,14 @@
 Unit U2 lane files (already written, no action needed): `app/main/dialogIpc.ts` (+ `dialogIpc.test.ts`),
 `app/renderer/src/views/Library.tsx` (+ `Library.test.tsx`). This document lists the EXACT changes the
 WIRING agent must apply to the shared files (`app/main/preload.ts`, `app/main/main.ts`, optionally
-`app/renderer/src/lib/rpc.ts`, `App.tsx`).
+`app/renderer/src/lib/rpc/schemas.ts`, `App.tsx`).
+
+> **Path corrected** — `app/renderer/src/lib/rpc.ts` was split (F4b) into
+> `lib/rpc/client.ts` (runtime + the `client` object) and `lib/rpc/schemas.ts` (the §3
+> data interfaces), re-exported by `lib/rpc/index.ts`. §3 below edits the **`MediaApi`
+> interface**, now declared in `lib/rpc/schemas.ts`. The SYMBOL is the anchor, not a
+> line: this section's previous `file:line` citation is exactly the class that rotted,
+> and `.quality/docs_check.py` r2 checks the path only.
 
 No sidecar changes. No new JSON-RPC methods. No native modules to pre-import.
 `dialog.openVideos` is a plain Electron ipc channel handled in the MAIN process — it never reaches
@@ -90,12 +97,12 @@ let disposeDialogIpc: (() => void) | null = null;
 
 ---
 
-## 3. OPTIONAL — canonical typing in `app/renderer/src/lib/rpc.ts` (wiring-owned)
+## 3. OPTIONAL — canonical typing in `app/renderer/src/lib/rpc/schemas.ts` (wiring-owned)
 
 `Library.tsx` reads `window.api.openVideos` / `window.api.pathForFile` STRUCTURALLY (safe cast with
 runtime `typeof` checks), so nothing breaks if this step is skipped. For canonical typing, add the two
-members to the `MediaApi` interface in `lib/rpc.ts` (and mirror in `components/api.ts` if desired) as
-OPTIONAL members, so tests/SSR contexts without the bridge still typecheck:
+members to the `MediaApi` interface in `lib/rpc/schemas.ts` (and mirror in `components/api.ts` if
+desired) as OPTIONAL members, so tests/SSR contexts without the bridge still typecheck:
 
 ```ts
   openVideos?(): Promise<string[]>;

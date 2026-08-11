@@ -374,7 +374,11 @@ check("P2.10b", True, len(subs_found) == 8, f"Settings.tsx names {len(subs_found
 
 ver = json.loads(apppkg or "{}").get("version", "?")
 readme = read("README.md") or ""
-check("P2.11a", True, ver == "1.4.2", f"app/package.json version={ver}")
+# DERIVED, not pinned (2026-08-10, at the 1.4.2 -> 1.5.0 bump). Both this check and P2.12
+# below hardcoded "1.4.2", so a legitimate bump made two SSOT probes report a false
+# failure — the checker itself was the drift. The durable invariant is not "the version is
+# <literal>" but "the version is well-formed AND the CHANGELOG has a section for it".
+check("P2.11a", True, bool(re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", ver)), f"app/package.json version={ver}")
 # DETECTOR FIX (v3) + INVARIANT (was OPEN): "1.4.1" IS still in README.md — only inside
 # the HTML comment at :32-38 that explains why the asset table is version-agnostic. The
 # durable assertion is not "no 1.4.1 anywhere" (prose may legitimately discuss a version)
@@ -394,8 +398,8 @@ changelog = read("CHANGELOG.md") or ""
 check(
     "P2.12",
     True,
-    "[1.4.2]" in changelog,
-    f"CHANGELOG has the [1.4.2] section README:151 points at={'[1.4.2]' in changelog}",
+    f"[{ver}]" in changelog,
+    f"CHANGELOG has the [{ver}] section for the CURRENT app/package.json version={f'[{ver}]' in changelog}",
 )
 
 rpcdoc = read("docs/rpc-contract-v2.md") or ""

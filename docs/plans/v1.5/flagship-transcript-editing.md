@@ -25,8 +25,12 @@ preview the cut → apply (ONE encode) → undo. The rest of this document remai
 - **T4 (contract half)** — the three methods are registered at RUNTIME ONLY, via
   `protocol.register` from `handlers/composition.py`. No `MethodSpec` entries were added to
   `sidecar/contract/spec.py` and nothing was regenerated. §5's "dual registration is
-  mandatory" is a design aspiration, not the repo's current norm: only 6 of ~180 methods are
-  MethodSpec-migrated, and every other feature (including `refine.*`) is runtime-only. The
+  mandatory" is a design aspiration, not the repo's current norm: only the POC slice that
+  `contract/spec.py` declares is MethodSpec-migrated, and every other feature (including
+  `refine.*`) is runtime-only. *This line said "6 of ~180 methods" until 2026-08-11; `~180`
+  was a third, unmeasured figure for a surface two other ACTIVE docs sized differently. The
+  live count is measured and test-pinned in `docs/rpc-contract-v2.md` §1 — not restated here,
+  because restating it is how the corpus came to hold three different answers.* The
   renderer calls `transcript.*` through the untyped `bridge.rpc` escape hatch, exactly like
   `Refine.tsx`.
 - **T5 (rest)** — no waveform/karaoke playhead, no click-to-seek into the shared `Timeline`,

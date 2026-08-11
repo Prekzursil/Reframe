@@ -12,7 +12,10 @@ The snippets below are the ONLY changes U4 needs in shared files. Apply exactly.
 
 ---
 
-## 1. `sidecar/media_studio/handlers.py` — register the assets.* methods
+## 1. `sidecar/media_studio/handlers/composition.py` — register the assets.* methods
+
+> **Path corrected** — `handlers.py` was deleted in `c12400c4`; `register_all` now
+> lives in `handlers/composition.py`. See the note in `docs/wiring/WIRING-T1.md` §1.
 
 At the end of `register_all(...)` (after the existing `reg(...)` calls, before the
 final `log.info`), add:

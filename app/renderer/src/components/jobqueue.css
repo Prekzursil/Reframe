@@ -203,6 +203,25 @@
   color: var(--text-muted);
 }
 
+/* Queued: accepted, no work started yet — the quiet END of the ladder, and the
+ * first rung in lifecycle order. Its VALUE is the same --text-muted the base rule
+ * already computed, so this changes nothing on screen today (W45 is a
+ * completeness fix, NOT a legibility fix — the legibility half of audit H4c, a
+ * cancelled row reading byte-identically to a queued one, was already closed by
+ * the --cancelled rule below).
+ *
+ * What it does buy is DECOUPLING. `.jobqueue__status` was carrying two unrelated
+ * jobs at one value: "the colour of a queued pill" and "the fallback for a status
+ * this sheet does not recognise". JobQueue.tsx:225 interpolates `job.status`
+ * straight into the class name, so an off-contract value from the sidecar lands on
+ * that fallback. Splitting them means a future change to the unknown-status
+ * fallback cannot silently restyle queued, and every member of the six-value
+ * union in lib/rpc/schemas.ts:1475 is now stated in the sheet rather than
+ * inferred from a comment. */
+.jobqueue__status--queued {
+  color: var(--text-muted);
+}
+
 .jobqueue__status--running {
   color: var(--accent);
 }

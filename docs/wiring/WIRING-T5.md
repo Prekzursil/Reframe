@@ -20,7 +20,10 @@ additions from this unit** (T2's onnxruntime/kokoro_onnx notes are theirs).
 
 ---
 
-## 1. `sidecar/media_studio/handlers.py` — import for asset registration
+## 1. `sidecar/media_studio/handlers/composition.py` — import for asset registration
+
+> **Path corrected** — `handlers.py` was deleted in `c12400c4`; `register_all` now
+> lives in `handlers/composition.py`. See the note in `docs/wiring/WIRING-T1.md` §1.
 
 `tools_resolver` registers the llama-server tool assets (CUDA + cudart + CPU,
 pinned ggml-org release URLs) at import. Import it once in `register_all`,

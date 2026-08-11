@@ -19,7 +19,21 @@ Unit U5 changed `sidecar/media_studio/jobs.py` + `sidecar/media_studio/protocol.
   pool spawns immediately when a slot is free; metadata defaults are
   backfilled from the recorded request).
 
-## 1. REQUESTED: `app/renderer/src/lib/rpc.ts` (shared file — wiring owns)
+## 1. REQUESTED: `app/renderer/src/lib/rpc/` (shared files — wiring owns)
+
+> **Path corrected, and this step now spans TWO files.** `app/renderer/src/lib/rpc.ts`
+> was split (F4b) into `lib/rpc/client.ts` (the runtime: bridge accessor, `rpc`,
+> `onProgress`, the `client` object) and `lib/rpc/schemas.ts` (the §3 data interfaces),
+> re-exported by `lib/rpc/index.ts`. So **(a)** the `JobInfo` interface goes in
+> `lib/rpc/schemas.ts` — it is already declared there, below `DoneEvent` (with
+> `ProxyStateEvent` between the two), exactly where this step asks for it — and
+> **(b)** the `client.job.*` methods go in
+> `lib/rpc/client.ts`. Importers still write `from '../lib/rpc'`, so the barrel kept
+> compiling while the cited file stopped existing; nothing under `docs/**` guards a
+> source path (`.quality/docs_check.py` r2 resolves only `docs/**`/`reports/**`).
+> Both anchors here are SYMBOLS (`JobInfo`, `DoneEvent`) rather than the line numbers
+> an earlier revision of this note carried — same reason: a line in prose rots on the
+> next edit above it and no gate can see it.
 
 Add the A3 `JobInfo` type and the two new client methods.
 

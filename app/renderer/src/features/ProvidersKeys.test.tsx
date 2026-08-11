@@ -970,6 +970,52 @@ describe('ProvidersKeys — WU-D3 reveal / re-validate / replace', () => {
     });
   });
 
+  // --- W64 / docs/plans/v1.5/SCOPE.md O-1: editKey is DEFERRED, not missing --
+  // O-1 records that no `providers.editKey` RPC exists on either side. This test
+  // is the pin for the DECISION not to add one: the index-targeted key edit it
+  // describes already ships here, over `providers.testKey` + `providers.upsert`.
+  // Routing that edit through a new `editKey` method turns this RED, which is the
+  // point — the deferral rationale in ProvidersKeys.tsx must be re-read first,
+  // because `editKey` would bypass keyBridge's `providers.upsert` interception
+  // and so never reach the DPAPI keystore.
+  it('W64/O-1: the index-targeted key edit rides testKey + upsert, never a providers.editKey', async () => {
+    const testKey = vi.fn(() => Promise.resolve({ ok: true, capabilities: ['text'] }));
+    const upsert = vi.fn(() =>
+      Promise.resolve({
+        providers: [{ id: 'groq', provider: 'Groq', apiKeys: ['…QRST'] }],
+      }),
+    );
+    const api = configuredApi({ testKey, upsert });
+    // Record which providers.* methods the panel actually reaches for. Property
+    // lookups happen at call time, so wrapping the object is enough.
+    const invoked: string[] = [];
+    const surface = (api as unknown as { providers: Record<string, (...a: never[]) => unknown> })
+      .providers;
+    for (const name of Object.keys(surface)) {
+      const original = surface[name];
+      surface[name] = (...args: never[]) => {
+        invoked.push(name);
+        return original(...args);
+      };
+    }
+    await mount({ rpcClient: api });
+    invoked.length = 0; // drop the mount reads (list / catalog / usage)
+
+    const toggle = container.querySelector<HTMLButtonElement>('.provider-key-row__replace-toggle')!;
+    await act(async () => toggle.click());
+    const input = container.querySelector<HTMLInputElement>('.provider-key-row__replace-input')!;
+    await act(async () => setInputValue(input, 'sk-edited-in-place'));
+    const save = container.querySelector<HTMLButtonElement>('.provider-key-row__replace-save')!;
+    await act(async () => save.click());
+    await flush();
+
+    // The WHOLE edit is these two calls, in this order — validate, then store.
+    expect(invoked).toEqual(['testKey', 'upsert']);
+    expect(invoked).not.toContain('editKey');
+    // And it is genuinely index-targeted: the new raw key lands at index 0.
+    expect(upsert).toHaveBeenCalledWith({ id: 'groq', apiKeys: ['sk-edited-in-place'] });
+  });
+
   // --- F38: the panel must not swallow a reveal/revalidate/replace rejection --
   // `revealKey` / `revalidateKey` / `replaceKey` had no try/catch at all, so the
   // role="alert" banner stayed empty while the sidecar's actionable refusal was
