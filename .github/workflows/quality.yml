@@ -112,11 +112,25 @@ jobs:
         run: basedpyright
 
       # gate:3 — tests + coverage (pytest branch 100%, vitest 100%)
+      #
+      # W37 — `--cov=contract` is the second root. `sidecar/contract/` holds the
+      # schema-first RPC contract: the spec, the dataclass->JSON-Schema/TS introspector,
+      # the emitters, the runtime param validator, AND the staleness gate that guards the
+      # generated artifacts. It was outside `--cov=media_studio`, so the one tree that
+      # guarantees INTERFACE correctness was the one tree with no coverage floor —
+      # measured at 59% (419 statements, 150 missed, 13 partial branches) while the gate
+      # reported green. It is now 100% line+branch like everything else
+      # (sidecar/tests/test_contract_internals.py covers the machinery;
+      # test_contract_parity.py covers the contract). Both roots share the ONE
+      # `--cov-fail-under=100`, which is a floor over their UNION — a regression in either
+      # tree fails the gate. Kept in step with .coverage-thresholds.json and the charter's
+      # gate:3 row; basedpyright already type-gates `sidecar/contract` (pyproject.toml).
       - name: gate-tests-coverage pytest
         working-directory: sidecar
         run: |
           python -m pytest \
             --cov=media_studio \
+            --cov=contract \
             --cov-branch --cov-fail-under=100
       - name: gate-tests-coverage vitest app
         working-directory: app

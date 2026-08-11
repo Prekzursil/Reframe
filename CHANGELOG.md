@@ -5,12 +5,19 @@
 All notable changes to Reframe — Media Studio are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.4.2] — unreleased
+## [1.5.0] — unreleased
 
-`app/package.json` has read `1.4.2` for some time with no section here, while
-`README.md` sends readers to this file for release history. This is that section.
 **Not yet tagged or published** — the newest published release is v1.4.0 (v1.4.1 is a
-Draft). 70 commits on `main` since `v1.4.1`.
+Draft). Everything below landed on `main` after `v1.4.1`.
+
+> **Renumbered from `1.4.2` on 2026-08-10.** This section carried the `[1.4.2]` heading
+> and `app/package.json` read `1.4.2`, per the 2026-07-29 decision
+> ([`GRILL-DECISION-QUEUE.md`](docs/plans/v1.5/GRILL-DECISION-QUEUE.md) B-1) to hold the
+> 1.5 line back until the v1.5 scope landed. The v1.5 programme is now landing, and the
+> problem B-1 existed to solve had recurred: `dist/` already holds a built
+> `media-studio-1.4.2-win-x64.exe`, so another build at `1.4.2` would overwrite it, NSIS
+> would treat the equal version as a repair, and electron-updater would never see it as
+> newer — exactly the failure B-1 described when it moved `1.4.1` -> `1.4.2`.
 
 ### Shipped crashes and data-loss fixes
 

@@ -1,0 +1,67 @@
+{
+  "_comment": "W26 reachability waivers. Every entry needs a WRITTEN reason; the gate fails on a blank one. `modules` is enforced by .quality/reachability_check.py (u1/u2/u3) and `rpcMethods` by sidecar/tests/test_reachability_gate.py, which reads the LIVE sidecar registry instead of guessing statically. Both sections are checked for DEAD entries in both directions: an entry that became reachable, and an entry naming something that no longer exists. That is what makes this list track the tree rather than history. A waiver is not a fix — four of the eight module entries below are recorded as REAL GAPS with the tracking anchor, and the gate's job is to stop a NINTH joining them silently.",
+  "modules": [
+    {
+      "path": "app/main/socialAuth.ts",
+      "reason": "REAL GAP (W26 class, found by this gate). C14 desktop OAuth (PKCE + loopback) for social publishing: complete, and promoted into the 100% renderer coverage bar by app/vitest.config.ts:49-60 as security-critical — yet its only importer is app/main/socialAuth.test.ts, so no main-process code can start a sign-in. Exactly the 'built, tested, 100%-covered, mounted nowhere' shape of W16-W20. Mounting it is a social-publish lane change, not a gates-lane one."
+    },
+    {
+      "path": "app/renderer/src/panels/TransitionPicker.tsx",
+      "reason": "REAL GAP (W26 class, found by this gate). The transition-choice control: only app/renderer/src/panels/TransitionPicker.test.tsx imports it, so a user can never choose a transition. Same shape as O-2's ReframeOverridePanel in docs/plans/v1.5/SCOPE.md, which W17 mounted after the same finding."
+    },
+    {
+      "path": "app/renderer/src/lib/transitions.ts",
+      "reason": "REAL GAP, DOWNSTREAM of TransitionPicker.tsx. Its only production importer is TransitionPicker, which is itself unreachable, so the transition algebra never runs in the app. It becomes reachable for free the moment the picker is mounted — remove BOTH entries then; u2 will demand it."
+    },
+    {
+      "path": "app/renderer/src/components/useAutosave.ts",
+      "reason": "REAL GAP (W26 class, found by this gate). The debounced+gated workspace autosave hook (UX/QoL WU-11): only its own test imports it, so no surface arms the debounce and the Settings `autosave` block (contract spec.py:65-70, DEFAULT_SETTINGS `autosave`) is configuration with no consumer."
+    },
+    {
+      "path": "app/renderer/src/components/index.ts",
+      "reason": "DELIBERATE, and consistent with the coverage config. A pure re-export barrel that nothing imports — already declared as such and excluded from the renderer coverage gate at app/vitest.config.ts:66. Zero behaviour, so unreachability costs nothing; deleting it is a renderer-lane call, not a gates-lane one."
+    },
+    {
+      "path": "app/renderer/src/lib/rpc/generated/client.generated.ts",
+      "reason": "DELIBERATE, by design of the v1.5 schema-first RPC POC. The generated method-typed wrappers exist so the generator can be trusted BEFORE any of the 123 hand-written methods migrates; today only app/renderer/src/lib/rpc/generated/parity.test.ts consumes them. Correctness is guaranteed by regeneration + the parity tests (sidecar/tests/test_contract_parity.py), the same rationale app/vitest.config.ts:71 uses to exclude generated/** from coverage. Remove this entry when client.ts starts delegating."
+    },
+    {
+      "path": "app/renderer/src/lib/rpc/generated/schemas.generated.ts",
+      "reason": "DELIBERATE, DOWNSTREAM of client.generated.ts — its only production importer. Becomes reachable with the same migration; u2 will demand both entries go together."
+    },
+    {
+      "path": "app/renderer/src/lib/rpc/generated/needsKeyInjection.generated.ts",
+      "reason": "DELIBERATE. The generated twin of app/main/keyBridge.ts's INJECT allowlist. It is consumed only by app/main/keyBridge.contractParity.test.ts, which is the POINT: the parity test proves the generated set agrees with the hand-maintained one, and keyBridge.ts keeps using its own literals until the migration flips. Remove this entry when keyBridge.ts imports it."
+    }
+  ],
+  "rpcMethods": [
+    {
+      "method": "reframe.analyze",
+      "reason": "DELIBERATE, named in app/renderer/src/lib/rpc/client.ts:1017-1034: W22 shipped the trace producer, and the renderer surface that would drive it is an unstarted wave. Registered backend-only on purpose."
+    },
+    {
+      "method": "reframe.render",
+      "reason": "DELIBERATE, same W22 pair as reframe.analyze (affected-only re-render over a cached ShotAnalysis). client.ts:1029 states outright that both are registered and NOT wrapped."
+    },
+    {
+      "method": "reframe.eval",
+      "reason": "DELIBERATE for now, and disclosed at client.ts:1034 ('reframe.eval still has no wrapper'). The crop-quality evaluator is a measurement surface, not a user action; it has no renderer caller."
+    },
+    {
+      "method": "assets.plan",
+      "reason": "REAL GAP, small. sidecar/media_studio/assets/rpc.py:151 registers it and manager.py:665 builds the tier/what/why view whose whole purpose is showing the user what a multi-GB download buys BEFORE committing — but app/renderer/src/features/Assets.tsx calls only assets.list / assets.ensure / assets.cancel, so the preview is never shown."
+    },
+    {
+      "method": "phase8.signals",
+      "reason": "DELIBERATE. Registered at handlers/composition.py:190 and consumed INSIDE the sidecar — handlers/director_ops.py:440-468 adapts the shipped phase8.signals runner output for the director evaluator (explicitly 'no parallel path'). It is an internal compute surface with no renderer caller, not dead code."
+    },
+    {
+      "method": "phase8.select",
+      "reason": "REAL GAP. Registered at handlers/composition.py:191 and on keyBridge.ts's key-injection allowlist, so it is treated as a live provider-backed method — yet the only renderer reference is app/renderer/src/components/useAiJob.test.tsx, a test fixture. No production surface starts it."
+    },
+    {
+      "method": "silence.trim",
+      "reason": "DELIBERATE. The FEATURE is live through the internal path — features/director_op_engines.py:621 and engine.py:84-92 call silencetrim.trim_clip for the removeSilence director op and the export pipeline — while the standalone RPC has no renderer caller; the UI exposes trimming as the shortmaker `silenceTrim` control instead."
+    }
+  ]
+}

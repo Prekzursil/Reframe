@@ -58,6 +58,50 @@ files:
 
 asar: true
 
+# W66 — ELECTRON FUSES. Compile-time bits flipped in the packaged binary right before
+# signing (app-builder-lib platformPackager.js:259-297 in the pinned electron-builder
+# 26.15.3, via @electron/fuses 1.8.0). They are the only way to remove a Node-injection
+# surface from a shipped Electron app: `webPreferences` hardening (main.ts:1080-1085)
+# governs the RENDERER, while these govern the EXECUTABLE.
+#
+# Every value is stated explicitly rather than left undefined, because an undefined
+# entry is SKIPPED by generateFuseConfig — so an omission is silence, not a default,
+# and the gate (.quality/electron_hardening_check.py) can only assert what is written.
+electronFuses:
+  # MUST STAY TRUE. The premium-caption render path spawns the ELECTRON EXE ITSELF as
+  # a plain Node process — `[exe, render.js, job.json]` with ELECTRON_RUN_AS_NODE=1
+  # (CONTRACTS.md:187, docs/wiring/WIRING-T4A.md:51, app/main/sidecar.ts:154,
+  # app/render-cli/package.json:5). `false` is the usual hardening default and it would
+  # break every animated caption render in the packaged app. This is the one fuse whose
+  # correct value here is the INSECURE-looking one; the gate pins it so a future
+  # "harden all the fuses" sweep cannot silently flip it.
+  runAsNode: true
+  # Cookies at rest are encrypted with the OS credential store.
+  enableCookieEncryption: true
+  # Close the two remote-code-injection surfaces. Measured before flipping: neither
+  # NODE_OPTIONS nor `--inspect` appears in ANY tracked .ts/.py/.json/.yml/.ps1/.mjs
+  # file, so nothing in this repo depends on either.
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  # THE HEADLINE OF W66: the app refuses to run a tampered app.asar. electron-builder
+  # computes the asar header hash for non-mac platforms (platformPackager.js:225-232)
+  # and this fuse makes Electron VERIFY it at load.
+  enableEmbeddedAsarIntegrityValidation: true
+  # ...and refuse an unpacked `app/` directory placed beside it, which would otherwise
+  # be an integrity bypass by construction. Safe here: `files:` ships out/** +
+  # package.json INTO the asar; the extraResources trees (render-cli, python, bin) are
+  # spawned as separate processes and are not the app entry point.
+  onlyLoadAppFromAsar: true
+  # No custom V8 snapshot is built.
+  loadBrowserProcessSpecificV8Snapshot: false
+  # LEFT AT ELECTRON'S DEFAULT (true), deliberately not hardened. Production loads the
+  # renderer from file:// (main.ts:1161 `loadFile`), so flipping this changes what a
+  # file:// page may do, and UNVERIFIED whether the mstream:// media path and the
+  # renderer's own asset loads survive it — this lane cannot run a packaged build to
+  # find out. Settling experiment: set it false, `npx electron-builder --win`, then
+  # drive app/e2e/packaged.spec.ts and the preview/media journeys.
+  grantFileProtocolExtraPrivileges: true
+
 extraResources:
   # Remotion render CLI (T4a) — layout mirrors the dev tree so the supervisor
   # env vars are just process.resourcesPath + the same relative paths:

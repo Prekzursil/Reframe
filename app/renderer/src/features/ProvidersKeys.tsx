@@ -478,6 +478,31 @@ export function ProvidersKeys({
   // it in place of the old one (preferred over silent in-place mutation). The
   // surviving redacted siblings round-trip back to their RAW form server-side; the
   // new raw key is written at its index.
+  //
+  // W64 / docs/plans/v1.5/SCOPE.md O-1 — `providers.editKey` is DEFERRED here, and
+  // this callback is the reason. O-1 reads "an index-targeted key edit has no RPC
+  // method behind it"; measured 2026-08-10, that is true of the METHOD NAME and
+  // false of the CAPABILITY. The edit ships, right here: validate the new value
+  // (`providers.testKey`), then write it at its index (`providers.upsert`), with
+  // the untouched siblings carried by their last-4 markers. `ProviderKeyRow`'s
+  // Replace disclosure is the user-facing affordance and
+  // `ProvidersKeys.test.tsx` pins both the mechanism and the index targeting.
+  //
+  // Adding the method would be a REGRESSION, not a completion, and it is a
+  // credential-loss shape rather than a cosmetic one:
+  //   * `app/main/keyBridge.ts:416-430` intercepts exactly two provider writes,
+  //     `providers.upsert` and `providers.remove`. `needsKeyInjection` (`:95-97`)
+  //     matches neither `providers.editKey` nor any prefix it would fall under, so
+  //     an `editKey` request is forwarded VERBATIM — its raw key reaches the
+  //     sidecar and is never written to the DPAPI keystore.
+  //   * the sidecar then redacts on persist
+  //     (`settings_store._strip_secrets_for_persist`), so the slot is left holding
+  //     a last-4 MARKER whose raw counterpart exists nowhere. `providers.revealKey`
+  //     answers INVALID_PARAMS on a marker slot by design, and every provider call
+  //     loses that key. The "edit" would silently destroy the credential.
+  // Closing that needs keyBridge + the generated contract — both outside this
+  // lane's scope. Since O-1's own note says a method absent from BOTH sides is
+  // parity-clean, nothing is drifting meanwhile: there is no half-landed surface.
   const replaceKey = useCallback(
     async (id: string, index: number, newKey: string): Promise<KeyCheckResult> => {
       const entry = providers.find((p) => p.id === id);
