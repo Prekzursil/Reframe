@@ -12,6 +12,9 @@ against the actual built Electron app and the live Python sidecar — no stubs.
 | `packaged.spec.ts` | Launches the **shipped electron-builder package** (the real `.exe`, resolved via `electron-playwright-helpers` `findLatestBuild`/`parseElectronApp`) and asserts `app.isPackaged === true`, that it runs out of `resources/app.asar`, that the packaged renderer boots with no console errors, and that the packaged main process inherits the seeded env + fires its first-run bootstrap. **WINDOWS-ONLY** (self-skips elsewhere — only the Windows CI leg builds a package). | **PACKAGED-SHELL-VERIFIED** (the shipped binary boots & is correctly wired). |
 | `confirm-scrim.hittest.spec.ts` | Loads the REAL `renderer/src/components/confirmDialog.css` (+ `styles/tokens.css`) into a plain Chromium page and asks `document.elementFromPoint` whether a click behind the themed confirm gate reaches the page — the pointer half of its `aria-modal="true"`, which jsdom cannot observe because it does no layout and no hit-testing. Carries a **detector control** (the oracle must see the background when nothing covers it) and a **both-states control** that mounts the pre-fix `::before`-on-a-transformed-card stylesheet and REQUIRES the click to get through, so a green run cannot come from a probe that is silent everywhere. No Electron app or sidecar needed — the question is a property of one stylesheet. | **HIT-TEST-VERIFIED** (real Chromium, real stylesheet). |
 | `nasty_captions.dom.test.tsx` | Feeds the real `CaptionOverlay` hostile caption data (unicode/RTL/emoji, empty/out-of-window cues, zero-duration/overlapping cues, a 10k-word timeline) and asserts graceful DOM output, never a crash. | **NASTY-INPUT-VERIFIED** (GUI leg). |
+| `add-videos-dialog.spec.ts` | Drives the **"Add videos" button a real user clicks**, end to end: `.library__add-btn` → `Library.handlePick` → the preload `window.api.openVideos` → `ipcMain.handle('dialog.openVideos')` → `dialog.showOpenDialog` → `library.add`. Only the OS widget is substituted (`electron-playwright-helpers` `stubDialog` replaces `dialog.showOpenDialog` inside the RUNNING main process), so every other link is real and **no production seam was added**. Both-states by construction — the CANCEL case and the PICK case are the identical click on identical wiring, differing only in the injected dialog result; a third case injects a nonexistent path and requires the **sidecar's own** wording ("video not found") to reach the toast, text the renderer cannot author. A fourth signal is mechanically independent of the DOM: `fixtures.listLibraryVideos()` re-reads the data root through the real `library.list`, so an optimistically-painted card cannot pass. | **GUI-VERIFIED** (live app + live sidecar; the OS dialog window itself is out of reach by construction). |
+| `installed-app.spec.ts` | The **INSTALLED** app (not `dist/win-unpacked`), resolved via `RF_E2E_APP_EXE`: asserts the running binary is a PACKAGED one from **outside** both `dist/` and the repo checkout (the `process.execPath == built.executablePath` comparison alone was **REFUTED as a tautology** — see below — so the out-of-repo check is what discriminates), that the **install directory's** `resources/bin/ffmpeg` carries every encoder the pipeline hardcodes (the NSIS-layout parity measurement), that the **cold first-run bootstrap COMPLETES** and the app's own bundled runtime then answers `library.list`, and that the seeded video really decodes. Self-skips **loudly** when `RF_E2E_APP_EXE` is unset. | **UNVERIFIED — never yet observed green.** Producing an installed app needs the full staging pipeline plus a silent NSIS install, which its author did not run. Settling experiment: the `drive_installed_build` dispatch input in `.github/workflows/e2e.yml`. The escape hatch's *resolution* contract IS measured, deterministically, by `findBuiltApp.test.ts`. |
+| `findBuiltApp.test.ts` | vitest, every OS leg. Pins `RF_E2E_APP_EXE` resolution against a **synthetic** installed tree — no Electron, no package, no installer, no GUI: the variable wins over `RF_E2E_DEV`, satisfies `RF_E2E_REQUIRE_PACKAGED`, fails **loud** on a path that does not exist AND on one that exists but is not an app tree (never a silent dev-build fallback), returns the executable the caller *named* rather than one re-derived by `readdirSync` — for **both** shapes, `.exe` and `.app` — and pins `bundledFfmpegPath`'s layout per target. | **RESOLUTION-VERIFIED for the cases listed** (15/15; the sibling-decoy and `bundledFfmpegPath` arms are RED-first-verified). Previously read "7/7; mutation-checked", which was **REFUTED**: the `.app` branch was delegated to `parseElectronApp` and returned a SIBLING bundle, the macOS fixture had no decoy to catch it, and the fail-loud case survived deleting its own `existsSync` guard. See the `Refuted claims` section below. |
 | `transcribe-journey.spec.ts` | Synthesises **real speech** with Windows SAPI, muxes it over the same `testsrc` video, seeds it through the real `library.add`, pins whisper `tiny`/`cpu` through the real `settings.set`, then drives the GUI: the Transcribe panel's **empty** state → the real **Start transcription** → the rendered `.transcript-segments` must carry the spoken content words → the Subtitles panel's real **Generate subtitles** → a rendered cue must carry one of the same words. **WINDOWS-ONLY** (SAPI; self-skips loudly elsewhere). | **GUI-VERIFIED** (live app + live sidecar + real faster-whisper). |
 
 `DirectorPanel` is NOT mounted anywhere in the running renderer (only its own
@@ -106,15 +109,35 @@ worse than none — and one extra arm that IS measured:
 this proves the capability nightly and on demand; it cannot prevent a
 transcription regression from merging.
 
-**It runs as its OWN, LAST CI step**, not inside the shared `npm run test:e2e`
-invocation (that step excludes it with `--grep-invert transcribe-journey`). A red
-Playwright step makes later steps inherit GitHub's implicit `success()` gate, and
-the blocking visual/a11y diff step deliberately has no `always()` — so folding the
-most environment-dependent spec in the repo (an `en-*` SAPI voice on the image plus
-huggingface.co egress) into that one invocation would let its first red silently
-drop visual + a11y coverage. This repo has already measured that cascade on run
-30612141716. Everything after the new step carries `always()`, so its own red
-suppresses no artifact.
+**It runs as its OWN CI step, after the visual/a11y gate**, not inside the shared
+`npm run test:e2e` invocation. A red Playwright step makes later steps inherit
+GitHub's implicit `success()` gate, so folding the most environment-dependent spec
+in the repo (an `en-*` SAPI voice on the image plus huggingface.co egress) into that
+one invocation would let its first red silently drop visual + a11y coverage. This
+repo has already measured that cascade on run 30612141716. Everything after this
+step carries `always()` or `!cancelled()`, so its own red suppresses no artifact.
+
+**The cascade is now closed at the ROOT as well** (2026-08-11). Every mitigation
+until then was per-spec, which meant each newly added spec had to re-derive the
+reasoning — and the v1.5 lane got it wrong for `add-videos-dialog.spec.ts`, placing
+it in the shared invocation on an argument (*"a spec that cannot fail cannot start
+the cascade"*) that only holds for `installed-app.spec.ts`, which self-skips.
+`add-videos-dialog` **can** fail, and `--list` showed it sorting FIRST of the eight
+spec files, ahead of `packaged`, `preview` and the proven `golden-journey`. So the
+blocking visual/a11y step now carries `!cancelled()`: it still diffs the committed
+baselines and still fails the leg on a mismatch, it simply can no longer be SKIPPED
+because something unrelated went red. `always()` is still withheld, so a cancelled
+run cannot start a screenshot suite.
+
+`add-videos-dialog` also moved to its own step (after `transcribe-journey`), because
+it launches its own Electron app plus a cold sidecar and needs a 60 s `beforeAll`
+wait. **The shared Windows step now names the files it runs** rather than excluding
+by pattern: a second name cannot be added to `--grep-invert` on Windows —
+`"a|b"` has its `|` eaten by the shell npm spawns (*exit 255*), and two
+`--grep-invert` flags leave only the last one in effect (measured: `--list` still
+enumerated the transcribe-journey tests). Current counts, re-measured:
+`--list` alone **37 in 8 files**; the shared step's positive list **30 in 6**;
+`--list add-videos-dialog` **5 in 1**.
 
 ### Packaged data-pipeline: a documented CI limitation
 
@@ -132,6 +155,59 @@ real `.exe` (`packaged.spec`) while the **data-pipeline** runs against the dev
 build (`preview.spec` with `RF_E2E_DEV=1`) on every OS leg. Set `RF_E2E_DEV=1`
 locally to force the dev build; omit it (with a warm first-run env) to drive a
 real package end-to-end.
+
+**PARTLY ADDRESSED, and only on demand.** `installed-app.spec.ts` +
+`RF_E2E_APP_EXE` exist precisely to observe the case the paragraph above declares
+out of reach: it waits for the cold bootstrap to **finish** (default 15 min,
+`RF_E2E_COLD_TIMEOUT_MS`) and then drives the pipeline through the app's own
+bundled runtime, with `MEDIA_STUDIO_PYTHON` / `MEDIA_STUDIO_SIDECAR_DIR` stripped
+from the launch env so the repo's sidecar and the host interpreter cannot stand in
+for the packaged ones. It runs ONLY when the `drive_installed_build` dispatch input
+is checked, and — restating the row in the table above rather than letting the
+reader infer it — **it has never been observed green**, so nothing in it may be
+cited as evidence yet.
+
+Two facts that narrow the *shape* of the remaining risk without closing it:
+`bundledFfmpegPath()` is derived from the executable's own path, and an installed
+tree was verified BY HAND to contain that exact path — so NSIS is believed to lay
+resources out identically to `win-unpacked` (*likely*, 80%; one hand inspection, no
+automated check). `installed-app.spec.ts`'s encoder test is what would turn that
+belief into a measurement, because it probes the **install directory's** binary.
+
+### Refuted claims (2026-08-11 adversarial round) — recorded, not deleted
+
+Four sentences in this harness were wider than their evidence. Each is corrected at
+its source; they are collected here so a reader who remembers the old wording knows
+it was withdrawn rather than quietly edited away.
+
+1. **"a macOS `.app` argument is a bundle DIRECTORY, so the derived `info.executable`
+   is the right answer"** (`fixtures.ts`) — REFUTED BY EXECUTION. `parseElectronApp`
+   strips a `.app` to its PARENT and picks `readdirSync(parent).find(f =>
+   f.endsWith('.app'))`, so with a sibling `Aardvark.app` present, asking for
+   `Reframe.app` returned `Aardvark.app/Contents/MacOS/Aardvark` for the executable
+   AND `Aardvark`'s entry for `main` — silently. `/Applications` is the documented
+   install location and holds every other app on the machine, so this was the
+   canonical input, not an edge case. Fixed by deriving from inside the named bundle.
+2. **`RESOLUTION-VERIFIED (7/7; mutation-checked)`** — REFUTED. The macOS fixture
+   built a fresh `mkdtemp` holding exactly ONE bundle while the Windows arm got an
+   explicit decoy, so the suite could not observe (1). Separately the fail-loud case
+   was a SURVIVING MUTANT: deleting the `existsSync` pre-check left all seven green,
+   because the fall-through error also contains `RF_E2E_APP_EXE` and the path.
+3. **"the running process IS the installed executable"** (`installed-app.spec.ts`) —
+   REFUTED as a tautology: `resolveInstalledApp` returns the caller's `.exe` verbatim
+   and Playwright launches exactly that, so the comparison reduces to
+   `resolve($RF_E2E_APP_EXE) === resolve($RF_E2E_APP_EXE)`. `isPackaged` and an
+   appPath containing `resources` are both satisfied by `dist/win-unpacked` too — the
+   very target the spec's skip message warns against. An out-of-repo check was added.
+4. **"Only `MEDIA_STUDIO_CONFIG_DIR` travels"** (`installed-app.spec.ts`) — the code
+   deleted two keys while `definedEnv` copies the whole ambient environment, and
+   `buildSidecarEnv` resolves each packaged default as `env.X ?? <resources>` (its own
+   header: "Pre-set env vars always win"). So an ambient `MEDIA_STUDIO_FFMPEG` would
+   have beaten the shipped binary. Resolved by widening the CODE to match the claim
+   (every ambient `MEDIA_STUDIO_*` except `CONFIG_DIR` is now deleted, asserted), not
+   by narrowing the sentence.
+5. **"two independent signals that this is a real install"** (`e2e.yml`) — only one
+   was asserted; the NSIS uninstaller was passed to `Write-Host`. Now a `throw`.
 
 ## Wave-2b: VISUAL screenshot-diff + A11Y (`e2e/visual/`)
 
@@ -208,6 +284,28 @@ npx playwright test --config playwright.config.ts transcribe-journey
 ```
 
 The harness seeds a fresh per-run `MEDIA_STUDIO_CONFIG_DIR` and registers the
-sample through the real `library.add` JSON-RPC (the native "Add videos" dialog
-cannot be driven headlessly; seeding the data root the sidecar reads is
-equivalent — the app lists, opens, and plays the same library record).
+sample through the real `library.add` JSON-RPC.
+
+**Corrected scope of that shortcut.** This paragraph used to justify it with "the
+native 'Add videos' dialog cannot be driven headlessly; seeding the data root the
+sidecar reads is equivalent". Both halves need narrowing:
+
+- Seeding is equivalent for everything **downstream** of the add — the app lists,
+  opens and plays the same library record either way — and it is **not** equivalent
+  for the add itself, which is a five-hop chain (button → renderer handler →
+  preload bridge → ipc handler → dialog → RPC) that no spec exercised. A broken
+  preload wiring would have shipped green with a "Native file picker unavailable"
+  toast and nothing watching.
+- Only the **OS widget** is undrivable, not the chain. `add-videos-dialog.spec.ts`
+  drives the chain by replacing `dialog.showOpenDialog` inside the running main
+  process, so seeding remains the right default for the other specs (it is faster
+  and it is not what they are testing) rather than the only option.
+
+```sh
+npx playwright test --config playwright.config.ts add-videos-dialog
+
+# the INSTALLED build (Windows): needs a real silent install first, and self-skips
+# loudly without the variable. Point it at the INSTALLED exe, never at dist/.
+RF_E2E_APP_EXE="C:/Program Files/Reframe/Reframe.exe" \
+  npx playwright test --config playwright.config.ts installed-app
+```

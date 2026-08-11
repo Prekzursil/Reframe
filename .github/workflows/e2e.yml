@@ -42,6 +42,10 @@ on:
         description: "Regenerate the Windows (*-win32.png) visual baselines instead of diffing (uploads them as the 'updated-visual-baselines' artifact; does NOT commit)"
         type: boolean
         default: false
+      drive_installed_build:
+        description: "Windows only: silently INSTALL the built NSIS package and drive installed-app.spec.ts against it (cold first-run bootstrap + data pipeline), then uninstall. Slow (multi-minute bootstrap, network) — off by default and NEVER on the nightly schedule."
+        type: boolean
+        default: false
   schedule:
     # Nightly at 04:17 UTC (off the hour to avoid GitHub's scheduler congestion).
     - cron: "17 4 * * *"
@@ -365,21 +369,60 @@ jobs:
       # GitHub image), so its first red would silently drop visual+a11y coverage.
       # Excluding it here keeps the pre-existing gate order intact and costs nothing.
       #
-      # `--grep-invert` matches the spec's FILE PATH, verified with a detector
-      # control on this box: `--list` alone enumerates 27 tests including the 2
-      # transcribe-journey ones; with `--grep-invert transcribe-journey` it
-      # enumerates exactly those 25 others. Tripwire: rename the spec file and the
-      # exclusion silently stops matching (it would then run twice, restoring the
-      # cascade) — keep the pattern and the filename in sync.
-      # The macOS/Linux legs above need no exclusion: the spec self-skips there
-      # with a named reason (Windows SAPI).
+      # add-videos-dialog.spec.ts is ALSO excluded here and runs in its own step
+      # after transcribe-journey (v1.5 e2e-coverage lane; corrected 2026-08-11).
+      # The original wiring put it in THIS invocation on the reasoning quoted below
+      # for `installed-app` — "a spec that cannot fail cannot start the suppression
+      # cascade". That reasoning is sound for `installed-app`, which self-skips, and
+      # it does NOT transfer: add-videos-dialog CAN fail. MEASURED with
+      # `--list`: it sorted FIRST of the 8 files, so it ran ahead of `packaged`,
+      # `preview` and the proven `golden-journey`. It is also not cheap — it launches
+      # its own Electron app plus a COLD sidecar, and its beforeAll wait had to be
+      # raised to 60 s above the config's 30 s expect.timeout because a cold sidecar
+      # boot measurably exceeded 30 s on a loaded box.
+      #
+      # HOW THE EXCLUSION IS SPELLED, and why not a regex alternation. A second name
+      # cannot be added to `--grep-invert` on this platform. MEASURED, both forms:
+      #   * `--grep-invert "transcribe-journey|add-videos-dialog"` -> the `|` is
+      #     eaten by the shell npm spawns: `'add-videos-dialog' is not recognized as
+      #     an internal or external command`, exit 255. Single-quoting does not help.
+      #   * two `--grep-invert` flags -> Playwright honours only the LAST one:
+      #     `--list` still enumerated the transcribe-journey tests, 32 in 7 files.
+      # So this step now names the files it DOES run. Bare args are Playwright
+      # filename filters and carry no shell metacharacters.
+      #
+      # DETECTOR CONTROL (re-measured on this box, not adjusted by arithmetic):
+      #   `--list` alone                       -> 37 tests in 8 files
+      #   `--grep-invert transcribe-journey`   -> 35 tests in 7 files
+      #   the positive list below              -> 30 tests in 6 files
+      #     confirm-scrim 5 · golden-journey 2 · installed-app 5 · overlay-hittest 4
+      #     · packaged 5 · preview 9
+      #   `--list add-videos-dialog`           ->  5 tests in 1 file
+      # TRIPWIRE, and it points the opposite way to the old one: a NEW spec file is
+      # not picked up here unless it is added to this list. That fails SAFE (it is
+      # simply not run in this step) rather than restoring the cascade, and the
+      # `!cancelled()` on the visual gate below means a missing name can no longer
+      # suppress anything either way. Renaming one of these six makes this step's
+      # count drop — compare against the numbers above.
+      #
+      # `installed-app` stays IN this invocation deliberately: it self-skips unless
+      # RF_E2E_APP_EXE is set, which now happens ONLY inside its own dedicated step
+      # (a step-scoped `env:`, no longer job-wide), so here it reports 5 skips and
+      # cannot go red.
+      # The macOS/Linux legs above need no exclusion: transcribe-journey self-skips
+      # there with a named reason (Windows SAPI). add-videos-dialog DOES run on those
+      # legs and has never been observed green there — UNVERIFIED; settling
+      # experiment is the next nightly's macOS/Linux logs. It cannot cascade there:
+      # every step after those two legs is either Windows-gated or carries always().
       - name: E2E GUI — Playwright Electron (Windows packaged .exe + dev-build pipeline)
         if: runner.os == 'Windows'
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
-        run: npm run test:e2e -- --grep-invert "transcribe-journey"
+        run: >-
+          npm run test:e2e --
+          confirm-scrim golden-journey overlay-hittest packaged preview installed-app
 
       # WAVE-2b VISUAL + A11Y — Windows ONLY. The visual screenshot baselines are
       # platform-specific (committed as `*-win32.png`), so this suite runs on the
@@ -393,7 +436,32 @@ jobs:
         # Unchanged for the nightly schedule and any dispatch that leaves the
         # `update_visual_baselines` box unchecked (input is '' on schedule, 'false'
         # when unchecked — either way not 'true', so this diff run fires as before).
-        if: runner.os == 'Windows' && github.event.inputs.update_visual_baselines != 'true'
+        #
+        # `!cancelled()` ADDED 2026-08-11, and it is the ROOT fix for the suppression
+        # cascade this file documents at length. Without it this step inherits
+        # GitHub's implicit success() gate, so ANY red in the Playwright step above
+        # SILENTLY SKIPS the whole blocking visual+a11y suite — on the only OS that
+        # has baselines. Measured on run 30612141716. Every mitigation until now was
+        # per-spec (pull transcribe-journey into its own later step; keep fragile
+        # specs out of the shared invocation), which means each newly added spec had
+        # to re-earn the reasoning — and the v1.5 lane got it wrong for
+        # add-videos-dialog by transferring an argument that only held for a spec
+        # that self-skips.
+        #
+        # This does NOT weaken the gate, which is the objection to answer since the
+        # comment below deliberately withholds always() from this step: `!cancelled()`
+        # changes only WHETHER IT RUNS after an unrelated red — it still runs, still
+        # diffs against the committed baselines, and still fails the leg on a
+        # mismatch (no continue-on-error). It is the same argument, and the same
+        # spelling, this file already applies to the installed-build steps below:
+        # silently skipping an explicitly-requested check because something earlier
+        # failed is the "looks like it ran" trap. always() is still NOT used, so a
+        # cancelled run cannot start a screenshot suite.
+        #
+        # Accepted cost, stated because it is real: when an earlier step failed
+        # because the app itself is broken, this suite will now also run and produce
+        # a wall of diff noise. A noisy real gate beats a silent skipped one.
+        if: ${{ !cancelled() && runner.os == 'Windows' && github.event.inputs.update_visual_baselines != 'true' }}
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
@@ -426,7 +494,7 @@ jobs:
           RF_E2E_DEV: "1"
         run: npm run test:e2e:visual:update
 
-      # SPEECH -> TRANSCRIPT -> CAPTION, deliberately LAST of the test steps.
+      # SPEECH -> TRANSCRIPT -> CAPTION, deliberately after the visual/a11y gate.
       # It runs on Windows only (its fixture synthesises speech with Windows SAPI;
       # the macOS/Linux legs self-skip it loudly), on the dev build, whose sidecar is
       # the system python the ASR step above installed faster-whisper into.
@@ -435,7 +503,8 @@ jobs:
       # environmental dependencies (an `en-*` SAPI voice on the image, huggingface.co
       # reachable for the 74.6 MB `tiny` snapshot), so if anything here goes red it
       # must not be able to skip a suite that would otherwise have run. Everything
-      # after this point carries always(), so a red here suppresses no artifact.
+      # after this point carries always() or !cancelled(), so a red here suppresses
+      # no artifact.
       #
       # NO always() here: this IS a gate for the nightly, and a red must fail the leg.
       - name: E2E GUI — Playwright Electron (speech -> transcript -> caption) [Windows only]
@@ -445,6 +514,178 @@ jobs:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
         run: npx playwright test --config playwright.config.ts transcribe-journey
+
+      # NATIVE "Add videos" DIALOG (W40) — its own step, after the visual gate.
+      #
+      # Excluded from the shared Windows invocation above (see the detector control
+      # there). Two independent reasons, and neither is the cascade — that is now
+      # handled at the root by `!cancelled()` on the visual gate:
+      #   * it sorted FIRST of the 8 spec files, so in the shared invocation it ran
+      #     ahead of `packaged`, `preview` and the proven `golden-journey`, putting
+      #     the newest and least-observed spec in front of the ones the nightly is
+      #     actually relied on for;
+      #   * it launches its own Electron app plus a COLD sidecar and needs a 60 s
+      #     beforeAll wait (above the config's 30 s expect.timeout) because a cold
+      #     sidecar boot measurably exceeded 30 s on a loaded box.
+      # Sitting here it is bounded by its own step: a red fails the leg (correct — it
+      # IS the W40 proof) and, because it is after both the visual gate and
+      # transcribe-journey, it cannot skip anything that has not already run.
+      #
+      # AFTER transcribe-journey rather than before it, deliberately: everything from
+      # this point on carries always() or !cancelled(), so a red here suppresses
+      # nothing. Placing it BEFORE transcribe-journey would have made a red here skip
+      # that step, which is exactly the trap being closed.
+      #
+      # NO always(): this IS the W40 gate for the nightly.
+      - name: E2E GUI — Playwright Electron (native "Add videos" dialog, W40) [Windows only]
+        if: runner.os == 'Windows'
+        working-directory: app
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
+        run: npx playwright test --config playwright.config.ts add-videos-dialog
+
+      # ── THE INSTALLED BUILD (W-A) + THE COLD PACKAGED PIPELINE (W41) ──────────
+      # OPT-IN, WINDOWS-ONLY, workflow_dispatch ONLY (`github.event.inputs` is '' on
+      # a schedule, so the nightly can never trigger this).
+      #
+      # WHY IT EXISTS. Everything above that calls itself "packaged" drives
+      # `dist/win-unpacked` — the electron-builder OUTPUT tree. No leg has ever
+      # driven an app laid down by the NSIS INSTALLER, and no leg has ever seen the
+      # cold packaged first-run bootstrap COMPLETE: `packaged.spec.ts` proves the
+      # gate FIRES and then stops, because that bootstrap pip-installs the heavy
+      # sidecar runtime into <configDir>/envs/sidecar (multi-minute, network-bound)
+      # and cannot finish inside a normal test window. A first-run bootstrap failure
+      # on a real machine is therefore the failure class NOTHING observes.
+      #
+      # WHY IT IS OFF BY DEFAULT. It is slow by construction (a real pip install of
+      # the sidecar runtime) and network-dependent, i.e. exactly the profile that
+      # must not be added to a gate other people rely on.
+      #
+      # NOT A 7th QUALITY GATE: e2e.yml is the dispatch/nightly workflow, so the
+      # closed 6-gate charter (QUALITY-CHARTER.md rule 2, enforced both ways by
+      # .quality/charter_check.py over quality.yml) is untouched.
+      #
+      # PLACEMENT is load-bearing, same reasoning as the transcribe step above: this
+      # is the most environment-dependent leg in the file, so it sits AFTER the
+      # blocking visual/a11y gate (which deliberately has no always()) and after
+      # transcribe-journey. Everything after it already carries always(), so its red
+      # suppresses no artifact.
+      #
+      # `!cancelled()` rather than the plain implicit success() gate: this is an
+      # explicitly-requested maintainer action, and silently SKIPPING it because an
+      # unrelated earlier step failed is the "looks like it ran" trap the baseline
+      # REGEN step above documents. It is NOT `always()` — a cancelled run must not
+      # start a multi-minute install. A red here still fails the leg (no
+      # continue-on-error), which is correct: it IS the proof being asked for.
+      - name: Install the built package SILENTLY (NSIS /S) [Windows, on demand]
+        id: install-app
+        if: ${{ !cancelled() && runner.os == 'Windows' && github.event.inputs.drive_installed_build == 'true' }}
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path dist -Filter '*-win-x64.exe' -File | Select-Object -First 1
+          if (-not $installer) {
+            # FAIL CLOSED with the directory listing. Reaching here means the
+            # electron-builder step above did not produce an NSIS artifact; a
+            # confusing "file not found" from Start-Process would hide that.
+            Write-Host "dist contains: $((Get-ChildItem -Path dist -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')"
+            throw "FAILED:installed-build no *-win-x64.exe NSIS installer in dist/"
+          }
+          # NSIS: /S = silent, and /D= must be the LAST argument and unquoted (NSIS
+          # takes the rest of the command line verbatim). RUNNER_TEMP has no spaces
+          # on the GitHub Windows image, which is why no quoting is attempted.
+          $target = Join-Path $env:RUNNER_TEMP 'ReframeInstalled'
+          Write-Host "installing $($installer.Name) -> $target"
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$target" -Wait
+          # `-Wait` is not sufficient on its own: an NSIS bootstrapper can hand off
+          # to a child process and return early, so poll for the postcondition (the
+          # executable on disk) instead of trusting the exit. Bounded, and fails
+          # closed with the install-dir listing.
+          $exe = Join-Path $target 'Reframe.exe'
+          for ($i = 0; $i -lt 60 -and -not (Test-Path -LiteralPath $exe); $i++) { Start-Sleep -Seconds 2 }
+          if (-not (Test-Path -LiteralPath $exe)) {
+            Write-Host "install dir contains: $((Get-ChildItem -Path $target -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')"
+            throw "FAILED:installed-build silent install produced no $exe"
+          }
+          Write-Host "installed tree: $((Get-ChildItem -Path $target | ForEach-Object Name) -join ', ')"
+          # SECOND INDEPENDENT SIGNAL that this is a real NSIS install and not a
+          # copied `win-unpacked` tree: the uninstaller electron-builder's
+          # `nsis.oneClick: false` writes beside the app ("Uninstall <productName>.exe";
+          # productName is `Reframe`, electron-builder.yml:25,159).
+          # This used to be Write-Host ONLY, under a comment claiming "two independent
+          # signals". It asserted nothing — a missing uninstaller produced no failure
+          # anywhere, and the uninstall step below likewise logs "no uninstaller found"
+          # and exits 0. A second signal that cannot go red is indistinguishable from a
+          # no-op, so it is now a throw.
+          $uninstaller = Get-ChildItem -Path $target -Filter 'Uninstall *.exe' -File | Select-Object -First 1
+          if (-not $uninstaller) {
+            throw "FAILED:installed-build no NSIS 'Uninstall *.exe' beside $exe — this tree was not laid down by the installer (a copied win-unpacked tree looks like this)"
+          }
+          Write-Host "uninstaller present: $($uninstaller.Name)"
+          # STEP-SCOPED, not job-wide. `$GITHUB_ENV` would export RF_E2E_APP_EXE to
+          # EVERY LATER STEP in the job, and `findBuiltApp()` gives it precedence over
+          # both RF_E2E_DEV and dist/ for EVERY spec — so any Playwright step added
+          # after this one would silently retarget to the installed app (preview.spec's
+          # data-pipeline assertions run against the dev build on purpose, and
+          # visual/_visualSetup's `launchSeededApp` would drive a cold packaged binary
+          # against dev-build baselines). It is harmless today only by step ORDER, and
+          # relying on ordering is what this file has already been bitten by. Outputs
+          # are read explicitly by the two steps that want them.
+          "exe=$exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "install_dir=$target" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # RF_E2E_APP_EXE comes from the install step's OUTPUT and is set in THIS step's
+      # `env:` only, so it makes fixtures.findBuiltApp() resolve the INSTALLED app
+      # here — beating the job-wide RF_E2E_DEV=1 — while every other step on this leg
+      # still gets the dev build it expects.
+      # RF_PY is still passed: the spec SEEDS its data root with the host
+      # interpreter, then launches the app with MEDIA_STUDIO_PYTHON /
+      # MEDIA_STUDIO_SIDECAR_DIR stripped so the app uses its OWN bundled runtime
+      # (see the spec header).
+      - name: E2E GUI — INSTALLED build cold first-run + data pipeline [Windows, on demand]
+        if: ${{ !cancelled() && runner.os == 'Windows' && github.event.inputs.drive_installed_build == 'true' }}
+        working-directory: app
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
+          # 20 minutes. The in-app estimate is ~3 min (FirstRunSetup
+          # SETUP_ESTIMATE_MIN) but that is a warm-network developer figure and this
+          # window has NEVER been measured on a GitHub runner — UNVERIFIED, which is
+          # why it is a variable. The settling experiment is this step's own log: the
+          # spec prints the gate phase/detail it timed out on.
+          RF_E2E_COLD_TIMEOUT_MS: "1200000"
+          RF_E2E_APP_EXE: ${{ steps.install-app.outputs.exe }}
+        run: npx playwright test --config playwright.config.ts installed-app
+
+      # ALWAYS uninstall — `always()` here and not `!cancelled()`, unlike the two
+      # steps above: cleanup must run even on a cancelled run, or the runner is left
+      # with an installed app and a Start-menu shortcut. `|| true` semantics via a
+      # guard rather than a suppressed exit: a failure to uninstall is reported in
+      # the log but must not turn a green proof red, since the artifact under test
+      # has already been measured by then.
+      - name: Uninstall the built package [Windows, on demand]
+        if: always() && runner.os == 'Windows' && github.event.inputs.drive_installed_build == 'true'
+        shell: pwsh
+        env:
+          # Read from the install step's OUTPUT rather than a job-wide GITHUB_ENV
+          # export. Empty when that step was skipped, which the guard below handles.
+          RF_E2E_INSTALL_DIR: ${{ steps.install-app.outputs.install_dir }}
+        run: |
+          $target = $env:RF_E2E_INSTALL_DIR
+          if (-not $target -or -not (Test-Path -LiteralPath $target)) {
+            Write-Host "nothing to uninstall (RF_E2E_INSTALL_DIR='$target')"
+            exit 0
+          }
+          $uninstaller = Get-ChildItem -Path $target -Filter 'Uninstall *.exe' -File | Select-Object -First 1
+          if ($uninstaller) {
+            Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait
+            for ($i = 0; $i -lt 30 -and (Test-Path -LiteralPath (Join-Path $target 'Reframe.exe')); $i++) { Start-Sleep -Seconds 2 }
+          } else {
+            Write-Host "no uninstaller found in $target"
+          }
+          # Report the residue rather than force-deleting it: a leftover tree is a
+          # finding about the uninstaller, and this is an ephemeral runner.
+          Write-Host "post-uninstall residue: $((Get-ChildItem -Path $target -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')"
 
       - name: Upload regenerated visual baselines
         if: always() && runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
