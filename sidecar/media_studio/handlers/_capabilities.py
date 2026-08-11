@@ -35,6 +35,11 @@ TRACKER_ASSET = "yunet-face-detection"
 SALIENCY_ASSET = "vinet-s-saliency"
 #: The on-demand TransNetV2 scene-cut weight (de-registered until B4).
 SCENE_ASSET = "transnetv2-pytorch"
+#: The isolated LatentSync/MuseTalk re-lip environment ``tts.lipsync.start`` runs in.
+#: A plain literal (like the three above) rather than an import, so this data-only
+#: module stays import-light — ``test_handlers_capabilities`` asserts it equals
+#: ``features.tts.lipsync.LIPSYNC_ENV_ASSET``, so the two cannot drift apart.
+LIPSYNC_ENV_ASSET = "latentsync-env"
 
 
 @dataclass(frozen=True)
@@ -80,6 +85,30 @@ _FEATURE_CAPABILITIES: tuple[FeatureSpec, ...] = (
         blocked_phrase="download the scene-cut model to enable automatic scene detection",
         core=False,
     ),
+    # ``tts.lipsync.start`` is registered UNCONDITIONALLY (see features/tts/__init__.py:23-28)
+    # and cannot succeed in any stock build, so without a row here the app offered a
+    # Re-lip button with no up-front warning at all. The capability name matches the
+    # job registry's ``feature="lipsync"`` tag (lipsync.py:717) so the readiness row
+    # and the job that fails are the same feature.
+    #
+    # The blocker named here is the one that is UNFIXABLE from the app: the re-lip
+    # env has no manifest entry, so ``assets.ensure`` cannot install it and no
+    # install PROFILE can supply it. (The face-box probe is a second, independent
+    # gate — wiring it would move the refusal here rather than remove it, which is
+    # why this row, not a probe, is the honest surface today.) Provisioning the env
+    # needs pinned torch/diffusers versions from a live resolve plus a hashed lock
+    # and an accepted OpenRAIL licence — lipsync.py:283-294 records why inventing
+    # those pins would put a lie in the manifest.
+    FeatureSpec(
+        capability="lipsync",
+        label="Lip-sync - re-lip a dub to the on-screen mouth",
+        assets=(LIPSYNC_ENV_ASSET,),
+        blocked_phrase=(
+            "lip-sync is not available in this build: the re-lip engine environment is not "
+            "provisioned, so every re-lip request refuses"
+        ),
+        core=False,
+    ),
 )
 
 
@@ -115,19 +144,27 @@ def _feature_item(spec: FeatureSpec, installed: set[str], *, offline: bool) -> d
 
     ``ready`` when every required weight is installed; ``needsDownload`` (with a
     one-button ``assets.ensure`` action over the missing manifest-KNOWN assets) when
-    a weight is missing online AND at least one is ensurable; ``unavailable`` when a
-    weight is missing but Offline mode blocks the download OR none of the missing
-    weights map to a registered asset yet (loud "not yet available", never a silent
-    drop and never an unknown-asset name). Mirrors ``_tier_readiness_items``.
+    a weight is missing online AND at least one is ensurable; ``unavailable`` when
+    none of the missing weights map to a registered asset yet OR Offline mode blocks
+    an otherwise-downloadable one (loud, never a silent drop and never an
+    unknown-asset name). Mirrors ``_tier_readiness_items``.
+
+    REASON PRECEDENCE — "not registered" OUTRANKS "offline". Both produce
+    ``unavailable``, so only the note differs, but the note is the part the user
+    acts on: telling someone Offline mode blocks a weight that is not registered at
+    all sends them to a setting that cannot help, and it silently becomes a lie the
+    moment they go online. The unregistered case is checked FIRST so the reason
+    given is the one that is actually true; the Offline note is narrowed to the case
+    where a real, ensurable asset exists and only connectivity is in the way.
     """
     if all(name in installed for name in spec.assets):
         return _readiness_item(spec.capability, spec.label, "ready", "", None)
     ensurable = _ensurable_missing(spec, installed)
-    if offline:
-        blocked = f"{spec.blocked_phrase} (Offline mode blocks downloads)"
-        return _readiness_item(spec.capability, spec.label, "unavailable", blocked, None)
     if not ensurable:
         blocked = f"{spec.blocked_phrase} (not yet available for download)"
+        return _readiness_item(spec.capability, spec.label, "unavailable", blocked, None)
+    if offline:
+        blocked = f"{spec.blocked_phrase} (Offline mode blocks downloads)"
         return _readiness_item(spec.capability, spec.label, "unavailable", blocked, None)
     action = {"kind": "assets.ensure", "assets": ensurable}
     return _readiness_item(spec.capability, spec.label, "needsDownload", spec.blocked_phrase, action)

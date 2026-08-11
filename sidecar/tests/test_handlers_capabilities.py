@@ -34,6 +34,10 @@ from media_studio.protocol import RpcContext
 _TRACKER = "yunet-face-detection"
 _SALIENCY = "vinet-s-saliency"
 _SCENE = "transnetv2-pytorch"
+#: The isolated re-lip environment ``tts.lipsync.start`` needs. It is NOT a
+#: registered manifest asset (measured: ``registry_snapshot()`` holds 11 entries and
+#: this is not one of them), so lip-sync can never run in a stock build.
+_LIPSYNC_ENV = "latentsync-env"
 
 
 @pytest.fixture
@@ -148,7 +152,7 @@ def test_scene_detect_needs_download_when_registered(monkeypatch: pytest.MonkeyP
 # --------------------------------------------------------------------------- #
 def test_capability_asset_names_are_deduped_and_cover_every_feature() -> None:
     names = cap.capability_asset_names()
-    assert set(names) == {_TRACKER, _SALIENCY, _SCENE}
+    assert set(names) == {_TRACKER, _SALIENCY, _SCENE, _LIPSYNC_ENV}
     assert len(names) == len(set(names))  # no duplicates
 
 
@@ -197,6 +201,110 @@ def test_matrix_custom_profile_enables_picked_tracker(monkeypatch: pytest.Monkey
 def test_matrix_unknown_profile_raises() -> None:
     with pytest.raises(ValueError, match="profile"):
         cap.profile_capability_matrix("bogus")
+
+
+# --------------------------------------------------------------------------- #
+# lip-sync — the SHIPPED-BUT-DEAD feature is surfaced, not silently offered
+# --------------------------------------------------------------------------- #
+# ``tts.lipsync.start`` is registered unconditionally and cannot succeed in any
+# stock build. Measured at 81a04965, TWO independent gates, either one fatal:
+#
+#   1. ``require_face_boxes`` (``lipsync.py:239-254``) raises because no caller
+#      supplies ``lipsync_face_boxes_probe`` — ``composition.py:344-353`` passes
+#      none, and every hop defaults to ``None``.
+#   2. EVEN WITH A PROBE WIRED, ``SubprocessLipSyncBackend.relip``
+#      (``lipsync.py:456-465``) raises because the ``latentsync-env`` environment
+#      has no manifest entry, so ``assets.ensure`` cannot install it.
+#
+# Gate 2 is why this capability entry exists rather than a probe: wiring YuNet
+# would only move the raise from gate 1 to gate 2, leaving the button just as dead
+# while looking fixed. Until the env is provisioned the honest surface is a LOUD
+# ``unavailable`` the user sees BEFORE spending a click, which is exactly the state
+# ``_feature_item`` already produces for an unregistered asset.
+def test_lipsync_capability_is_surfaced_at_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Before this lane there was NO lip-sync entry in the readiness family at all,
+    # so the app offered a Re-lip button with zero up-front warning.
+    _register(monkeypatch, _TRACKER)
+    items = _by_cap(cap.feature_readiness_items({_TRACKER}, offline=False))
+    assert "lipsync" in items
+
+
+def test_lipsync_is_unavailable_because_its_relip_env_is_unprovisioned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The env asset is unregistered -> LOUD `unavailable` with NO download button
+    # (an assets.ensure naming an unknown asset would trip the manager's gate), and
+    # the copy must say the feature is unavailable in this build.
+    _register(monkeypatch, _TRACKER)  # latentsync-env deliberately NOT known
+    items = _by_cap(cap.feature_readiness_items({_TRACKER}, offline=False))
+    lipsync = items["lipsync"]
+    assert lipsync["status"] == "unavailable"
+    assert lipsync["action"] is None
+    assert "lip-sync" in lipsync["blockedBy"].lower()
+    assert "not available in this build" in lipsync["blockedBy"].lower()
+    # Never emit the unknown-asset name into the wire payload.
+    assert _LIPSYNC_ENV not in repr(lipsync)
+
+
+def test_lipsync_unavailability_is_never_blamed_on_offline_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # HONESTY: an UNREGISTERED asset is not "blocked by Offline mode" — turning
+    # Offline off would not make it downloadable. Blaming offline would send the
+    # user to a setting that cannot help. The unregistered reason DOMINATES.
+    _register(monkeypatch, _TRACKER)
+    items = _by_cap(cap.feature_readiness_items({_TRACKER}, offline=True))
+    lipsync = items["lipsync"]
+    assert lipsync["status"] == "unavailable"
+    assert "offline" not in lipsync["blockedBy"].lower()
+    assert "not yet available for download" in lipsync["blockedBy"].lower()
+
+
+def test_a_deregistered_asset_outranks_offline_for_every_feature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same precedence bug hit the two pre-B4 de-registered weights: offline was
+    # checked FIRST, so a permanently-unavailable feature reported the wrong reason.
+    _register(monkeypatch, _TRACKER)  # saliency + scene de-registered
+    items = _by_cap(cap.feature_readiness_items({_TRACKER}, offline=True))
+    for feature in ("reframe.saliency", "scene.detect"):
+        assert items[feature]["status"] == "unavailable"
+        assert "offline" not in items[feature]["blockedBy"].lower()
+    # ...but a REGISTERED weight that is merely undownloadable right now still
+    # correctly blames Offline mode (the branch is narrowed, not deleted).
+    _register(monkeypatch, _TRACKER, _SALIENCY)
+    offline_items = _by_cap(cap.feature_readiness_items(set(), offline=True))
+    assert "offline" in offline_items["reframe.saliency"]["blockedBy"].lower()
+
+
+def test_lipsync_capability_name_matches_the_job_registry_feature_tag() -> None:
+    # The readiness row and the job the user starts must be the SAME feature name,
+    # or the rollup explains one thing while another fails.
+    from media_studio.features.tts import lipsync as ls
+
+    spec = next(s for s in cap._FEATURE_CAPABILITIES if s.capability == "lipsync")
+    assert spec.assets == (ls.LIPSYNC_ENV_ASSET,)
+    assert cap.LIPSYNC_ENV_ASSET == ls.LIPSYNC_ENV_ASSET
+    assert spec.core is False  # never a core floor — it is an opt-in heavy extra
+
+
+def test_lipsync_env_really_is_unregistered_so_the_copy_is_true() -> None:
+    # The claim "not available in this build" rests on the env being absent from the
+    # REAL manifest, so assert it against the real registry (no monkeypatch) with a
+    # detector control: a known-present asset must be found by the same probe.
+    from media_studio.assets import manifest as _manifest
+
+    snapshot = _manifest.registry_snapshot()
+    assert _TRACKER in snapshot  # CONTROL: the probe can find a present asset
+    assert _LIPSYNC_ENV not in snapshot
+    assert _manifest.get_asset(_LIPSYNC_ENV) is None
+
+
+def test_matrix_lipsync_is_unavailable_in_every_install_profile() -> None:
+    # No profile can install an unregistered env, so lip-sync is unavailable even on
+    # the fullest profile — the matrix must never promise it.
+    for profile in ("minimum", "default", "full"):
+        assert cap.profile_capability_matrix(profile)["lipsync"] == "unavailable"
 
 
 # --------------------------------------------------------------------------- #
