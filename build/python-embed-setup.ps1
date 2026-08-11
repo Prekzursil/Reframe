@@ -128,7 +128,20 @@ param(
     # three in sync when pypa rotates get-pip.
     # ROTATED 2026-07-30 alongside the runtime constant. pypa republished the rolling URL
     # (Last-Modified "Wed, 29 Jul 2026 22:35:44 GMT"), so the previous digest
-    # a341e1a4...7055 (2,226,848 B) started failing closed. Current: 2,230,427 B, pip 26.2.
+    # a341e1a4...7055 (2,226,848 B) started failing closed. Current: 2,230,488 B, pip 26.2.
+    #
+    # THE 2026-07-30 ROTATION WAS INCOMPLETE, and "keep the three in sync" above is why this
+    # sentence exists. Two of the three moved — this default and the runtime constant — while
+    # the third, the VENDORED artifact `build/python-embed/get-pip.py`, stayed at the old
+    # a341e1a4...7055 from 2026-06-16. Nothing compared them. Because
+    # `runtime_setup/bootstrap.py::resolve_get_pip` prefers the STAGED copy and fails CLOSED on
+    # a mismatch (correctly — this file is downloaded-then-EXECUTED), it never fell through to
+    # the download, so every fresh install died in first-run bootstrap. Measured on Actions run
+    # 31445248586 step 28 with a real NSIS install. Re-staged 2026-08-11 and now pinned by
+    # `sidecar/tests/test_get_pip_staged_pin.py`, which compares all three.
+    #
+    # The byte count above was ALSO wrong: it read 2,230,427 B, which cannot describe a file
+    # with this digest. Corrected to the measured 2,230,488 B. A figure nothing checks drifts.
     # Provenance + its limits are documented at the runtime site, which is the SSOT —
     # see sidecar/media_studio/assets/manager.py::GET_PIP_SHA256. Keep the two in lockstep.
     [string]$ExpectedGetPipSha256 = 'fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6',
