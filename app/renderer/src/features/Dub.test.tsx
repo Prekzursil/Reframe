@@ -1084,7 +1084,14 @@ describe('<Dub />', () => {
     const twoDubs: AudioTrack[] = [
       AUDIO_TRACKS[0],
       AUDIO_TRACKS[1], // a2 — de
-      { id: 'a3', lang: 'ro', name: 'Dub (kokoro, ro)', kind: 'dub', voice: 'af_sarah', path: 'C:/ro.m4a' },
+      {
+        id: 'a3',
+        lang: 'ro',
+        name: 'Dub (kokoro, ro)',
+        kind: 'dub',
+        voice: 'af_sarah',
+        path: 'C:/ro.m4a',
+      },
     ];
     const { api, calls } = makeBridge({ 'tracks.audio.list': { audioTracks: twoDubs } });
     await mount(api);
@@ -1095,7 +1102,9 @@ describe('<Dub />', () => {
 
     // Switch to the OTHER dub. Its editor must open empty and disarmed.
     await act(async () => rowBtn('a3', 'replace-audio').click());
-    const input = rowFor('a3').querySelector('[data-input="replace-audio-path"]') as HTMLInputElement;
+    const input = rowFor('a3').querySelector(
+      '[data-input="replace-audio-path"]',
+    ) as HTMLInputElement;
     expect(input).not.toBeNull();
     expect(input.value).toBe('');
     expect(rowBtn('a3', 'replace-audio-save').disabled).toBe(true);
