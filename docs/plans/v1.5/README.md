@@ -25,7 +25,7 @@ changed — never the reverse.
 | file | authoritative for | status |
 |---|---|---|
 | `PROGRAM.md` | the owner-locked v1.5 scope + decision list | **current** — newest, and it supersedes older plans on conflict |
-| `GRILL-DECISION-QUEUE.md` | binding owner decisions taken during the grill (version 1.4.2, baseline REGEN, a11y critical-only) | **current** |
+| `GRILL-DECISION-QUEUE.md` | binding owner decisions taken during the grill (versioning — B-1 chose 1.4.2 and is now marked SUPERSEDED by the 1.5.0 bump in #402; baseline REGEN; a11y critical-only) | **current** |
 | `DESIGN-DIRECTION.md` | the v1.5 re-skin direction | current for *direction*; **`app/renderer/src/styles/tokens.css` is authoritative for values** |
 | `redesign.html` | the validated redesign prototype | reference artifact |
 | `shell-audit/` | 8 screenshots + `capture-report.json` of the built shell as of the audit | evidence, point-in-time |
@@ -65,7 +65,9 @@ changed — never the reverse.
 - **B-roll is not deferred.** `docs/ROADMAP.md` lists B-roll, emoji/SFX triggers and
   publishing as "deferred from V1"; `PROGRAM.md` makes local auto-B-roll flagship #3
   and puts emoji-burst + SFX-on-emphasis in the caption engine. docs/ROADMAP.md is stale
-  at v1.2.0 while `app/package.json` is 1.4.2.
+  at v1.2.0 while `app/package.json` is several minor versions ahead of it. (This clause used
+  to pin "1.4.2", which went false the moment #402 bumped the package to 1.5.0 — the argument
+  survived the drift but the literal did not, so it is now version-agnostic.)
 
 ## Two documents were archived, not promoted
 
@@ -75,7 +77,8 @@ They are at `docs/_archive/2026-07/` because they are superseded, and one is
 - `docs/_archive/2026-07/reframe-visual-audit.md` — its P0 ("16+ horizontal top-level tabs") is refuted by
   `App.tsx`, which renders 8 vertical rails.
 - `docs/_archive/2026-07/reframe-reconcile-audit.md` — asserts *"there is NO 'YuNet' anywhere in the repo
-  (zero matches)"*. There are 369 occurrences across 44 files, and the detector it
+  (zero matches)"*. YuNet is referenced throughout the tree — hundreds of occurrences across
+  dozens of files, and the detector it
   contradicts had landed roughly 24 hours before that file's mtime. Its headline gap
   (no keystore) was likewise already closed by `app/main/keystore.ts`.
 
@@ -85,13 +88,21 @@ They are at `docs/_archive/2026-07/` because they are superseded, and one is
 
 ## Verifying this corpus has not drifted
 
-`docs/validation/tools/verify_ssot_claims.py` re-checks every load-bearing factual
-claim behind this reconciliation — file existence, version literals, palette values,
-the RPC registration site, the rail/sub-tab counts — mechanically, against the tree.
-Run it after any change here:
+`docs/validation/tools/verify_ssot_claims.py` re-checks **its own registered list** of claims —
+file existence, the live version literal, palette values, the RPC registration site, the
+rail/sub-tab counts — mechanically, against the tree. Run it after any change here:
 
 ```
 python docs/validation/tools/verify_ssot_claims.py
 ```
 
-It exits non-zero and names each claim that no longer resolves as recorded.
+It exits non-zero and names each **registered** claim that no longer resolves as recorded.
+
+> **SCOPE, corrected — it does NOT check this file.** The earlier wording ("re-checks every
+> load-bearing factual claim behind this reconciliation") was wider than the tool, and the proof
+> was sitting in its own output: it exited 0 (`total=40 as-predicted=40 mismatched=0`) in the very
+> tree where line 68 above asserted `app/package.json` is 1.4.2, twenty lines from its own
+> `P2.11a ... app/package.json version=1.5.0`. The instrument was right; nothing compared the
+> prose against it. A green run here means the 40 REGISTERED claims hold — it says nothing about
+> a literal written in this README. Closing that properly means adding checks that pin this
+> corpus's own literals, which is a follow-up, not a wording change.
