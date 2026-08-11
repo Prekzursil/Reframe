@@ -1598,8 +1598,11 @@ def recorded_segment_bytes(row: Mapping[str, Any]) -> int | None:
     included** — so a row recording ``0`` over a 0-byte file on disk satisfies the
     bytes half and its (unusable) segment is reused. That is deliberate here (this
     function answers "did the row record a size", not "is that size plausible") and
-    it is why :func:`segment_is_reusable` no longer claims to fail closed in *every*
-    degenerate direction. UNVERIFIED whether a 0-byte segment is reachable at all:
+    it is why :func:`segment_is_reusable` scopes its fail-closed claim to FOUR
+    directions rather than *every* one. (That was ASPIRATIONAL when written — the
+    sibling below still read "FAIL-CLOSED in every degenerate direction" until
+    2026-08-11, so the two made incompatible claims in the same file.) UNVERIFIED
+    whether a 0-byte segment is reachable at all:
     it needs the ffmpeg runner to exit 0 having written nothing, which was not
     reproduced; reachability judged **remote (1-20%)** on that evidence, and the
     failure would be a LOUD concat error rather than silent corruption. Settling
@@ -1628,12 +1631,25 @@ def segment_is_reusable(
     * the BYTES half — the size ``row`` published must equal the size measured on
       disk RIGHT NOW.
 
-    FAIL-CLOSED in every degenerate direction: no row, no usable recorded size, and
-    no measurable file (``measured_bytes is None``, which is also how a VANISHED
-    segment presents, so this subsumes the old ``exists`` seam) each deny reuse.
-    The absent-vs-absent case is called out because it is the trap: comparing an
-    unrecorded size to an unmeasurable file would compare ``None`` to ``None`` and
-    license reuse of a segment that is not even there.
+    FAIL-CLOSED in FOUR degenerate directions, each measured to deny reuse: no row;
+    no usable recorded size (absent key / ``null`` / ``str`` / ``float`` / ``bool`` /
+    negative — :func:`recorded_segment_bytes` owns that set); no measurable file
+    (``measured_bytes is None``, which is also how a VANISHED segment presents, so
+    this subsumes the old ``exists`` seam); and a size MISMATCH in either direction
+    (a shrunk stump or a grown file). The absent-vs-absent case is called out
+    because it is the trap: comparing an unrecorded size to an unmeasurable file
+    would compare ``None`` to ``None`` and license reuse of a segment that is not
+    even there.
+
+    REFUTED 2026-08-11 — this paragraph read "FAIL-CLOSED in every degenerate
+    direction", which is wider than the code and contradicted its own sibling
+    :func:`recorded_segment_bytes` just above, which already said otherwise.
+    ZERO is NOT closed: a row recording ``0`` over a 0-byte file satisfies the bytes
+    half and reuse is GRANTED. Measured by enumerating fourteen cases against this
+    function — twelve deny, and the only two that grant are that ``0 == 0`` case and
+    the healthy ``5 == 5`` control, so the probe is not a constant. Reachability of a
+    0-byte segment, and the experiment that would settle it, are recorded on
+    :func:`recorded_segment_bytes`, which owns that decision.
 
     HONEST SCOPE: a size match is not a proof of content. A corruption that
     preserves the byte count exactly (an in-place overwrite of the same length)
@@ -2097,19 +2113,56 @@ class MultiSpeakerReframeEngine:
           cache path, a user editing the cache) was still trusted, because reuse bound
           no size or hash to the row and ended in a bare ``exists()``.
 
-          CLOSED 2026-08-10 by the v2->v3 manifest bump: every row now publishes its
-          segment's byte size and :func:`segment_is_reusable` re-measures the file at
-          plan time, so a truncated piece is re-encoded instead of concat-copied. The
-          settling experiment named here ("add the segment's byte size to the manifest
-          row and re-run the truncate-then-rerender probe") WAS RUN, in both states —
-          see ``test_a_truncated_cached_segment_is_re_encoded_end_to_end`` and its
-          intact-file control in ``sidecar/tests/test_reframe_analyze.py``.
+          CLOSED 2026-08-11 by ``2756afb4`` ("close the truncated-segment reuse hole,
+          both halves"), which took BOTH of:
 
-          RESIDUAL, deliberately not closed: a size match is not a content proof, so a
-          corruption that preserves the byte count exactly still reuses. UNVERIFIED
-          whether that occurs on this path; settling experiment on
-          :func:`segment_is_reusable`. A content hash would close it at the cost of
-          re-reading every cached segment on every render.
+          * the PLAN-TIME half — every row publishes its segment's byte size and
+            :func:`segment_is_reusable` re-measures the file before granting reuse, so
+            a truncated piece is re-encoded instead of concat-copied. The settling
+            experiment named here ("add the segment's byte size to the manifest row and
+            re-run the truncate-then-rerender probe") WAS RUN, in both states — see
+            ``test_a_truncated_cached_segment_is_re_encoded_end_to_end`` and its
+            intact-file control in ``sidecar/tests/test_reframe_analyze.py``;
+          * the PERSISTENCE half — a REUSED row republishes
+            :attr:`ShotSegment.measured_bytes` rather than being re-measured after the
+            render (:func:`shot_manifest_payload`). MUTATION-MEASURED: replacing that
+            carry with a plain ``size(seg.path)`` publishes the stump (``bytes`` 3
+            against a proven 4096) and reddens
+            ``test_a_reused_shots_row_republishes_the_size_reuse_was_granted_against``
+            while both plan-time tests above stay GREEN. The halves are independent,
+            so the manifest bump ALONE does not durably close the hole.
+
+          CORRECTED 2026-08-11 — this paragraph credited "the v2->v3 manifest bump"
+          alone, dated 2026-08-10. The v2->v3 bump of THAT date is ``f5ed3f86``, which
+          ``git merge-base --is-ancestor`` puts OFF the shipped history — it never
+          reached ``origin/main``. On the shipped chain the immediate parent
+          ``fe4b0a8b`` still carries v2 with no byte sizes and no carry, and both
+          arrive together in ``2756afb4``, authored 2026-08-11.
+
+          RESIDUALS, deliberately not closed — THREE, where this list used to enumerate
+          one and so read as complete:
+
+          1. EQUAL-LENGTH corruption: a size match is not a content proof, so an
+             in-place overwrite of the same length still reuses. UNVERIFIED whether that
+             occurs on this path; settling experiment on :func:`segment_is_reusable`. A
+             content hash would close it at the cost of re-reading every cached segment
+             on every render.
+          2. The PLAN-TIME -> CONCAT window: the bytes are proven when
+             :func:`plan_shot_segments` runs, and the concat pass happens later in this
+             same method over EVERY segment path (``_write_concat`` is fed reused and
+             fresh alike), so a truncation landing in between still reaches THIS
+             render's output — a TOCTOU no size check can close. Executed as the first
+             half of ``test_a_reused_shots_row_republishes_the_size_reuse_was_granted_against``,
+             whose segment is truncated right after the plan-time probe and is still
+             reused (``reencoded == ()``). What IS guaranteed is that the bad state does
+             not become the recorded truth, so the NEXT render re-encodes the shot; that
+             half is on :func:`shot_manifest_payload` — which is where this residual was
+             disclosed, and this list was not.
+          3. ZERO bytes: ``0 == 0`` satisfies the bytes half, so a row recording ``0``
+             over a 0-byte file reuses an unusable segment (measured on
+             :func:`segment_is_reusable`). Reachability judged **remote (1-20%)** and
+             its settling experiment named on :func:`recorded_segment_bytes` — again,
+             disclosed there and not here.
 
         Returns ``(out_path, reencoded_shot_indices)``.
         """

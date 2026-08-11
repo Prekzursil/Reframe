@@ -1683,6 +1683,65 @@ class TestRenderHandler:
         assert job.status.value == "done", job.error
         assert job.result["affected"] == [0], "no diarizeBackend needed to reach the disclosed ambiguity"
 
+    def test_one_resident_bundle_that_is_not_the_callers_still_reports_one(self, tmp_path):
+        # REFUTES the ">=2 bundles exist for this (video_id, aspect)" clause of the
+        # precondition LruAnalysisCache.find shipped. It is not NECESSARY: with a
+        # one-entry cache the second analyze EVICTS the caller's own bundle, so exactly
+        # ONE entry is resident and it is not the caller's. The defaulted render key
+        # (True, True, None) misses it, find() hands it back as the diff baseline, and
+        # the untouched plan is reported affected=[0] with no second bundle in sight.
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache(max_entries=1)
+        svc, _b = _service(tmp_path, analysis=_two_talker_analysis(concurrent=3), cache=cache)
+        single = _run(reg, svc.analyze({"videoId": "v", "allowComposite": False}, _ctx(reg))).result["plan"]
+        _run(reg, svc.analyze({"videoId": "v", "allowSplit": False}, _ctx(reg)))
+        assert len(cache) == 1, "the caller's own bundle must have been evicted for this to measure eviction"
+        job = _run(reg, svc.render({"videoId": "v", "plan": single}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["affected"] == [0], "ONE resident bundle is enough to reach the disclosed ambiguity"
+
+    def test_one_resident_bundle_that_is_the_callers_reports_none(self, tmp_path):
+        # The BOTH-STATES control for the test above, mechanically matched on
+        # max_entries=1 (test_an_omitted_flag_set_still_falls_back_to_the_most_recent_bundle
+        # makes the same point on an unbounded cache). Without this passing, that
+        # affected=[0] could be a harness stuck at [0] rather than the eviction.
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache(max_entries=1)
+        svc, _b = _service(tmp_path, analysis=_two_talker_analysis(concurrent=3), cache=cache)
+        single = _run(reg, svc.analyze({"videoId": "v", "allowComposite": False}, _ctx(reg))).result["plan"]
+        assert len(cache) == 1
+        job = _run(reg, svc.render({"videoId": "v", "plan": single}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["affected"] == [], "the one resident bundle IS the caller's, so the baseline is right"
+
+    def test_passing_an_identity_value_no_cached_bundle_carries_misreports(self, tmp_path):
+        # REFUTES the "the DEFAULTED key (True, True, None)" half of the same
+        # precondition. The miss is of whatever key the CALL BUILDS, not specifically
+        # the all-defaults one: the caller PASSES diarizeBackend="x" while the cached
+        # bundles carry "a" and "b", so (True, True, "x") misses both, find() returns
+        # the most-recently-used bundle, and affected=[0] again. Passing an identity
+        # param is therefore NOT the workaround — passing the value analyze was called
+        # with is, which the second half asserts.
+        reg, _ = _registry()
+        cache = ra.LruAnalysisCache()
+        svc, _b = _service(tmp_path, analysis=_two_talker_analysis(concurrent=3), cache=cache)
+        single = _run(
+            reg, svc.analyze({"videoId": "v", "allowComposite": False, "diarizeBackend": "a"}, _ctx(reg))
+        ).result["plan"]
+        _run(reg, svc.analyze({"videoId": "v", "allowSplit": False, "diarizeBackend": "b"}, _ctx(reg)))
+        job = _run(reg, svc.render({"videoId": "v", "plan": single, "diarizeBackend": "x"}, _ctx(reg)))
+        assert job.status.value == "done", job.error
+        assert job.result["affected"] == [0], "a passed-but-uncached identity value still misses and falls back"
+        exact = _run(
+            reg,
+            svc.render(
+                {"videoId": "v", "plan": single, "allowComposite": False, "diarizeBackend": "a"},
+                _ctx(reg),
+            ),
+        )
+        assert exact.status.value == "done", exact.error
+        assert exact.result["affected"] == [], "passing the values analyze was called with is what makes get() hit"
+
     def test_a_non_boolean_render_flag_is_refused(self, tmp_path):
         reg, _ = _registry()
         svc, _ = _service(tmp_path)

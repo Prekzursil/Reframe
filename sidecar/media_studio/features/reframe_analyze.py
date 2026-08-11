@@ -263,8 +263,36 @@ class LruAnalysisCache:
         give ``affected=[0]`` for an untouched plan
         (``test_two_bundles_each_non_default_on_a_different_flag_also_report_one``),
         against ``affected=[]`` when the flags are passed
-        (``test_the_layout_flags_select_the_exact_cached_bundle``). The workaround is
-        unchanged: pass the three identity params.
+        (``test_the_layout_flags_select_the_exact_cached_bundle``).
+
+        SCOPED 2026-08-11 (third pass) — that three-clause precondition is still wider
+        than the code in one clause and narrower in another. What is EXECUTABLE is two
+        clauses:
+
+        1. the key the CALL BUILDS — ``(video_id, aspect, allowSplit|True,
+           allowComposite|True, diarizeBackend|None)``, assembled in
+           :meth:`ReframeAnalyzeService.render` — is resident under no cache entry, so
+           its ``get(key) or find(...)`` falls through to here; AND
+        2. the most-recently-USED resident entry for ``(video_id, aspect)`` is not the
+           bundle the caller's plan derives from.
+
+        Against the wording above: "**≥2 bundles exist** for this ``(video_id,
+        aspect)``" is REFUTED as *necessary*. With ``max_entries=1`` the second analysis
+        EVICTS the caller's own bundle, leaving exactly ONE resident entry
+        ``(False, True, None)``, and the untouched plan still reports ``affected=[0]``
+        (``test_one_resident_bundle_that_is_not_the_callers_still_reports_one``); its
+        BOTH-STATES control — the same one-entry cache holding only the caller's own
+        analysis — reports ``affected=[]``
+        (``test_one_resident_bundle_that_is_the_callers_reports_none``), so that ``[0]``
+        is not a probe stuck at one answer. And "the **DEFAULTED** key
+        ``(True, True, None)``" is too NARROW: with the caller PASSING
+        ``diarizeBackend="x"`` against bundles cached under ``"a"`` and ``"b"``, the
+        built key ``(True, True, "x")`` misses both and ``affected=[0]`` again
+        (``test_passing_an_identity_value_no_cached_bundle_carries_misreports``).
+
+        So the workaround is narrower than "pass the three identity params": pass the
+        SAME values ``reframe.analyze`` was called with, which is what makes :meth:`get`
+        hit exactly. Passing a value no cached bundle carries lands here just the same.
         """
         for key in reversed(self._items):
             if key.video_id == video_id and key.aspect == aspect:
