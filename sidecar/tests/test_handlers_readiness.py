@@ -37,6 +37,23 @@ def _register_all(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_manifest, "get_asset", lambda _n: SimpleNamespace(label="", size_mb=0))
 
 
+def _deregister_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin every asset as manifest-UNKNOWN (the pre-B4 de-registered state).
+
+    The inverse of :func:`_register_all`, and it must be explicit for the same
+    reason: the manifest registry is a PROCESS-GLOBAL populated lazily by module
+    import, so "nothing is registered" is a property of the current import set, not
+    of the manifest. Measured: running this file after ``tests/test_saliency.py``
+    (which registers ``vinet-s-saliency`` for real) turned a de-registered-state
+    assertion into ``'missing model weights: vinet-s-saliency (Offline mode blocks
+    downloads)'``. A test that asserts the ABSENCE of a registration must therefore
+    create that absence, never inherit it.
+    """
+    from media_studio.assets import manifest as _manifest
+
+    monkeypatch.setattr(_manifest, "get_asset", lambda _n: None)
+
+
 _ALL_MODELS = (
     "saliency",
     "audio_saliency",
@@ -101,13 +118,63 @@ def test_tier_missing_weight_online_needs_download(
     assert tier1["action"]["assets"]
 
 
-def test_tier_missing_weight_offline_is_unavailable(tmp_path: Path, ctx: RpcContext) -> None:
-    # Offline + a missing weight -> unavailable (download blocked); no action.
+def test_tier_missing_weight_offline_is_unavailable(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Offline + a missing but REGISTERED weight -> unavailable (download blocked);
+    # no action. Registration matters: only an ENSURABLE asset can be offline-blocked.
+    _register_all(monkeypatch)
     svc = _services(tmp_path, settings={"offline": True}, models_present={})
     items = _by_cap(svc.readiness_summary({}, ctx))
     tier1 = items["tier1-multimodal"]
     assert tier1["status"] == "unavailable"
     assert tier1["action"] is None
+    assert "Offline mode blocks downloads" in tier1["blockedBy"]
+
+
+def test_tier_deregistered_weight_outranks_offline_and_never_doubles_the_reason(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # REASON PRECEDENCE, the tier half. `_missing_weights_phrase` ALREADY ends in
+    # "(not yet available for download)" when nothing is ensurable, so checking
+    # `offline` first appended a SECOND, contradictory clause and shipped one string
+    # saying both "no download exists" and "your Offline setting is blocking the
+    # download". Measured as the DEFAULT state, not an edge case: every asset behind
+    # tier1/tier2 is de-registered pre-B4, so with Offline on a fresh install ALWAYS
+    # rendered that self-contradiction — next to feature rows that had already been
+    # fixed, in the SAME readiness.summary payload (`library_ops.py:656` + `:664`).
+    #
+    _deregister_all(monkeypatch)  # create the absence; never inherit it (see helper)
+    svc = _services(tmp_path, settings={"offline": True}, models_present={})
+    items = _by_cap(svc.readiness_summary({}, ctx))
+    for tier in ("tier1-multimodal", "tier2-vlm"):
+        blocked = items[tier]["blockedBy"]
+        assert items[tier]["status"] == "unavailable"
+        assert "not yet available for download" in blocked
+        assert "Offline" not in blocked, f"{tier} blames offline for an unregistered weight: {blocked!r}"
+    # CONTROL: the offline note is NARROWED, not deleted — it still fires for a
+    # registered-but-undownloadable weight (pinned by the test above).
+
+
+def test_both_readiness_families_agree_on_reason_precedence(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The tier family and the WU-C2 feature family ride ONE items array, so a user
+    # reading the rollup must not see the same situation explained two ways. With
+    # Offline on and nothing registered, NO row in either family may blame Offline.
+    _deregister_all(monkeypatch)
+    svc = _services(tmp_path, settings={"offline": True}, models_present={})
+    result = svc.readiness_summary({}, ctx)
+    offenders = [
+        item["capability"]
+        for item in result["items"]
+        if item["status"] == "unavailable"
+        and "Offline" in item["blockedBy"]
+        and "available for download" in item["blockedBy"]
+    ]
+    assert offenders == [], f"rows carrying BOTH reasons at once: {offenders}"
+    # CONTROL: the scan sees a populated list, so the empty result is a real zero.
+    assert len(result["items"]) > 3
 
 
 def test_tier0_numeric_is_always_ready(tmp_path: Path, ctx: RpcContext) -> None:

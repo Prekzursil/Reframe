@@ -207,41 +207,64 @@ def test_matrix_unknown_profile_raises() -> None:
 # lip-sync — the SHIPPED-BUT-DEAD feature is surfaced, not silently offered
 # --------------------------------------------------------------------------- #
 # ``tts.lipsync.start`` is registered unconditionally and cannot succeed in any
-# stock build. Measured at 81a04965, TWO independent gates, either one fatal:
+# stock build. THREE gates are live, in the order they actually fire:
 #
-#   1. ``require_face_boxes`` (``lipsync.py:239-254``) raises because no caller
-#      supplies ``lipsync_face_boxes_probe`` — ``composition.py:344-353`` passes
-#      none, and every hop defaults to ``None``.
-#   2. EVEN WITH A PROBE WIRED, ``SubprocessLipSyncBackend.relip``
+#   1. THE BUILD FLAG. ``require_enabled`` (``lipsync.py:208-215``) is called FIRST
+#      (``:652``) and ``lipSyncEnabled`` defaults to ``False``
+#      (``settings_store.py:178``), so ``tts.lipsync.start`` refuses SYNCHRONOUSLY
+#      with an RpcError naming the flag. ``ctx.jobs.start`` (``:717``) is never
+#      reached, so there is no jobId and no job to fail.
+#   2. THE UNPROVISIONED ENV. ``SubprocessLipSyncBackend.relip``
 #      (``lipsync.py:456-465``) raises because the ``latentsync-env`` environment
 #      has no manifest entry, so ``assets.ensure`` cannot install it.
+#   3. THE UNWIRED FACE-BOX PROBE. ``require_face_boxes`` (``lipsync.py:239-254``,
+#      called at ``:699`` INSIDE the job body) raises because
+#      ``composition.py`` supplies no ``lipsync_face_boxes_probe``.
 #
-# Gate 2 is why this capability entry exists rather than a probe: wiring YuNet
-# would only move the raise from gate 1 to gate 2, leaving the button just as dead
-# while looking fixed. Until the env is provisioned the honest surface is a LOUD
-# ``unavailable`` the user sees BEFORE spending a click, which is exactly the state
-# ``_feature_item`` already produces for an unregistered asset.
+# REFUTED, kept rather than deleted: an earlier version of this block said "TWO
+# independent gates, either one fatal" and the lane report said the app "offered a
+# Re-lip button, accepted the request, returned a jobId, and only then failed the
+# job". Gate 1 was missed and that sequence is FALSE for a stock build — an
+# executable probe with a sentinel ``jobs.start`` (the both-states control: with the
+# flag forced true the same call DOES reach it) showed the synchronous flag refusal.
+# The renderer agrees: ``LipSync.tsx:509`` gates ``canStart`` on ``enabled === true``
+# and ``LipSync.test.tsx:219`` pins that nothing in ``app/`` writes the flag.
+# Correctly scoped: the accept-then-fail path needs a hand-edited settings.json;
+# what was genuinely missing is a row in ``readiness.summary`` — the app's single
+# "what is ready" surface — which carried no lipsync entry at all.
+#
+# Gates 2 AND 3 are why this is a capability row rather than a wired probe: wiring
+# YuNet would only move the raise from gate 3 to gate 2. And because gate 3 is
+# unfinished WIRING that no download can clear, the row is ``hard_blocked`` — see
+# ``test_lipsync_is_never_ready_even_once_its_env_is_provisioned``.
 def test_lipsync_capability_is_surfaced_at_all(monkeypatch: pytest.MonkeyPatch) -> None:
     # Before this lane there was NO lip-sync entry in the readiness family at all,
-    # so the app offered a Re-lip button with zero up-front warning.
+    # so readiness.summary said nothing about a feature that cannot run.
     _register(monkeypatch, _TRACKER)
     items = _by_cap(cap.feature_readiness_items({_TRACKER}, offline=False))
     assert "lipsync" in items
 
 
-def test_lipsync_is_unavailable_because_its_relip_env_is_unprovisioned(
+def test_lipsync_is_unavailable_and_the_copy_names_the_flag_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The env asset is unregistered -> LOUD `unavailable` with NO download button
-    # (an assets.ensure naming an unknown asset would trip the manager's gate), and
-    # the copy must say the feature is unavailable in this build.
+    # LOUD `unavailable` with NO download button (an assets.ensure naming an unknown
+    # asset would trip the manager's gate). The copy must name the gate that ACTUALLY
+    # fires first — the build flag — because naming a blocker other than the live one
+    # is the precedence defect this module fixes elsewhere.
     _register(monkeypatch, _TRACKER)  # latentsync-env deliberately NOT known
     items = _by_cap(cap.feature_readiness_items({_TRACKER}, offline=False))
     lipsync = items["lipsync"]
     assert lipsync["status"] == "unavailable"
     assert lipsync["action"] is None
-    assert "lip-sync" in lipsync["blockedBy"].lower()
-    assert "not available in this build" in lipsync["blockedBy"].lower()
+    blocked = lipsync["blockedBy"].lower()
+    assert "lip-sync is off in this build" in blocked
+    assert "cannot be switched on from the app" in blocked
+    # ...and it still discloses the other two gates rather than stopping at the flag.
+    assert "not provisioned" in blocked
+    assert "face-box" in blocked
+    # It must NOT claim the env is why every request refuses — the flag is.
+    assert "every re-lip request refuses" not in blocked
     # Never emit the unknown-asset name into the wire payload.
     assert _LIPSYNC_ENV not in repr(lipsync)
 
@@ -249,15 +272,38 @@ def test_lipsync_is_unavailable_because_its_relip_env_is_unprovisioned(
 def test_lipsync_unavailability_is_never_blamed_on_offline_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # HONESTY: an UNREGISTERED asset is not "blocked by Offline mode" — turning
-    # Offline off would not make it downloadable. Blaming offline would send the
-    # user to a setting that cannot help. The unregistered reason DOMINATES.
+    # HONESTY: none of lip-sync's three gates is connectivity, so turning Offline off
+    # would not help. Blaming offline would send the user to a setting that cannot
+    # help. A hard-blocked feature never reaches the offline branch at all.
     _register(monkeypatch, _TRACKER)
     items = _by_cap(cap.feature_readiness_items({_TRACKER}, offline=True))
     lipsync = items["lipsync"]
     assert lipsync["status"] == "unavailable"
     assert "offline" not in lipsync["blockedBy"].lower()
-    assert "not yet available for download" in lipsync["blockedBy"].lower()
+    # Nor the "(not yet available for download)" suffix: a download is not the
+    # missing piece, so that note would be a third wrong reason.
+    assert "not yet available for download" not in lipsync["blockedBy"].lower()
+    # CONTROL: the suffix is real and DOES appear on a merely-de-registered feature,
+    # so its absence above is a scoped difference, not a broken matcher.
+    assert "not yet available for download" in items["scene.detect"]["blockedBy"].lower()
+
+
+def test_lipsync_is_never_ready_even_once_its_env_is_provisioned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # THE POINT OF ``hard_blocked``. The prescribed next step (WU-B1) is to provision
+    # ``latentsync-env`` FIRST and wire the face-box probe second. Modelling the row
+    # on the env asset ALONE would make it flip to ready="" at the end of step one,
+    # while every re-lip still raised at gate 3 — the mirror image of the silent dead
+    # end this row exists to remove. Measured before the flag existed: the row
+    # returned status='ready', blockedBy='', action=None in exactly this state.
+    _register(monkeypatch, _TRACKER, _LIPSYNC_ENV)  # env registered AND...
+    items = _by_cap(cap.feature_readiness_items({_TRACKER, _LIPSYNC_ENV}, offline=False))  # ...installed
+    assert items["lipsync"]["status"] == "unavailable"
+    assert items["lipsync"]["action"] is None
+    # CONTROL: the same registered+installed treatment DOES make a normal feature
+    # ready, so the assertion above is the flag doing its job, not an inert fixture.
+    assert items["reframe"]["status"] == "ready"
 
 
 def test_a_deregistered_asset_outranks_offline_for_every_feature(
@@ -289,15 +335,37 @@ def test_lipsync_capability_name_matches_the_job_registry_feature_tag() -> None:
 
 
 def test_lipsync_env_really_is_unregistered_so_the_copy_is_true() -> None:
-    # The claim "not available in this build" rests on the env being absent from the
-    # REAL manifest, so assert it against the real registry (no monkeypatch) with a
-    # detector control: a known-present asset must be found by the same probe.
+    # The copy rests on the env being absent from the REAL manifest, so assert it
+    # against the real registry (no monkeypatch).
+    #
+    # REFUTED CONTROL, recorded rather than silently swapped: this test first used
+    # ``_TRACKER`` as its detector control. That control is BLIND, because
+    # ``registry_snapshot()`` is populated LAZILY by module import — so a NEGATIVE
+    # assertion over it measures the session's import set, not the manifest. Measured
+    # both states: after only this module's imports the snapshot holds 10 entries and
+    # reports ``chatterbox-env`` ABSENT (it is a genuinely registered kind=env asset);
+    # after importing ``media_studio.features.tts.chatterbox`` it holds 13 and reports
+    # it present. ``_TRACKER`` is registered by an eagerly-imported chain, so it reads
+    # True in BOTH states and cannot detect the laziness at all. Running this file
+    # alone would therefore have kept passing after someone registered the env,
+    # leaving the shipped copy a live lie.
+    #
+    # Two independent repairs, because either alone is thin:
+    #   (a) import the env's natural registration site FIRST, so the snapshot is
+    #       complete for the thing being denied;
+    #   (b) control with ``chatterbox-env`` — same ``kind=env`` category, and the
+    #       asset whose flip exposed the laziness.
     from media_studio.assets import manifest as _manifest
+    from media_studio.features.tts import lipsync as _ls  # (a) where the env WOULD register
 
     snapshot = _manifest.registry_snapshot()
-    assert _TRACKER in snapshot  # CONTROL: the probe can find a present asset
+    # (b) CONTROL: a lazily-registered kind=env asset IS found once its module is in.
+    assert "chatterbox-env" in snapshot
+    assert _TRACKER in snapshot  # second control: the eager chain is in too
     assert _LIPSYNC_ENV not in snapshot
     assert _manifest.get_asset(_LIPSYNC_ENV) is None
+    # The module that owns the name is imported above, so this is a real absence.
+    assert _ls.LIPSYNC_ENV_ASSET == _LIPSYNC_ENV
 
 
 def test_matrix_lipsync_is_unavailable_in_every_install_profile() -> None:
