@@ -731,11 +731,27 @@ jobs:
       # below, but it embeds the triple as content-hashed copies under `data/`, not
       # as the named files.)
       #
-      # `!cancelled()` rather than `always()`, matching the visual gate step itself:
-      # it MUST upload when that gate goes red (the entire point), but a cancelled
-      # run has no diff worth keeping. Windows-only because the suite is.
+      # `always()`, matching the "Upload Playwright report" step immediately below.
+      #
+      # CORRECTED before merge. This first shipped as `!cancelled()` "matching the visual gate
+      # step itself", and that reasoning does not transfer. The gate uses `!cancelled()` because
+      # it is a TEST step — do not start work on a cancelled run. An UPLOAD step has the OPPOSITE
+      # requirement: it exists to rescue evidence that is already on disk.
+      #
+      # The cancel is reachable, not theoretical: `:56-58` sets `concurrency: {group:
+      # e2e-${{ github.ref }}, cancel-in-progress: true}`, so a superseding dispatch or cron on
+      # the same ref cancels an in-flight run. The visual gate is step 21 and this upload is step
+      # 29; between them sit steps 23-26, and step 26 carries `RF_E2E_COLD_TIMEOUT_MS: 1200000` —
+      # a twenty-minute window in which a REAL diff sits on disk and a cancel discards it, while
+      # the `always()` neighbour below still fires.
+      #
+      # Blast radius was bounded rather than total (the html reporter's relative `outputFolder`
+      # resolves against the CONFIG directory, so `app/playwright-report/visual/` is a child of
+      # the neighbour's path and survived a cancel; only the raw named -actual/-diff/-expected
+      # triples were lost). Bounded is not a reason to leave a step strictly weaker than the one
+      # beside it, for a stated reason that does not survive scrutiny.
       - name: Upload VISUAL screenshot-diff diagnostics (actual + diff + html report)
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        if: ${{ always() && runner.os == 'Windows' }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: e2e-gui-visual-diff-${{ matrix.os }}
