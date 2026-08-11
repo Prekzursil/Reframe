@@ -44,6 +44,18 @@ changed — never the reverse.
 - **ViNet-S.** `model-rehosting.md` (2026-07-04) plans to permanently re-host the
   CC-BY-NC-SA checkpoint. `PROGRAM.md` (2026-07-11) instead locks
   *"ViNet-S (CC-BY-NC-SA) → UNISAL (Apache-2.0)"* as a mandatory NC→permissive swap.
+  **That quoted pairing conflates two different KINDS of licence — annotation added
+  2026-08-11 (W24 remediation); the quote is left verbatim because it is the locked
+  decision.** ViNet-S's CC-BY-NC-SA is a **weights** licence (live code:
+  `sidecar/media_studio/features/saliency.py:421`, the `AssetEntry.label` on the
+  `installer="download"` entry, and the registering docstring at `:408`) — which the
+  line above already implies by calling it "the CC-BY-NC-SA **checkpoint**" — whereas
+  UNISAL's Apache-2.0 is its **repository/code** licence, and the UNISAL *weights*
+  licence is UNVERIFIED: a recursive scan of the pinned `rdroste/unisal@0440df77`
+  tree (41 entries, `truncated: false`) finds exactly one licence artifact, the root
+  `LICENSE`, and none beside either weight. So the swap is a licence improvement of
+  *unmeasured size* until the UNISAL weights terms are read. Full adjudication and
+  the settling experiment: `PROGRAM.md:37` and its licence sub-bullet at `:40`.
   **`PROGRAM.md` wins** — it is newer and it is the owner's locked decision, and
   `flagship-lip-sync-dub.md` independently rules the re-hosting dossier stale.
   Neither has executed: `features/_vinet_s/` is still on disk and there are zero
