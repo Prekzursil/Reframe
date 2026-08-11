@@ -23,7 +23,17 @@ Synthesized from: 15-agent audit + competitor redo + live visual audit. Owner gr
 ### Wave 1 — Trust / distribution
 - ~~Authenticode-signed + attested CI release pipeline (tag-triggered release.yml, pin 4 build SHA-256s, SBOM/provenance, release depends on `quality`).~~
   **REVERSED 2026-08-09 by `docs/plans/v1.5/GRILL-DECISION-QUEUE.md` §F-1:** *"Signing stays NONE (already by design). No SmartScreen concern to solve."* The absent `release.yml` is therefore CORRECT, not an outstanding item. Design docs marked SUPERSEDED.
-- Electron 39 (EOL) → 43 + ASAR-integrity fuses + Electronegativity CI. **SHIPPED** — the app runs Electron 43.
+- Electron 39 (EOL) → 43 + ASAR-integrity fuses + Electronegativity CI. **PARTIALLY SHIPPED — the line
+  used to read "SHIPPED" on the strength of the version bump alone.** Corrected 2026-08-10 after
+  measurement: (a) the bump DID land, the app runs Electron 43; (b) the **fuses did not** —
+  `electron-builder.yml` declared no `electronFuses` block at all, so the shipped exe kept
+  `NODE_OPTIONS`/`--inspect` open and would load a tampered `app.asar`. That is now fixed and pinned by
+  `.quality/electron_hardening_check.py`, which also pins the `webPreferences` sandbox triple (that had
+  no assertion anywhere). Note `runAsNode` stays **true** on purpose — the caption render path spawns the
+  Electron exe as plain Node. (c) **Electronegativity is still NOT wired**, deliberately, with the
+  reasoning and the revisit condition recorded in `QUALITY-CHARTER.md`. The fuse *bits in a built exe*
+  remain UNVERIFIED here — the gate reads config; agents do not run builds. Settling experiment is named
+  in the charter note.
 - **Licensing swaps (mandatory per decision 1):** ViNet-S (CC-BY-NC-SA) → UNISAL (Apache-2.0); NLLB/Seamless (NC) → MADLAD-400; verify Parakeet/EdgeTAM permissive. Behind existing backend seams.
   - **Translator: DONE, by a different model than planned.** The NC translator was replaced with **Apache-2.0 Qwen3** (tier1 Qwen3-4B / tier2 Qwen3-8B), not MADLAD-400 — the licence objective was met, the named model was not used. Recorded here so the plan stops reading as outstanding. If MADLAD-400 was wanted *specifically*, that is a new decision.
   - **ViNet-S → UNISAL: NOT DONE. The WEIGHT needs a ONE-file maintainer re-host; the LOADER half was never blocked and was not attempted here.** Measured 2026-08-10, re-measured and corrected 2026-08-11 (W24 remediation — this headline and six of the eight sub-bullets carried claims REFUTED on re-measurement; each is rewritten in place with the retraction recorded, not silently deleted). UNISAL was never integrated; the tree still gates ViNet-S off for a commercial build. Every `unisal/…` and `training_runs/…` path below is UPSTREAM, pinned at `rdroste/unisal@0440df77` — **nothing UNISAL is vendored into Reframe** (`git ls-files` returns zero matches for `unisal|training_runs|pretrained`, against 6 for a `saliency` control, so that zero is not a broken matcher). Findings, each with the probe that produced it:

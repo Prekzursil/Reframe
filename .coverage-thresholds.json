@@ -1,10 +1,11 @@
 {
-  "_comment": "Single source of truth for the project's test-strength TARGETS. The line/branch COVERAGE gates are enforced in CI (the BLOCKING quality.yml gate:3): the sidecar via `pytest --cov=media_studio --cov-branch --cov-fail-under=100`, and the renderer via the 100% thresholds in app/vitest.config.ts. Those two are mirrored here for visibility. The `mutation` block documents the Wave-2a mutation-testing target (kill rate) measured by the SEPARATE, NON-BLOCKING nightly .github/workflows/mutation.yml (mutmut for the sidecar, Stryker for the renderer). Mutation is observe-only: it does NOT fail quality.yml. Raise these targets toward 100% as surviving mutants are killed by strengthening assertions (never by weakening tests).",
+  "_comment": "Single source of truth for the project's test-strength TARGETS. The line/branch COVERAGE gates are enforced in CI (the BLOCKING quality.yml gate:3): the sidecar via `pytest --cov=media_studio --cov=contract --cov-branch --cov-fail-under=100`, and the renderer via the 100% thresholds in app/vitest.config.ts. Those two are mirrored here for visibility. W37: `--cov=contract` is the SECOND sidecar root, added 2026-08-10 — sidecar/contract/ (the schema-first RPC contract, its generator and its own staleness gate) sat outside the only coverage root, so the tree that guarantees interface correctness was the one tree with no floor, measured at 59%. The `mutation` block documents the Wave-2a mutation-testing target (kill rate) measured by the SEPARATE, NON-BLOCKING nightly .github/workflows/mutation.yml (mutmut for the sidecar, Stryker for the renderer). Mutation is observe-only: it does NOT fail quality.yml. Raise these targets toward 100% as surviving mutants are killed by strengthening assertions (never by weakening tests).",
   "coverage": {
     "sidecar": {
       "lines": 100,
       "branches": 100,
-      "_enforced_by": "quality.yml gate-tests-coverage pytest (--cov-fail-under=100 --cov-branch)"
+      "_roots": ["media_studio", "contract"],
+      "_enforced_by": "quality.yml gate-tests-coverage pytest (--cov=media_studio --cov=contract --cov-fail-under=100 --cov-branch); the floor is over the UNION of the two roots"
     },
     "renderer": {
       "lines": 100,
