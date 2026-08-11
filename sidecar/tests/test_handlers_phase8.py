@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from media_studio import handlers
 from media_studio.handlers import Services
-from media_studio.jobs import JobRegistry
+from media_studio.jobs import JobRegistry, JobStatus
 from media_studio.protocol import ErrorCode, RpcContext, RpcError
 
 
@@ -165,8 +165,29 @@ def _add_video(services: Services, video_file: Path) -> str:
 
 
 def _transcribe_sync(services: Services, ctx: RpcContext, vid: str) -> None:
-    services.transcribe_start({"videoId": vid}, ctx)
-    ctx.jobs.join(timeout=5)
+    """Run a transcribe job to completion.
+
+    The 5s deadline this used to carry FAILED DETERMINISTICALLY whenever this file
+    was the first to transcribe in a process -- `pytest tests/test_handlers_phase8.py`
+    alone, reproduced: test_phase8_select_runs_job_and_caches took 5.40s against
+    the 5s bound. It is green in the full gate only because `test_handlers.py`
+    sorts earlier and absorbs the cost, i.e. the suite was passing on collection
+    order, not on correctness.
+
+    MEASURED cause: the FIRST transcribe of a process does a one-time warm-up ON
+    THE JOB THREAD -- inside exactly the window this deadline covers -- at 6.096s
+    versus 0.026s for the second call in the same process (234x). 60s matches the
+    bound test_handlers.py already had to adopt for the same reason.
+    """
+    started = services.transcribe_start({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=60)
+    job = ctx.jobs.get(started["jobId"])
+    # join() gives up silently at its deadline and error/cancel set the same done
+    # event as success (jobs.py:770-811, 860-864), so without this the three are
+    # indistinguishable and surface only as a confusing downstream assertion.
+    assert job is not None and job.status is JobStatus.DONE, (
+        f"transcribe job did not finish cleanly: {job and job.status.value} err={job and job.error!r}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -465,9 +486,15 @@ def test_phase8_select_runs_job_and_caches(tmp_path: Path, video_file: Path) -> 
     _transcribe_sync(svc, ctx, vid)
     out = svc.phase8_select({"videoId": vid, "prompt": "best", "controls": {}, "tier": 2}, ctx)
     assert "jobId" in out
-    ctx.jobs.join(timeout=5)
+    ctx.jobs.join(timeout=60)
     done = [e for e in ctx.events if e[0] == "done"]  # type: ignore[attr-defined]
-    result = done[-1][2]
+    # Select the select-job's OWN done event by job id, not by position. `done[-1]`
+    # silently read the wrong job the moment the transcribe above outran its
+    # deadline and landed its own done event last: the observed failure was
+    # `assert 'candidates' in {'transcript': ...}` -- the transcribe result, not a
+    # missing field. Keying on the id makes the wrong-job case impossible rather
+    # than merely unlikely.
+    result = next(e[2] for e in done if e[1] == out["jobId"])
     assert "candidates" in result
     assert vid in svc._selection_cache  # cached for a later shortmaker.export
 
