@@ -576,7 +576,11 @@ export function Workspace({
           </div>
 
           {/* THE DOCK (L5 G-1 / G-2): one timeline, several lanes, permanently
-              visible beside the preview — reachable with ZERO navigation actions.
+              visible beside the preview — reachable with ZERO navigation actions
+              once this component is mounted. That last clause is the honest scope:
+              the Refine DESTINATION still lands on views/Edit.tsx's Task Hub on a
+              first open (Edit.tsx:69, :163), so the ">= 1 click" is upstream of
+              here, in a file this lane does not own.
               Selecting a lane, or a clip inside the video lane, is what drives the
               inspector. */}
           <section className="workspace__dock" aria-label="Timeline">

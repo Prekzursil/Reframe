@@ -922,6 +922,34 @@ describe('L5 rail: exactly four destinations plus Settings', () => {
     expect(container.querySelector('[data-testid="export"]')).toBeNull();
   });
 
+  it('lets the mode panel STRETCH its view, the way .app__main did before the nesting', async () => {
+    // G-6 CARRIED RISK, the half a "mounted unchanged" claim does not cover: the
+    // COMPONENT is unchanged, its layout CONTEXT is not. `components/shell.css:376`
+    // gives `.app__main > * { flex: 1; min-height: 0 }`, and every mode-hosted view
+    // used to be that direct child. Nested inside `.app__mode-panel` it is an
+    // ordinary flex item — `flex: 0 1 auto`, i.e. CONTENT height — and
+    // `views/director.css:9` declares neither a height nor a flex-grow of its own,
+    // so Director stopped filling its destination. On the app's one deliberately
+    // low-density editorial screen, content-height and full-height look nothing
+    // alike. A single `1fr` row hands the height back without a third wrapper div.
+    //
+    // SCOPE: jsdom performs no layout, so this asserts the DECLARATION, not pixels.
+    // The rendered check at 1280x820 stays the owner's baseline review.
+    await mount();
+    await act(async () => {
+      tab('Produce').click();
+    });
+    await flush();
+    const panel = container.querySelector<HTMLElement>('.app__mode-panel')!;
+    expect(panel.style.display).toBe('grid');
+    expect(panel.style.gridTemplateRows).toBe('1fr');
+    // `min-height: 0` is what lets the row shrink below its content instead of
+    // pushing the destination past the 820px window (jsdom keeps it unitless).
+    expect(panel.style.minHeight).toBe('0');
+    // exactly one child, which is what makes one 1fr row the whole story
+    expect(panel.children).toHaveLength(1);
+  });
+
   it('does not mint a duplicate DOM id by nesting the mode nav around a view', async () => {
     // `components/TabBar` mints ids from ONE flat namespace (`tab-<id>` /
     // `tabpanel-<id>`), so wrapping a TabBar-based mode nav around a view that also

@@ -752,6 +752,20 @@ describe('L5 invariant: all 21 panels stay reachable (reconcile, never drop)', (
 describe('L5 invariant: the timeline is docked, not navigated to', () => {
   // INVARIANT 4. The video timeline used to be tab #12 of 21. It is now visible
   // the moment the workspace opens, with ZERO clicks, keystrokes or deep-links.
+  //
+  // SCOPE OF WHAT THIS FILE PROVES, stated so the row in the PR table cannot be
+  // read wider than the evidence: `render()` mounts the WORKSPACE COMPONENT. The
+  // Refine DESTINATION reaches it through views/Edit.tsx, which still opens on its
+  // Task Hub (Edit.tsx:69 `useState('hub')`, :163) unless a remembered choice
+  // resumes into the workspace (lib/taskHub.ts:109, :111). So the destination-level
+  // invariant is NOT met on a first open, Edit.tsx is outside this lane's file
+  // scope, and no App-level suite closes the gap — measured: zero hits for
+  // `workspace__dock|VideoTimeline|TaskHub` across App.test.tsx and its three
+  // App.*.test.tsx siblings, which follows from App.test.tsx:59 mocking
+  // `./views/Edit` outright, so neither the real hub nor the real workspace is ever
+  // mounted beside the rail. The settling test, for whoever owns
+  // Edit.tsx next: assert `.workspace__dock [data-panel="VideoTimeline"]` after
+  // Library → open video with no intervening click.
   it('shows the video timeline with zero navigation actions', async () => {
     await render();
     const dock = container.querySelector('.workspace__dock');

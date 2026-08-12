@@ -15,9 +15,21 @@
 //                (candidate-driven, views/MakeShorts.tsx, carries the
 //                interrupted-batch badge) and "Director" (prompt-driven,
 //                views/Director.tsx, lazy). Same job — AI proposes, you review,
-//   * Refine   — the editor: "Editor" (the per-video Workspace, views/Edit.tsx —
-//                preview + docked timeline + selection-driven inspector) and
-//                "Caption design" (the v1.5 Caption phase pilot),
+//   * Refine   — the editor: "Editor" (views/Edit.tsx) and "Caption design" (the
+//                v1.5 Caption phase pilot). SCOPE, because the obvious reading is
+//                wrong: "Editor" is not the Workspace directly. views/Edit.tsx
+//                still opens on its Task Hub (Edit.tsx:69 `useState('hub')`, :163)
+//                and mounts the Workspace — preview + docked timeline +
+//                selection-driven inspector — only after a card is picked, or
+//                immediately when a remembered hub choice resumes there, which is
+//                exactly the two choices `resumeFor` maps to `{kind:'workspace'}`
+//                (lib/taskHub.ts:109 'subtitles', :111 'advanced'). So the L5
+//                "timeline with zero navigation actions" invariant holds from the
+//                Workspace mount, NOT from a first open of this destination. That
+//                gap is REAL and is not this lane's to close: Edit.tsx is outside
+//                its file scope and byte-unchanged on this branch. Follow-up in
+//                the PR residuals.
+
 //   * Deliver  — getting files out: "Finish" (Phase-5 guarded commit for ONE
 //                video, views/Export.tsx) and "Publish" (cross-video / batch
 //                publish + platform presets + the pro EDL/CSV handoff),
@@ -623,6 +635,16 @@ function AppShell(): React.ReactElement {
    * scoped alternative, not a shortcut. Follow-up: move `.app__destination` /
    * `.app__mode-panel` into shell.css when that file is next open.
    *
+   * The mode panel is a GRID with one `1fr` row, not a flex column, and that is
+   * load-bearing rather than a taste call. The nesting moved every mode-hosted view
+   * off `.app__main > * { flex: 1; min-height: 0 }` (shell.css:376) and made it an
+   * ordinary flex item — `flex: 0 1 auto`, i.e. CONTENT height. `views/director.css:9`
+   * declares neither a height nor a flex-grow, so Director silently stopped filling
+   * its destination: exactly the low-density editorial screen G-6 tells us not to
+   * flatten. A single `1fr` row stretches the one child back to the full height
+   * without adding a third wrapper div. (`.workspace` is unaffected either way —
+   * shell.css:562 gives it `height: 100%`, which resolves against either.)
+   *
    * The inner `role="tabpanel"` is required, not decorative: TabBar puts
    * `aria-controls={tabPanelId(active)}` on the selected tab, and without a
    * matching id that is a dangling IDREF — the CRITICAL axe `aria-valid-attr-value`
@@ -642,7 +664,7 @@ function AppShell(): React.ReactElement {
           role="tabpanel"
           id={tabPanelId(modes.active)}
           aria-labelledby={tabId(modes.active)}
-          style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
+          style={{ display: 'grid', gridTemplateRows: '1fr', flex: 1, minHeight: 0 }}
         >
           {renderRoute()}
         </div>
