@@ -57,7 +57,11 @@ export interface EmptyStateProps {
   block?: string;
   /** Root class. Defaults to `block` (the shared `.empty-state` skin). */
   className?: string;
-  /** `aria-label` for the region, when the surface has a name worth announcing. */
+  /**
+   * Names the empty state as a REGION, when the surface has a name worth
+   * exposing. The name and `role="region"` travel together — see
+   * {@link resolveA11y}. Omit it and the root stays role-less and unnamed.
+   */
   label?: string;
 }
 
@@ -66,6 +70,29 @@ function resolvePoster(poster: EmptyStateProps['poster']): EmptyStatePoster | un
   if (poster === true) return {};
   if (poster === false) return undefined;
   return poster;
+}
+
+/** The root's a11y attributes: a NAMED region, or nothing at all. */
+type EmptyStateA11y = { role: 'region'; 'aria-label': string } | Record<string, never>;
+
+/**
+ * A name only reaches the accessibility tree if the element's role PERMITS
+ * naming. A role-less `<div>` maps to ARIA `generic`, where ARIA 1.2 prohibits
+ * an author-supplied accessible name (axe-core `aria-prohibited-attr`, impact
+ * serious / wcag2a), so a bare `aria-label` here is written to the DOM and then
+ * dropped. `origin/main`'s Edit.tsx shipped exactly that — the extraction keeps
+ * the label and adds the role, so the affordance actually works instead of
+ * being promoted, inert, into every future surface.
+ *
+ * This repo already knows the rule from the other direction: TabBar.tsx's group
+ * `<section>` deliberately carries NO `aria-label` *because* a labelled section
+ * maps to `role="region"`, which would break its tablist ownership. An empty
+ * state is a standalone container with no such constraint, so here the two
+ * travel together — and no label means NO role, since an unnamed region is not
+ * exposed as a landmark and would only add noise.
+ */
+function resolveA11y(label: string | undefined): EmptyStateA11y {
+  return label ? { role: 'region', 'aria-label': label } : {};
 }
 
 /** The shared empty state: ghost poster -> title -> hint -> a way forward. */
@@ -80,7 +107,7 @@ export function EmptyState({
 }: EmptyStateProps): React.ReactElement {
   const art = resolvePoster(poster);
   return (
-    <div className={className ?? block} aria-label={label}>
+    <div className={className ?? block} {...resolveA11y(label)}>
       {art ? (
         // Illustration, never content: it must not reach the a11y tree.
         <div className={`${block}-poster`} aria-hidden="true">

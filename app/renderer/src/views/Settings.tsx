@@ -163,10 +163,17 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     //     ModelsSystemPanel is far taller than four bars. UNVERIFIED at pixel
     //     level; settle it by measuring the fallback's offsetHeight against the
     //     loaded panel's with the chunk throttled.
-    //   * the wait is a NAMED busy status region carrying real text, where it
-    //     used to be an unnamed div. Whether a screen reader SPEAKS it on
-    //     insertion is NOT-CHECKED — see the a11y note in Skeleton.tsx for why
-    //     that is a weaker claim than it looks, and the experiment that settles it.
+    //   * the wait is a BUSY STATUS REGION (role=status + aria-busy) whose
+    //     content is a real, clipped text node, where it used to be a plain div
+    //     carrying the visible string "Loading…". The region is deliberately
+    //     UNNAMED — the same commit dropped `aria-label`, because role=status
+    //     takes its name from the author only, so a name would sit BESIDE the
+    //     content instead of being read as it (pinned: Skeleton.test.tsx asserts
+    //     aria-label is null). So the delta is the role, the busy state and the
+    //     shape — NOT text where there was none; the old div had visible text.
+    //     Whether a screen reader SPEAKS it on insertion is NOT-CHECKED — see
+    //     the a11y note in Skeleton.tsx for why that is a weaker claim than it
+    //     looks, and the experiment that settles it.
     render: (ctx) => (
       <Suspense
         fallback={

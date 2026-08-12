@@ -65,6 +65,19 @@ describe('Edit — the no-video state rides the shared <EmptyState />', () => {
     expect(props.action?.className).toBe('edit__empty-back');
   });
 
+  it('names the SHIPPED region with a role that permits the name', async () => {
+    // origin/main rendered `<div className="edit edit--empty" aria-label="Edit">`
+    // — a name on a role-less div, which ARIA 1.2 prohibits on `generic`. The
+    // component-level pin (EmptyState.test.tsx) is what went red for this; this
+    // one is the end-to-end regression pin, asserted on the DOM Edit actually
+    // ships rather than on a prop object.
+    await mount(<Edit video={null} onBack={vi.fn()} />);
+
+    const region = container.querySelector('.edit.edit--empty');
+    expect(region?.getAttribute('role')).toBe('region');
+    expect(region?.getAttribute('aria-label')).toBe('Edit');
+  });
+
   it('still renders the exact same skin the reference screen shipped', async () => {
     await mount(<Edit video={null} onBack={vi.fn()} />);
 

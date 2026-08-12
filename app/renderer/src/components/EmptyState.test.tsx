@@ -116,6 +116,34 @@ describe('<EmptyState /> — the shared empty-state anatomy', () => {
     expect(q('.empty-state')?.getAttribute('aria-label')).toBe('Edit');
   });
 
+  it('gives a NAMED empty state a role that PERMITS the name', async () => {
+    // The defect this pins. A role-less <div> maps to ARIA `generic`, where
+    // ARIA 1.2 PROHIBITS an author-supplied accessible name — axe-core ships
+    // `aria-prohibited-attr` (impact: serious, wcag2a) for exactly this shape —
+    // so `aria-label` on a bare div is written to the DOM and never reaches the
+    // a11y tree. This repo already knows the underlying rule from the other
+    // direction: TabBar.tsx's group `<section>` deliberately carries NO
+    // aria-label BECAUSE "a labelled section maps to role=region", which would
+    // break its tablist ownership. An empty state has no such constraint, so
+    // here the name and a naming-capable role must travel TOGETHER.
+    await mount(<EmptyState title="No video open" label="Edit" />);
+
+    const named = q('.empty-state');
+    expect(named?.getAttribute('role')).toBe('region');
+    expect(named?.getAttribute('aria-label')).toBe('Edit');
+  });
+
+  it('adds NO role when the surface does not name it (no unnamed landmark)', async () => {
+    // The other half of the same contract, and the reason the role is
+    // conditional: an unnamed `role="region"` is not exposed as a landmark and
+    // would only add noise. No name -> no role, no aria-label.
+    await mount(<EmptyState title="No matches" />);
+
+    const anonymous = q('.empty-state');
+    expect(anonymous?.getAttribute('role')).toBeNull();
+    expect(anonymous?.getAttribute('aria-label')).toBeNull();
+  });
+
   it('reproduces the Edit skin byte-for-byte (the extraction pin)', async () => {
     // The Edit empty state as it shipped: root `edit edit--empty`, aria-label
     // Edit, `edit__empty-*` slots (styled in components/shell.css) and the
@@ -136,6 +164,12 @@ describe('<EmptyState /> — the shared empty-state anatomy', () => {
     const rootEl = q('.edit.edit--empty');
     expect(rootEl).not.toBeNull();
     expect(rootEl?.getAttribute('aria-label')).toBe('Edit');
+    // origin/main shipped that aria-label on a role-less div, where ARIA 1.2
+    // prohibits a name. The extraction keeps the label and ADDS the role that
+    // makes it reach the a11y tree — an attribute-only change, zero CSS impact
+    // (the only `[role=…]` selector in any renderer stylesheet is shell.css's
+    // :focus-visible list, which matches button/tab/input, never region).
+    expect(rootEl?.getAttribute('role')).toBe('region');
     expect(q('.edit__empty-poster')).not.toBeNull();
     expect(q('.edit__empty-glyph')?.textContent).toBe('▶');
     expect(q('.edit__empty-timecode')?.textContent).toBe('--:--');

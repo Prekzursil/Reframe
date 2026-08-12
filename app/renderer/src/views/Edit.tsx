@@ -175,9 +175,17 @@ export function Edit({
   if (!video) {
     // Q8: the anatomy (ghost poster -> title -> hint -> a way forward) now has ONE
     // definition, components/EmptyState.tsx. `block` keeps this screen's own
-    // `edit__empty-*` skin (components/shell.css) byte-for-byte, so sharing
+    // `edit__empty-*` skin (components/shell.css) class-for-class, so sharing
     // the structure costs zero pixels here — this screen IS the reference bar, and
     // Edit.empty.test.tsx pins both the delegation and the unchanged classes.
+    //
+    // ONE attribute is deliberately NOT byte-identical to what shipped: the root
+    // now carries `role="region"` beside its `aria-label`. origin/main named a
+    // role-less div, and ARIA 1.2 prohibits a name on `generic`, so the label was
+    // inert (axe-core `aria-prohibited-attr`, impact serious). Attribute-only,
+    // zero CSS impact — the sole `[role=…]` selector in any renderer stylesheet is
+    // shell.css's :focus-visible list (button/tab/input, never region) — so the
+    // "zero visual regression" claim survives; it is the a11y tree that changed.
     //
     // HINT COPY — docs/plans/v1.5/editing-surface-audit-2026-08.md:52 — this used
     // to read "trim, cut, join, reframe, caption, and more — every edit tool lives
