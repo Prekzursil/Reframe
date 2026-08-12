@@ -12,9 +12,13 @@
 // call to action. Three changes, all inside this file:
 //   1. a VISIBLE CTA ("Open" / "Show history") painted inside the open button as a
 //      non-interactive <span>, so the primary action finally has a label;
-//   2. Remove demoted to an icon-only ghost control (accessible name kept on
-//      aria-label + title) so the destructive action is no longer the peer — let
-//      alone the only member — of the labelled-action set;
+//   2. Remove stops being the only member of the labelled-action set — because the
+//      set GAINED a member (item 1), not because Remove lost its name. A round-2
+//      draft did demote it to an icon-only `×` + `title="Remove"`; that shipped a
+//      no-confirm, no-undo delete with no visible label while the compensating CTA
+//      paint stayed a scope-escape, and it was REVERSED. See the comment on the
+//      button itself for the three measurements. Ceasing to be the visual PEER of
+//      the primary action is a WEIGHT problem, and weight lives in CSS: SCOPE-ESCAPE 2;
 //   3. an overflow menu that deep-links into Deliver PRE-FILLED (L5-NAV G-3): the
 //      card hands over `(video, shortcutId)` and nothing else. It never implements
 //      conversion — a second converter here would be the tab-strip ratchet in a new
@@ -47,10 +51,30 @@
 //      the tree, and `.library__item-open` is `padding:0; border:none;
 //      background:transparent; font:inherit` (library-cards.css:40-53) inside a plain
 //      flex column, so at HEAD the CTA paints as an ordinary body-text line under the
-//      meta line — a primary action in the DOM, a stray word on the pixels — while
-//      `.library__remove-btn` keeps its whole box and merely loses its word. Net:
-//      Remove is still the only element on the card that reads as a control. That CSS
-//      must land in the SAME release or the card is worse than before, not better.
+//      meta line — a primary action in the DOM, a stray word on the pixels.
+//
+//      CORRECTION, round 2 — an earlier draft of this paragraph claimed
+//      "`.library__remove-btn` keeps its whole box and merely loses its word. Net:
+//      Remove is still the only element on the card that reads as a control." That
+//      was FALSE and it understated the regression it was documenting. Remove is in
+//      the raised-voice list (shell.css:438-447) but shell.css:520-529 then applies
+//      the GHOST voice to it — `background: transparent; border-color: transparent;
+//      box-shadow: none; color: var(--text-muted)` — at the same 0-1-0 specificity
+//      and LATER in source order, so the ghost wins at rest and the only thing the
+//      raised base still contributes is the invisible `--control-pad-btn` hit-box.
+//      A second, independent source agrees: docs/validation/v15-audit-ledger.md:104
+//      records the same transparent/borderless `--text-muted` reading. Surface, edge
+//      and shadow appear only on `:hover` (shell.css:589). So Remove NEVER had a
+//      painted box; it read as a control because of its WORD — which is exactly why
+//      the icon-only draft was reversed rather than shipped.
+//
+//      Correctly scoped, then: after the reversal NEITHER control is painted at rest,
+//      but BOTH are legible — "Open" and "Remove" both render as words. That is
+//      strictly no worse than origin/main (which had "Remove" alone) and one visible
+//      verb better. The CSS is still owed, and owes paint to BOTH: button weight for
+//      `.library__item-cta`, and a resting affordance for `.library__remove-btn` that
+//      does not make it the primary's peer. Treating Remove as already-solved would
+//      ship a boxless destructive control beside a newly-painted CTA.
 //
 // TWO TRAPS THE CSS LANE INHERITS, measured here so it does not rediscover them:
 //   * `[hidden]` vs `display`. The panel is hidden ONLY by the UA `[hidden] {
@@ -60,10 +84,18 @@
 //     stays green, because they assert `panel.hidden === true`, never computed
 //     display. Scope it: `.library__card-menu-panel:not([hidden]) { display: … }`.
 //   * TARGET SIZE (WCAG 2.5.8) — SPLIT by measurement, not carried as one blanket
-//     risk. `.library__remove-btn` IS named in shell.css:395-401's raised-voice list,
-//     so it takes `--control-pad-btn` = 6px 14px (tokens.css:199) at
-//     `--type-control-size` 12px (:159) plus 1px borders => >=26px tall and ~37px
-//     wide against `--size-target-min` 24px (:192): MET at AA (AAA 44x44 still fails).
+//     risk. `.library__remove-btn` IS named in the raised-voice list, which is TEN
+//     selectors at shell.css:438-447 on current origin/main (an earlier draft of this
+//     header cited seven at :395-401; #424 added `.vtl__bar button`,
+//     `.vtl__laneHead button` and `.caption-prefs__actions button`, so only the anchor
+//     drifted — the membership and therefore the arithmetic are unchanged). It takes
+//     `--control-pad-btn` = 6px 14px (styles/tokens.css:199) at `--type-control-size`
+//     12px (:159) plus 1px borders => >=26px tall against `--size-target-min` 24px
+//     (:192), the min-HEIGHT axis that token governs: MET at AA (AAA 44x44 still
+//     fails). The ghost override at :520-529 does not weaken this — it zeroes
+//     `border-color`, never `border-width`, and never touches `padding`. Width is
+//     text-driven now that the visible verb is back, so it is no longer the binding
+//     axis (the reverted glyph draft was the ~37px case).
 //     The "⋯" trigger is NOT in that list and the Library view has no `.feature-panel`
 //     ancestor (that list is explicit classes, not a bare `button` selector), so it
 //     alone falls through to raw Chromium UA chrome and is the control genuinely at
@@ -144,8 +176,17 @@ function VideoThumb({ video }: { video: Video }): React.ReactElement {
  *
  * Returns '' (meaning "say nothing") unless the BASENAME has a trailing dot
  * followed by 1-5 alphanumerics — so `C:\my.videos\talk` (dotted directory),
- * `.env` (leading dot, no name) and `talk.backupcopy` (not an extension) all
- * stay quiet instead of shouting a wrong format at the user.
+ * `.env` (leading dot, no name) and `talk.backupcopy` (>5 chars, so not read as an
+ * extension) all stay quiet.
+ *
+ * SCOPED in round 2: that is a SHAPE guard, not a container check, and it rejects
+ * exactly those three shapes — not the class. Any alphanumeric suffix of five
+ * characters or fewer is still upper-cased into the format slot, so `talk.final`
+ * prints "FINAL", `render.v2` prints "V2" and `clip.2024` prints "2024". An earlier
+ * draft of this docblock implied the guard prevented shouting a wrong format
+ * generally; it does not. Settle it, if it matters, with a container allow-list
+ * (mp4/mov/mkv/webm/m4v/avi/…) rather than a wider regex — and note an allow-list
+ * trades this false-positive for silence on an unlisted-but-real container.
  */
 export function formatContainer(path: string): string {
   const base = path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
