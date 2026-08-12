@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { rpc, type Video } from '../components/api';
 import { useConfirm } from '../components/ConfirmDialog';
-import { CapabilitiesChip } from './CapabilitiesChip';
 import { LibraryCard } from './LibraryCard';
 import { LibraryToolbar } from './LibraryToolbar';
 import { ShortsGalleryModal } from './ShortsGalleryModal';
@@ -65,10 +64,28 @@ export interface LibraryProps {
    */
   toast?: (toast: ToastMessage) => void;
   /**
-   * WU-14: fired when the library's readiness roll-up action button is clicked
-   * (e.g. download a model / add a provider key). The parent owns the routing
-   * to the providers/assets flows; absent -> the roll-up still renders, the
-   * action is simply a no-op.
+   * INERT (Q3). This used to feed the Library's readiness roll-up / capabilities
+   * chip, which is DELETED: nothing in this view raises a readiness action any
+   * more, so this prop is deliberately NOT destructured below and no handler is
+   * wired to it.
+   *
+   * It stays DECLARED for exactly one reason: `App.tsx:543` still passes
+   * `onReadinessAction={handleReadinessAction}`, and removing the prop from this
+   * interface would make that call site a TS2322 excess-property error and break
+   * `npm run typecheck`. Retiring the prop and its `App.tsx:429-434` handler is
+   * owned by the rail/flow (`App.tsx`) lane — delete this declaration in the same
+   * commit that removes the call site, not before.
+   *
+   * WARNING for that lane, because the obvious signal LIES: `App.tsx:429-434`
+   * still reports 100% covered, and that coverage is PHANTOM. `App.quality.test.tsx`
+   * replaces this view with a `vi.mock('./views/Library')` stub whose
+   * `readiness-fix` / `readiness-fix-key` buttons synthesize `assets.ensure` /
+   * `openProviders` actions that the REAL Library can no longer emit, and the
+   * "App readiness deep-link → Settings" tests drive those buttons. So the handler
+   * is unreachable from the product while the coverage gate stays green, and those
+   * two tests now assert a Library→Settings journey that does not exist. They must
+   * be deleted in the SAME commit as the handler and this declaration; do not read
+   * the coverage number as evidence the handler is still live.
    */
   onReadinessAction?: (action: ReadinessAction) => void;
   /**
@@ -163,7 +180,7 @@ function loadLineage(id: string): Promise<LineageResult> {
 export function Library({
   onOpen,
   toast: externalToast,
-  onReadinessAction,
+  // `onReadinessAction` is intentionally NOT destructured — see LibraryProps.
   provenance,
   shorts,
   onEditShort,
@@ -544,10 +561,88 @@ export function Library({
         </div>
       </header>
 
-      {/* design-review P2/§4: the model-readiness roll-up demoted to a compact
-          "Capabilities: N of M installed" disclosure chip (a plumbing count, kept
-          separate from the visible card count). */}
-      <CapabilitiesChip onAction={onReadinessAction} />
+      {/* Q3: NOTHING readiness-shaped renders here any more. The
+          "Capabilities: N of M installed" disclosure chip that used to sit
+          between the header and the toolbar is DELETED, for two measured reasons:
+
+            1. It was a DECOY on the app's landing surface. Stated precisely,
+               because the earlier wording ("a button on the landing surface") was
+               wider than the evidence: the CHIP was painted here unconditionally,
+               but its action button was ONE EXPAND CLICK deep — the row list was
+               gated behind the disclosure's own `open` state
+               (origin/main:views/CapabilitiesChip.tsx:37,82,98, `{open && items &&
+               total > 0 ? <ul>`), so the button was reachable-in-one-click, not
+               on screen at rest. Once revealed, for an `assets.ensure` row that
+               button's accessible name was "Download the <X> model"
+               (components/readinessMeta.ts:113), but the chip only forwarded the
+               action to its parent, and the Library's parent handler is
+               `App.tsx:429-434` — `openSettings(actionSection(action))`, pure
+               navigation. No download ever started. Contrast Settings, which
+               renders the SAME shared parts — `<ReadinessBadge>` and the
+               `readinessActionLabel` builder — inside its own `<ReadinessRollup>`
+               (the chip itself was bespoke, so what is shared is the button, not
+               the container): there the very same `assets.ensure` action reaches
+               `runAssetJob(action.assets)` and really downloads
+               (panels/ModelsSystemPanel.tsx:746-765). Identical button, identical
+               label, one works and one did not.
+
+               The destination did not even land the user near the row: Settings
+               force-resets its scroll container to the top on every section change
+               (`panelRef.current!.scrollTop = 0`, views/Settings.tsx:273-275) and
+               nothing scrolls to or highlights the relevant row — there is no
+               `scrollIntoView` CALL SITE anywhere under renderer/src (the only
+               textual hits are this comment, its test, and Settings.tsx:264 saying
+               the same thing). Measured: the panel it lands in,
+               ModelsSystemPanel.tsx, is 1136 lines. Announced as a download, it
+               downloaded nothing.
+            2. Its counter was not user-meaningful. The denominator was an internal
+               capability enumeration (already moved 11 -> 12; the owner reports
+               seeing 13), so it was DELETED rather than relocated — moving a
+               meaningless denominator to a new home preserves the defect.
+
+          Readiness now lives in ONE place, Settings -> Models & System, where the
+          fix actions are in reach of the controls that perform them. If an
+          in-Library readiness signal is ever wanted back, the bar is: a
+          CONDITIONAL single-line banner whose button runs the shared asset-download
+          path (ModelsSystemPanel.tsx:682-714) IN PLACE — never a navigation decoy,
+          and never an always-on chip.
+
+          SCOPE: the decoy verdict covers `assets.ensure` rows only. `openProviders`
+          and `setConsent` rows SHOULD navigate, and they still do — from Settings.
+          Nothing here removes navigation from those. Pinned by Library.test.tsx
+          "Library readiness surface (Q3 — chip deleted, not relocated)".
+
+          THIS ROUTE'S PIXEL BASELINE IS NOW STALE — known-red, not merely
+          unchecked. `e2e/visual/library.visual.spec.ts:31` diffs a full-page
+          screenshot of this route against the committed
+          `library.visual.spec.ts-snapshots/library-win32.png` (63,097 B,
+          1280x820), and that PNG still shows the pill "Capabilities: 6 of 11
+          installed" between the title and the search/SORT row. `.library` is a
+          column flex with no `gap` (components/shell.css), so deleting the pill
+          shifts the toolbar and the whole card grid UP by that row's height (the
+          exact px delta is not measured here — only its sign and that it is
+          nonzero). Any nonzero shift busts the budget: the tolerance is
+          `maxDiffPixelRatio: 0.01` (e2e/visual/_visualSetup.ts:111) = 10,496 of
+          1,049,600 px, while the colour-bar thumbnail that moves is ~230x140 in
+          that baseline ≈ 32k high-frequency px on its own. `npm run test:e2e:visual`
+          (.github/workflows/e2e.yml:485-490, Windows, no continue-on-error) will
+          therefore fail until the baseline is regenerated. It does NOT gate this
+          PR: e2e.yml is workflow_dispatch + nightly cron only (:38-51; :3 "This
+          NEVER gates a normal PR"). The PNG is outside this lane's file scope, so
+          this is a routed SCOPE-ESCAPE, not a gap closed here — dispatch e2e.yml
+          with `update_visual_baselines: true`, then download the
+          `updated-visual-baselines` artifact and commit the PNG (the regen step
+          uploads, it does not commit: e2e.yml:492-516,743-745). Whether the
+          header-to-toolbar rhythm now READS right with the row gone is a separate
+          question and is still genuinely unmeasured.
+
+          ALSO ROUTED (CSS lane, out of scope here): the chip's stylesheet block
+          outlived the chip — nine dead `.capabilities-chip*` rules at
+          components/library-shell.css:9,16,39,44,49,54,60,73,80 with zero
+          consumers, plus that file's header at :2 still advertising "the
+          capabilities disclosure chip". Delete the BLOCK, not the file:
+          views/LibraryToolbar.tsx:9 and views/ShortsGalleryModal.tsx:25 still
+          import it. */}
 
       {/* W54: `videos.length` — the RAW count — gates the search + sort controls,
           which used to mount unconditionally as a sibling of the

@@ -11,10 +11,14 @@ vi.mock('../components/api', () => ({
   hasApi: () => true,
 }));
 
-// WU-14: the library home renders <ReadinessRollup>, which loads
-// `readiness.summary` through the canonical lib/rpc `client`. Stub that client so
-// the roll-up resolves to an empty set in these tests (the roll-up has its own
-// dedicated suite); the rest of lib/rpc stays real for the type re-exports.
+// Q3: the Library landing route no longer carries ANY readiness surface — the
+// `CapabilitiesChip` disclosure was deleted, not relocated. This stub of the
+// canonical lib/rpc `client.readiness.summary` is therefore no longer here to
+// keep a mounted roll-up quiet; it is here as a DETECTOR. Any future readiness
+// probe re-added to this route would call it, and the "issues no readiness probe"
+// pin below would go red. (Readiness itself still lives in Settings → Models &
+// System, which has its own suite; the rest of lib/rpc stays real for the type
+// re-exports.)
 const readinessSummaryMock = vi.fn(
   async (): Promise<{ items: ReadinessItem[] }> => ({ items: [] }),
 );
@@ -1041,23 +1045,64 @@ describe('Library source provenance (WU-1f)', () => {
   });
 });
 
-describe('Library capabilities chip (v1.5 §4)', () => {
-  it('renders the capabilities disclosure chip on the library home', async () => {
+// ---------------------------------------------------------------------------
+// Q3: the CapabilitiesChip is DELETED from the Library landing route
+// ---------------------------------------------------------------------------
+// The chip was painted on the app's landing surface unconditionally, and ONE
+// EXPAND CLICK deep — its row list was gated behind the disclosure's own `open`
+// state (origin/main:views/CapabilitiesChip.tsx:37,82,98) — it offered a button
+// whose accessible name was "Download the <X> model"
+// (components/readinessMeta.ts:113) and whose only effect was to NAVIGATE to
+// Settings. No download ever started, and the destination reset scroll to the top
+// of a long panel without scrolling to or highlighting the row in question (zero
+// `scrollIntoView` call sites exist under renderer/src). That is a decoy on the
+// primary landing surface. (Earlier wording here said the chip "put a button on
+// the landing surface", which read as immediately-on-screen and was wider than
+// the evidence; the third pin below encodes the two-step reality.)
+//
+// Its "N of M installed" counter is deleted rather than relocated: the
+// denominator is an internal capability enumeration (it has already moved 11→12
+// and the owner reports seeing 13), so it is not a user-meaningful number and
+// moving it would only preserve the defect.
+//
+// SCOPE OF THE DECOY, per the two settings-assets verdicts: only `assets.ensure`
+// rows were decoys. `openProviders` / `setConsent` rows SHOULD navigate, and they
+// still do — from Settings, where they live. Nothing here removes navigation from
+// those; it removes the READINESS SURFACE FROM THE LIBRARY.
+describe('Library readiness surface (Q3 — chip deleted, not relocated)', () => {
+  it('renders no capabilities chip and no "N of M installed" counter', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
-    expect(container.querySelector('.capabilities-chip')).not.toBeNull();
-    expect(readinessSummaryMock).toHaveBeenCalled();
+    // POSITIVE CONTROL first. Three `not`-assertions follow, and every one of them
+    // would pass vacuously against an empty container — i.e. they would also
+    // "prove" the chip is gone if the whole view had failed to render. Anchor them
+    // to a landmark that must be present for the absence to mean anything.
+    expect(container.querySelector('.library__title')).not.toBeNull();
+    expect(container.querySelector('.capabilities-chip')).toBeNull();
+    expect(container.textContent).not.toContain('Capabilities:');
+    expect(container.textContent).not.toMatch(/\d+ of \d+ installed/);
   });
 
-  it('forwards a capability fix action to onReadinessAction after expanding the chip', async () => {
+  it('issues no readiness.summary probe from the landing route', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+    // The whole point of deleting the surface: the landing route stops paying for
+    // a boot RPC whose only rendered output was the decoy. (This also removed the
+    // `Capabilities: checking…` state an e2e cold-start once stalled on.)
+    expect(readinessSummaryMock).not.toHaveBeenCalled();
+  });
+
+  it('offers no download-labelled button that only navigates, even when a capability needs one', async () => {
+    // The exact shape that produced the decoy: an `assets.ensure` row, whose
+    // ReadinessBadge action button reads "Download the <label> model".
     readinessSummaryMock.mockResolvedValue({
       items: [
         {
-          capability: 'tr',
-          label: 'Translate captions',
-          status: 'needsKey',
-          blockedBy: 'no key',
-          action: { kind: 'openProviders' },
+          capability: 'tier1-multimodal',
+          label: 'Transcribe speech',
+          status: 'needsDownload',
+          blockedBy: 'model not installed',
+          action: { kind: 'assets.ensure', assets: ['whisper-large-v3'] },
         },
       ],
     });
@@ -1068,17 +1113,15 @@ describe('Library capabilities chip (v1.5 §4)', () => {
     });
     await flush();
 
-    // The chip is collapsed by default — expand it to reveal the fix action.
-    await act(async () => {
-      (container.querySelector('.capabilities-chip__toggle') as HTMLButtonElement).click();
-    });
-    const btn = container.querySelector(
-      '.capabilities-chip button.readiness-badge__action',
-    ) as HTMLButtonElement;
-    await act(async () => {
-      btn.click();
-    });
-    expect(onReadinessAction).toHaveBeenCalledWith({ kind: 'openProviders' });
+    // Positive control (see the first pin): the view really did render.
+    expect(container.querySelector('.library__title')).not.toBeNull();
+    // There is no disclosure left to expand...
+    expect(container.querySelector('.capabilities-chip__toggle')).toBeNull();
+    // ...so no readiness action button can be reached from here at all...
+    expect(container.querySelector('button.readiness-badge__action')).toBeNull();
+    // ...and the decoy label never renders on the landing route.
+    expect(container.textContent).not.toContain('Download the');
+    expect(onReadinessAction).not.toHaveBeenCalled();
   });
 });
 

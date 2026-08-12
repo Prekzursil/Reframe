@@ -1,0 +1,67 @@
+# opengrep / semgrep ignore — gate 4 (SAST). Adopted from quality-zero-platform
+# docs/lean-gate/semgrepignore.template.
+#
+# ── WHY THIS FILE EXISTS ────────────────────────────────────────────────────
+#
+# With NO `.semgrepignore` in the scanned root, opengrep falls back to a
+# BUILT-IN ignore template that drops test code. Measured 2026-08-11 on the
+# PINNED CI engine (opengrep v1.22.0 CLI on Linux, the exact build gate 4
+# installs), controlled detector, one variable changed at a time:
+#
+#   src/inline.go    db.Query(fmt.Sprintf(...))        -> FIRES
+#   tests/inline.go  byte-identical to the line above  -> SILENT
+#
+# and `paths.skipped` reported `none` while it happened, so NOTHING in the gate
+# output revealed it. Pointing the scanner directly at `tests/` returns
+# `paths.scanned: []`, so an explicit path argument does not override it either.
+#
+# The dropped set, enumerated with one identical vulnerable file per candidate
+# path: `*_test.go` at ANY depth, plus the `test/` and `tests/` directories.
+# (Python/TS test FILENAMES — `test_app.py`, `app_test.py`, `conftest.py`,
+# `app.test.ts`, `app.spec.ts`, `__tests__/` — are NOT dropped; only the two
+# directories are.) The engine abandons the built-in template as soon as ANY
+# `.semgrepignore` exists, so shipping this file restores the test tree and
+# makes the scanned set a DELIBERATE choice.
+#
+# Effect measured on THIS repo, using its own gate-4 scan paths (app sidecar):
+# 803 files scanned before, 1075 after (+272 newly visible), and
+# 0 findings either way — so adoption is finding-neutral.
+#
+# ── EDITING RULES ───────────────────────────────────────────────────────────
+#
+# 1. NEVER add `*_test.go`, `test/`, `tests/`, `spec/` or `__tests__/`.
+#    First-party test code is first-party code — it handles credentials, builds
+#    queries and shells out. Re-excluding it restores the exact hole this file
+#    closes.
+# 2. Every directory entry ships BOTH the root-anchored and the nested form: a
+#    bare `**/x/` does NOT match a root-level `x/`, and it fails open with no
+#    warning. Measured with a positive control — `**/vendor/` left a root-level
+#    `vendor/pkg/b.go` scanned while `vendor/` excluded both trees.
+# 3. An exclusion is a statement about SCOPE ("this is not our source"), never
+#    about severity. Do not use this file to make a finding go away.
+
+.git/
+
+# Vendored third-party source. Not ours to fix, and upstream style trips
+# first-party rules. Secrets in these trees stay covered by gitleaks (gate 5),
+# which scans independently of this file.
+vendor/
+**/vendor/
+vendor_src/
+**/vendor_src/
+node_modules/
+**/node_modules/
+
+# Installed dependencies (virtualenvs) — third-party bytes, not source.
+.venv/
+**/.venv/
+venv/
+**/venv/
+
+# Build output, generated from source that gate 4 already scans.
+dist/
+**/dist/
+build/
+**/build/
+out/
+**/out/
