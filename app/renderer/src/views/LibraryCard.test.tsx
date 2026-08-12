@@ -415,6 +415,54 @@ describe('LibraryCard', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('returns focus to the overflow trigger when a shortcut is chosen', async () => {
+    // ROUND-3 DEFECT, found by the did-it-break reviewer. The row that closes the
+    // menu lives INSIDE the panel the close then `hidden`s, so a keyboard user who
+    // activated the row was left focused on a hidden element — browsers drop that
+    // focus to <body>, i.e. back to the top of the document, on every shortcut use.
+    //
+    // The docblock previously defended this as "exactly the contract
+    // CardProvenanceDisclosure uses … and nothing more". That equivalence is FALSE on
+    // this axis: that disclosure is closed only from its toggle, which sits OUTSIDE
+    // the panel (CardProvenanceDisclosure.tsx:42-53 vs the panel at :57-59), and its
+    // body is `{open ? <LibraryProvenance/> : null}` — so it has nothing focusable
+    // inside to blur. The house pattern for focus-RETURN is JobQueue.tsx:109-126
+    // ("disclosure focus-return contract"), which this now follows.
+    //
+    // The pre-existing selection test cannot catch this: it asserts `panel.hidden`
+    // and the onSelect payload, never `document.activeElement`, and it clicks via
+    // dispatchEvent (which does not focus), so focus is on <body> before AND after.
+    // This test focuses the row first, which is what makes it discriminating.
+    const onSelect = vi.fn();
+    await renderCard({
+      deliver: { shortcuts: [{ id: 'convert', label: 'Convert…' }], onSelect },
+    });
+    const trigger = container.querySelector('.library__card-menu-trigger') as HTMLButtonElement;
+    act(() => {
+      trigger.focus();
+      trigger.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const row = container.querySelector('.library__card-menu-item') as HTMLButtonElement;
+    act(() => {
+      row.focus();
+    });
+    // Control: the row really holds focus before activation, so a pass below cannot
+    // come from focus never having moved off the trigger in the first place.
+    expect(document.activeElement).toBe(row);
+
+    act(() => {
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    // The panel really did collapse (so the focused row really is hidden now)...
+    expect((container.querySelector('.library__card-menu-panel') as HTMLDivElement).hidden).toBe(
+      true,
+    );
+    // ...and focus is back on the control that opened the menu, never stranded on
+    // the hidden row and never dumped on <body>.
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it('keeps the overflow trigger a SIBLING of the open button (no nested interactive)', async () => {
     await renderCard({
       deliver: { shortcuts: [{ id: 'convert', label: 'Convert…' }], onSelect: vi.fn() },
