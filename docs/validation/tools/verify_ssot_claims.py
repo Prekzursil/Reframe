@@ -360,10 +360,17 @@ for _rel in DESIGN_DOCS:
 # same basename, and off-token hexes, and is deliberately NOT covered (they are a
 # prototype-REJECTION table, so admitting it without a use-vs-mention narrowing would
 # emit false positives). A doc that promises a universal the code does not implement is
-# the same defect this corpus exists to remove, committed by the correction itself. So the
-# universal quantifier is banned in any sentence that names these checks; the enumeration
-# has to be written out, and adding a third entry to `DESIGN_DOCS` forces the prose to be
-# re-read rather than silently outgrown.
+# the same defect this corpus exists to remove, committed by the correction itself. So an
+# UNEMPHASISED universal quantifier is rejected in any sentence that names these checks, which
+# pushes the enumeration to be written out, and adding a third entry to `DESIGN_DOCS` forces the
+# prose to be re-read rather than silently outgrown.
+#
+# SCOPE, corrected 2026-08-12 at `1ad80ce8` — this comment used to say the quantifier is "banned",
+# which overstated the pattern below by exactly the margin the docs it polices were corrected for.
+# MEASURED: the pattern needs literal whitespace between its tokens, so an emphasised (`**any**`,
+# `*any*`) or blockquote-wrapped quantifier is invisible to it. That is deliberate for now, not an
+# oversight — see `C8-scope-measured` below, which pins the measured behaviour and the docs'
+# description of it together so neither can drift from the other unnoticed.
 #
 # Deliberately NOT blockquote-stripped, and this is the reverse of the C8/C9b/C11 choice:
 # measured, `docs/build/DESIGN-DIRECTION.md`'s over-wide sentence lives INSIDE its own
@@ -388,6 +395,57 @@ check(
     not _overwide_scope,
     f"no doc claims the C8 guards cover every design doc; they cover the {len(DESIGN_DOCS)} "
     f"enumerated in DESIGN_DOCS ({', '.join(DESIGN_DOCS)}) — offenders: {_overwide_scope or 'none'}",
+)
+
+# INVARIANT (new): the two docs that announce `C8-scope-prose` may not promise more reach than
+# it has. Both said it "now fails if this sentence/paragraph re-widens" — and that is the same
+# over-wide-promise defect one level up again, committed by the correction itself, for the third
+# time in this file's history. MEASURED at `1ad80ce8`: `_C8_UNIVERSAL` requires literal
+# whitespace between its tokens, so an EMPHASISED quantifier slips past it, and the flatten at
+# the loop above turns a blockquote continuation into `any design > doc`, which also slips past.
+# Both offending docs happen to write the quantifier emphasised, and this corpus emphasises
+# quantifiers by habit (`**two**`, `**16**`, `**not**`), so the likelier spelling of a future
+# re-widening is the one the guard cannot see.
+#
+# Widening `_C8_UNIVERSAL` is NOT the fix and was rejected on measurement, not taste: both
+# retraction paragraphs QUOTE the banned wording in order to retire it, and C8-scope-prose
+# deliberately does not `_live_text`, so allowing `*` or `>` between the tokens would fire on
+# the retractions themselves. Closing it needs the use-vs-mention narrowing C1b uses (drop
+# double-quoted spans), which is a behaviour change this pass did not measure. So the honest
+# repair is the SENTENCE — and this check makes it stick in both directions: the probe table is
+# re-run against the shipped pattern on every run, so a later regex change fails here and forces
+# the prose to be re-read instead of silently outgrowing it, and any doc naming the check must
+# carry the measured qualifier next to the promise.
+_C8_PROBES: tuple[tuple[str, bool], ...] = (
+    ("over any design doc", True),
+    ("over every design doc", True),
+    ("over **any** design doc", False),
+    ("over *any* design doc", False),
+    ("over any design > doc", False),
+)
+_probe_drift = [
+    f"{_txt!r} fires={not _want}"
+    for _txt, _want in _C8_PROBES
+    if bool(_C8_UNIVERSAL.search(re.sub(r"\s+", " ", _txt))) is not _want
+]
+_scope_unqualified: list[str] = []
+for _p in sorted(ROOT.glob("docs/**/*.md")):
+    try:
+        _flat_q = re.sub(r"\s+", " ", _p.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        continue
+    for _hit in re.finditer(r"C8-scope-prose", _flat_q):
+        if "UNEMPHASISED" not in _flat_q[_hit.start() : _hit.end() + 400]:
+            _scope_unqualified.append(_p.relative_to(ROOT).as_posix())
+            break
+check(
+    "C8-scope-measured",
+    True,
+    not _probe_drift and not _scope_unqualified,
+    f"C8-scope-prose behaves as its prose says (probe drift: {_probe_drift or 'none'}) and every "
+    f"doc naming it qualifies the reach as UNEMPHASISED within 400 chars "
+    f"(unqualified: {_scope_unqualified or 'none'}; a back-reference such as "
+    f'"that check" avoids re-naming it a second time)',
 )
 
 # INVARIANT (new): a `docs/<file>.md:<N>` citation may not land on a blockquote line.

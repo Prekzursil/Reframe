@@ -46,8 +46,16 @@ No component sheet may introduce a color, radius, duration, or font that is not 
 > `docs/plans/v1.5/DESIGN-DIRECTION.md`, `**Status:** ACTIVE`, same basename — and is
 > deliberately NOT covered: its off-token hexes are a prototype-**rejection** table quoted in
 > order to forbid them, so admitting it without a use-vs-mention narrowing would emit false
-> positives, and widening the tuple needs that narrowing first. `C8-scope-prose` now fails if
-> this paragraph re-widens to a universal. (2) "Enforced" overstated a **manual** verifier:
+> positives, and widening the tuple needs that narrowing first. `C8-scope-prose` catches a
+> re-widening of this paragraph **only in the UNEMPHASISED, unwrapped spelling**. MEASURED
+> 2026-08-12 at `1ad80ce8`: its pattern needs literal whitespace between the words, so the
+> `**any** design doc` quoted above, `*any* design doc`, and a re-widening that wraps across a
+> blockquote continuation all report GREEN — it is a partial re-introduction guard, not a ban.
+> (This sentence used to read "now fails if this paragraph re-widens to a universal", which was
+> the same over-wide-promise defect the paragraph above retracts, one level up. Widening the
+> pattern would fire on that retraction itself, so the repair is the wording; `C8-scope-measured`
+> re-measures the shipped pattern every run so this qualifier cannot go stale unnoticed.)
+> (2) "Enforced" overstated a **manual** verifier:
 > no CI job and no `pre-commit` hook invokes it. Run it yourself —
 > `python docs/validation/tools/verify_ssot_claims.py`. Settling experiment for the unwired
 > claim: `git grep -n verify_ssot_claims -- .github/ .pre-commit-config.yaml` returns zero
