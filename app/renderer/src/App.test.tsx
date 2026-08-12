@@ -136,8 +136,16 @@ vi.mock('./views/Export', () => ({
   ),
 }));
 vi.mock('./views/Deliver', () => ({
+  // FIDELITY: the real view renders its own `components/TabBar`, unconditionally,
+  // and one of its tabs is literally `publish` (views/Deliver.tsx:21-28, :68). Those
+  // ids come from the SAME flat global namespace the mode nav uses, so a stub that
+  // omits them cannot reproduce a nesting id collision — which is how one shipped.
   Deliver: ({ video }: { video: Video | null }) => (
-    <div data-testid="deliver" data-video-id={video?.id ?? ''} />
+    <div data-testid="deliver" data-video-id={video?.id ?? ''}>
+      <button type="button" role="tab" id="tab-publish" aria-selected="false">
+        Publish
+      </button>
+    </div>
   ),
 }));
 
@@ -205,8 +213,13 @@ function tab(label: string): HTMLButtonElement {
  * each destination that hosts more than one surface exposes them as modes).
  */
 function modeTab(label: string): HTMLButtonElement {
+  // Scoped to the destination's OWN TabBar (`.app__destination > .tabbar`), not to
+  // any descendant with role=tab: a nested view has its own tablist, and one of
+  // Deliver's tabs is also labelled "Publish". If TabBar's root class ever changes
+  // this selector finds nothing and every mode test fails loudly, which is the
+  // behaviour we want from a helper this many tests lean on.
   const btns = Array.from(
-    container.querySelectorAll<HTMLButtonElement>('.app__destination [role="tab"]'),
+    container.querySelectorAll<HTMLButtonElement>('.app__destination > .tabbar [role="tab"]'),
   );
   const found = btns.find((b) => b.textContent === label);
   if (!found) throw new Error(`mode tab "${label}" not found`);
@@ -909,6 +922,36 @@ describe('L5 rail: exactly four destinations plus Settings', () => {
     expect(container.querySelector('[data-testid="export"]')).toBeNull();
   });
 
+  it('does not mint a duplicate DOM id by nesting the mode nav around a view', async () => {
+    // `components/TabBar` mints ids from ONE flat namespace (`tab-<id>` /
+    // `tabpanel-<id>`), so wrapping a TabBar-based mode nav around a view that also
+    // uses TabBar collides whenever a mode id equals one of that view's tab ids.
+    // It did: DELIVER_MODES 'publish' vs views/Deliver.tsx's 'publish' tab put TWO
+    // elements with id="tab-publish" on the {deliver, publish} route — and that id
+    // is the target of the mode panel's aria-labelledby, i.e. an ARIA IDREF
+    // resolving to whichever element document order happens to hand it.
+    await mount();
+    await act(async () => {
+      tab('Deliver').click();
+    });
+    await flush();
+    await act(async () => {
+      modeTab('Publish').click();
+    });
+    await flush();
+    // CONTROL: the nested view's own `tab-publish` must really be in the document,
+    // or the scan below would pass while measuring nothing.
+    expect(container.querySelector('[data-testid="deliver"] #tab-publish')).not.toBeNull();
+
+    const ids = Array.from(container.querySelectorAll('[id]')).map((el) => el.id);
+    expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
+    // and the mode nav is namespaced, so no view nested under it can collide later.
+    expect(modeTab('Publish').id).toBe('tab-mode-publish');
+    const panel = container.querySelector('.app__mode-panel');
+    expect(panel?.id).toBe('tabpanel-mode-publish');
+    expect(panel?.getAttribute('aria-labelledby')).toBe('tab-mode-publish');
+  });
+
   it('carries a finished render from Finish into Publish (the Export/Deliver split)', async () => {
     await mount();
     await act(async () => {
@@ -1002,7 +1045,10 @@ describe('L5 rail: exactly four destinations plus Settings', () => {
       '.app__destination [role="tab"][aria-selected="true"]',
     );
     const controls = selected!.getAttribute('aria-controls');
-    expect(controls).toBe('tabpanel-shorts');
+    // NAMESPACED (`mode-`), which is the fix for the nesting collision asserted by
+    // "does not mint a duplicate DOM id …" above: the IDREF still has to resolve,
+    // it just resolves inside the mode nav's own namespace now.
+    expect(controls).toBe('tabpanel-mode-shorts');
     expect(container.querySelector(`#${controls}`)).not.toBeNull();
     expect(container.querySelector(`#${controls}`)?.getAttribute('aria-labelledby')).toBe(
       selected!.getAttribute('id'),

@@ -136,6 +136,26 @@ export const DELIVER_MODES: TabDef[] = [
   { id: 'publish', label: 'Publish' },
 ];
 
+/**
+ * The mode nav's DOM ids are NAMESPACED, and the prefix is load-bearing.
+ *
+ * `components/TabBar` mints its ids from ONE flat global namespace — `tab-<id>` /
+ * `tabpanel-<id>` — so NESTING a TabBar-based mode nav around a view that also uses
+ * TabBar collides the moment a mode id equals one of that view's tab ids. It did:
+ * `DELIVER_MODES` has `publish` and `views/Deliver.tsx`'s own TABS has `publish`,
+ * so the route {deliver, publish} — reachable by click AND by `openDeliver()` when
+ * a Phase-5 render finishes — carried TWO elements with `id="tab-publish"`, one of
+ * them the target of the mode panel's `aria-labelledby` below. That is the same
+ * invalid-ARIA-IDREF family the mode panel itself exists to prevent.
+ *
+ * Prefixing here fixes every present and future nesting rather than one pair, and
+ * keeps the ROUTE's mode values (`publish`) readable — the prefix is a rendering
+ * detail of the tablist, not part of the navigation model.
+ */
+const MODE_TAB_PREFIX = 'mode-';
+const modeTabId = (mode: string): string => `${MODE_TAB_PREFIX}${mode}`;
+const modeOfTabId = (tab: string): string => tab.slice(MODE_TAB_PREFIX.length);
+
 type Route =
   // The Library home.
   | { name: 'library' }
@@ -502,14 +522,25 @@ function AppShell(): React.ReactElement {
    * sub-navigation inside views/Settings.tsx).
    */
   function modeNav(): { tabs: TabDef[]; active: string; onSelect: (id: string) => void } | null {
+    // Every mode list goes through `namespaced`, so no destination can reintroduce
+    // the id collision by having its own mode named like one of its view's tabs.
+    const namespaced = (
+      modes: TabDef[],
+      active: string,
+      onSelect: (mode: string) => void,
+    ): { tabs: TabDef[]; active: string; onSelect: (id: string) => void } => ({
+      tabs: modes.map((mode) => ({ ...mode, id: modeTabId(mode.id) })),
+      active: modeTabId(active),
+      onSelect: (id: string) => onSelect(modeOfTabId(id)),
+    });
     if (route.name === 'produce') {
-      return { tabs: PRODUCE_MODES, active: route.mode, onSelect: selectProduceMode };
+      return namespaced(PRODUCE_MODES, route.mode, selectProduceMode);
     }
     if (route.name === 'refine') {
-      return { tabs: REFINE_MODES, active: route.mode, onSelect: selectRefineMode };
+      return namespaced(REFINE_MODES, route.mode, selectRefineMode);
     }
     if (route.name === 'deliver') {
-      return { tabs: DELIVER_MODES, active: route.mode, onSelect: selectDeliverMode };
+      return namespaced(DELIVER_MODES, route.mode, selectDeliverMode);
     }
     return null;
   }
