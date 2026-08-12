@@ -1,39 +1,38 @@
-// App.tsx — the renderer shell + TOP-LEVEL TABBED NAVIGATION (V1 IA §h).
+// App.tsx — the renderer shell + the TOP-LEVEL RAIL (L5, owner-locked).
 //
-// The `tabs` array below is the SSOT for the top-level sections
-// (components/TopTabBar.tsx renders it). This comment mirrors it in the SAME ORDER
-// and must be re-read against it on any change — it listed only six of the eight
-// while `export` and `deliver` had already shipped, so a reader designing against
-// the header saw an IA the app does not have. Same stale-count class as the #371
-// tab-strip incident, whose count test cannot see prose:
-//   * Library    — the video library home; opening a video routes into the Edit
-//                  section for that video,
-//   * Make Shorts — the novice front door: AI moment-pick + manual intervals +
-//                   the single produced-shorts gallery + batch/templates
-//                   (views/MakeShorts.tsx; carries the interrupted-batch badge),
-//   * Edit       — the per-video manual surface (trim/cut/join/reframe/caption/
-//                  audio…) hosted in the Workspace (views/Edit.tsx),
-//   * Caption    — the v1.5 Caption phase pilot: inspector-over-shared-stage
-//                  caption design + keyboard clip timing for the open video,
-//   * Export     — Phase-5: finishes ONE video as a guarded commit, the only
-//                  irreversible spend/file-writing action (views/Export.tsx);
-//                  terminal success links INTO Deliver,
-//   * Deliver    — the OTHER half of the Export/Deliver split: cross-video / batch
-//                  publish, the platform-preset (aspect) matrix, and the pro-editor
-//                  EDL/CSV handoff (views/Deliver.tsx),
-//   * Director   — the prompt-driven AI video-editing panel (lazy),
-//   * Settings   — a sub-tabbed area; views/Settings.tsx `SETTINGS_SECTIONS` is the
-//                  SSOT for which sub-sections exist (deliberately not re-listed
-//                  here — the duplicate list is what rotted).
+// The `tabs` array below is the SSOT for the rail (components/TopTabBar.tsx
+// renders it). This comment mirrors it in the SAME ORDER and must be re-read
+// against it on any change.
+//
+// L5 took the rail from EIGHT destinations to FOUR + Settings. The eight were
+// Library / Make Shorts / Edit / Caption / Export / Deliver / Director / Settings
+// — four of which ("where do I make a short?", "where do I finish?") had two
+// answers in two places. Nothing was deleted: each old destination is now a MODE
+// of the destination that owns its job, reached by a small sub-navigation inside
+// it. The rail:
+//   * Library  — the video library home; opening a video routes into Refine,
+//   * Produce  — BOTH AI paths in one place (L5 G-6): "Make Shorts"
+//                (candidate-driven, views/MakeShorts.tsx, carries the
+//                interrupted-batch badge) and "Director" (prompt-driven,
+//                views/Director.tsx, lazy). Same job — AI proposes, you review,
+//   * Refine   — the editor: "Editor" (the per-video Workspace, views/Edit.tsx —
+//                preview + docked timeline + selection-driven inspector) and
+//                "Caption design" (the v1.5 Caption phase pilot),
+//   * Deliver  — getting files out: "Finish" (Phase-5 guarded commit for ONE
+//                video, views/Export.tsx) and "Publish" (cross-video / batch
+//                publish + platform presets + the pro EDL/CSV handoff),
+//   * Settings — a sub-tabbed area; views/Settings.tsx `SETTINGS_SECTIONS` is the
+//                SSOT for which sub-sections exist (deliberately not re-listed
+//                here — the duplicate list is what rotted).
 //
 // UNVERIFIED that this comment stays in step: nothing mechanically checks prose
-// against `tabs`, so the only guard is the re-read above. Settling experiment: an
-// App.test.tsx case that parses this block's `*` bullets and asserts one per `tabs`
-// entry, in order — out of scope for the comment-only change that fixed the counts.
+// against `tabs`, so the only guard is the re-read above. What IS mechanical is
+// the COUNT — App.test.tsx pins the rail at exactly 5 entries (L5 G-7 invariant
+// 3), which is the number that actually regressed before.
 //
-// The active tab is DERIVED from the route (one source of truth), so navigation
-// and the tab strip can never desync. The currently-open Edit video is held in
-// shell state so switching tabs and re-entering Edit keeps the same video.
+// The active destination is DERIVED from the route (one source of truth), so
+// navigation and the rail can never desync. The currently-open video is held in
+// shell state so switching destinations and coming back keeps the same video.
 //
 // Also hosts the Local/Cloud quality toggle (CONTRACTS.md §0/§2: settings.useCloud)
 // and the global Jobs slide-over (components/JobQueue.tsx).
@@ -51,12 +50,10 @@ import { lineageActions } from './features/lineageActionsClient';
 import { libraryShortsClient } from './features/libraryShortsClient';
 import { useToast } from './components/toast/useToast';
 import { TopTabBar, topTabId, topTabPanelId, type TopTab } from './components/TopTabBar';
+import { TabBar, tabId, tabPanelId, type TabDef } from './components/TabBar';
 import {
-  CaptionIcon,
   CreateIcon,
   DeliverIcon,
-  DirectorIcon,
-  ExportIcon,
   LibraryIcon,
   RepurposeIcon,
   SettingsIcon,
@@ -106,53 +103,62 @@ registerJobRetry((jobId) => rpc<{ jobId: string }>('job.retry', { jobId }));
 
 type Quality = 'local' | 'cloud';
 
-/** The top-level tab ids (the surface switcher). */
-type TabId =
-  | 'library'
-  | 'makeshorts'
-  | 'edit'
-  | 'caption'
-  | 'export'
-  | 'deliver'
-  | 'director'
-  | 'settings';
+/** The rail's destination ids (L5 G-6: 4 + Settings, and no more). */
+type TabId = 'library' | 'produce' | 'refine' | 'deliver' | 'settings';
+
+/** Produce hosts BOTH AI paths — candidate-driven and prompt-driven. */
+type ProduceMode = 'shorts' | 'director';
+/** Refine hosts the editor and the caption-design pilot. */
+type RefineMode = 'editor' | 'caption';
+/** Deliver hosts the single-video finish and the cross-video publish. */
+type DeliverMode = 'finish' | 'publish';
+
+/**
+ * The MODE sub-navigations. These are what let the rail shrink to five without
+ * dropping a destination: each old top-level entry became a mode of the
+ * destination that owns its job.
+ *
+ * They are deliberately TINY and fixed — two entries each. A destination whose
+ * mode list starts growing is the tab-strip ratchet reappearing one level down;
+ * the answer there is selection-driven disclosure INSIDE the destination (as
+ * Refine does), not a sixth mode.
+ */
+export const PRODUCE_MODES: TabDef[] = [
+  { id: 'shorts', label: 'Make Shorts' },
+  { id: 'director', label: 'Director' },
+];
+export const REFINE_MODES: TabDef[] = [
+  { id: 'editor', label: 'Editor' },
+  { id: 'caption', label: 'Caption design' },
+];
+export const DELIVER_MODES: TabDef[] = [
+  { id: 'finish', label: 'Finish' },
+  { id: 'publish', label: 'Publish' },
+];
 
 type Route =
   // The Library home.
   | { name: 'library' }
-  // Make Shorts: AI/manual making + the gallery + batch (resume deep-link).
-  // WU-3a4: `videoId` pre-selects a source video (the Workspace Short-maker tab
-  // deep-links here — the single ShortMaker owner — with the open video threaded).
-  | { name: 'makeshorts'; resumeId?: string; videoId?: string }
-  // Edit: the per-video manual surface (the open video lives in shell state).
-  | { name: 'edit' }
-  // Caption: the v1.5 Caption phase pilot (inspector-over-shared-stage) for the
-  // open video; empty-states when none is open.
-  | { name: 'caption' }
-  // Export: the v1.5 Phase-5 guarded-commit render/finish for the open video.
-  | { name: 'export' }
-  // Deliver: the batch / cross-video publish rail (Export/Deliver split, §4).
-  | { name: 'deliver' }
-  // Director: the prompt-driven AI video-editing panel.
-  | { name: 'director' }
+  // Produce: AI proposes, you review. `resumeId` deep-links a batch resume from
+  // the toast; `videoId` pre-selects a source video (the single ShortMaker owner
+  // is here, so the Workspace's short-maker deep-link lands on it).
+  | { name: 'produce'; mode: ProduceMode; resumeId?: string; videoId?: string }
+  // Refine: the per-video editor (the open video lives in shell state).
+  | { name: 'refine'; mode: RefineMode }
+  // Deliver: get files out — finish one video, or publish across videos.
+  | { name: 'deliver'; mode: DeliverMode }
   // Settings: a sub-navigated area (Models & System / Providers & Keys / Health).
   | { name: 'settings'; section?: string };
 
-/** Map a route to the top-level tab it belongs to. */
+/** Map a route to the rail destination it belongs to. */
 function routeTab(route: Route): TabId {
   switch (route.name) {
-    case 'makeshorts':
-      return 'makeshorts';
-    case 'edit':
-      return 'edit';
-    case 'caption':
-      return 'caption';
-    case 'export':
-      return 'export';
+    case 'produce':
+      return 'produce';
+    case 'refine':
+      return 'refine';
     case 'deliver':
       return 'deliver';
-    case 'director':
-      return 'director';
     case 'settings':
       return 'settings';
     case 'library':
@@ -359,7 +365,7 @@ function AppShell(): React.ReactElement {
         const match = videos.find((v) => v.id === id);
         if (!cancelled && match) {
           setEditVideo(match);
-          setRoute({ name: 'edit' });
+          setRoute({ name: 'refine', mode: 'editor' });
         }
       } catch {
         // Best-effort restore; stay on the Library default on any failure.
@@ -370,10 +376,10 @@ function AppShell(): React.ReactElement {
     };
   }, []);
 
-  // Opening a video from the Library routes into the Edit section for it.
+  // Opening a video from the Library routes into Refine (the editor) for it.
   const openVideo = useCallback((video: Video) => {
     setEditVideo(video);
-    setRoute({ name: 'edit' });
+    setRoute({ name: 'refine', mode: 'editor' });
     // WU-13: persist the last-opened video so launch can restore it. Best-effort.
     if (!hasApi()) return;
     void rpc('settings.set', { lastOpenedVideoId: video.id }).catch(() => {
@@ -385,16 +391,17 @@ function AppShell(): React.ReactElement {
     setRoute({ name: 'library' });
   }, []);
 
-  // The Make Shorts nav (optionally deep-linking a batch resume from the toast).
+  // The Make Shorts nav — now Produce's candidate-driven mode (optionally
+  // deep-linking a batch resume from the toast).
   const openMakeShorts = useCallback((resumeId?: string) => {
-    setRoute({ name: 'makeshorts', resumeId });
+    setRoute({ name: 'produce', mode: 'shorts', resumeId });
   }, []);
 
-  // WU-3a4: the Workspace "Short-maker" tab is a single-owner deep-link — it routes
-  // to the Make Shorts section (the ONE ShortMaker owner) with the open video
-  // pre-selected, instead of mounting a second ShortMaker copy inside the Workspace.
+  // WU-3a4: the Workspace's short-maker deep-link is a single-owner route — it
+  // goes to Produce → Make Shorts (the ONE ShortMaker owner) with the open video
+  // pre-selected, instead of mounting a second ShortMaker copy inside the editor.
   const openMakeShortsForVideo = useCallback((videoId: string) => {
-    setRoute({ name: 'makeshorts', videoId });
+    setRoute({ name: 'produce', mode: 'shorts', videoId });
   }, []);
 
   // v1.5 §4 P0: "edit in Studio" for a produced short (fired from the Library's
@@ -405,16 +412,16 @@ function AppShell(): React.ReactElement {
     [openMakeShortsForVideo],
   );
 
-  // WU-3a1: the Task Hub's "Director" job card routes to the top-level Director
-  // section (the open video is already threaded from shell state).
+  // WU-3a1: the Task Hub's "Director" job card routes to Produce → Director (the
+  // open video is already threaded from shell state).
   const openDirector = useCallback(() => {
-    setRoute({ name: 'director' });
+    setRoute({ name: 'produce', mode: 'director' });
   }, []);
 
-  // v1.5 §4: the Deliver rail (batch / cross-video publish) — finishing a Phase-5
-  // Export links INTO here.
+  // v1.5 §4: finishing a Phase-5 Export links INTO the cross-video publish half,
+  // which is now Deliver's "Publish" mode rather than a separate destination.
   const openDeliver = useCallback(() => {
-    setRoute({ name: 'deliver' });
+    setRoute({ name: 'deliver', mode: 'publish' });
   }, []);
 
   // Open Settings, optionally pre-selecting a sub-section (e.g. a readiness fix
@@ -433,28 +440,19 @@ function AppShell(): React.ReactElement {
     [openSettings],
   );
 
-  // The top-level tab strip switches surfaces. Re-entering Edit shows the
-  // currently-open video (or its empty state when none is open yet).
+  // The rail switches destinations, each landing on its FIRST mode. Re-entering
+  // Refine shows the currently-open video (or its empty state when none is open).
   const selectTab = useCallback(
     (id: string) => {
       switch (id as TabId) {
-        case 'makeshorts':
+        case 'produce':
           openMakeShorts();
           break;
-        case 'edit':
-          setRoute({ name: 'edit' });
-          break;
-        case 'caption':
-          setRoute({ name: 'caption' });
-          break;
-        case 'export':
-          setRoute({ name: 'export' });
+        case 'refine':
+          setRoute({ name: 'refine', mode: 'editor' });
           break;
         case 'deliver':
-          setRoute({ name: 'deliver' });
-          break;
-        case 'director':
-          setRoute({ name: 'director' });
+          setRoute({ name: 'deliver', mode: 'finish' });
           break;
         case 'settings':
           openSettings();
@@ -468,19 +466,29 @@ function AppShell(): React.ReactElement {
     [openMakeShorts, openSettings],
   );
 
+  // Switching MODE inside a destination. Each destination owns its own mode ids,
+  // so one handler per destination keeps the union type discriminated.
+  const selectProduceMode = useCallback((mode: string) => {
+    setRoute({ name: 'produce', mode: mode as ProduceMode });
+  }, []);
+  const selectRefineMode = useCallback((mode: string) => {
+    setRoute({ name: 'refine', mode: mode as RefineMode });
+  }, []);
+  const selectDeliverMode = useCallback((mode: string) => {
+    setRoute({ name: 'deliver', mode: mode as DeliverMode });
+  }, []);
+
   // The interrupted-batch badge now rides the Make Shorts tab (batch lives in
   // that section); a resume deep-links into Make Shorts → Batch.
   const batchBadge = useRepurposeBadge(openMakeShorts);
 
+  // L5 G-7 INVARIANT 3: exactly five. App.test.tsx pins the count and the ids.
   const tabs: TopTab[] = useMemo(
     () => [
       { id: 'library', label: 'Library', icon: <LibraryIcon /> },
-      { id: 'makeshorts', label: 'Make Shorts', icon: <CreateIcon />, badge: batchBadge },
-      { id: 'edit', label: 'Edit', icon: <RepurposeIcon /> },
-      { id: 'caption', label: 'Caption', icon: <CaptionIcon /> },
-      { id: 'export', label: 'Export', icon: <ExportIcon /> },
+      { id: 'produce', label: 'Produce', icon: <CreateIcon />, badge: batchBadge },
+      { id: 'refine', label: 'Refine', icon: <RepurposeIcon /> },
       { id: 'deliver', label: 'Deliver', icon: <DeliverIcon /> },
-      { id: 'director', label: 'Director', icon: <DirectorIcon /> },
       { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
     ],
     [batchBadge],
@@ -488,13 +496,50 @@ function AppShell(): React.ReactElement {
 
   const activeTab = routeTab(route);
 
+  /**
+   * The mode sub-navigation for the current destination, or null for the two
+   * that have exactly one surface (Library, Settings — Settings does its own
+   * sub-navigation inside views/Settings.tsx).
+   */
+  function modeNav(): { tabs: TabDef[]; active: string; onSelect: (id: string) => void } | null {
+    if (route.name === 'produce') {
+      return { tabs: PRODUCE_MODES, active: route.mode, onSelect: selectProduceMode };
+    }
+    if (route.name === 'refine') {
+      return { tabs: REFINE_MODES, active: route.mode, onSelect: selectRefineMode };
+    }
+    if (route.name === 'deliver') {
+      return { tabs: DELIVER_MODES, active: route.mode, onSelect: selectDeliverMode };
+    }
+    return null;
+  }
+
   function renderRoute(): React.ReactElement {
     switch (route.name) {
-      case 'makeshorts':
+      case 'produce':
+        if (route.mode === 'director') {
+          return (
+            <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
+              {/* L5 G-6 CARRIED RISK, honoured: Director is the app's one
+                  consciously low-density, editorial-spacious screen (serif
+                  display voice, illustrated empty state, left-anchored content
+                  column) and folding it into Produce must NOT flatten it into a
+                  generic form. It is therefore mounted UNCHANGED — Produce adds a
+                  two-entry mode switch above it and nothing else. Do not wrap it
+                  in a card, a grid cell, or a shared Produce chrome. */}
+              <Director video={editVideo} onChooseVideo={backToLibrary} />
+            </Suspense>
+          );
+        }
         return <MakeShorts resumeId={route.resumeId} videoId={route.videoId} />;
-      case 'edit':
-        // WU-3a1: the Task Hub's section cards route to the top-level Make Shorts
-        // / Director surfaces; workspace-scoped cards stay inside Edit.
+      case 'refine':
+        if (route.mode === 'caption') {
+          // v1.5 Caption pilot: the inspector-over-shared-stage phase for the open
+          // video (empty-states + routes back to the Library when none is open).
+          return <Caption video={editVideo} onBack={backToLibrary} />;
+        }
+        // WU-3a1: the Task Hub's section cards route to the Produce surfaces;
+        // workspace-scoped cards stay inside the editor.
         return (
           <Edit
             video={editVideo}
@@ -504,29 +549,15 @@ function AppShell(): React.ReactElement {
             onDirector={openDirector}
           />
         );
-      case 'caption':
-        // v1.5 Caption pilot: the inspector-over-shared-stage phase for the open
-        // video (empty-states + routes back to the Library when none is open).
-        return <Caption video={editVideo} onBack={backToLibrary} />;
-      case 'export':
-        // v1.5 Phase-5 Export: the guarded-commit render/finish for the open video;
-        // finishing links INTO the Deliver rail (the Export/Deliver split, §4).
-        return <Export video={editVideo} onBack={backToLibrary} onDeliver={openDeliver} />;
       case 'deliver':
-        // v1.5 Deliver rail: batch / cross-video publish + platform presets + pro
-        // handoff (the open video drives the EDL/CSV handoff).
-        return <Deliver video={editVideo} onBack={backToLibrary} />;
-      case 'director':
-        return (
-          <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
-            {/* v1.5 §4: the first-class Director rail destination — built on the
-                shipped DirectorPanel + the shared EditorContext + the per-phase
-                hand-off. WU-E1: thread the app-selected video so it plans against
-                video.id (never the goal text); the empty-state CTA routes to the
-                Library to pick one. */}
-            <Director video={editVideo} onChooseVideo={backToLibrary} />
-          </Suspense>
-        );
+        if (route.mode === 'publish') {
+          // batch / cross-video publish + platform presets + pro handoff (the open
+          // video drives the EDL/CSV handoff).
+          return <Deliver video={editVideo} onBack={backToLibrary} />;
+        }
+        // v1.5 Phase-5: the guarded-commit render/finish for the open video;
+        // finishing links INTO the Publish mode (the Export/Deliver split, §4).
+        return <Export video={editVideo} onBack={backToLibrary} onDeliver={openDeliver} />;
       case 'settings':
         return <Settings initialSection={route.section} />;
       case 'library':
@@ -547,6 +578,45 @@ function AppShell(): React.ReactElement {
           />
         );
     }
+  }
+
+  /**
+   * The destination body: the surface, plus a mode sub-navigation when the
+   * destination hosts more than one (Produce / Refine / Deliver).
+   *
+   * The wrapper's layout is set INLINE, deliberately. `components/shell.css`
+   * gives `.app__main > *` `flex: 1`, so two direct children would each claim
+   * half the height and the sub-nav would balloon; the surface must therefore sit
+   * inside ONE flex column child. That sheet is owned by another lane, so writing
+   * the rule there is out of this lane's file scope — the inline style is the
+   * scoped alternative, not a shortcut. Follow-up: move `.app__destination` /
+   * `.app__mode-panel` into shell.css when that file is next open.
+   *
+   * The inner `role="tabpanel"` is required, not decorative: TabBar puts
+   * `aria-controls={tabPanelId(active)}` on the selected tab, and without a
+   * matching id that is a dangling IDREF — the CRITICAL axe `aria-valid-attr-value`
+   * violation TabBar's own comment records from the Make Shorts screen.
+   */
+  function renderDestination(): React.ReactElement {
+    const modes = modeNav();
+    if (modes === null) return renderRoute();
+    return (
+      <div
+        className="app__destination"
+        style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}
+      >
+        <TabBar tabs={modes.tabs} active={modes.active} onSelect={modes.onSelect} />
+        <div
+          className="app__mode-panel"
+          role="tabpanel"
+          id={tabPanelId(modes.active)}
+          aria-labelledby={tabId(modes.active)}
+          style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
+        >
+          {renderRoute()}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -595,7 +665,7 @@ function AppShell(): React.ReactElement {
           id={topTabPanelId(activeTab)}
           aria-labelledby={topTabId(activeTab)}
         >
-          {renderRoute()}
+          {renderDestination()}
         </main>
       </div>
       <JobQueue open={jobsOpen} onClose={() => setJobsOpen(false)} />
