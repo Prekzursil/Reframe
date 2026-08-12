@@ -270,7 +270,12 @@ describe('LibraryCard', () => {
   // ---- v1.5b: the card's PRIMARY action is visible, and Remove stops being the
   // only labelled verb on the card (the "no primary action" finding).
 
-  it('paints a visible Open call-to-action inside the primary button', async () => {
+  // NAME SCOPED IN ROUND 2. This was titled "paints a visible Open call-to-action";
+  // it asserts textContent, aria-hidden, ancestry and tagName and nothing about
+  // paint, while `.library__item-cta` has ZERO rules in any stylesheet — so the old
+  // name printed a green claim the product does not satisfy. Paint is the declared
+  // scope-escape into components/library-cards.css.
+  it('renders the CTA verb inside the primary button', async () => {
     await renderCard();
     const cta = container.querySelector('.library__item-cta');
     expect(cta?.textContent).toBe('Open');
@@ -288,14 +293,31 @@ describe('LibraryCard', () => {
     expect(container.querySelector('.library__item-cta')?.textContent).toBe('Show history');
   });
 
-  it('demotes Remove to an icon-only control so it is not the primary action peer', async () => {
+  it('keeps Remove LEGIBLE — a visible word, never an unlabelled glyph', async () => {
     await renderCard();
     const remove = container.querySelector('.library__remove-btn') as HTMLButtonElement;
-    // No visible verb: the glyph carries no text label, the name is on aria-label.
-    expect(remove.textContent).toBe('×');
+    // Round 2 REVERSAL, pinned so it cannot silently regress. An earlier draft of
+    // this lane demoted Remove to an icon-only `×` + `title="Remove"`. That was the
+    // wrong lever, on three measured grounds:
+    //   1. `.library__remove-btn` has NO resting box to fall back on — shell.css
+    //      :520-529 gives it the GHOST voice (`background: transparent;
+    //      border-color: transparent; box-shadow: none`), same 0-1-0 specificity as
+    //      the raised base at :438-447 but later in source order. Its WORD was the
+    //      only thing that read as a control at rest.
+    //   2. views/Library.tsx:386-419 fires `library.remove` with NO confirm and NO
+    //      undo (`useConfirm` is wired, but only around `deleteShort` at :505),
+    //      against the repo standard at features/KeepCopyControl.tsx:21 — "never a
+    //      silent one-click destructive action".
+    //   3. `title` is not an equivalent substitute: it surfaces on mouse-hover dwell
+    //      and not on keyboard focus, so a keyboard user got an unnamed glyph on an
+    //      irreversible action.
+    // Remove stops being the primary-action peer by the CTA gaining WEIGHT (the
+    // library-cards.css scope-escape), not by the destructive control losing its name.
+    expect(remove.textContent).toBe('Remove');
     expect(remove.getAttribute('aria-label')).toBe('Remove Talk');
-    expect(remove.getAttribute('title')).toBe('Remove');
-    expect(remove.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    // No decorative glyph, and no tooltip standing in for a visible label.
+    expect(remove.querySelector('[aria-hidden="true"]')).toBeNull();
+    expect(remove.hasAttribute('title')).toBe(false);
   });
 
   // ---- v1.5b: the overflow menu — Deliver deep-links, never a second converter.

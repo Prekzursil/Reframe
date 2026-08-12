@@ -365,18 +365,22 @@ export function LibraryCard({
         {deliver && deliver.shortcuts.length > 0 ? (
           <CardOverflowMenu video={video} deliver={deliver} />
         ) : null}
-        {/* Destructive, and therefore ICON-ONLY: the word "Remove" was the card's
-            only visible verb, which made deletion look like the primary action.
-            The accessible name is unchanged (aria-label), and `title` gives sighted
-            users the same word on hover. */}
+        {/* Destructive, and therefore LABELLED. Round 2 reversed an earlier draft
+            that demoted this to an icon-only `×` + `title="Remove"`: this control
+            has no resting box to fall back on (the GHOST voice at shell.css:520-529
+            zeroes its background, border-colour and shadow), it deletes with NO
+            confirm and NO undo (views/Library.tsx:386-419), and `title` surfaces on
+            mouse-hover dwell but not on keyboard focus — so the glyph left a
+            keyboard user an unnamed control on an irreversible action. Remove stops
+            being the primary-action PEER by the CTA gaining weight, not by the
+            destructive verb losing its name. */}
         <button
           type="button"
           className="library__remove-btn"
           aria-label={`Remove ${video.title}`}
-          title="Remove"
           onClick={(event) => onRemove(video.id, event)}
         >
-          <span aria-hidden="true">×</span>
+          Remove
         </button>
       </div>
     </li>
