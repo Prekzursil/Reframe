@@ -90,41 +90,58 @@ vi.mock('../features/BrollPanel', () => stubPanel('BrollPanel'));
 // clip it reports (Q7 `onSelectClip`) and the dock shows the file it produced
 // (Q7 `onRendered`). The stub exposes both edges as buttons so those wires can be
 // driven from a test without mounting the real editor.
-vi.mock('../features/VideoTimeline', () => ({
-  default: (props: Record<string, unknown>) => {
-    const React_ = require('react');
-    const select = props.onSelectClip as ((id: string | null) => void) | undefined;
-    const rendered = props.onRendered as ((path: string) => void) | undefined;
-    return React_.createElement(
-      'div',
-      {
-        'data-panel': 'VideoTimeline',
-        'data-videoid': String(props.videoId ?? ''),
-        'data-sourcepath': String(props.sourcePath ?? ''),
-        'data-duration': String(props.sourceDurationSec ?? ''),
-      },
-      React_.createElement(
-        'button',
-        { type: 'button', 'data-action': 'select-clip', onClick: () => select?.('c1') },
-        'select clip',
-      ),
-      React_.createElement(
-        'button',
-        { type: 'button', 'data-action': 'clear-clip', onClick: () => select?.(null) },
-        'clear clip',
-      ),
-      React_.createElement(
-        'button',
+// ASYNC factory with a real `import`, unlike the marker stubs above: this stub uses
+// a HOOK, and `require('react')` hands back the CJS copy of React whose hook
+// dispatcher is null under the ESM renderer ("Cannot read properties of null
+// (reading 'useEffect')"). `createElement` is a pure function and survives the
+// duplicate copy; `useEffect` does not.
+vi.mock('../features/VideoTimeline', async () => {
+  const React_ = await import('react');
+  return {
+    default: (props: Record<string, unknown>) => {
+      const select = props.onSelectClip as ((id: string | null) => void) | undefined;
+      const rendered = props.onRendered as ((path: string) => void) | undefined;
+      // FIDELITY, not decoration. The real panel holds `selected` internally
+      // (VideoTimeline.tsx:135) and publishes it from an effect (:145-147), so
+      // EVERY mount reports `null` before the user has touched anything —
+      // including the remount a lane switch causes, because `renderLane()` returns
+      // a different element TYPE per lane (Workspace.tsx:474-505). A stub without
+      // this effect cannot reproduce that report, and the Export-after-a-lane-
+      // switch defect below shipped under exactly that blind spot.
+      React_.useEffect(() => {
+        select?.(null);
+      }, [select]);
+      return React_.createElement(
+        'div',
         {
-          type: 'button',
-          'data-action': 'finish-render',
-          onClick: () => rendered?.('D:/out/timeline.mp4'),
+          'data-panel': 'VideoTimeline',
+          'data-videoid': String(props.videoId ?? ''),
+          'data-sourcepath': String(props.sourcePath ?? ''),
+          'data-duration': String(props.sourceDurationSec ?? ''),
         },
-        'finish render',
-      ),
-    );
-  },
-}));
+        React_.createElement(
+          'button',
+          { type: 'button', 'data-action': 'select-clip', onClick: () => select?.('c1') },
+          'select clip',
+        ),
+        React_.createElement(
+          'button',
+          { type: 'button', 'data-action': 'clear-clip', onClick: () => select?.(null) },
+          'clear clip',
+        ),
+        React_.createElement(
+          'button',
+          {
+            type: 'button',
+            'data-action': 'finish-render',
+            onClick: () => rendered?.('D:/out/timeline.mp4'),
+          },
+          'finish render',
+        ),
+      );
+    },
+  };
+});
 
 import {
   Workspace,
@@ -868,6 +885,20 @@ describe('the inspector follows the selection (L5 G-5)', () => {
     expect(tabEl('gaze')?.getAttribute('aria-selected')).toBe('true');
   });
 
+  it('drops a CLIP-scoped pin when the clip it belongs to goes away', async () => {
+    // The other half of the rule: a vanished clip invalidates a pin that only
+    // makes sense WITH a clip, and nothing else. (A project pin surviving the same
+    // report is what the Export-from-the-caption-lane test asserts.)
+    await render();
+    await clickEl(dockAction('select-clip'));
+    await clickEl(tabEl('speed'));
+    expect(container.querySelector('[data-panel="Speed"]')).not.toBeNull();
+
+    await clickEl(dockAction('clear-clip'));
+    expect(selectionLabel()).toBe('Project');
+    expect(inspectorTabIds()).toEqual([...WORKSPACE_INSPECTOR_SECTIONS.project]);
+  });
+
   it('lets a real selection change take over from a pinned deep-link', async () => {
     await render({ initialTab: 'gaze' });
     await clickEl(tabEl('captions'));
@@ -929,5 +960,39 @@ describe('Workspace Export affordance (design-review P1)', () => {
     expect(container.querySelector('[data-panel="Convert"]')).not.toBeNull();
     expect(tabEl('convert')?.getAttribute('aria-selected')).toBe('true');
     expect(selectionLabel()).toBe('Project');
+  });
+
+  // The test above starts on the video lane, which is the ONE case where Export
+  // does not remount the timeline — so "from any selection" was one case, not any.
+  it('lands on Convert from the caption lane too, where Export remounts the dock', async () => {
+    await render();
+    await clickEl(dockAction('select-clip'));
+    // Leave the video lane: `renderLane()` swaps the element type, unmounting the
+    // timeline. Export switches the lane BACK, so a fresh panel mounts and reports
+    // `null` — a report that used to clear the pin the same click had just set and
+    // dropped the inspector onto `sections[0]`, Transcribe.
+    await clickEl(tabEl('captions'));
+    expect(selectionLabel()).toBe('Caption cues');
+
+    await clickEl(container.querySelector('button.workspace__export'));
+    expect(container.querySelector('[data-panel="Convert"]')).not.toBeNull();
+    expect(container.querySelector('[data-panel="Transcribe"]')).toBeNull();
+    expect(tabEl('convert')?.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('gives the clip inspector back when the same clip is picked again', async () => {
+    // Export pins a PROJECT panel while the clip stays selected in the timeline
+    // (`tracks.video.list` auto-seeds ONE whole-source clip, so "pick a different
+    // clip" is usually not even available). Re-picking that clip is the gesture a
+    // user reaches for, so a report of the SAME id must drop a pin belonging to
+    // another context instead of being swallowed as "no change".
+    await render();
+    await clickEl(dockAction('select-clip'));
+    await clickEl(container.querySelector('button.workspace__export'));
+    expect(selectionLabel()).toBe('Project');
+
+    await clickEl(dockAction('select-clip'));
+    expect(selectionLabel()).toBe('Selected clip');
+    expect(container.querySelector('[data-panel="ReframeCorrect"]')).not.toBeNull();
   });
 });

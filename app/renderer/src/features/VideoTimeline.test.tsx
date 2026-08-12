@@ -869,4 +869,25 @@ describe('Q7: status/progress semantics and selection reporting', () => {
     await click(clipEl('c1'));
     expect(onSelectClip).toHaveBeenLastCalledWith('c1');
   });
+
+  it('re-reports a clip the user picks again, even though the id has not changed', async () => {
+    // A host can PIN a panel of another scope over the clip inspector (the
+    // workspace Export button does exactly that). The clip is still selected here,
+    // so re-picking it is the user asking for its tools back — and the host can
+    // only honour that if the gesture reaches it. Holding the selection as a bare
+    // `string | null` swallowed it: React bails out on an identical value, so the
+    // publish effect never re-fired.
+    const fake = makeFakeApi();
+    const onSelectClip = vi.fn<(id: string | null) => void>();
+    (globalThis as { api?: unknown }).api = fake.api;
+    await act(async () => {
+      root.render(<VideoTimeline videoId="v1" onSelectClip={onSelectClip} />);
+    });
+    await click(clipEl('c1'));
+    const afterFirstPick = onSelectClip.mock.calls.length;
+
+    await click(clipEl('c1'));
+    expect(onSelectClip.mock.calls.length).toBe(afterFirstPick + 1);
+    expect(onSelectClip).toHaveBeenLastCalledWith('c1');
+  });
 });

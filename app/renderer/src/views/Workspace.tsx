@@ -281,12 +281,33 @@ export function Workspace({
 
   /**
    * Q7: the timeline reports its selection, so the inspector follows the real
-   * editing surface instead of a separate switch. The ref guard makes the
-   * mount-time `null` report (the panel's initial state, not a user action) a
-   * no-op, so it cannot wipe a deep-link the user has not interacted with yet.
+   * editing surface instead of a separate switch.
+   *
+   * Two reports are NOT user actions and must not be treated as one:
+   *   * the mount-time `null` from a panel nobody has touched — the ref guard
+   *     keeps that a no-op so it cannot wipe a deep-link;
+   *   * the same `null` after a REMOUNT. `renderLane()` returns a different
+   *     element TYPE per lane, so leaving and re-entering the video lane rebuilds
+   *     the panel and it re-reports `null` (VideoTimeline.tsx:145-147). Clearing
+   *     `sectionPref` on that report sent `handleExport` — which switches the lane
+   *     back to 'video' — to `sections[0]` (Transcribe) instead of Convert. A
+   *     vanished clip only invalidates a pin that is CLIP-scoped; a project / cue
+   *     / audio pin is about something else and survives.
+   * Conversely a NON-null report is a user gesture even when the id is unchanged:
+   * after Export pins a project panel the clip is still selected, so re-picking it
+   * is the obvious way back to its tools and must drop the pin (VideoTimeline
+   * re-publishes a re-pick precisely so this can work).
    */
   const handleSelectClip = useCallback((id: string | null) => {
-    if (clipRef.current === id) return;
+    if (id === null) {
+      if (clipRef.current === null) return;
+      clipRef.current = null;
+      setClipId(null);
+      setSectionPref((pref) =>
+        pref !== null && workspacePanelHome(pref) === 'clip' ? null : pref,
+      );
+      return;
+    }
     clipRef.current = id;
     setClipId(id);
     setSectionPref(null);

@@ -132,7 +132,18 @@ export function VideoTimeline({
   const [busy, setBusy] = useState<Busy>('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
+  /**
+   * The selected clip, held as an OBJECT so that every set is a distinct selection
+   * EVENT. A host may PIN a panel of another scope over the clip inspector (the
+   * workspace's Export button does exactly that) while this clip stays selected;
+   * re-picking it is then the user asking for its tools back, and the host can only
+   * honour that if the gesture reaches it. A bare `string | null` cannot express it
+   * — React bails out on an identical value, so the publish effect never re-fired
+   * and the click looked like a no-op.
+   */
+  const [pick, setPick] = useState<{ id: string | null }>({ id: null });
+  const selected = pick.id;
+  const setSelected = (id: string | null): void => setPick({ id });
   const [playhead, setPlayhead] = useState(0);
   const [pct, setPct] = useState(0);
 
@@ -142,9 +153,11 @@ export function VideoTimeline({
   // Q7: publish the selection. ONE effect rather than a call at each `setSelected`
   // site (there are three: clip click, drag start, and the post-commit clear) —
   // a per-site call is the shape that goes stale the moment a fourth is added.
+  // The dependency is the `pick` OBJECT, not the id: that is what makes a re-pick
+  // of the already-selected clip publish again (see the state's own note).
   useEffect(() => {
-    onSelectClip?.(selected);
-  }, [onSelectClip, selected]);
+    onSelectClip?.(pick.id);
+  }, [onSelectClip, pick]);
 
   // -- load ------------------------------------------------------------------
   /**
