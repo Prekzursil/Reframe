@@ -122,13 +122,17 @@
   gap: var(--space-3);
 }
 
-.skeleton--title {
+/* Scoped under .skeleton-group deliberately: these override `border-radius` from
+   the .skeleton base (shell.css:634), and a bare `.skeleton--line` would tie it on
+   specificity — leaving the winner to bundle order. The bars are only ever emitted
+   inside a group, so the descendant selector costs nothing and settles it. */
+.skeleton-group .skeleton--title {
   height: 14px;
   width: 38%;
   border-radius: var(--radius-pill);
 }
 
-.skeleton--line {
+.skeleton-group .skeleton--line {
   height: 10px;
   width: 100%;
   border-radius: var(--radius-pill);
