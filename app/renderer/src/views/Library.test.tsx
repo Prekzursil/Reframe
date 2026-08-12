@@ -1068,6 +1068,11 @@ describe('Library readiness surface (Q3 — chip deleted, not relocated)', () =>
   it('renders no capabilities chip and no "N of M installed" counter', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
+    // POSITIVE CONTROL first. Three `not`-assertions follow, and every one of them
+    // would pass vacuously against an empty container — i.e. they would also
+    // "prove" the chip is gone if the whole view had failed to render. Anchor them
+    // to a landmark that must be present for the absence to mean anything.
+    expect(container.querySelector('.library__title')).not.toBeNull();
     expect(container.querySelector('.capabilities-chip')).toBeNull();
     expect(container.textContent).not.toContain('Capabilities:');
     expect(container.textContent).not.toMatch(/\d+ of \d+ installed/);
@@ -1103,6 +1108,8 @@ describe('Library readiness surface (Q3 — chip deleted, not relocated)', () =>
     });
     await flush();
 
+    // Positive control (see the first pin): the view really did render.
+    expect(container.querySelector('.library__title')).not.toBeNull();
     // There is no disclosure left to expand...
     expect(container.querySelector('.capabilities-chip__toggle')).toBeNull();
     // ...so no readiness action button can be reached from here at all...
