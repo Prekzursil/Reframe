@@ -346,8 +346,8 @@ describe('waitForJobDone', () => {
 // ---- Q6: the crash/hang voice must not leak developer vocabulary ----------
 // `waitForJobDone` is the ONE shared wait behind every deferred-job panel, and
 // both messages it authors itself are rendered VERBATIM inside role="alert".
-// They must use the product noun the rest of the UI already renders — "the
-// engine" (AudioMix.tsx:377, BrollPanel.tsx:202,980) — never the internal
+// They must use the product noun the rest of the UI already RENDERS — "the
+// engine" (AudioMix.tsx:377, BrollPanel.tsx:204,:407,:984) — never the internal
 // process name. Deliberately scoped to these two strings: a blanket /sidecar/i
 // ban across the file would also hit `onSidecarStatus`, `SidecarStatus` and the
 // CSS class names, which are CODE, not copy. Note this is the CRASH/HANG voice

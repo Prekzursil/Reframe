@@ -159,11 +159,21 @@ export function SidecarBanner(): React.ReactElement | null {
   return (
     <div className="sidecar-banner" role="alert" aria-live="assertive">
       {/* USER-FACING COPY: "the engine" is the noun the rest of the UI already
-          renders (AudioMix.tsx:377, BrollPanel.tsx:202,980). This banner is
-          role="alert" aria-live="assertive" and mounted app-wide, so it is the
-          loudest string in the product — the internal process name must not
-          appear here. The `sidecar-banner*` CLASS NAMES are deliberately
-          unchanged: they are code, not copy, and shell.css depends on them. */}
+          RENDERS (AudioMix.tsx:377, BrollPanel.tsx:204,:407,:984 — earlier
+          revisions of this note cited BrollPanel.tsx:202,980, which are a JSDoc
+          and a JSX comment, not copy). This banner is role="alert"
+          aria-live="assertive" and mounted app-wide, so it is the loudest string
+          in the product — the internal process name must not appear here. The
+          `sidecar-banner*` CLASS NAMES are deliberately unchanged: they are
+          code, not copy, and shell.css depends on them.
+          KNOWN AMBIGUITY (disclosed, not resolved — the term is brief-locked):
+          "engine" is overloaded in this product's copy. features/
+          AiDisclosure.tsx:151 ("Chatterbox — the engine selected above"),
+          features/ExportPresetsPanel.tsx:324 (<th>Engine</th>), features/
+          SystemHealth.tsx:184 (<h3>Engines</h3>) and the "ASR engine" <select>
+          at panels/ModelsSystemPanel.tsx:1121-1126 all denote a USER-SELECTED
+          model backend, so this string can be read as "the dub/ASR engine I
+          picked stopped". Renaming is out of scope here; see the PR body. */}
       <span className="sidecar-banner__message">
         {restarting ? 'Restarting the engine…' : 'The engine stopped'}
       </span>

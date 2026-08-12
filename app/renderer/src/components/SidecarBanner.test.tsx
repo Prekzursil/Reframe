@@ -104,6 +104,17 @@ function restartBtn(): HTMLButtonElement | null {
   return container.querySelector('.sidecar-banner__action');
 }
 
+/**
+ * The message span ALONE, so the Q6 copy can be pinned with an exact `toBe`.
+ * `banner()` also contains the Restart button, whose label would force a
+ * substring assertion — and a substring assertion is exactly what let a copy
+ * mutation through: dropping the trailing ellipsis and appending "!" left all
+ * 21 tests in this file green (measured 2026-08-12).
+ */
+function bannerMessage(): Element | null {
+  return container.querySelector('.sidecar-banner__message');
+}
+
 function repairBtn(): HTMLButtonElement | null {
   return container.querySelector('[data-action="repair"]');
 }
@@ -142,16 +153,22 @@ describe('SidecarBanner', () => {
   // ---- Q6: the loudest copy in the product ---------------------------------
   // This banner is mounted app-wide with role="alert" aria-live="assertive", so
   // its message is read out the moment the engine dies. It must speak the noun
-  // the rest of the UI already renders ("the engine"), never the internal
-  // process name. The `sidecar-banner` CSS class stays exactly as-is on purpose:
-  // that is code, and the assertion below reads textContent, not markup.
+  // the rest of the UI already RENDERS — "the engine" (AudioMix.tsx:377,
+  // BrollPanel.tsx:204,:407,:984) — never the internal process name. The
+  // `sidecar-banner` CSS class stays exactly as-is on purpose: that is code, and
+  // the assertions below read textContent, not markup.
+  //
+  // EXACT, not substring. A `toContain` here is not a pin: dropping the trailing
+  // ellipsis and appending "!" to the other string left all 21 tests in this
+  // file green (measured 2026-08-12). `bannerMessage()` isolates the copy from
+  // the Restart button label so `toBe` can carry the whole string.
   it('names "the engine", not "sidecar", in the down + restarting copy', () => {
     mount();
     pushStatus('down');
-    expect(banner()!.textContent).toContain('The engine stopped');
+    expect(bannerMessage()!.textContent).toBe('The engine stopped');
     expect(banner()!.textContent).not.toMatch(/sidecar/i);
     pushStatus('restarting');
-    expect(banner()!.textContent).toContain('Restarting the engine');
+    expect(bannerMessage()!.textContent).toBe('Restarting the engine…');
     expect(banner()!.textContent).not.toMatch(/sidecar/i);
   });
 
