@@ -10,7 +10,7 @@ vi.mock('../components/api', () => ({
   hasApi: () => true,
 }));
 
-import { LibraryCard } from './LibraryCard';
+import { LibraryCard, type DeliverMenu } from './LibraryCard';
 import type { LibraryVideo } from './libraryModel';
 import { videoThumbnailSrc } from '../components/useVideoThumbnail';
 
@@ -74,6 +74,7 @@ interface Over {
   shortsCount?: number;
   onOpenShorts?: (v: LibraryVideo) => void;
   provenance?: ReturnType<typeof provenanceHandlers>;
+  deliver?: DeliverMenu;
 }
 
 async function renderCard(over: Over = {}): Promise<void> {
@@ -90,6 +91,7 @@ async function renderCard(over: Over = {}): Promise<void> {
           shortsCount={over.shortsCount ?? 0}
           onOpenShorts={over.onOpenShorts ?? (() => {})}
           provenance={over.provenance}
+          deliver={over.deliver}
         />
       </ul>,
     );
@@ -103,14 +105,38 @@ describe('LibraryCard', () => {
     const open = container.querySelector('.library__item-open') as HTMLButtonElement;
     expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript');
     expect(container.querySelector('.library__item-title')?.textContent).toBe('Talk');
-    expect(container.querySelector('.library__item-added')?.textContent).toBe('Added 2026-06-11');
+    // The quiet meta line now leads with the source container (derived from the
+    // path extension — the ONLY format signal the frozen Video contract carries).
+    expect(container.querySelector('.library__item-added')?.textContent).toBe(
+      'MP4 · Added 2026-06-11',
+    );
     const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/v1.jpg'));
     expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
   });
 
-  it('omits the added line when the timestamp is unparseable', async () => {
+  it('keeps the format on the meta line when the timestamp is unparseable', async () => {
     await renderCard({ video: makeVideo({ addedAt: 'nope' }) });
+    expect(container.querySelector('.library__item-added')?.textContent).toBe('MP4');
+  });
+
+  it('shows the date alone when the path carries no usable extension', async () => {
+    await renderCard({ video: makeVideo({ path: '/movies/talk' }) });
+    expect(container.querySelector('.library__item-added')?.textContent).toBe('Added 2026-06-11');
+  });
+
+  it('omits the meta line entirely when neither format nor date is known', async () => {
+    await renderCard({ video: makeVideo({ path: '/movies/talk', addedAt: 'nope' }) });
+    expect(container.querySelector('.library__item-added')).toBeNull();
+  });
+
+  it('ignores a dot that is not a real extension (dotted directory, no basename dot)', async () => {
+    await renderCard({ video: makeVideo({ path: 'C:\\my.videos\\talk', addedAt: 'nope' }) });
+    expect(container.querySelector('.library__item-added')).toBeNull();
+  });
+
+  it('ignores an implausibly long extension rather than shouting it', async () => {
+    await renderCard({ video: makeVideo({ path: '/movies/talk.backupcopy', addedAt: 'nope' }) });
     expect(container.querySelector('.library__item-added')).toBeNull();
   });
 
@@ -239,5 +265,123 @@ describe('LibraryCard', () => {
     expect(rpcMock).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
     expect(container.querySelector('img.library__thumb-img')).toBeNull();
     expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+  });
+
+  // ---- v1.5b: the card's PRIMARY action is visible, and Remove stops being the
+  // only labelled verb on the card (the "no primary action" finding).
+
+  it('paints a visible Open call-to-action inside the primary button', async () => {
+    await renderCard();
+    const cta = container.querySelector('.library__item-cta');
+    expect(cta?.textContent).toBe('Open');
+    // The CTA is DECORATION for the button that already owns the accessible name,
+    // so it must not be announced a second time...
+    expect(cta?.getAttribute('aria-hidden')).toBe('true');
+    // ...and it must live INSIDE the open button (never a sibling control, which
+    // would add a second tab stop to every card).
+    expect(container.querySelector('.library__item-open .library__item-cta')).not.toBeNull();
+    expect(cta?.tagName).toBe('SPAN');
+  });
+
+  it('matches the visible CTA verb to the action in lineage view', async () => {
+    await renderCard({ lineageView: true });
+    expect(container.querySelector('.library__item-cta')?.textContent).toBe('Show history');
+  });
+
+  it('demotes Remove to an icon-only control so it is not the primary action peer', async () => {
+    await renderCard();
+    const remove = container.querySelector('.library__remove-btn') as HTMLButtonElement;
+    // No visible verb: the glyph carries no text label, the name is on aria-label.
+    expect(remove.textContent).toBe('×');
+    expect(remove.getAttribute('aria-label')).toBe('Remove Talk');
+    expect(remove.getAttribute('title')).toBe('Remove');
+    expect(remove.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  // ---- v1.5b: the overflow menu — Deliver deep-links, never a second converter.
+
+  it('renders no overflow menu when no Deliver shortcuts are wired', async () => {
+    await renderCard();
+    expect(container.querySelector('.library__card-menu')).toBeNull();
+  });
+
+  it('renders no overflow menu when the shortcut list is empty', async () => {
+    await renderCard({ deliver: { shortcuts: [], onSelect: vi.fn() } });
+    expect(container.querySelector('.library__card-menu')).toBeNull();
+  });
+
+  it('keeps the overflow panel mounted-but-hidden at rest so aria-controls resolves', async () => {
+    await renderCard({
+      deliver: { shortcuts: [{ id: 'convert', label: 'Convert…' }], onSelect: vi.fn() },
+    });
+    const trigger = container.querySelector('.library__card-menu-trigger') as HTMLButtonElement;
+    const panel = container.querySelector('.library__card-menu-panel') as HTMLDivElement;
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(trigger.getAttribute('aria-haspopup')).toBe('true');
+    expect(trigger.getAttribute('aria-label')).toBe('More actions for Talk');
+    expect(panel).not.toBeNull();
+    expect(panel.hidden).toBe(true);
+    expect(trigger.getAttribute('aria-controls')).toBe(panel.id);
+    expect(panel.id).not.toBe('');
+  });
+
+  it('opens the overflow menu and deep-links a shortcut into Deliver pre-filled', async () => {
+    const onSelect = vi.fn();
+    await renderCard({
+      deliver: {
+        shortcuts: [
+          { id: 'convert', label: 'Convert…' },
+          { id: 'nle', label: 'Send to editor…' },
+        ],
+        onSelect,
+      },
+    });
+    const trigger = container.querySelector('.library__card-menu-trigger') as HTMLButtonElement;
+    act(() => {
+      trigger.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const panel = container.querySelector('.library__card-menu-panel') as HTMLDivElement;
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(panel.hidden).toBe(false);
+
+    const items = [...container.querySelectorAll('.library__card-menu-item')];
+    expect(items.map((i) => i.textContent)).toEqual(['Convert…', 'Send to editor…']);
+
+    act(() => {
+      (items[1] as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    // The card hands Deliver the WHOLE source video + which preset to pre-fill; it
+    // never converts anything itself.
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0][0].id).toBe('v1');
+    expect(onSelect.mock.calls[0][1]).toBe('nle');
+    // Choosing an item closes the menu (a shortcut, not a sticky panel).
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect((container.querySelector('.library__card-menu-panel') as HTMLDivElement).hidden).toBe(
+      true,
+    );
+  });
+
+  it('closes the overflow menu when the trigger is pressed again', async () => {
+    await renderCard({
+      deliver: { shortcuts: [{ id: 'convert', label: 'Convert…' }], onSelect: vi.fn() },
+    });
+    const trigger = container.querySelector('.library__card-menu-trigger') as HTMLButtonElement;
+    act(() => {
+      trigger.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    act(() => {
+      trigger.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps the overflow trigger a SIBLING of the open button (no nested interactive)', async () => {
+    await renderCard({
+      deliver: { shortcuts: [{ id: 'convert', label: 'Convert…' }], onSelect: vi.fn() },
+    });
+    expect(container.querySelector('.library__item-open .library__card-menu')).toBeNull();
+    expect(container.querySelector('.library__item-open button')).toBeNull();
   });
 });
