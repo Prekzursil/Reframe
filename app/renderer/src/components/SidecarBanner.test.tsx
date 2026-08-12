@@ -470,6 +470,11 @@ describe('the Q6 notes carry no token-count absolute about a foreign stylesheet'
   const flatten = (name: string) =>
     readFileSync(join(DIR, name), 'utf8').replace(/\/\//g, ' ').replace(/\s+/g, ' ');
 
+  // SCOPE, disclosed: this scan covers the TWO files that carried the absolute,
+  // not the tree, so a recurrence in a third file is NOT caught. The narrow list
+  // is deliberate — it is the surface this lane owns, and a tree-wide prose scan
+  // would fail on other lanes' notes. Settling experiment: widen the list, or
+  // walk renderer/src recursively and allowlist instead.
   it('fires on the wording it forbids (detector control)', () => {
     // Both-states: a matcher silent on the known-bad input measures nothing, so
     // its silence on the corrected files would prove nothing either.
