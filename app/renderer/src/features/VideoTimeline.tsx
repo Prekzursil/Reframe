@@ -143,7 +143,9 @@ export function VideoTimeline({
    */
   const [pick, setPick] = useState<{ id: string | null }>({ id: null });
   const selected = pick.id;
-  const setSelected = (id: string | null): void => setPick({ id });
+  // Memoised because `removeClip` captures it inside a `useCallback` that does not
+  // list it: a stable identity keeps that closure honest rather than merely harmless.
+  const setSelected = useCallback((id: string | null): void => setPick({ id }), []);
   const [playhead, setPlayhead] = useState(0);
   const [pct, setPct] = useState(0);
 
