@@ -946,7 +946,13 @@ describe('L5 rail: exactly four destinations plus Settings', () => {
     // `min-height: 0` is what lets the row shrink below its content instead of
     // pushing the destination past the 820px window (jsdom keeps it unitless).
     expect(panel.style.minHeight).toBe('0');
-    // exactly one child, which is what makes one 1fr row the whole story
+    // Exactly one child, which is what makes one 1fr row the whole story — but this
+    // file mocks all eight views, so what is asserted HERE is a stub. RESCOPED: the
+    // fact was verified separately by inspection of the six real mode-hosted views
+    // (Edit, Caption, Deliver, Export, MakeShorts, Director) — each has a
+    // single-element root, MakeShorts' fragment being nested at MakeShorts.tsx:347
+    // inside a conditional rather than at its root. A fragment root there would land
+    // extra children in implicit auto rows, which is the one way `1fr` regresses.
     expect(panel.children).toHaveLength(1);
   });
 
