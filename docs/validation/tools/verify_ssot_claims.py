@@ -462,6 +462,21 @@ check(
 # :78-81), predate this branch, and are left for a sweep that can re-derive each true
 # anchor.
 #
+# SCOPE OF THE CITING SIDE, corrected 2026-08-12 at `1ad80ce8` — this check is
+# ONE-DIRECTIONAL and the first wording of it did not say so. The citing-side scan is
+# `ROOT.glob("docs/**/*.md")`, so it covers docs->docs only. Citations FROM application source
+# INTO docs are covered by nothing: `.quality/docs_check.py`'s r2 validates that the cited PATH
+# resolves and never looks at the line number. MEASURED over `app/` + `sidecar/` at this commit:
+# 30 `docs/<file>.md:<N>` citations exist, 6 of them land on a `>` line. Those 6 are NOT
+# asserted to be defects — on the citing side a `>` line can be the retraction someone MEANT to
+# cite (`app/renderer/src/features/ReframeCorrect.tsx` cites `docs/plans/v1.5/SCOPE.md:47-74`
+# precisely because
+# the retraction there records the prerequisite as BUILT), which is the same use-vs-mention trap
+# in mirror image, so a blocking blockquote rule on code would manufacture false positives. The
+# decidable subclass is split out into `C13-code-anchor` below; the judgement-call subclass is
+# reported to the owner instead of guessed at here. Settling experiment for the full surface:
+# `git grep -nE "docs/[A-Za-z0-9_./-]+\.md:[0-9]+" -- app sidecar`.
+#
 # `_live_text` on the CITING side, for the reason C9b/C11b already establish and which this
 # check re-proved on itself: the first draft went red on the retraction note that names the
 # rotted anchor in order to retire it. The note is a MENTION. The cost is the same known
@@ -493,6 +508,55 @@ check(
     _cites_checked > 0 and not _rotted_cites,
     f"resolvable docs->docs line citations={_cites_checked}, landing on a blockquote "
     f"(retraction) line={len(_rotted_cites)}: {_rotted_cites or 'none'}",
+)
+
+# INVARIANT (new): the OTHER direction — a `docs/<file>.md:<N>` citation written in application
+# source — must at least resolve. Only the mechanically decidable half is asserted here: the
+# target file exists and N is within it. "Does N still point at the right paragraph" is NOT
+# decidable and is deliberately left out (see the mirror-image use-vs-mention note above). This
+# is still worth pinning: `.quality/docs_check.py` r2 checks the PATH and never the line, so a
+# doc that SHRINKS below a cited line number currently rots silently in both gates, and a
+# citation is the one thing in this corpus that is supposed to survive a doc edit. Fail-closed on
+# an empty walk, per the no-op-gate rule — a zero here means the glob broke, not that the tree is
+# clean. Both-states control, run before shipping by slicing this block verbatim out of this file
+# and replaying it against two trees (nothing under `app/` or `sidecar/` was written): on the live
+# tree it printed `code->docs line citations=30, unresolvable=0` and held; on a synthetic tree
+# whose first source file cites line 9999 of a two-line target and whose second cites a target
+# file that was never created, it went red with exactly one OUT-OF-RANGE and one TARGET-MISSING.
+# (Those two synthetic paths are described rather than written out, because writing them would
+# make THIS comment an unresolvable citation and `.quality/docs_check.py` r2 correctly fails on
+# it — measured, on the first draft of this comment.) A silence this check has never broken is
+# not evidence, so that control is the reason it ships.
+_CODE_EXT = {".ts", ".tsx", ".js", ".mjs", ".css", ".py"}
+_code_cite_bad: list[str] = []
+_code_cites = 0
+for _sub in ("app", "sidecar"):
+    for _cp in sorted((ROOT / _sub).rglob("*")):
+        if _cp.suffix not in _CODE_EXT or not _cp.is_file():
+            continue
+        if "node_modules" in _cp.parts or "dist" in _cp.parts or "release" in _cp.parts:
+            continue
+        try:
+            _cbody = _cp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for _cm in _CITE_RE.finditer(_cbody):
+            _ctgt, _cn = _cm.group(1), int(_cm.group(2))
+            _crel = _cp.relative_to(ROOT).as_posix()
+            _code_cites += 1
+            if not (ROOT / _ctgt).is_file():
+                _code_cite_bad.append(f"{_crel} -> {_ctgt}:{_cn} TARGET-MISSING")
+                continue
+            if _ctgt not in _target_lines:
+                _target_lines[_ctgt] = (ROOT / _ctgt).read_text(encoding="utf-8", errors="replace").splitlines()
+            if not 1 <= _cn <= len(_target_lines[_ctgt]):
+                _code_cite_bad.append(f"{_crel} -> {_ctgt}:{_cn} OUT-OF-RANGE")
+check(
+    "C13-code-anchor",
+    True,
+    _code_cites > 0 and not _code_cite_bad,
+    f"code->docs line citations={_code_cites} (0 would mean the walk broke, not a clean tree), "
+    f"unresolvable={len(_code_cite_bad)}: {_code_cite_bad or 'none'}",
 )
 
 # ---------------------------------------------------- C9 keystore / consent gate
@@ -562,9 +626,29 @@ check("C11a", True, not _broll_missing, f"B-roll engine+UI on disk (missing: {_b
 # as "… and a publishing scheduler for v1.5. Also B-roll, still deferred." and the window
 # collapses at `v1`, so the re-listed B-roll falls outside it and C11b reports green over
 # the exact regression it exists to catch. Splitting the LIVE text on blank lines first and
-# taking the remainder of the matching paragraph has no such escape: a version literal, a
-# file name and an abbreviation are all interior to the paragraph. Strictly wider than the
-# old window, so it cannot introduce a false negative the old one did not already have.
+# taking the remainder of the matching paragraph closes that escape: a version literal, a file
+# name and an abbreviation are all interior to the paragraph.
+#
+# CORRECTED 2026-08-12 at `1ad80ce8`. This comment used to end "Strictly wider than the old
+# window, so it cannot introduce a false negative the old one did not already have." That was
+# REFUTED by measurement and is the overclaim this file exists to catch, in the file itself. The
+# two windows differ in KIND, not in width — the old one ran over the ALREADY-FLATTENED roadmap,
+# where paragraph breaks are spaces, so it could cross a paragraph boundary; this one cannot. So
+# it is a TRADE, and both directions are real. Both-directions probe, same synthetic roadmap,
+# old-vs-new: (B) "… a publishing scheduler for v1.5. Also B-roll, still deferred." -> old
+# window collapses at `v1` and reports GREEN, new window goes RED = NEW-CATCHES. (C) a deferred
+# list with NO terminating period and `Also B-roll.` in the FOLLOWING paragraph -> old window
+# reads "… a publishing scheduler Also B-roll" and goes RED, new window stops at the paragraph
+# break and reports GREEN = NEW-MISSES. The trade is taken deliberately: (B) is the realistic
+# regression (someone re-adds B-roll to the list itself) and (C) requires a re-listing outside
+# the paragraph the list lives in.
+#
+# Known limit, stated rather than hidden: a B-roll re-listing that sits outside the
+# `yet shipped:` paragraph but still under `## Still deferred` escapes C11b, and C11c cannot
+# backstop it because C11c skips `docs/ROADMAP.md` by design (see its loop below). Settling
+# experiment: add that paragraph to `docs/ROADMAP.md` and confirm C11b stays green. The fix, if
+# it ever matters, is to take the whole `## Still deferred` SECTION instead of the one
+# paragraph — a behaviour change this pass did not measure, so it is recorded, not applied.
 _live_roadmap = _live_text(roadmap)
 _para = next((p for p in re.split(r"\n\s*\n", _live_roadmap) if "yet shipped:" in p), "")
 _deferred_sentence = re.sub(r"\s+", " ", _para.split("yet shipped:", 1)[1]).strip() if _para else ""
