@@ -296,7 +296,16 @@ export function Workspace({
    * Conversely a NON-null report is a user gesture even when the id is unchanged:
    * after Export pins a project panel the clip is still selected, so re-picking it
    * is the obvious way back to its tools and must drop the pin (VideoTimeline
-   * re-publishes a re-pick precisely so this can work).
+   * re-publishes a re-pick precisely so this can work). But "unchanged id" is NOT
+   * always a re-pick: `startDrag` (VideoTimeline.tsx:287) calls `setSelected(clip.id)`
+   * and is bound to onMouseDown on the clip BODY (:681) and on BOTH trim edges (:689,
+   * :695), so beginning a drag or a trim on the already-selected clip publishes its id
+   * too. Dropping a CLIP-scoped pin on those gestures tore down the panel the user was
+   * configuring — Speed / Eye contact / Auto B-roll, and `gaze` is the W19 likeness-
+   * attestation consent surface — losing its local state mid-gesture. So the pin is
+   * dropped only when it belongs to another context (Export's Convert, giving the clip
+   * inspector back) or when the clip genuinely CHANGED (a real selection change, after
+   * which the selection is authoritative again).
    */
   const handleSelectClip = useCallback((id: string | null) => {
     if (id === null) {
@@ -308,9 +317,12 @@ export function Workspace({
       );
       return;
     }
+    const previous = clipRef.current;
     clipRef.current = id;
     setClipId(id);
-    setSectionPref(null);
+    setSectionPref((pref) =>
+      pref !== null && previous === id && workspacePanelHome(pref) === 'clip' ? pref : null,
+    );
   }, []);
 
   // Q7: `tracks.video.render` really encodes a file; before this the only mount

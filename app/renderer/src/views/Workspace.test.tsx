@@ -129,6 +129,19 @@ vi.mock('../features/VideoTimeline', async () => {
           { type: 'button', 'data-action': 'clear-clip', onClick: () => select?.(null) },
           'clear clip',
         ),
+        // FIDELITY again: the real panel publishes a DIFFERENT id when a second clip
+        // is picked (VideoTimeline.tsx:679 click, :287 `startDrag`). Without this
+        // edge the stub can only ever report 'c1', so the "same id" and "different
+        // id" halves of the host's pin rule are indistinguishable from a test.
+        React_.createElement(
+          'button',
+          {
+            type: 'button',
+            'data-action': 'select-other-clip',
+            onClick: () => select?.('c2'),
+          },
+          'select other clip',
+        ),
         React_.createElement(
           'button',
           {
@@ -771,14 +784,26 @@ describe('L5 invariant: the timeline is docked, not navigated to', () => {
   // Refine DESTINATION reaches it through views/Edit.tsx, which still opens on its
   // Task Hub (Edit.tsx:69 `useState('hub')`, :163) unless a remembered choice
   // resumes into the workspace (lib/taskHub.ts:109, :111). So the destination-level
-  // invariant is NOT met on a first open, Edit.tsx is outside this lane's file
-  // scope, and no App-level suite closes the gap — measured: zero hits for
-  // `workspace__dock|VideoTimeline|TaskHub` across App.test.tsx and its three
-  // App.*.test.tsx siblings, which follows from App.test.tsx:59 mocking
-  // `./views/Edit` outright, so neither the real hub nor the real workspace is ever
-  // mounted beside the rail. The settling test, for whoever owns
-  // Edit.tsx next: assert `.workspace__dock [data-panel="VideoTimeline"]` after
-  // Library → open video with no intervening click.
+  // invariant is NOT met on a first open, and Edit.tsx is outside this lane's file
+  // scope.
+  //
+  // No App-level suite closes the gap either. RESCOPED: an earlier wording here
+  // attributed that to "App.test.tsx:59 mocking ./views/Edit outright", citing a grep
+  // for `workspace__dock|VideoTimeline|TaskHub` over the four App suites. Both halves
+  // were too wide, so the claim is restated with what actually measures it:
+  //   (1) MOCK SETS — App.test.tsx:59, App.caption.test.tsx and App.export.test.tsx
+  //       each mock './views/Edit', but App.director-state.test.tsx does NOT, and
+  //       app/renderer has no shared vitest setup module that could supply one. So
+  //       "all four are Edit-mocked" is false.
+  //   (2) NAVIGATION — App.director-state.test.tsx only drives Library and
+  //       Produce → Director, so the real Edit is never reached there.
+  // The grep does return zero hits, but it reads test SOURCE TEXT, not the rendered
+  // tree: a suite that DID mount the real Edit without naming it would also print
+  // zero. It is therefore not evidence for this claim on its own — the mock sets plus
+  // the navigation are.
+  // The settling test, for whoever owns Edit.tsx next: assert
+  // `.workspace__dock [data-panel="VideoTimeline"]` after Library → open video with
+  // no intervening click, and note it must go in a suite whose Edit mock is removed.
   it('shows the video timeline with zero navigation actions', async () => {
     await render();
     const dock = container.querySelector('.workspace__dock');
@@ -836,6 +861,47 @@ describe('L5 invariant: navigation cannot overflow the fixed 1280px window', () 
     // The 16-painted-tab strip and its scrollport are gone, not merely hidden.
     expect(container.querySelector('.tabbar--grouped')).toBeNull();
     expect(container.querySelector('.tabbar__tablist')).toBeNull();
+  });
+
+  // CROSS-SURFACE GUARD, re-established. This is NOT a red-first test — it pins the
+  // present painted set so a FUTURE change to it cannot land silently, and its
+  // detector strength was checked by mutation (drop one project section: the count
+  // and the id list both go red) rather than by a failing first run.
+  //
+  // Why it has to exist: `app/e2e/preview.spec.ts:221-234` records that its own
+  // hardcoded strip counts went stale and "merged four times over", and names a unit
+  // test — "pins the strip counts that the nightly e2e spec hardcodes" — as the only
+  // reason that nightly pair was not stale again. Base commit 360109c4 deleted that
+  // test along with the strip it measured. The surviving `toHaveLength(21)`
+  // assertions (this file, and the registry check above) pin the panel REGISTRY, not
+  // the painted strip the e2e reads, and `e2e.yml` is `workflow_dispatch` + cron with
+  // no `test:e2e` reference in `quality.yml`, so nothing else gates it at PR time.
+  it('pins the painted tab set that the nightly e2e spec counts', async () => {
+    await render();
+    const painted = Array.from(container.querySelectorAll('.tab')).map((el) =>
+      el.getAttribute('data-tab-id'),
+    );
+    // 12 = 3 dock lanes + the 9 project sections. App.tsx paints the 2 REFINE_MODES
+    // tabs around this view on the Refine/editor route (App.test.tsx owns that list),
+    // so the number `preview.spec.ts:235-236` reads for that route is 14 visible —
+    // not the 21 total / 16 visible it still hardcodes, and nothing is collapsed now
+    // so total and visible are the same number. Those two lines are BROKEN by this
+    // branch and are outside this lane's file scope: see the PR's scope-escape note.
+    expect(painted).toHaveLength(12);
+    expect(painted).toEqual([
+      ...WORKSPACE_DOCK_LANES.map((lane) => lane.id),
+      ...WORKSPACE_INSPECTOR_SECTIONS.project,
+    ]);
+    // The grouped-TabBar chrome is gone with the strip (TabBar.tsx:240-246 returns the
+    // flat branch before minting any of it), so every e2e selector reading it is dead
+    // until app/e2e is updated: preview.spec.ts:77, 197-199, 206, 242, 258, 298, 314.
+    for (const gone of ['.tabbar__advanced-toggle', '.tabbar__advanced-panel', '.tabbar__export']) {
+      expect(container.querySelector(gone)).toBeNull();
+    }
+    // `tracks` was behind that disclosure — `preview.spec.ts:217` asserts it HIDDEN.
+    // It is now a permanently visible project section, so that assertion inverts.
+    expect(tabEl('tracks')).not.toBeNull();
+    expect(tabEl('tracks')?.closest('[hidden]') ?? null).toBeNull();
   });
 
   it('grows a context vertically: the inspector list is a column in the stylesheet', () => {
@@ -1021,5 +1087,43 @@ describe('Workspace Export affordance (design-review P1)', () => {
     await clickEl(dockAction('select-clip'));
     expect(selectionLabel()).toBe('Selected clip');
     expect(container.querySelector('[data-panel="ReframeCorrect"]')).not.toBeNull();
+  });
+
+  // The re-pick above must NOT widen into "ANY report of the selected clip wipes the
+  // inspector", which is what the first version of it did. Publishing an unchanged id
+  // is not only a deliberate re-pick: `startDrag` (VideoTimeline.tsx:287) calls
+  // `setSelected(clip.id)` and is bound to onMouseDown on the clip BODY (:681) and on
+  // BOTH trim edges (:689, :695). So beginning a drag or a trim on the already-
+  // selected clip re-publishes its id, and dropping a CLIP-scoped pin there tears
+  // down the panel being configured mid-gesture, losing its local state. `gaze` is
+  // the W19 likeness-attestation consent surface, so that tear-down is a consent
+  // surface tear-down. The narrower rule — drop the pin only when it belongs to
+  // ANOTHER context, or when the clip really changed — keeps the test above green.
+  it('keeps a clip-scoped panel across a trim/drag re-report of the same clip', async () => {
+    await render();
+    await clickEl(dockAction('select-clip'));
+    await clickEl(tabEl('gaze'));
+    expect(container.querySelector('[data-panel="Gaze"]')).not.toBeNull();
+
+    // The same-id report a trim-edge mousedown produces in the real panel.
+    await clickEl(dockAction('select-clip'));
+    expect(tabEl('gaze')?.getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelector('[data-panel="Gaze"]')).not.toBeNull();
+    expect(container.querySelector('[data-panel="ReframeCorrect"]')).toBeNull();
+  });
+
+  it('drops a clip-scoped pin when a DIFFERENT clip is picked', async () => {
+    // The other half of the rule, and the reason it is not simply "clip pins are
+    // permanent": a new clip is a real selection change, so the inspector goes back
+    // to following the selection and opens on the context's first section.
+    await render();
+    await clickEl(dockAction('select-clip'));
+    await clickEl(tabEl('gaze'));
+    expect(container.querySelector('[data-panel="Gaze"]')).not.toBeNull();
+
+    await clickEl(dockAction('select-other-clip'));
+    expect(selectionLabel()).toBe('Selected clip');
+    expect(container.querySelector('[data-panel="ReframeCorrect"]')).not.toBeNull();
+    expect(container.querySelector('[data-panel="Gaze"]')).toBeNull();
   });
 });
