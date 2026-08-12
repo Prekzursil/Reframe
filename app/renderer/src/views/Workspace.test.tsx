@@ -681,6 +681,19 @@ describe('L5 invariant: all 21 panels stay reachable (reconcile, never drop)', (
   // is opened for real, through its own selection context, and its marker asserted
   // in the DOM. Deleting a `case` from renderPanel(), or dropping an id from the
   // mapping, turns exactly one of these red.
+  //
+  // SCOPE, because "all 21 reachable" is easy to state wider than the evidence: for
+  // the five CLIP-context panels this walk measures the MAPPING and the WIRING
+  // through a stub whose select-clip button is unconditional. The renderer half of
+  // real-app reachability IS measured, just not here — VideoTimeline.test.tsx drives
+  // a clip button on the REAL panel and asserts the host is told ("reports the
+  // selected clip to its host", "re-reports a clip the user picks again"). What
+  // neither suite measures is the sidecar end: that `tracks.video.list` auto-seeds
+  // lane 0 with the whole source (`video_tracks.py:595-612,653`) so there is always
+  // a clip to pick. That is CITED, not measured, and it matters because those five
+  // are the W17 / W19 / W16-UI consent surfaces the anti-ratchet note protects.
+  // Settling experiment: a Playwright walk that clicks a real clip in the docked
+  // timeline against the real sidecar and asserts the gaze / broll sections appear.
   const inspectorPanels: Array<[string, string]> = [
     ['transcribe', 'Transcribe'],
     ['search', 'SemanticSearch'],
