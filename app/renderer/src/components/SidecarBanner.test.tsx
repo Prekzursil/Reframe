@@ -409,8 +409,8 @@ describe('SidecarBanner', () => {
 // ---- Q6 citation pin: the class-name note must name a REAL dependent ---------
 // The copy note above the banner markup keeps the `sidecar-banner*` class names
 // out of the rename by asserting a stylesheet depends on them. That citation was
-// wrong, and it was wrong TWICE: it named `shell.css` (which contains zero
-// `sidecar` tokens) and the second occurrence was re-typed by the very commit
+// wrong, and it was wrong TWICE: it named `shell.css`, which does not key off
+// the class at all, and the second occurrence was re-typed by the very commit
 // whose job was to correct this comment's anchors. Nothing checks prose, so this
 // is the check — the stylesheet the sentence names is compared against the
 // stylesheets that measurably key off the class names. Scanning the source is
@@ -424,9 +424,10 @@ describe('the class-name citation in SidecarBanner.tsx names a real dependent', 
     .filter((name) => name.endsWith('.css'))
     .filter((name) => readFileSync(join(COMPONENTS, name), 'utf8').includes('sidecar-banner'));
 
-  // SCOPE, disclosed: the owner scan is this directory only. Measured
-  // 2026-08-12, SidecarBanner.css is the ONLY *.css in the repo containing
-  // `sidecar-banner`, so that is currently exhaustive; if a dependent rule ever
+  // SCOPE, disclosed: the owner scan is this directory only. Measured at
+  // 78c415c9 (origin/main) AND at this branch tip, SidecarBanner.css is the ONLY
+  // *.css in the repo containing `sidecar-banner`, so that is currently
+  // exhaustive at both revs; if a dependent rule ever
   // lands in another directory the citation becomes INCOMPLETE (not false) and
   // this pin would not catch it. Settling experiment: widen the scan to a
   // recursive walk of renderer/src.
@@ -444,5 +445,41 @@ describe('the class-name citation in SidecarBanner.tsx names a real dependent', 
     // silently measuring nothing.
     expect(cited).toHaveLength(1);
     expect(cited[0]).toBe(owners[0]);
+  });
+});
+
+// ---- Q6 staleness pin: no token-count absolute about a foreign stylesheet ----
+// The pin above fixed WHICH stylesheet the note names. It did not stop the note
+// carrying a second, unpinned absolute beside it — a count of `sidecar`
+// occurrences in shell.css. That count was measured true at the lane base
+// (1fa9a69f) and at the lane tip, and it is FALSE on current origin/main:
+// 78c415c9 added a `sidecar/media_studio/features/video_tracks.py` PATH inside a
+// CSS comment at shell.css:499, so the sentence goes stale the moment this
+// branch merges. The regex in the pin above reads only the
+// "<name>.css depends on them" phrase, so it structurally cannot catch that.
+// shell.css belongs to another lane; the fix is to stop counting in it at all.
+// This pin forbids the SHAPE and scans BOTH files that carried it — the note and
+// this file's own preamble — with whitespace flattened, because here the phrase
+// straddled a line break and a line-based `git grep` therefore missed it.
+describe('the Q6 notes carry no token-count absolute about a foreign stylesheet', () => {
+  const DIR = join(process.cwd(), 'renderer', 'src', 'components');
+  const STALE_COUNT = /\b(zero|no)\s+`?sidecar`?\s+tokens/i;
+  // Assembled from parts deliberately: as one literal this sample would match
+  // itself, and the file would report itself as an offender forever.
+  const FORBIDDEN = ['said shell.css, which contains ZERO', '`sidecar`', 'tokens'].join(' ');
+  const flatten = (name: string) =>
+    readFileSync(join(DIR, name), 'utf8').replace(/\/\//g, ' ').replace(/\s+/g, ' ');
+
+  it('fires on the wording it forbids (detector control)', () => {
+    // Both-states: a matcher silent on the known-bad input measures nothing, so
+    // its silence on the corrected files would prove nothing either.
+    expect(STALE_COUNT.test(FORBIDDEN)).toBe(true);
+  });
+
+  it('is clean in the note AND in this test file', () => {
+    const offenders = ['SidecarBanner.tsx', 'SidecarBanner.test.tsx'].filter((name) =>
+      STALE_COUNT.test(flatten(name)),
+    );
+    expect(offenders).toEqual([]);
   });
 });
