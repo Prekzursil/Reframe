@@ -62,9 +62,6 @@ OPEN_ITEMS = {
     "C1b",
     "C5a",
     "C5b",
-    "C8:--surface-deep",
-    "C8:--text-muted",
-    "C11",
     "P1-corpus",
 }
 
@@ -242,17 +239,71 @@ check(
 )
 
 # ------------------------------------------------------------------ C8 palette
+# INVARIANT (was two OPEN items, `C8:--surface-deep` and `C8:--text-muted`). Those
+# two PINNED one wrong value each and asserted the doc still carried it — a guard that
+# went green on the drift and would have gone green on ten more. `docs/INDEX.md` had
+# meanwhile measured the real surface at NINE of sixteen and filed it as "phase-2 item
+# 2.7, not done", so the count was known and unenforced. Generalised: a design doc may
+# not print a colour value that `tokens.css` does not define, and may not bind a token
+# NAME to a value `tokens.css` does not bind it to. Both directions are mechanically
+# decidable, so neither is left to a reader's diff (fan-out-contract C4).
 tokens = read("app/renderer/src/styles/tokens.css") or ""
-dd = read("docs/build/DESIGN-DIRECTION.md")
-PALETTE = [("--surface-deep", "#0b0d12", "#08090b"), ("--text-muted", "#adb4c2", "#7d8390")]
-for var, truth, doc_claim in PALETTE:
-    tok_ok = truth.lower() in tokens.lower()
-    doc_wrong = dd is not None and doc_claim.lower() in dd.lower()
+# `#rrggbb` plus the FULL four-argument rgba form. The abbreviated `rgba(.14)` spelling
+# `docs/design-system.md` uses for the accent washes names an ALPHA, not a colour, so
+# requiring three numeric channels first is what keeps it out of the comparison.
+COLOUR_RE = re.compile(r"#[0-9a-fA-F]{6}\b|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(?:,[^)]*)?\)")
+# `--token` followed by a hex within a dozen characters — the table-cell (`| `--x` |
+# `#hex` |`) and the prose (``--x` `#hex``) spellings both fit, and nothing else does.
+BINDING_RE = re.compile(r"(--[a-z][a-z0-9-]*)`?[^#\n]{0,12}(#[0-9a-fA-F]{6})\b")
+DESIGN_DOCS = ("docs/design-system.md", "docs/build/DESIGN-DIRECTION.md")
+
+
+def _norm_colour(s: str) -> str:
+    """Whitespace-, case- and leading-zero-insensitive form of one colour literal.
+
+    `rgba(255,255,255,.09)` and `rgba(255, 255, 255, 0.09)` are the same colour written
+    two ways; a raw string compare would report the doc as drifted for a formatting
+    difference and burn the reader's trust on a non-finding.
+    """
+    return re.sub(r"(?<=[(,])0(?=\.)", "", re.sub(r"\s+", "", s).lower())
+
+
+def _live_text(body: str) -> str:
+    """Drop blockquote lines — a `>` block is where a retraction QUOTES the dead value.
+
+    Same treatment, and the same reason, as C9b: without it the guard fires on the
+    correction note that records what the value used to be, so writing the retraction
+    down would be punished and deleting it silently rewarded. Known limit, stated rather
+    than hidden: a live wrong claim parked inside a blockquote is invisible to this check.
+    Settling experiment: move one dead hex out of the `>` block and confirm C8-colour
+    goes red.
+    """
+    return re.sub(r"(?m)^\s*>.*$", "", body)
+
+
+_token_colours = {_norm_colour(m) for m in COLOUR_RE.findall(tokens)}
+for _rel in DESIGN_DOCS:
+    _raw = read(_rel)
+    _body = None if _raw is None else _live_text(_raw)
+    _dead = sorted({m for m in COLOUR_RE.findall(_body or "") if _norm_colour(m) not in _token_colours})
     check(
-        f"C8:{var}",
+        f"C8-colour:{Path(_rel).name}",
         True,
-        tok_ok and doc_wrong,
-        f"tokens.css has {truth}={tok_ok}; docs/build/DESIGN-DIRECTION.md still has {doc_claim}={doc_wrong}",
+        _body is not None and not _dead,
+        f"{_rel} states {len(_dead)} colour value(s) tokens.css does not define: {_dead or 'none'}",
+    )
+    _unbound = sorted(
+        {
+            f"{name}={hexval}"
+            for name, hexval in BINDING_RE.findall(_body or "")
+            if not re.search(rf"{re.escape(name)}:\s*{re.escape(hexval)}\b", tokens, re.IGNORECASE)
+        }
+    )
+    check(
+        f"C8-binding:{Path(_rel).name}",
+        True,
+        _body is not None and not _unbound,
+        f"{_rel} binds {len(_unbound)} token name(s) to a value tokens.css does not: {_unbound or 'none'}",
     )
 
 # ---------------------------------------------------- C9 keystore / consent gate
@@ -294,12 +345,37 @@ check(
 )
 
 # ------------------------------------------------------------------- C11 B-roll
+# INVARIANT (was OPEN, expectation flipped). The old check asserted the ROADMAP still
+# called B-roll deferred; the engine had meanwhile shipped, so the guard was pinning the
+# defect open. Bidirectional on purpose: C11a measures the CODE and C11b measures the
+# DOC, so deleting the feature fails C11a instead of quietly making C11b true — a
+# one-sided "the doc no longer says X" check passes just as well when both are gone.
 roadmap = read("docs/ROADMAP.md") or ""
+_BROLL_CODE = (
+    "app/renderer/src/features/BrollPanel.tsx",
+    "sidecar/media_studio/features/broll_ops.py",
+    "sidecar/media_studio/features/broll_plan.py",
+    "sidecar/media_studio/features/broll_compose.py",
+    "sidecar/media_studio/features/broll_index.py",
+)
+_broll_missing = [f for f in _BROLL_CODE if not (ROOT / f).is_file()]
+check("C11a", True, not _broll_missing, f"B-roll engine+UI on disk (missing: {_broll_missing or 'none'})")
+# Read the not-yet-shipped SENTENCE, not the whole file: `docs/ROADMAP.md` legitimately
+# discusses B-roll elsewhere, and a whole-file substring cannot tell the two apart —
+# the use-vs-mention class this file has already been bitten by at C5b, C9b and P2.8.
+# Two independent narrowings, because the first draft of this check went red on its own
+# retraction: `_live_text` drops the `> **CORRECTED** …` block that names B-roll in order
+# to record that it USED to be listed, and `[^.]` stops the window at the end of the
+# sentence instead of running 240 characters into whatever follows the paragraph.
+_flat_roadmap = re.sub(r"\s+", " ", _live_text(roadmap))
+_m = re.search(r"yet shipped:([^.]{0,240})", _flat_roadmap)
+_deferred_sentence = _m.group(1) if _m else ""
 check(
-    "C11",
+    "C11b",
     True,
-    "B-roll" in roadmap and "deferred" in roadmap.lower(),
-    f"docs/ROADMAP.md still lists B-roll as deferred={'B-roll' in roadmap and 'deferred' in roadmap.lower()}",
+    bool(_deferred_sentence) and "B-roll" not in _deferred_sentence,
+    f"docs/ROADMAP.md no longer lists B-roll as not-yet-shipped "
+    f"(sentence found={bool(_deferred_sentence)}): {_deferred_sentence[:120]!r}",
 )
 
 # ------------------------------------------------------------------- C12 ledger

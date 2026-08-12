@@ -13,32 +13,58 @@ No component sheet may introduce a color, radius, duration, or font that is not 
 
 ---
 
-## Palette (exact values)
+## Palette — values live in `tokens.css`, not here
+
+> **CORRECTED (2026-08-12, measured at `1fa9a69f`).** This section used to be headed
+> *"Palette (exact values)"* and reprinted the whole ladder. **Nine of the sixteen values it
+> stated contradicted `app/renderer/src/styles/tokens.css`** — the six `--surface-*` steps,
+> `--edge`, `--text-muted` and `--text-faint` — which is a doc asserting exact numbers that
+> the code disagrees with, three lines under its own sentence naming `tokens.css` the single
+> source of truth. The dead values are DELETED rather than refreshed: this document has been
+> `SUPERSEDED` since 2026-08-08, and a superseded doc that carries a second copy of the palette
+> re-earns the same drift the moment the tokens move again. The correction is recorded here
+> instead of applied silently so the next reader inherits it rather than re-deriving it.
+>
+> Verbatim, so the retraction is checkable and not merely asserted:
+> `--surface-deep #08090b` (real `#0b0d12`) · `--surface-bg #0e0f12` (`#121620`) ·
+> `--surface-raised #16181d` (`#1b212e`) · `--surface-overlay #1d2026` (`#252d3d`) ·
+> `--surface-hover #22252d` (`#2c3448`) · `--surface-active #2a2e38` (`#353f56`) ·
+> `--edge rgba(255,255,255,0.07)` (`rgba(255,255,255,0.09)`) · `--text-muted #7d8390`
+> (`#adb4c2`) · `--text-faint #50555f` (`#a6aebd`). The seven that agreed are not restated.
+>
+> Enforced from now on by `docs/validation/tools/verify_ssot_claims.py` (`C8-colour:*` /
+> `C8-binding:*`), which fails if any design doc prints a colour `tokens.css` does not define
+> or binds a token name to a value it does not hold. Both directions are needed:
+> `#50555f` still appears in `tokens.css` — inside the comment recording that it was
+> *replaced* — so the colour check alone reads it as live and only the binding check sees it.
+
+**Read the values from `app/renderer/src/styles/tokens.css`.** The portable spec derived from
+it is [`docs/design-system.md`](../design-system.md) (ACTIVE), guarded by
+`app/renderer/src/styles/tokens.conformance.test.ts`. What survives below is *direction* —
+the rules for how the ladder is used, which do not go stale when a hex moves.
 
 ### Surface ladder (depth = tone, not borders)
 
-| Token | Value | Use |
-|---|---|---|
-| `--surface-deep` | `#08090b` | Media wells: player strip, thumbnails, timeline lane, progress tracks, inputs |
-| `--surface-bg` | `#0e0f12` | The app canvas |
-| `--surface-raised` | `#16181d` | Cards, app bar, tab strip, panels — one step toward the user |
-| `--surface-overlay` | `#1d2026` | JobQueue slide-over, toasts, popovers — floats above all |
-| `--surface-hover` | `#22252d` | Hover tint |
-| `--surface-active` | `#2a2e38` | Pressed tint |
+Six rungs, `--surface-deep` → `--surface-active`, luminance climbing monotonically. Media
+wells (player strip, thumbnails, timeline lane, progress tracks, inputs) step DOWN to
+`--surface-deep` so footage floats in black; the canvas is `--surface-bg`; cards, app bar,
+tab strip and panels sit one step toward the user at `--surface-raised`; the JobQueue
+slide-over, toasts and popovers float above everything at `--surface-overlay`; hover and
+pressed are `--surface-hover` / `--surface-active`.
 
-Edges are hairlines used sparingly: `--edge` `rgba(255,255,255,0.07)`,
-`--edge-strong` `rgba(255,255,255,0.15)`. If you're reaching for a border to separate
-two regions, change the surface tone instead.
+Edges are hairlines used sparingly: `--edge`, and `--edge-strong` where a seam must read.
+If you're reaching for a border to separate two regions, change the surface tone instead.
 
 ### Text ladder
 
-`--text-primary` `#f4f5f7` · `--text-secondary` `#b0b6c0` · `--text-muted` `#7d8390` ·
-`--text-faint` `#50555f`. Four real steps — pick the step, don't invent grays.
+`--text-primary` → `--text-secondary` → `--text-muted` → `--text-faint`. Four real steps —
+pick the step, don't invent grays. Muted is the LOUDER label voice and must stay lighter
+than faint; the ordering and the AA floor on every plane are pinned by the conformance test.
 
-### The accent: **Signal Amber** `#f2a33c`
+### The accent: **Signal Amber** (`--accent`)
 
-Hover `#ffb554` · pressed `#d88a1f` · ink-on-accent `#211404` · soft wash
-`rgba(242,163,60,.14)` · edge/ring `rgba(242,163,60,.5)`. Warm tungsten amber — the
+`--accent-hover` · `--accent-pressed` · ink-on-accent `--accent-ink` · soft wash
+`--accent-soft` · edge/ring `--accent-edge`. Warm tungsten amber — the
 edit-room lamp, the Resolve-school selection color — deliberately not template blue.
 
 **Accent MAY be used for (semantic only):**
@@ -55,21 +81,34 @@ is in progress.
 
 ### Status (never decorative)
 
-`--status-success` `#46c483` · `--status-error` `#e5484d` · `--status-warn` `#e7c14b`
-(yellow-leaning, distinct from the orange-leaning accent; warn always rides on text/labels,
-e.g. ShortMaker's "(nudged)"). Each has a `-soft` wash for chips/banners. Errors are
-left-edge banners (3px rail + soft wash), not red boxes.
+`--status-success` · `--status-error` · `--status-warn` (yellow-leaning, distinct from the
+orange-leaning accent; warn always rides on text/labels, e.g. ShortMaker's "(nudged)").
+Each has a `-soft` wash for chips/banners. Errors are left-edge banners (3px rail + soft
+wash), not red boxes. Red STRINGS use the lighter `--status-error-text` step, which the
+solid signal red is too dark to satisfy AA for.
 
 ---
 
 ## Type pairing (system stack, weighted deliberately)
 
-- **UI sans** `--font-ui` (system-ui stack) — weight does the talking: display 750/-0.022em,
-  titles 650/-0.01em, body 400.
-- **Mono** `--font-mono` (ui-monospace…) — the *editing-room voice*: every timecode,
-  duration badge, percent, file path, rank score. Always `tabular-nums`.
-- **Editorial serif** `--font-editorial` (Georgia…) — ONE place only: the ShortMaker hook
-  line, set 15px italic like a pull-quote. It is the editorial signature; do not spread it.
+> **CORRECTED (2026-08-12, measured at `1fa9a69f`).** All three bullets below described a
+> system-font stack that the tree no longer ships. `app/renderer/src/styles/fonts.css`
+> binds three bundled OFL faces with `@font-face` — Inter, IBM Plex Mono and Newsreader —
+> and `app/renderer/src/styles/tokens.css` heads each stack with the bundled face, so the
+> system names in those stacks are FALLBACKS, not the design. Previous wording, refuted:
+> UI sans *"(system-ui stack)"*; editorial serif *"(Georgia…)"* and *"ONE place only: the
+> ShortMaker hook line"*. The one-site limit was already overtaken by 15 real uses —
+> see `docs/design-system.md` and `docs/plans/v1.5/uiux-qol-audit-2026-08.md` §3.1.
+
+- **UI sans** `--font-ui` (**Inter**, self-hosted; system stack only as fallback) — weight
+  does the talking: display 750/-0.022em, titles 650/-0.01em, body 400.
+- **Mono** `--font-mono` (**IBM Plex Mono**, self-hosted) — the *editing-room voice*: every
+  timecode, duration badge, percent, file path, rank score. Always `tabular-nums`.
+- **Editorial serif** `--font-editorial` (**Newsreader**, self-hosted) — a SCARCE channel,
+  not a one-site rule: hook pull-quotes, empty-state titles, and panel/modal display titles.
+  Never body text, labels, controls, data/timecode, or view headers. New sites need an
+  entry in the `tokens.conformance.test.ts` allowlist, so spreading it is a reviewed
+  decision rather than drift.
 
 Scale: display 30px (Library title) · title 17px (Workspace/panel titles) · body 13px ·
 caption 11px/600/+0.08em tracked CAPS (all labels, tabs, statuses, field names). The jump
