@@ -34,6 +34,7 @@ import { ProvidersKeys } from '../features/ProvidersKeys';
 import { PathsPanel, type PathsBridge } from '../components/PathsPanel';
 import { ManagedStoreMeter } from '../components/ManagedStoreMeter';
 import { SetupStatusPanel } from '../components/SetupStatusPanel';
+import { Skeleton } from '../components/Skeleton';
 import { CaptionPreferences } from '../components/CaptionPreferences';
 import { SavePresetsControls } from '../components/SavePresetsControls';
 import { ThirdPartyNotices } from '../features/ThirdPartyNotices';
@@ -153,8 +154,21 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     // WU-PROVIDERS: a readiness fix action of kind openProviders/setConsent on
     // this panel routes to the Providers & Keys section (where key + consent
     // management now lives), fixing the previous early-return dead-end.
+    // Q8: the fallback was the literal string "Loading…" — the exact thing
+    // Library.tsx:616-618 writes down as forbidden ("never a bare LOADING…"), on
+    // the heaviest panel in the app. It is now the shared <Skeleton />: a shape
+    // that echoes what lands (heading bar over body lines) so the layout does not
+    // jump, announced once via role=status instead of leaving dead air.
     render: (ctx) => (
-      <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
+      <Suspense
+        fallback={
+          <Skeleton
+            variant="panel"
+            className="panel panel--loading"
+            label="Loading Models & System"
+          />
+        }
+      >
         <ModelsSystemPanel onOpenProviders={() => ctx.goTo('providers')} />
       </Suspense>
     ),
