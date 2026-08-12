@@ -149,8 +149,14 @@ export function CaptionPreferences({
 
       <div className="caption-prefs__group caption-prefs__row">
         <label htmlFor="prefs-subtitle-mode">Subtitles</label>
+        {/* This panel's root is `caption-prefs panel`, and `.panel` has no rule in the
+            tree, so nothing here inherits the shared control voice by ancestry the way a
+            `.feature-panel` child does. The class is what lets components/shell.css reach
+            this one bare <select>; without it the control paints as a raw OS dropdown on
+            an otherwise fully-voiced panel. */}
         <select
           id="prefs-subtitle-mode"
+          className="caption-prefs__select"
           aria-label="Default subtitle delivery"
           value={prefs.subtitleMode}
           onChange={(e) =>

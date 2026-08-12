@@ -89,15 +89,43 @@ body,
  *     the accent-primary rule at (0,4,1). A plain (0,2,1) rule is NOT enough — proven by
  *     modelsSystem.css, whose (0,2,1) override still lost on the accent primary.
  * The accent fill is composed with the ring rather than replaced, so primaries keep their
- * glow while gaining a visible focus state. */
+ * glow while gaining a visible focus state.
+ *
+ * The list has to name EVERY selector the raised voice below declares, or the control keeps
+ * NO indicator at all. Three were missing: `.library__remove-btn` and `.workspace__back`
+ * take the ring away with the ghost voice's `box-shadow: none`, and `.library__add-btn`
+ * replaces it with the accent voice's `--accent-glow` — each at (0,1,0), the same
+ * specificity as the global ring but LATER in source order, so each simply wins. That left
+ * the Library's primary action, its destructive action and the Workspace's only back
+ * navigation with no visible keyboard focus (WCAG 2.4.7 AA).
+ *
+ * `outline-color` here is the DURABLE half. The global rule keeps the outline transparent
+ * because the box-shadow is the design — but a box-shadow is one channel that any later
+ * same-or-higher-specificity rule can take away, which is precisely how these three lost it
+ * (and `:hover:not(:disabled)` at (0,3,0) still outranks a (0,2,0) focus rule while both are
+ * active). A real outline colour paints the same 2px..4px band as the token's outer ring —
+ * `outline-offset: 2px` + a 2px outline, against `--focus-ring`'s 2px `--surface-bg` layer
+ * over its 4px `--accent-edge` layer — so it is the same ring where the shadow paints, and
+ * it is the ring that survives where the shadow does not. */
 .feature-panel button:focus-visible,
 .shortmaker button:focus-visible,
 .timeline__toolbar button:focus-visible,
-.batch-queue button:focus-visible {
+.batch-queue button:focus-visible,
+.vtl__bar button:focus-visible,
+.vtl__laneHead button:focus-visible,
+.caption-prefs__actions button:focus-visible,
+.library__remove-btn:focus-visible,
+.workspace__back:focus-visible {
+  outline-color: var(--accent-edge);
   box-shadow: var(--focus-ring);
 }
 
+/* Composed, NOT plain: a bare `box-shadow: var(--focus-ring)` on `.library__add-btn` is
+   (0,2,0) and would beat the accent voice at (0,1,0), stripping the primary's glow the
+   moment it takes focus. */
+.library__add-btn:focus-visible,
 .feature-panel .actions > button:first-child:not(.secondary):focus-visible {
+  outline-color: var(--accent-edge);
   box-shadow: var(--focus-ring), var(--accent-glow);
 }
 
@@ -391,14 +419,32 @@ button {
    `.batch-queue` is listed explicitly (W05): views/Repurpose.tsx and
    views/Deliver.tsx mount it with NO `.feature-panel` ancestor, so every one of
    its controls fell through to raw platform chrome. Reusing this voice rather
-   than re-declaring it in features/batchQueue.css keeps ONE button language. */
+   than re-declaring it in features/batchQueue.css keeps ONE button language.
+
+   `.vtl__*` and `.caption-prefs__actions` are the same W05 failure on the two
+   remaining surfaces whose root is `className="… panel"` — and `.panel` has no
+   rule in this tree at all, only `.panel--missing`/`--loading` below. The video
+   timeline (features/VideoTimeline.tsx:514) hangs off `.workspace__body` and the
+   caption defaults (components/CaptionPreferences.tsx:115) off `.settings__panel`,
+   so neither has a `.feature-panel` ancestor and every control on them painted as
+   raw dark Chromium chrome next to fully-voiced siblings.
+
+   The hosts are NARROW on purpose. `.vtl button` / `.caption-prefs button` would be
+   (0,1,1) and would out-specify two (0,1,0) component voices nested inside these
+   panels — `.vtl__clip` (features/videoTimeline.css:74; the clips ARE buttons) and
+   `.caption-style-swatch` (components/captionStylePicker.css:9) — silently
+   repainting their background, border, padding and cursor. `.vtl__bar`,
+   `.vtl__laneHead` and `.caption-prefs__actions` contain only toolbar controls. */
 .library__add-btn,
 .library__remove-btn,
 .workspace__back,
 .feature-panel button,
 .shortmaker button,
 .timeline__toolbar button,
-.batch-queue button {
+.batch-queue button,
+.vtl__bar button,
+.vtl__laneHead button,
+.caption-prefs__actions button {
   appearance: none;
   padding: var(--control-pad-btn);
   border: 1px solid var(--edge);
@@ -420,7 +466,10 @@ button {
 .feature-panel button:hover:not(:disabled),
 .shortmaker button:hover:not(:disabled),
 .timeline__toolbar button:hover:not(:disabled),
-.batch-queue button:hover:not(:disabled) {
+.batch-queue button:hover:not(:disabled),
+.vtl__bar button:hover:not(:disabled),
+.vtl__laneHead button:hover:not(:disabled),
+.caption-prefs__actions button:hover:not(:disabled) {
   background: var(--surface-hover);
   border-color: var(--edge-strong);
   box-shadow: var(--elev-2);
@@ -432,7 +481,10 @@ button {
 .feature-panel button:active:not(:disabled),
 .shortmaker button:active:not(:disabled),
 .timeline__toolbar button:active:not(:disabled),
-.batch-queue button:active:not(:disabled) {
+.batch-queue button:active:not(:disabled),
+.vtl__bar button:active:not(:disabled),
+.vtl__laneHead button:active:not(:disabled),
+.caption-prefs__actions button:active:not(:disabled) {
   transform: translateY(1px);
   box-shadow: var(--elev-1);
 }
@@ -453,10 +505,18 @@ button {
   color: var(--text-primary);
 }
 
+/* Disabled is not an afterthought on these two: four of the video timeline's five
+   toolbar buttons are disabled until a clip is selected, so it is the state that
+   shows MOST. (`.timeline__toolbar button:disabled` is absent from this list on
+   purpose — features/timeline.css:83 already declares the identical treatment for
+   that surface. Do not read the gap as the pattern.) */
 .feature-panel button:disabled,
 .shortmaker button:disabled,
 .library__add-btn:disabled,
-.batch-queue button:disabled {
+.batch-queue button:disabled,
+.vtl__bar button:disabled,
+.vtl__laneHead button:disabled,
+.caption-prefs__actions button:disabled {
   opacity: 0.45;
   cursor: default;
 }
@@ -506,6 +566,13 @@ button {
 
 /* ---- shared inputs ------------------------------------------------------------- */
 
+/* `.caption-prefs__select` is the same bare-`.panel` case as the buttons above: the
+   caption-defaults panel has no `.feature-panel` ancestor, so its subtitle-delivery
+   <select> was the one raw OS dropdown left on an otherwise voiced panel. It is
+   named by CLASS, not as `.caption-prefs__row > select`, so the rule cannot be
+   broken by a wrapper element and cannot reach the <select> that `LanguageSelect`
+   renders on the next row, which carries its own voice
+   (components/languageSelect.css:8). */
 .library__add-input,
 .feature-panel input,
 .feature-panel select,
@@ -514,7 +581,8 @@ button {
 .shortmaker select,
 .shortmaker textarea,
 .timeline__editor input,
-.timeline__editor textarea {
+.timeline__editor textarea,
+.caption-prefs__select {
   appearance: none;
   padding: var(--control-pad-input);
   background: var(--surface-deep);
@@ -531,7 +599,8 @@ button {
 .feature-panel textarea:hover,
 .shortmaker input:hover,
 .shortmaker select:hover,
-.shortmaker textarea:hover {
+.shortmaker textarea:hover,
+.caption-prefs__select:hover {
   border-color: var(--edge-strong);
 }
 
@@ -547,7 +616,8 @@ button {
 .shortmaker select:focus-visible,
 .shortmaker textarea:focus-visible,
 .timeline__editor input:focus-visible,
-.timeline__editor textarea:focus-visible {
+.timeline__editor textarea:focus-visible,
+.caption-prefs__select:focus-visible {
   outline: none;
   border-color: var(--accent-edge);
   box-shadow: var(--focus-glow);
@@ -1206,9 +1276,15 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* Native <progress> used inside feature panels: same accent language. */
+/* Native <progress> used inside feature panels: same accent language. `.vtl` is
+   listed for the same reason its buttons are — the video timeline's render bar is a
+   bare `<progress>` on a panel with no `.feature-panel` ancestor
+   (features/VideoTimeline.tsx:558), so it was the one UA-chrome progress bar in the
+   app. There is exactly one `<progress>` inside `.vtl`, so the descendant form is
+   safe here. */
 .feature-panel progress,
-.sm-progress progress {
+.sm-progress progress,
+.vtl progress {
   appearance: none;
   width: 220px;
   height: 6px;
@@ -1219,12 +1295,14 @@ button {
 }
 
 .feature-panel progress::-webkit-progress-bar,
-.sm-progress progress::-webkit-progress-bar {
+.sm-progress progress::-webkit-progress-bar,
+.vtl progress::-webkit-progress-bar {
   background: var(--surface-deep);
 }
 
 .feature-panel progress::-webkit-progress-value,
-.sm-progress progress::-webkit-progress-value {
+.sm-progress progress::-webkit-progress-value,
+.vtl progress::-webkit-progress-value {
   background: var(--accent);
   transition: width var(--dur-base) var(--ease-out);
 }

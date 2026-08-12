@@ -127,7 +127,13 @@ const VTL_TSX = readFileSync(VIDEO_TIMELINE_TSX, 'utf8');
 const VOICED = ['.vtl__bar button', '.vtl__laneHead button', '.caption-prefs__actions button'];
 
 /** The five lists a control has to appear in to be fully voiced. */
-const STATES = ['', ':hover:not(:disabled)', ':active:not(:disabled)', ':disabled', ':focus-visible'];
+const STATES = [
+  '',
+  ':hover:not(:disabled)',
+  ':active:not(:disabled)',
+  ':disabled',
+  ':focus-visible',
+];
 
 /** The selectors the focus-ring specificity repair was missing (Q2). */
 const FOCUS_REPAIRED = [
