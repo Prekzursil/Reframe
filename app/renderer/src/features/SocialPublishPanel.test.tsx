@@ -146,6 +146,32 @@ describe('<SocialPublishPanel /> — the honest blocked state', () => {
     expect(dom().textContent).not.toContain('Export a clip first');
   });
 
+  // The wayfinding must name the tab that PERFORMS each step. A previous revision said
+  // "Render the platform-shaped file under Platform presets" — false, because
+  // ExportPresetsPanel's whole wire surface is exportPresets.list/save/delete/reset; it
+  // shapes a preset and renders nothing. Rendering is Batch publish (client.batch.*).
+  // Asserting only "Platform presets" (the test above) passes for BOTH the accurate and the
+  // inaccurate wording, so it cannot protect this correction — these assertions can.
+  it('routes rendering to Batch publish, not to Platform presets', async () => {
+    await render();
+    const text = dom().textContent ?? '';
+    expect(text).toContain('Batch publish');
+    // The exact false direction must not return.
+    expect(text).not.toContain('Render the platform-shaped file under Platform presets');
+    expect(text).not.toMatch(/render[^.]*under Platform presets/i);
+  });
+
+  it('states all three steps, in order, each attached to its own surface', async () => {
+    await render();
+    const text = (dom().textContent ?? '').replace(/\s+/g, ' ');
+    const shape = text.indexOf('Shape the output under Platform presets');
+    const render_ = text.indexOf('render it under Batch publish');
+    const post = text.indexOf('post it from that platform');
+    expect(shape).toBeGreaterThan(-1);
+    expect(render_).toBeGreaterThan(shape);
+    expect(post).toBeGreaterThan(render_);
+  });
+
   it('carries an accessible name for the destination', async () => {
     await render();
     expect(dom().querySelector('section.social-publish')?.getAttribute('aria-label')).toBe(

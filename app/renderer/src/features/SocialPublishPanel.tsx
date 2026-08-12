@@ -36,11 +36,18 @@ export function SocialPublishPanel(): React.ReactElement {
   return (
     <section className="social-publish" aria-label="Direct publish">
       <p className="social-publish__blocked">
-        Direct publish is not available in this build; use Platform presets and upload manually.
+        Direct publish is not available in this build; export and upload manually.
       </p>
+      {/* WAYFINDING MUST NAME THE TAB THAT ACTUALLY DOES THE WORK. An earlier revision of this
+          copy said "Render the platform-shaped file under Platform presets", which is FALSE:
+          ExportPresetsPanel's entire wire surface is exportPresets.list/save/delete/reset — it
+          shapes a preset and renders nothing. Rendering happens under Batch publish
+          (client.batch.*), after TemplateEditor folds a preset into a template. Replacing a false
+          capability claim with an inaccurate direction is the same defect in a new place, so the
+          three steps are named separately and each points at the tab that performs it. */}
       <p className="social-publish__blocked">
-        Reframe cannot sign in to a platform or upload on your behalf yet. Render the
-        platform-shaped file under Platform presets, then post it from that platform.
+        Reframe cannot sign in to a platform or upload on your behalf yet. Shape the output under
+        Platform presets, render it under Batch publish, then post it from that platform.
       </p>
     </section>
   );
