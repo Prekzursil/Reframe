@@ -181,8 +181,11 @@ export function Edit({
     //
     // ONE attribute is deliberately NOT byte-identical to what shipped: the root
     // now carries `role="region"` beside its `aria-label`. origin/main named a
-    // role-less div, and ARIA 1.2 prohibits a name on `generic`, so the label was
-    // inert (axe-core `aria-prohibited-attr`, impact serious). Attribute-only,
+    // role-less div, where ARIA 1.2 declares "Name from: prohibited"; measured on
+    // this repo's own axe-core 4.12.1 that shape is a needs-review ("aria-label
+    // attribute is not well supported on a div with no valid role attribute") and
+    // this one PASSES — so the honest delta is unreliable -> dependable, not
+    // "was broken" (see resolveA11y in EmptyState.tsx). Attribute-only,
     // zero CSS impact — the sole `[role=…]` selector in any renderer stylesheet is
     // shell.css's :focus-visible list (button/tab/input, never region) — so the
     // "zero visual regression" claim survives; it is the a11y tree that changed.

@@ -118,10 +118,14 @@ describe('<EmptyState /> — the shared empty-state anatomy', () => {
 
   it('gives a NAMED empty state a role that PERMITS the name', async () => {
     // The defect this pins. A role-less <div> maps to ARIA `generic`, where
-    // ARIA 1.2 PROHIBITS an author-supplied accessible name — axe-core ships
-    // `aria-prohibited-attr` (impact: serious, wcag2a) for exactly this shape —
-    // so `aria-label` on a bare div is written to the DOM and never reaches the
-    // a11y tree. This repo already knows the underlying rule from the other
+    // ARIA 1.2 declares "Name from: prohibited". MEASURED with this repo's own
+    // axe-core 4.12.1 (rule `aria-prohibited-attr`, both DOM shapes in jsdom):
+    // the old shape returns INCOMPLETE/needs-review — impact serious, wcag2a,
+    // "aria-label attribute is not well supported on a div with no valid role
+    // attribute" — and the shape below returns PASS. Note what that does NOT
+    // say: axe declines to assert the name is dropped, so "inert" would be an
+    // overclaim (UNVERIFIED; settle in the DevTools Accessibility pane). See the
+    // resolveA11y JSDoc. This repo already knows the underlying rule from the other
     // direction: TabBar.tsx's group `<section>` deliberately carries NO
     // aria-label BECAUSE "a labelled section maps to role=region", which would
     // break its tablist ownership. An empty state has no such constraint, so

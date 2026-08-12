@@ -67,7 +67,9 @@ describe('Edit — the no-video state rides the shared <EmptyState />', () => {
 
   it('names the SHIPPED region with a role that permits the name', async () => {
     // origin/main rendered `<div className="edit edit--empty" aria-label="Edit">`
-    // — a name on a role-less div, which ARIA 1.2 prohibits on `generic`. The
+    // — a name on a role-less div, which ARIA 1.2 lists as "Name from:
+    // prohibited" for `generic` and this repo's own axe-core 4.12.1 reports as a
+    // needs-review, not a violation (see resolveA11y in EmptyState.tsx). The
     // component-level pin (EmptyState.test.tsx) is what went red for this; this
     // one is the end-to-end regression pin, asserted on the DOM Edit actually
     // ships rather than on a prop object.
