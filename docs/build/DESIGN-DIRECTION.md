@@ -32,11 +32,33 @@ No component sheet may introduce a color, radius, duration, or font that is not 
 > `--edge rgba(255,255,255,0.07)` (`rgba(255,255,255,0.09)`) · `--text-muted #7d8390`
 > (`#adb4c2`) · `--text-faint #50555f` (`#a6aebd`). The seven that agreed are not restated.
 >
-> Enforced from now on by `docs/validation/tools/verify_ssot_claims.py` (`C8-colour:*` /
-> `C8-binding:*`), which fails if any design doc prints a colour `tokens.css` does not define
-> or binds a token name to a value it does not hold. Both directions are needed:
-> `#50555f` still appears in `tokens.css` — inside the comment recording that it was
-> *replaced* — so the colour check alone reads it as live and only the binding check sees it.
+> Checked by `docs/validation/tools/verify_ssot_claims.py` (`C8-colour:*` / `C8-binding:*`)
+> over the **two** design docs its `DESIGN_DOCS` tuple enumerates — `docs/design-system.md`
+> and this file — which fail if either prints a colour `tokens.css` does not define or binds
+> a token name to a value it does not hold. Both directions are needed: `#50555f` still
+> appears in `tokens.css` — inside the comment recording that it was *replaced* — so the
+> colour check alone reads it as live and only the binding check sees it.
+>
+> **CORRECTED (2026-08-12).** This paragraph said *"Enforced from now on … if **any** design
+> doc …"*. Both halves were wider than the code and are REFUTED; the rescoped wording above
+> is the claim. (1) `DESIGN_DOCS` enumerates two paths, so a NEW design doc gets zero
+> coverage until it is added to that tuple. A third one already exists —
+> `docs/plans/v1.5/DESIGN-DIRECTION.md`, `**Status:** ACTIVE`, same basename — and is
+> deliberately NOT covered: its off-token hexes are a prototype-**rejection** table quoted in
+> order to forbid them, so admitting it without a use-vs-mention narrowing would emit false
+> positives, and widening the tuple needs that narrowing first. `C8-scope-prose` now fails if
+> this paragraph re-widens to a universal. (2) "Enforced" overstated a **manual** verifier:
+> no CI job and no `pre-commit` hook invokes it. Run it yourself —
+> `python docs/validation/tools/verify_ssot_claims.py`. Settling experiment for the unwired
+> claim: `git grep -n verify_ssot_claims -- .github/ .pre-commit-config.yaml` returns zero
+> hits.
+>
+> **What these two checks currently examine in THIS file is zero and zero** — every hex above
+> now sits inside a retraction blockquote, which they skip by design — so here they are a
+> re-introduction guard, not a live measurement. They bite on `docs/design-system.md`. The
+> per-doc examined counts are printed by the run itself (`examined N colour value(s)` /
+> `examined N token binding(s)`) and deliberately not retyped here, because a hand-written
+> count in this corpus has drifted every time.
 
 **Read the values from `app/renderer/src/styles/tokens.css`.** The portable spec derived from
 it is [`docs/design-system.md`](../design-system.md) (ACTIVE), guarded by

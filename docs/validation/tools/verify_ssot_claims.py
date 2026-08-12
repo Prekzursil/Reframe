@@ -59,7 +59,6 @@ def read(rel: str) -> str | None:
 # from this set (and flip its expectation) as each is corrected.
 OPEN_ITEMS = {
     "C1a",
-    "C1b",
     "C5a",
     "C5b",
     "P1-corpus",
@@ -75,6 +74,15 @@ OPEN_ITEMS = {
 #             CONTRACTS.md:126 QUOTING the dead clause.
 #   P2.11b  — same shape. "1.4.1" survives only inside the HTML comment at README.md:32-38
 #             that explains why the asset table is version-agnostic.
+#   C1b     — THIRD instance of the same shape, and this file walked past it while
+#             retiring the other two. It asserted `sidecar/pyproject.toml` still carries
+#             the stale comment "PINNED to 1.0.3", and printed `present=True` on every
+#             run — but the live comment at :64-65 already reads "PINNED to 1.1.0" and
+#             agrees with the literal. The only survivor is :72, a HISTORY note QUOTING
+#             the dead wording. So the OPEN item was pinning a NON-defect open and the
+#             tool was emitting a false statement about the tree. Retired with the
+#             expectation flipped to the durable property: the live comment must name
+#             the SAME version as the pinned literal.
 
 
 def check(cid: str, predicted: bool, actual: bool, detail: str) -> None:
@@ -122,14 +130,33 @@ def git(*args: str) -> str:
 # ---------------------------------------------------------------- C1 SpeechBrain
 pyproj = read("sidecar/pyproject.toml") or ""
 has_110_literal = '"speechbrain==1.1.0"' in pyproj
-# DETECTOR FIX (v2): the exact string "PINNED to 1.0.3" is NOT present — the comment
-# wraps as `# ... PINNED\n# to 1.0.3 (GPU-validated ...)` at :64-65. A literal
-# substring check reported the plan as wrong when the plan was right. Un-wrap comment
-# continuations first: strip leading `#` + collapse whitespace.
-_pyproj_flat = re.sub(r"\s+", " ", re.sub(r"(?m)^\s*#\s?", "", pyproj))
-comment_says_103 = "PINNED to 1.0.3" in _pyproj_flat
+# DETECTOR FIX (v2): the comment wraps as `# ... PINNED\n# to 1.1.0 (...)` at :64-65, so
+# un-wrap continuations first — strip the leading `#` and collapse whitespace — before any
+# substring test. DETECTOR FIX (v3) + INVARIANT (was OPEN): v2 then flattened the WHOLE
+# FILE and asked whether "PINNED to 1.0.3" survives. It does, at :72, inside
+# `HISTORY — this comment used to say "PINNED to 1.0.3 ... 1.1.0 is DELIBERATELY AVOIDED"`
+# — a MENTION of the dead wording, not a live claim. So C1b reported `present=True` and
+# pinned a defect that had already been fixed, in the same file whose C9b/P2.11b notes
+# above describe exactly this trap. Two narrowings, mirroring C9b: read COMMENT lines only
+# (a literal in TOML code is C1a's subject, not this one), and drop double-quoted spans,
+# which is where a correction note parks the wording it is retiring. Then assert the
+# durable property instead of a fixed string — the live comment must name the SAME version
+# as the pinned literal, so this stays green when the pin legitimately moves and goes red
+# the moment prose and pin disagree again.
+_pyproj_comments = re.sub(r"\s+", " ", " ".join(m.group(1) for m in re.finditer(r"(?m)^\s*#\s?(.*)$", pyproj)))
+_pyproj_live_comments = re.sub(r'"[^"]*"', "", _pyproj_comments)
+_pin_m = re.search(r'"speechbrain==([0-9][0-9.]*)"', pyproj)
+_com_m = re.search(r"PINNED to ([0-9][0-9.]*)", _pyproj_live_comments)
+_pin_v, _com_v = (_pin_m.group(1) if _pin_m else ""), (_com_m.group(1) if _com_m else "")
 check("C1a", True, has_110_literal, f'pyproject literal "speechbrain==1.1.0" present={has_110_literal}')
-check("C1b", True, comment_says_103, f'pyproject comment "PINNED to 1.0.3" present={comment_says_103}')
+check(
+    "C1b",
+    True,
+    bool(_pin_v) and _com_v == _pin_v,
+    f"pyproject live comment pins {_com_v or '(none)'} and the literal pins {_pin_v or '(none)'} — agree="
+    f"{bool(_pin_v) and _com_v == _pin_v} (whole-file '1.0.3' mentions={pyproj.count('1.0.3')}, all "
+    f"inside the HISTORY note quoting the retired wording)",
+)
 c1_docs = [
     ("docs/WU-R1-MULTISPEAKER-ENGINE.md", "speechbrain==1.0.3"),
     ("docs/V1.2-FEATURES.md", "1.0.3"),
@@ -285,17 +312,25 @@ _token_colours = {_norm_colour(m) for m in COLOUR_RE.findall(tokens)}
 for _rel in DESIGN_DOCS:
     _raw = read(_rel)
     _body = None if _raw is None else _live_text(_raw)
-    _dead = sorted({m for m in COLOUR_RE.findall(_body or "") if _norm_colour(m) not in _token_colours})
+    _seen = COLOUR_RE.findall(_body or "")
+    _dead = sorted({m for m in _seen if _norm_colour(m) not in _token_colours})
     check(
         f"C8-colour:{Path(_rel).name}",
         True,
         _body is not None and not _dead,
-        f"{_rel} states {len(_dead)} colour value(s) tokens.css does not define: {_dead or 'none'}",
+        # The EXAMINED count is printed, not just the failure count, because the two can
+        # diverge silently: every hex in `docs/build/DESIGN-DIRECTION.md` now sits inside a
+        # retraction blockquote, so this check inspects ZERO values there and a bare
+        # "0 dead" would read as a live measurement instead of the re-introduction guard it
+        # currently is. Generated here rather than retyped in prose — the P3-readme-count rule.
+        f"{_rel} examined {len(_seen)} colour value(s), {len(_dead)} that tokens.css does not "
+        f"define: {_dead or 'none'}",
     )
+    _bindings = BINDING_RE.findall(_body or "")
     _unbound = sorted(
         {
             f"{name}={hexval}"
-            for name, hexval in BINDING_RE.findall(_body or "")
+            for name, hexval in _bindings
             if not re.search(rf"{re.escape(name)}:\s*{re.escape(hexval)}\b", tokens, re.IGNORECASE)
         }
     )
@@ -303,8 +338,93 @@ for _rel in DESIGN_DOCS:
         f"C8-binding:{Path(_rel).name}",
         True,
         _body is not None and not _unbound,
-        f"{_rel} binds {len(_unbound)} token name(s) to a value tokens.css does not: {_unbound or 'none'}",
+        f"{_rel} examined {len(_bindings)} token binding(s), {len(_unbound)} bound to a value "
+        f"tokens.css does not: {_unbound or 'none'}",
     )
+
+# INVARIANT (new): the prose describing C8's reach may not be wider than `DESIGN_DOCS`.
+# Both docs that introduced these guards said they "fail if ANY design doc prints a colour
+# `tokens.css` does not define". The tuple above enumerates TWO files, and the gap is not
+# hypothetical — `docs/plans/v1.5/DESIGN-DIRECTION.md` carries `**Status:** ACTIVE`, the
+# same basename, and off-token hexes, and is deliberately NOT covered (they are a
+# prototype-REJECTION table, so admitting it without a use-vs-mention narrowing would
+# emit false positives). A doc that promises a universal the code does not implement is
+# the same defect this corpus exists to remove, committed by the correction itself. So the
+# universal quantifier is banned in any sentence that names these checks; the enumeration
+# has to be written out, and adding a third entry to `DESIGN_DOCS` forces the prose to be
+# re-read rather than silently outgrown.
+#
+# Deliberately NOT blockquote-stripped, and this is the reverse of the C8/C9b/C11 choice:
+# measured, `docs/build/DESIGN-DIRECTION.md`'s over-wide sentence lives INSIDE its own
+# `> **CORRECTED** …` block, so `_live_text` here would hide one of the two offenders and
+# report a 50%-clean tree as clean. A `>` block is invisible-to-the-guard only when it is
+# QUOTING something dead; this one asserts a live forward-looking promise. Same reasoning,
+# and the same exception, as `P3-readme-count`.
+_C8_UNIVERSAL = re.compile(r"(?i)(?:any|every)\s+design\s+doc")
+_overwide_scope: list[str] = []
+for _p in sorted(ROOT.glob("docs/**/*.md")):
+    try:
+        _flat_scope = re.sub(r"\s+", " ", _p.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        continue
+    for _hit in _C8_UNIVERSAL.finditer(_flat_scope):
+        if "C8-" in _flat_scope[max(0, _hit.start() - 300) : _hit.end() + 300]:
+            _overwide_scope.append(_p.relative_to(ROOT).as_posix())
+            break
+check(
+    "C8-scope-prose",
+    True,
+    not _overwide_scope,
+    f"no doc claims the C8 guards cover every design doc; they cover the {len(DESIGN_DOCS)} "
+    f"enumerated in DESIGN_DOCS ({', '.join(DESIGN_DOCS)}) — offenders: {_overwide_scope or 'none'}",
+)
+
+# INVARIANT (new): a `docs/<file>.md:<N>` citation may not land on a blockquote line.
+# This corpus's own citation rule is "cite by SYMBOL or by a FIXED commit, never a bare
+# same-file line range", because that form has now rotted five times here — the fifth
+# created by the very pass that wrote the rule down: a 9-line retraction inserted at
+# `docs/design-system.md:34` pushed the caption-voice row from :43 to :52, so a citation
+# that was byte-exact before now points at a line of the retraction. That subclass is
+# mechanically decidable and worth pinning even though the general case is not: a `>` line
+# is a correction note, and a correction note is never the definition anyone meant to cite,
+# so a citation resolving onto one is wrong with no judgement call. Scope, stated rather
+# than implied: this does NOT catch an anchor that rotted onto a different ordinary line.
+# Three such already exist in `docs/plans/v1.5/uiux-qol-audit-2026-08.md` (:49, :65-66,
+# :78-81), predate this branch, and are left for a sweep that can re-derive each true
+# anchor.
+#
+# `_live_text` on the CITING side, for the reason C9b/C11b already establish and which this
+# check re-proved on itself: the first draft went red on the retraction note that names the
+# rotted anchor in order to retire it. The note is a MENTION. The cost is the same known
+# hole — a live citation parked inside a `>` block is invisible — and it is real here rather
+# than theoretical, so the examined count is printed on every run to keep the check's reach
+# visible instead of implied.
+_CITE_RE = re.compile(r"(docs/[A-Za-z0-9_./-]+\.md):(\d+)")
+_target_lines: dict[str, list[str]] = {}
+_rotted_cites: list[str] = []
+_cites_checked = 0
+for _p in sorted(ROOT.glob("docs/**/*.md")):
+    try:
+        _citer = _live_text(_p.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        continue
+    for _cm in _CITE_RE.finditer(_citer):
+        _tgt, _n = _cm.group(1), int(_cm.group(2))
+        if not (ROOT / _tgt).is_file():
+            continue
+        _cites_checked += 1
+        if _tgt not in _target_lines:
+            _target_lines[_tgt] = (ROOT / _tgt).read_text(encoding="utf-8", errors="replace").splitlines()
+        _ls = _target_lines[_tgt]
+        if 1 <= _n <= len(_ls) and _ls[_n - 1].lstrip().startswith(">"):
+            _rotted_cites.append(f"{_p.relative_to(ROOT).as_posix()} -> {_tgt}:{_n}")
+check(
+    "C13-anchor",
+    True,
+    _cites_checked > 0 and not _rotted_cites,
+    f"resolvable docs->docs line citations={_cites_checked}, landing on a blockquote "
+    f"(retraction) line={len(_rotted_cites)}: {_rotted_cites or 'none'}",
+)
 
 # ---------------------------------------------------- C9 keystore / consent gate
 C9_FILES = [
@@ -365,17 +485,69 @@ check("C11a", True, not _broll_missing, f"B-roll engine+UI on disk (missing: {_b
 # the use-vs-mention class this file has already been bitten by at C5b, C9b and P2.8.
 # Two independent narrowings, because the first draft of this check went red on its own
 # retraction: `_live_text` drops the `> **CORRECTED** …` block that names B-roll in order
-# to record that it USED to be listed, and `[^.]` stops the window at the end of the
-# sentence instead of running 240 characters into whatever follows the paragraph.
-_flat_roadmap = re.sub(r"\s+", " ", _live_text(roadmap))
-_m = re.search(r"yet shipped:([^.]{0,240})", _flat_roadmap)
-_deferred_sentence = _m.group(1) if _m else ""
+# to record that it USED to be listed, and the window stops at the end of the deferred-list
+# PARAGRAPH instead of running on into whatever follows it.
+#
+# WINDOW FIX (v2): that window used to be `([^.]{0,240})`, which stops at the first PERIOD —
+# and a period is not a sentence boundary in this corpus. Measured evasion: rewrite the list
+# as "… and a publishing scheduler for v1.5. Also B-roll, still deferred." and the window
+# collapses at `v1`, so the re-listed B-roll falls outside it and C11b reports green over
+# the exact regression it exists to catch. Splitting the LIVE text on blank lines first and
+# taking the remainder of the matching paragraph has no such escape: a version literal, a
+# file name and an abbreviation are all interior to the paragraph. Strictly wider than the
+# old window, so it cannot introduce a false negative the old one did not already have.
+_live_roadmap = _live_text(roadmap)
+_para = next((p for p in re.split(r"\n\s*\n", _live_roadmap) if "yet shipped:" in p), "")
+_deferred_sentence = re.sub(r"\s+", " ", _para.split("yet shipped:", 1)[1]).strip() if _para else ""
 check(
     "C11b",
     True,
     bool(_deferred_sentence) and "B-roll" not in _deferred_sentence,
     f"docs/ROADMAP.md no longer lists B-roll as not-yet-shipped "
-    f"(sentence found={bool(_deferred_sentence)}): {_deferred_sentence[:120]!r}",
+    f"(paragraph found={bool(_deferred_sentence)}): {_deferred_sentence[:120]!r}",
+)
+# INVARIANT (new). C11a/C11b pin the CODE and the ROADMAP sentence, and both went green
+# while `docs/plans/v1.5/README.md` went on telling every reader that `docs/ROADMAP.md`
+# lists B-roll as "deferred from V1" — a doc contradicting another doc in the same commit
+# series, which is the defect class this corpus exists to remove, reproduced one level up
+# from the guard that was supposed to catch it. A guard scoped to a single file reports
+# green over a contradiction it cannot see. So: no OTHER doc may assert that the ROADMAP
+# defers B-roll. `_live_text` applies for the usual reason (a retraction that quotes the
+# dead claim must not be punished), and the window is a bounded character span around each
+# `ROADMAP` mention rather than a sentence, because `docs/ROADMAP.md:66` itself contains
+# two periods and sentence-splitting would cut the citation off from its own claim.
+#
+# WINDOW DESIGN (v2), measured: the first draft asked only for `b-roll` + `defer` in the
+# window and FALSE-POSITIVED on the corrected bullet, because "B-roll is **not** deferred"
+# satisfies a co-occurrence test exactly as well as the assertion it denies — and the
+# corrected bullet mentions the ROADMAP two sentences later on an unrelated subject (the
+# Release-status version gap). A bare co-occurrence cannot separate a claim from its
+# negation. Keying on the ROADMAP's OWN list phrasing can: a doc that reproduces the
+# deferred list reproduces its wording. Both-states control run before shipping — RED on
+# the pre-fix bullet and on three independent phrasings of the same claim, GREEN on the
+# corrected bullet and on two negation/unrelated controls. Known limit, stated rather than
+# hidden: a paraphrase that avoids all three stems escapes this. Settling experiment: add
+# the paraphrase to a doc and confirm C11c stays green, then extend the stem list.
+_BROLL_LIST_STEMS = ("deferred from v1", "still deferred", "yet shipped")
+_broll_defer_docs: list[str] = []
+for _p in sorted(ROOT.glob("docs/**/*.md")):
+    _rel_p = _p.relative_to(ROOT).as_posix()
+    if _rel_p == "docs/ROADMAP.md":
+        continue
+    try:
+        _flat_doc = re.sub(r"\s+", " ", _live_text(_p.read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        continue
+    for _hit in re.finditer(r"(?i)roadmap", _flat_doc):
+        _w = _flat_doc[max(0, _hit.start() - 200) : _hit.end() + 200].lower()
+        if "b-roll" in _w and any(_s in _w for _s in _BROLL_LIST_STEMS):
+            _broll_defer_docs.append(_rel_p)
+            break
+check(
+    "C11c",
+    True,
+    not _broll_defer_docs,
+    f"no doc outside docs/ROADMAP.md asserts the ROADMAP defers B-roll (offenders: {_broll_defer_docs or 'none'})",
 )
 
 # ------------------------------------------------------------------- C12 ledger

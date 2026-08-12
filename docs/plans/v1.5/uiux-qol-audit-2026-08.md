@@ -155,7 +155,21 @@ accent-valued declarations per component.
 
 ### 3.3 Two label voices coexist, sometimes on one screen
 
-`docs/design-system.md:43` defines caption 11 px/600 tracked CAPS as *the* label voice. Honoured on
+`docs/design-system.md`'s `## Type` table defines the `--type-caption-size` role — caption 11 px/600
+tracked CAPS — as *the* label voice.
+
+> **CORRECTED (2026-08-12) — cited by SYMBOL, not by line.** This sentence cited
+> `docs/design-system.md:43`, which was byte-exact at `1fa9a69f`, until a 9-line retraction
+> inserted at that file's `:34` pushed the caption row down to `:52` and left the citation
+> resolving onto a line of the retraction itself. Fifth bare-same-file-line-range rot in this
+> corpus, and the first caused by the very pass that wrote the no-bare-line-ranges rule down.
+> `C13-anchor` now fails on any `docs/*.md:N` citation that resolves onto a `>` line. Scope,
+> stated rather than implied: it catches only the *retraction-line* subclass, and it skips
+> blockquotes, so this note is invisible to it. Three anchors in this file (`:49`, `:65-66`,
+> `:78-81`) rotted onto ordinary lines BEFORE this branch and are untouched — they need a
+> sweep that re-derives each true anchor, which this pass did not do.
+
+Honoured on
 Library (`SORT`), the header (`AI MODEL`) and most Settings headings — but Deliver renders `Sources` and
 `Template` as sentence-case body text, Make Shorts renders `Video`, EXPORT PRESETS renders `Save current
 settings as`, and MODELS & SYSTEM mixes a sentence-case `OpenRouter spend` heading among tracked-caps

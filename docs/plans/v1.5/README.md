@@ -62,9 +62,29 @@ changed — never the reverse.
   UNISAL references in implementation code (the single textual hit is one alternative
   inside a model-name regex in `advisorMeta.test.ts`, i.e. a mention, not a swap).
 
-- **B-roll is not deferred.** `docs/ROADMAP.md` lists B-roll, emoji/SFX triggers and
-  publishing as "deferred from V1" (`docs/ROADMAP.md:66`); `PROGRAM.md` makes local
-  auto-B-roll flagship #3 and puts emoji-burst + SFX-on-emphasis in the caption engine.
+- **B-roll is not deferred.** `PROGRAM.md` makes local auto-B-roll flagship #3 and puts
+  emoji-burst + SFX-on-emphasis in the caption engine.
+
+  > **CORRECTED (2026-08-12).** This bullet used to open by asserting, in the present
+  > tense, that the `## Still deferred` sentence in `docs/ROADMAP.md` *lists* B-roll
+  > alongside emoji/SFX triggers and publishing. That was true at `1fa9a69f` and is now
+  > **REFUTED**: the same branch that wrote this correction removed B-roll from that
+  > sentence (commit `cddc178a`), which now names only emoji / keyword SFX triggers, AI
+  > avatars and a publishing scheduler and carries its own retraction beneath it. So the
+  > contradiction this bullet reported is closed at the source, and the *report* of it had
+  > gone stale — a doc asserting something another doc in the same commit series
+  > contradicts, which is the exact defect class this corpus exists to remove, created by
+  > the pass that was removing it. Marked rather than deleted so the next reader inherits
+  > the correction instead of re-deriving it.
+  >
+  > `C11a`/`C11b` pin the code and the ROADMAP sentence and BOTH reported green over this
+  > line, being scoped to files that do not include it — a guard that cannot see a
+  > contradiction reports its absence. `C11c` now scans every other doc for the same
+  > assertion. Known limit, stated rather than hidden: `C11c` skips blockquote lines, so
+  > this paragraph is invisible to it — the price of not punishing a retraction for
+  > quoting what it retires. A live wrong claim parked in a `>` block would be missed.
+  > Settling experiment: unindent this block and confirm `C11c` goes red.
+
   Re-measured 2026-08-11: `docs/ROADMAP.md`'s Release-status list still stops at **v1.2.0**
   while `app/package.json` is **1.5.0** — so the gap is three minors wide (1.2 -> 1.3 -> 1.4
   -> 1.5), not the two it was when this line was written.
