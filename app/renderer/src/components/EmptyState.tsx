@@ -3,8 +3,10 @@
 //
 // Three surfaces had independently hand-rolled the SAME anatomy — a ghost 16:9
 // poster (play glyph + mono placeholder timecode) over a title, a hint, and a way
-// forward: Edit.tsx:177-205 (skin at components/shell.css:812-899),
-// MakeShorts.tsx:428-437 (views/makeShorts.css:134) and Library.tsx:649-698.
+// forward: Edit.tsx's `edit__empty-*` (skin in components/shell.css),
+// MakeShorts.tsx's `make-shorts__empty` (views/makeShorts.css) and Library.tsx's
+// `library__empty`. Cited by selector, not by line — the shell.css anchors this
+// file was written with drifted ~108 lines within days of the branch.
 // Meanwhile other surfaces shipped a single grey paragraph with no action, so the
 // quality of an empty state depended on which screen you happened to land on.
 // This component is that anatomy once, so a surface inherits the bar by default.

@@ -175,7 +175,7 @@ export function Edit({
   if (!video) {
     // Q8: the anatomy (ghost poster -> title -> hint -> a way forward) now has ONE
     // definition, components/EmptyState.tsx. `block` keeps this screen's own
-    // `edit__empty-*` skin (components/shell.css:812-899) byte-for-byte, so sharing
+    // `edit__empty-*` skin (components/shell.css) byte-for-byte, so sharing
     // the structure costs zero pixels here — this screen IS the reference bar, and
     // Edit.empty.test.tsx pins both the delegation and the unchanged classes.
     //

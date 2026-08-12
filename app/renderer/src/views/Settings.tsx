@@ -155,10 +155,18 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     // this panel routes to the Providers & Keys section (where key + consent
     // management now lives), fixing the previous early-return dead-end.
     // Q8: the fallback was the literal string "Loading…" — the exact thing
-    // Library.tsx:616-618 writes down as forbidden ("never a bare LOADING…"), on
-    // the heaviest panel in the app. It is now the shared <Skeleton />: a shape
-    // that echoes what lands (heading bar over body lines) so the layout does not
-    // jump, announced once via role=status instead of leaving dead air.
+    // Library.tsx's own comment writes down as forbidden ("never a bare
+    // LOADING…"), on the heaviest panel in the app. It is now the shared
+    // <Skeleton />, which buys two things and no more:
+    //   * the layout JUMP IS REDUCED, not removed — the ghost echoes the SHAPE
+    //     (heading bar over body lines) of what lands, not its HEIGHT, and
+    //     ModelsSystemPanel is far taller than four bars. UNVERIFIED at pixel
+    //     level; settle it by measuring the fallback's offsetHeight against the
+    //     loaded panel's with the chunk throttled.
+    //   * the wait is a NAMED busy status region carrying real text, where it
+    //     used to be an unnamed div. Whether a screen reader SPEAKS it on
+    //     insertion is NOT-CHECKED — see the a11y note in Skeleton.tsx for why
+    //     that is a weaker claim than it looks, and the experiment that settles it.
     render: (ctx) => (
       <Suspense
         fallback={

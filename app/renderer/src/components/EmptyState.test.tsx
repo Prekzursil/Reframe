@@ -2,9 +2,10 @@
 //
 // Reframe already cleared the professional bar on three screens that each
 // hand-rolled the SAME anatomy: a ghost 16:9 poster (play glyph + mono
-// placeholder timecode) -> title -> hint -> a way forward. Edit.tsx:177-205,
-// MakeShorts.tsx:428-437 and Library.tsx:649-698 are three copies of it, and
-// their skins live in components/shell.css:812-899 / views/makeShorts.css:134.
+// placeholder timecode) -> title -> hint -> a way forward. The `edit__empty-*`,
+// `make-shorts__empty` and `library__empty` blocks are three copies of it, and
+// their skins live in components/shell.css / views/makeShorts.css. Cited by
+// selector, not by line: those shell.css anchors have already drifted ~108 lines.
 // This component is that anatomy, once — so a new surface inherits the bar
 // instead of shipping a fourth grey paragraph.
 //
@@ -116,8 +117,8 @@ describe('<EmptyState /> — the shared empty-state anatomy', () => {
   });
 
   it('reproduces the Edit skin byte-for-byte (the extraction pin)', async () => {
-    // Edit.tsx:176-206 as it shipped: root `edit edit--empty`, aria-label Edit,
-    // `edit__empty-*` slots (styled in components/shell.css:812-899) and the
+    // The Edit empty state as it shipped: root `edit edit--empty`, aria-label
+    // Edit, `edit__empty-*` slots (styled in components/shell.css) and the
     // `edit__empty-back` CTA. Rendering it through the shared component must not
     // change one class, or the reference screen regresses visually.
     await mount(

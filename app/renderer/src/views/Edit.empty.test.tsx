@@ -68,7 +68,8 @@ describe('Edit — the no-video state rides the shared <EmptyState />', () => {
   it('still renders the exact same skin the reference screen shipped', async () => {
     await mount(<Edit video={null} onBack={vi.fn()} />);
 
-    // Every class components/shell.css:803-899 styles must survive the extraction.
+    // Every class the shell.css `.edit--empty` family styles must survive the
+    // extraction (cited by selector — those line anchors have already drifted).
     for (const sel of [
       '.edit.edit--empty',
       '.edit__empty-poster',
