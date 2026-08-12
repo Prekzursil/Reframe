@@ -54,6 +54,18 @@ reader who trusts my first pass would be misled.
    **stale**. I judged the app against `docs/design-system.md` (ACTIVE), citing the older doc only where
    the newer one restates the same intent.
 
+   > **RESOLVED 2026-08-12 (measured at `1fa9a69f`).** True when written; no longer true. That doc's
+   > palette values are deleted and its font bullets corrected, and the class is pinned by
+   > `C8-colour:*` / `C8-binding:*` in `docs/validation/tools/verify_ssot_claims.py`. The finding is
+   > kept rather than deleted so a later reader inherits the resolution instead of re-deriving the
+   > defect. **Two citation defects in the sentence above, recorded because this repo has been bitten
+   > by both before.** (a) `tokens.css:103` is a bare line number into a file that moves: the sentence
+   > it points at spans `:101-110` today and the anchor survived only by luck. Cite the SYMBOL
+   > (`--font-ui` / `--font-editorial`) or a FIXED commit. (b) That comment never mentions the ladder
+   > at all — it supersedes the `system-ui`/`Georgia` font leads only — so attributing the `#08090b`
+   > verdict to it was a real over-attribution. The ladder claim was independently true; its evidence
+   > is the value comparison against `tokens.css`, not that comment.
+
 **My detector failures, and what each nearly caused me to report:**
 
 | My wrong reading | Broken probe | What corrected it |
