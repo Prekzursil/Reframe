@@ -581,6 +581,15 @@ check(
 # Zero false positives and zero paraphrase noise in the same run, which is why this ships as a
 # detector rather than a one-off note.
 #
+# Reading its output, and the one way it can mislead: an entry ending `quotes text at :<N>` found
+# the quote elsewhere in the target and N is the true anchor. An entry ending `quotes text at :?`
+# did NOT find the quote anywhere, which can equally mean the citation PARAPHRASES rather than
+# quotes — a false positive, not a rot. That is tolerable only because this is an OPEN item: it
+# reports and never gates, so the cost of that case is one noisy line rather than a red gate.
+# Measured on n=2 with zero such entries, which is a small sample and stated as one. Settling
+# experiment: add a citation whose parenthetical paraphrases the target and confirm it reports
+# `:?` rather than a line number.
+#
 # A THIRD rotted anchor is NOT machine-checkable and is recorded here instead of guessed at:
 # `app/renderer/src/components/jobqueue.conformance.test.ts:9` cites `:198-199` for the claim
 # that `jobqueue.css` has no `--cancelled` colour, but `:198-199` is the checkbox tap-target
