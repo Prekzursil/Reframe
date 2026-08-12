@@ -1,0 +1,159 @@
+/* emptyState.css — the shared skins for <EmptyState /> and <Skeleton />.
+ *
+ * EXTRACTED, not invented. The `.empty-state*` block below is the ghost-poster
+ * language the app already shipped on its best screens — .edit--empty
+ * (components/shell.css:803-899), .make-shorts__empty (views/makeShorts.css:134)
+ * and .library__empty (components/shell.css:724+) — lifted to one place under
+ * neutral names. Existing screens keep their own class names (the component
+ * skins per screen), so nothing here re-styles them; this is what a NEW surface
+ * inherits by default instead of a bare grey paragraph.
+ *
+ * No accent anywhere: an empty landing is not an active state (same reasoning as
+ * .edit--empty). The CTA borrows the ghost/raised voice of .edit__empty-back
+ * rather than inventing a fifth button treatment.
+ *
+ * SKELETONS: the `.skeleton` shimmer base + its reduced-motion handling live in
+ * components/shell.css:634 and are deliberately NOT redefined here — a second
+ * copy would race the first. Everything below is a SHAPE layered on that one
+ * rule (pinned by Skeleton.test.tsx). */
+
+/* ---- <EmptyState /> ------------------------------------------------------- */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+/* The ghost poster: a deep 16:9 well with a second poster peeking out behind —
+   the stack waiting to be filled. */
+.empty-state-poster {
+  position: relative;
+  width: 240px;
+  aspect-ratio: 16 / 9;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--atmos-well), var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--elev-2);
+}
+
+.empty-state-poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(12px, -10px) rotate(2deg);
+}
+
+.empty-state-glyph {
+  font-size: var(--type-display-size);
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.empty-state-timecode {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--type-caption-leading);
+}
+
+.empty-state-title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-subhead-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-secondary);
+}
+
+.empty-state-hint {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+
+.empty-state-action {
+  margin-top: var(--space-3);
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.empty-state-action:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.empty-state-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---- <Skeleton /> shapes -------------------------------------------------- */
+
+.skeleton-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.skeleton--title {
+  height: 14px;
+  width: 38%;
+  border-radius: var(--radius-pill);
+}
+
+.skeleton--line {
+  height: 10px;
+  width: 100%;
+  border-radius: var(--radius-pill);
+}
+
+/* A panel ghost reads as a heading over a paragraph, so the body lines taper
+   the way real prose does instead of three identical bars. */
+.skeleton-group--panel .skeleton--line:nth-child(3) {
+  width: 84%;
+}
+
+.skeleton-group--panel .skeleton--line:nth-child(4) {
+  width: 62%;
+}
+
+/* Stagger the pulse down the stack so it reads as alive, not a frozen block —
+   the same beat the Library and Shorts skeletons already use. */
+.skeleton-group .skeleton:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.skeleton-group .skeleton:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.skeleton-group .skeleton:nth-child(4) {
+  animation-delay: 0.45s;
+}
