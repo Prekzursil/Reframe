@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+//
 // shell.buttonVoice.conformance.test.ts — the two bare-`.panel` surfaces join the
 // shared control voice, and the focus-ring specificity repair covers every
 // selector it has to (Q1 + Q2).
@@ -18,9 +20,13 @@
 //     is `.workspace > .workspace__body` (`views/Workspace.tsx:450,513`) — no
 //     `.feature-panel`.
 //   * `components/CaptionPreferences.tsx:115` — `<section className="caption-prefs
-//     panel">`; the Save button (`:220`) and the subtitle-mode `<select>` (`:152`).
-//     Mounted into `.settings__panel` (`views/Settings.tsx:197,281`) — again no
-//     `.feature-panel` ancestor.
+//     panel">`; the Save button (`:220`). Mounted into `.settings__panel`
+//     (`views/Settings.tsx:197,281`) — again no `.feature-panel` ancestor.
+//
+// BUTTONS only. The subtitle-mode `<select>` on that same panel is NOT part of this
+// failure and was wrongly swept into it on the first pass: `styles/controls.css:34`
+// gives every `<select>` in the app the shared voice, so the select needed nothing.
+// The correction is pinned by the cross-sheet block at the bottom of this file.
 //
 // The repo already fixed this exact failure once, for `.batch-queue`, and wrote
 // down why at `shell.css:391-394`; `features/batchQueue.conformance.test.ts` is the
@@ -119,7 +125,8 @@ function classNamesOf(tsx: string): ReadonlySet<string> {
   return out;
 }
 
-const SHELL = stripComments(readFileSync(SHELL_CSS, 'utf8'));
+const SHELL_RAW = readFileSync(SHELL_CSS, 'utf8');
+const SHELL = stripComments(SHELL_RAW);
 const PREFS_TSX = readFileSync(CAPTION_PREFS_TSX, 'utf8');
 const VTL_TSX = readFileSync(VIDEO_TIMELINE_TSX, 'utf8');
 
@@ -181,24 +188,45 @@ describe('the bare-`.panel` surfaces join the shared control voice (Q1)', () => 
     }
   });
 
-  it('gives the caption-prefs <select> the shared input voice', () => {
+  it('leaves the caption-prefs <select> to styles/controls.css (no class entry)', () => {
+    // The inverse of the button case, and the correction of this branch's own first
+    // attempt. A <select> is ALREADY voiced app-wide by styles/controls.css:34, so
+    // naming one in shell.css's shared input rule does not add a voice — its
+    // shorthand body takes the chevron away. The cross-sheet block below measures
+    // the consequence; this keeps the selector itself from coming back.
     for (const state of ['', ':hover', ':focus-visible']) {
       expect(
         listsSelector(SHELL, `.caption-prefs__select${state}`),
-        `shell.css must list .caption-prefs__select${state}`,
-      ).toBe(true);
+        `shell.css must NOT list .caption-prefs__select${state} — the shared input ` +
+          'rule uses `background:`/`padding:` shorthands, which reset the chevron and ' +
+          'the `padding-right` that styles/controls.css reserves for it',
+      ).toBe(false);
     }
   });
 
-  it('keeps the lane head DENSE so the lane name is not ellipsised away', () => {
-    // Measured in Chromium at 1280px on the real ancestor chain: the lane head is a
-    // fixed 132px grid column (features/videoTimeline.css:44). At the full
-    // `--control-pad-btn` the two row actions take 89px of it and squeeze
-    // `.vtl__laneName` to 26.4px — narrower than the 41px the DEFAULT lane name
-    // "Video 1" needs (sidecar/media_studio/features/video_tracks.py:230,611), so
-    // every lane label truncated to "Vid…". The row-action pad is the token for this
-    // case; the VOICE is unchanged, only the density, and `--size-target-min` holds
-    // the control at the WCAG 2.5.8 minimum target height.
+  it('gives the lane head the row-action pad, not the full button pad', () => {
+    // What this asserts is exactly the two declarations below — the density tokens.
+    // It does NOT assert that the lane name fits; measured, it does not, and it did
+    // not before this branch either.
+    //
+    // MEASURED in headless Chromium at 1280px, real in-repo Inter inlined so the
+    // glyph metrics are the shipped ones, three real git states, with a short-name
+    // control that must never ellipsise and a long-name control that always must
+    // (both held). The lane head is a fixed 132px grid column
+    // (features/videoTimeline.css:44) and "Video 1" is the DEFAULT lane name
+    // (sidecar/media_studio/features/video_tracks.py:230,611), needing 40.98px:
+    //
+    //   origin/main   .vtl__laneName = 39.53px  -> ALREADY ellipsised
+    //   9942af19      .vtl__laneName = 25.31px  -> ellipsised, visibly worse
+    //   HEAD          .vtl__laneName = 39.45px  -> ellipsised, back to the main width
+    //
+    // So the residual is a PRE-EXISTING truncation this branch neither introduces nor
+    // repairs: the full button pad would have cost 14.2px, and these two declarations
+    // give all but 0.08px of it back. Closing the remaining 1.53px needs the 132px
+    // column widened, the 4px gap shrunk, or "+ Clip" made icon-only — all in
+    // features/videoTimeline.css, outside this lane's file scope, and all equally
+    // required on origin/main. Gate any follow-up on `scrollWidth <= clientWidth`
+    // for `.vtl__laneName` with the default lane name.
     const bodies = bodiesFor(SHELL, '.vtl__laneHead button');
     const padded = bodies.filter((b) => decl(b, 'padding') === 'var(--control-pad-mini)');
     expect(padded.length, '.vtl__laneHead button must use the row-action pad').toBe(1);
@@ -242,9 +270,116 @@ describe('the bare-`.panel` surfaces join the shared control voice (Q1)', () => 
     ).toBe(true);
     expect(
       prefs.has('caption-prefs__select'),
-      'CaptionPreferences.tsx must class the subtitle-mode <select> so the shared ' +
-        'input voice can reach it without a structural `>` selector',
-    ).toBe(true);
+      'the subtitle-mode <select> must stay UNCLASSED — styles/controls.css already ' +
+        'voices it, and a class only drags it under shell.css`s shorthand input rule',
+    ).toBe(false);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * CROSS-SHEET CASCADE. Everything above reads ONE stylesheet, so it is
+ * structurally blind to a shell.css rule overriding a rule in another sheet —
+ * and that blind spot shipped a real defect on this very branch. A
+ * `.caption-prefs__select` entry was added to the shared input rule on the
+ * premise that the control was "the one raw OS dropdown left on that panel".
+ * It was not: `styles/controls.css:34` already gives EVERY <select> in the app
+ * the shared voice, chevron included, and App.tsx imports it immediately before
+ * shell.css. Because the shared input rule's body uses SHORTHANDS, the (0,1,0)
+ * class entry reset two longhands the (0,0,1) element rule had set —
+ * `background:` wiped `background-image` (the redrawn arrow that
+ * controls.css:35-38 documents as the "this opens a list" affordance) and
+ * `padding:` dropped `padding-right` from `--space-6` to `--control-pad-input`,
+ * removing the room reserved for it. The panel ended up with two adjacent
+ * dropdowns speaking different languages, which is the opposite of the change's
+ * intent. This block loads the real sheets in the real order so that class of
+ * defect cannot come back unseen.
+ * ------------------------------------------------------------------------ */
+
+const TOKENS_CSS = resolve(HERE, '..', 'styles', 'tokens.css');
+const CONTROLS_CSS = resolve(HERE, '..', 'styles', 'controls.css');
+
+/** The `select` longhands controls.css sets that a later shorthand can silently reset. */
+const SELECT_PROPS = ['backgroundImage', 'backgroundColor', 'paddingRight'] as const;
+
+/**
+ * Mount the caption-defaults panel with the REAL sheets in App.tsx order and read
+ * back the computed style of its two adjacent dropdowns.
+ *
+ * jsdom does not resolve `var()`, so nothing here is compared against a literal:
+ * the subtitle <select> is compared against the `LanguageSelect` <select> on the
+ * very next row, which carries no shell.css class. That comparison is immune to
+ * var() resolution AND is the actual product requirement — two dropdowns on one
+ * panel must speak one control language.
+ *
+ * The fixture keeps `class="caption-prefs__select"` on the subtitle <select> even
+ * though the real component no longer sets it. That is a deliberate TRIPWIRE, not
+ * drift: it makes this a guard on the STYLESHEET rather than on the markup, so the
+ * rule cannot be reinstated in shell.css without going red here — including in the
+ * case where someone re-adds both the rule and the className together.
+ */
+function adjacentSelects(shellCss: string): {
+  subtitle: Record<string, string>;
+  control: Record<string, string>;
+} {
+  document.head.replaceChildren();
+  for (const css of [
+    readFileSync(TOKENS_CSS, 'utf8'),
+    readFileSync(CONTROLS_CSS, 'utf8'),
+    shellCss,
+  ]) {
+    const style = document.createElement('style');
+    style.textContent = css;
+    document.head.append(style);
+  }
+  document.body.innerHTML =
+    '<div class="app"><main class="app__main"><section class="settings__panel">' +
+    '<section class="caption-prefs panel">' +
+    '<div class="caption-prefs__group caption-prefs__row">' +
+    '<select id="subtitle" class="caption-prefs__select"></select></div>' +
+    '<div class="caption-prefs__group caption-prefs__row">' +
+    '<select id="lang" class="lang-select__control"></select></div>' +
+    '</section></section></main></div>';
+
+  // GUARD, learned the hard way: a sheet jsdom cannot parse contributes NOTHING,
+  // which makes every assertion below vacuously true. While building this fixture a
+  // draft removed a selector entry and left the previous line's dangling `,` —
+  // shell.css dropped to zero rules and the "fixed" state passed for that reason
+  // alone. Assert the sheet is really in the cascade before reading anything from it.
+  const shellSheet = document.styleSheets[2];
+  expect(
+    shellSheet.cssRules.length,
+    'shell.css did not parse — the FIXTURE is broken',
+  ).toBeGreaterThan(100);
+
+  const read = (id: string): Record<string, string> => {
+    const el = document.getElementById(id);
+    if (el === null) throw new Error(`fixture is missing #${id}`);
+    const cs = getComputedStyle(el);
+    return Object.fromEntries(SELECT_PROPS.map((prop) => [prop, cs[prop]]));
+  };
+  return { subtitle: read('subtitle'), control: read('lang') };
+}
+
+describe('shell.css does not clobber the global <select> voice (cross-sheet)', () => {
+  it('the parity detector FIRES on a synthetic clobber (both-states control)', () => {
+    // Prove the instrument can go red before trusting it green. A shorthand
+    // `background:`/`padding:` on the subtitle select must break parity with its
+    // neighbour on exactly the longhands controls.css owns.
+    const { subtitle, control } = adjacentSelects(
+      `${SHELL_RAW}\n.caption-prefs__select { background: #000; padding: 1px; }\n`,
+    );
+    const differing = SELECT_PROPS.filter((prop) => subtitle[prop] !== control[prop]);
+    expect(differing, 'the detector cannot see a shorthand clobber').toEqual([...SELECT_PROPS]);
+  });
+
+  it('the two dropdowns on the caption-defaults panel compute identically', () => {
+    const { subtitle, control } = adjacentSelects(SHELL_RAW);
+    expect(
+      subtitle,
+      'the subtitle-delivery <select> must keep the voice styles/controls.css gives ' +
+        'every <select>; a shorthand in shell.css resets its chevron and the padding ' +
+        'reserved for it, leaving two adjacent dropdowns visibly different',
+    ).toEqual(control);
   });
 });
 

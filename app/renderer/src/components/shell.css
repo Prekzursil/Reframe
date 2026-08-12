@@ -490,14 +490,28 @@ button {
 }
 
 /* DENSITY, not a different voice. The lane head is a fixed 132px grid column
-   (features/videoTimeline.css:44) carrying a lane name plus two row actions. At the
-   full `--control-pad-btn` those two take 89px of it and squeeze `.vtl__laneName`
-   to 26.4px — narrower than the 41px the DEFAULT name "Video 1" needs
-   (sidecar/media_studio/features/video_tracks.py:230,611), so every lane label
-   truncated to "Vid…" (measured in Chromium at 1280px). The row-action pad is the
-   token for exactly this case. Surface, edge, elevation, radius, hover, press,
-   disabled and focus are all inherited from the voice above and unchanged;
-   `--size-target-min` holds the smaller control at the WCAG 2.5.8 target height. */
+   (features/videoTimeline.css:44) carrying a lane name plus two row actions, so every
+   pixel the buttons gain comes straight out of `.vtl__laneName`.
+
+   MEASURED in headless Chromium at 1280px with the real in-repo Inter (a substituted
+   font makes these figures meaningless) and with two controls that held — a one-char
+   lane name that never ellipsises, a long one that always does. "Video 1" is the
+   DEFAULT lane name (sidecar/media_studio/features/video_tracks.py:230,611) and needs
+   40.98px:
+
+     origin/main                    .vtl__laneName = 39.53px  (already ellipsised)
+     the voice at --control-pad-btn .vtl__laneName = 25.31px  (visibly worse)
+     with this rule                 .vtl__laneName = 39.45px  (back to the main width)
+
+   So this rule buys back 14.14 of the 14.22px the full pad cost. It does NOT make the
+   label fit: the default name was ALREADY truncating on origin/main by 1.45px, and it
+   still is. That residual is pre-existing and out of this sheet's reach — closing it
+   needs the 132px column widened, the 4px gap shrunk, or "+ Clip" made icon-only, all
+   in features/videoTimeline.css. Do not "fix" it here with an off-token pad.
+
+   Surface, edge, elevation, radius, hover, press, disabled and focus are inherited
+   from the voice above and unchanged; `--size-target-min` holds the smaller control
+   at the WCAG 2.5.8 minimum target height. */
 .vtl__laneHead button {
   padding: var(--control-pad-mini);
   min-height: var(--size-target-min);
@@ -580,13 +594,26 @@ button {
 
 /* ---- shared inputs ------------------------------------------------------------- */
 
-/* `.caption-prefs__select` is the same bare-`.panel` case as the buttons above: the
-   caption-defaults panel has no `.feature-panel` ancestor, so its subtitle-delivery
-   <select> was the one raw OS dropdown left on an otherwise voiced panel. It is
-   named by CLASS, not as `.caption-prefs__row > select`, so the rule cannot be
-   broken by a wrapper element and cannot reach the <select> that `LanguageSelect`
-   renders on the next row, which carries its own voice
-   (components/languageSelect.css:8). */
+/* DO NOT add a bare `<select>` to this list. Unlike the button voice above, selects
+   are NOT unvoiced by default: `styles/controls.css:34` gives every <select> in the
+   app the shared voice — border, radius, `--surface-raised`, `min-height`, and a
+   redrawn chevron with `padding-right: var(--space-6)` holding the room for it —
+   and App.tsx imports it immediately before this sheet.
+
+   This rule's body uses SHORTHANDS, so any class entry added here lands at (0,1,0)
+   over that (0,0,1) element rule and RESETS the longhands it does not restate:
+   `background:` wipes `background-image` (the arrow controls.css:35-38 documents as
+   the "this opens a list" affordance) and `padding:` drops `padding-right` back to
+   `--control-pad-input`, taking away the space reserved for it. That is measured, not
+   theorised — a `.caption-prefs__select` entry was added here and then removed once
+   the two adjacent dropdowns on the caption-defaults panel were compared in-engine
+   (components/shell.buttonVoice.conformance.test.ts pins it).
+
+   The nine entries below predate that and are deliberate: `.feature-panel` /
+   `.shortmaker` / `.timeline__editor` fields sit in a recessed `--surface-deep` well.
+   Two of the nine are selects (`.feature-panel select`, `.shortmaker select`) and so
+   take the same chevron loss — a real app-wide divergence, but a PRE-EXISTING one and
+   a design call to make deliberately, not to spread one class at a time. */
 .library__add-input,
 .feature-panel input,
 .feature-panel select,
@@ -595,8 +622,7 @@ button {
 .shortmaker select,
 .shortmaker textarea,
 .timeline__editor input,
-.timeline__editor textarea,
-.caption-prefs__select {
+.timeline__editor textarea {
   appearance: none;
   padding: var(--control-pad-input);
   background: var(--surface-deep);
@@ -613,8 +639,7 @@ button {
 .feature-panel textarea:hover,
 .shortmaker input:hover,
 .shortmaker select:hover,
-.shortmaker textarea:hover,
-.caption-prefs__select:hover {
+.shortmaker textarea:hover {
   border-color: var(--edge-strong);
 }
 
@@ -630,8 +655,7 @@ button {
 .shortmaker select:focus-visible,
 .shortmaker textarea:focus-visible,
 .timeline__editor input:focus-visible,
-.timeline__editor textarea:focus-visible,
-.caption-prefs__select:focus-visible {
+.timeline__editor textarea:focus-visible {
   outline: none;
   border-color: var(--accent-edge);
   box-shadow: var(--focus-glow);

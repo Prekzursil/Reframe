@@ -149,14 +149,16 @@ export function CaptionPreferences({
 
       <div className="caption-prefs__group caption-prefs__row">
         <label htmlFor="prefs-subtitle-mode">Subtitles</label>
-        {/* This panel's root is `caption-prefs panel`, and `.panel` has no rule in the
-            tree, so nothing here inherits the shared control voice by ancestry the way a
-            `.feature-panel` child does. The class is what lets components/shell.css reach
-            this one bare <select>; without it the control paints as a raw OS dropdown on
-            an otherwise fully-voiced panel. */}
+        {/* Deliberately UNCLASSED. This panel's root is `caption-prefs panel` and `.panel`
+            has no rule in the tree, so its <button> does need a class to reach the shared
+            voice — but a <select> does not: styles/controls.css:34 already voices every
+            <select> in the app, chevron included. Adding a class here put it under
+            shell.css's shared INPUT rule, whose `background:`/`padding:` shorthands then
+            reset the chevron and the padding reserved for it, so this control stopped
+            matching the LanguageSelect directly below it. Measured in-engine and reverted;
+            shell.buttonVoice.conformance.test.ts keeps the two dropdowns in parity. */}
         <select
           id="prefs-subtitle-mode"
-          className="caption-prefs__select"
           aria-label="Default subtitle delivery"
           value={prefs.subtitleMode}
           onChange={(e) =>
