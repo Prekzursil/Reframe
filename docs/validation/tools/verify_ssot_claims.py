@@ -58,6 +58,17 @@ def read(rel: str) -> str | None:
 # so a mismatch there means someone FIXED it — good news, not a regression. Delete an id
 # from this set (and flip its expectation) as each is corrected.
 OPEN_ITEMS = {
+    # C1a is a deliberate ODD ONE OUT and is labelled misleadingly by this set's own
+    # vocabulary: it prints "[OPEN] still-open" while asserting something TRUE and
+    # uncontested (the `speechbrain==1.1.0` literal is present). Nothing about it is open.
+    # It is left here rather than retired because retiring it would make a HARDCODED
+    # version literal gate the exit code, so a legitimate bump to 1.2.0 would report as a
+    # regression — the moving-figure trap `docs/plans/v1.5/README.md` warns about. The
+    # durable half of this claim is already an INVARIANT: C1b asserts prose and pin AGREE,
+    # whatever the version. Recorded rather than fixed because both available fixes
+    # (retire-as-is, or rewrite to drop the literal) are behaviour changes this pass did
+    # not measure. Settling experiment: bump the literal and confirm C1b stays green while
+    # a retired C1a would go red.
     "C1a",
     "C5a",
     "C5b",
