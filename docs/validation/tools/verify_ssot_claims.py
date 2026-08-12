@@ -478,6 +478,29 @@ check(
     f"CHANGELOG has the [{ver}] section for the CURRENT app/package.json version={f'[{ver}]' in changelog}",
 )
 
+# INVARIANT: the corpus README may not hand-write how many claims THIS tool registers.
+# It said "the 40 REGISTERED claims hold" while the tool registered a different number,
+# and its own surrounding paragraph had already identified the fix — "adding checks that
+# pin this corpus's own literals" — and deferred it. Same reasoning as `waivers-applied=`
+# in `.quality/docs_check.py`: a number the run GENERATES cannot drift from the thing it
+# counts, and a number a human retypes always eventually does. Deliberately NOT
+# blockquote-stripped, unlike C8/C11: the stale literal lived inside a `>` block, so
+# reusing that helper here would pass vacuously — the wrong control for this claim.
+_readme_v15 = read("docs/plans/v1.5/README.md") or ""
+_hardcoded_n = sorted(set(re.findall(r"(?i)(\d+)\s+registered claims", _readme_v15)))
+check(
+    "P3-readme-count",
+    True,
+    bool(_readme_v15) and not _hardcoded_n,
+    # No count in this message ON PURPOSE. The obvious `len(results)` is evaluated where
+    # this check sits, roughly two thirds down the file, so it printed 40 while the run
+    # went on to report 45 — a stale hand-adjacent number inside the check whose whole
+    # subject is stale hand-written numbers. The authoritative total is the `total=` line
+    # the report prints at the end, and it is not worth duplicating here to say so.
+    f"docs/plans/v1.5/README.md hand-writes this tool's claim count={_hardcoded_n or 'none'} "
+    f"(authoritative count = the `total=` line this run ends with)",
+)
+
 rpcdoc = read("docs/rpc-contract-v2.md") or ""
 check(
     "P2.6",
@@ -503,7 +526,15 @@ check(
 
 # ------------------------------------------- Phase 1: does the untracked corpus exist?
 review_dir = Path.home() / ".reframe-review"
-P1 = [
+# Two lists, not one. The single 14-entry list asked `~/.reframe-review` for two entries
+# spelled as REPO paths (`docs/_archive/2026-07/…`) — files that had since been PROMOTED
+# into the tracked tree, which was the entire point of the reconciliation. They can never
+# be found under the scratch dir, so the probe stuck at 12/14 forever; and because
+# P1-corpus is an OPEN item, that permanent mismatch printed
+# "NOW-FIXED (retire it from OPEN_ITEMS)" on every run. A detector that reports a fix
+# nobody made, and invites the next reader to retire the item on that basis, is worse
+# than no detector. Split so each half asserts the property that is actually durable.
+P1_SCRATCH = [
     "reframe-v1.5-program.md",
     "reframe-redesign-direction.md",
     "reframe-redesign.html",
@@ -516,15 +547,29 @@ P1 = [
     "reframe-techprep-dossier.md",
     "reframe-trust-plan.md",
     "reframe-competitor-research.md",
+]
+# INVARIANT: promoted out of the scratch corpus and into the repo. Machine-independent,
+# unlike the OPEN probe below, which can only ever speak for the box it runs on.
+P1_PROMOTED = [
     "docs/_archive/2026-07/reframe-visual-audit.md",
     "docs/_archive/2026-07/reframe-reconcile-audit.md",
 ]
-present = [f for f in P1 if (review_dir / f).is_file()]
+_tracked = set(git("ls-files", "--", "docs/_archive/2026-07").splitlines())
+_unpromoted = [f for f in P1_PROMOTED if f not in _tracked]
+check(
+    "P1-promoted",
+    True,
+    not _unpromoted,
+    f"{len(P1_PROMOTED) - len(_unpromoted)}/{len(P1_PROMOTED)} promoted audit docs are TRACKED "
+    f"(missing: {_unpromoted or 'none'})",
+)
+present = [f for f in P1_SCRATCH if (review_dir / f).is_file()]
 check(
     "P1-corpus",
     True,
-    len(present) == len(P1),
-    f"{len(present)}/{len(P1)} untracked authority files found in {review_dir} (missing: {[f for f in P1 if f not in present] or 'none'})",
+    len(present) == len(P1_SCRATCH),
+    f"{len(present)}/{len(P1_SCRATCH)} untracked authority files found in {review_dir} "
+    f"(missing: {[f for f in P1_SCRATCH if f not in present] or 'none'})",
 )
 shell_audit = review_dir / "shell-audit"
 pngs = len(list(shell_audit.glob("*.png"))) if shell_audit.is_dir() else 0

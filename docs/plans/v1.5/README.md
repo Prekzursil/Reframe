@@ -106,11 +106,16 @@ It exits non-zero and names each **registered** claim that no longer resolves as
 
 > **SCOPE, corrected — it does NOT check this file.** The earlier wording ("re-checks every
 > load-bearing factual claim behind this reconciliation") was wider than the tool, and the proof
-> was sitting in its own output: it exited 0 (`total=40 as-predicted=40 mismatched=0`) in a tree
+> was sitting in its own output: it exited 0 (`total=40 as-predicted=40 mismatched=0`, the count at
+> `1fa9a69f` — re-derive with the command above, which prints its own current total) in a tree
 > where the B-roll bullet above still asserted `app/package.json` is 1.4.2 — twenty lines from
 > the tool's own `P2.11a ... app/package.json version=1.5.0`. The instrument was right; nothing
 > compared the prose against it. (That bullet has since been re-measured and now carries the
 > dated 1.2.0-vs-1.5.0 gap, so the example is historical — the SCOPE limit it demonstrates is
-> not.) A green run here means the 40 REGISTERED claims hold; it says nothing about a literal
-> written in this README. Closing that properly means adding checks that pin this corpus's own
-> literals, which is a follow-up, not a wording change.
+> not.) A green run here means every REGISTERED claim holds — how many that is, is printed by the
+> run itself and deliberately not retyped here; the sentence used to name a count, and that count
+> had already drifted, which is this paragraph's own point committed one line below where it is
+> made. It still says nothing about a literal written in this README. **The follow-up this
+> paragraph deferred is now partly done (2026-08-12, `1fa9a69f`):** `P3-readme-count` in the
+> verifier fails if this file ever hand-writes that count again. Partly, not fully — it pins THIS
+> literal, not every literal in the corpus, and the general case remains open.
