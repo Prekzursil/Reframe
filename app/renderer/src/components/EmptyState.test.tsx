@@ -58,50 +58,50 @@ describe('<EmptyState /> — the shared empty-state anatomy', () => {
       />,
     );
 
-    expect(q('.empty-state')).not.toBeNull();
-    expect(q('.empty-state-poster')).not.toBeNull();
-    expect(q('.empty-state-title')?.textContent).toBe('No video open');
-    expect(q('.empty-state-hint')?.textContent).toBe('Open a video from the Library.');
-    expect(q('.empty-state-action')?.textContent).toBe('← Library');
+    expect(q('.empty-state-shell')).not.toBeNull();
+    expect(q('.empty-state-shell-poster')).not.toBeNull();
+    expect(q('.empty-state-shell-title')?.textContent).toBe('No video open');
+    expect(q('.empty-state-shell-hint')?.textContent).toBe('Open a video from the Library.');
+    expect(q('.empty-state-shell-action')?.textContent).toBe('← Library');
   });
 
   it('ships the ghost poster as DECORATION with the shared glyph + timecode', async () => {
     await mount(<EmptyState poster title="No video open" />);
 
     // The poster is an illustration, not content: it must not reach the a11y tree.
-    expect(q('.empty-state-poster')?.getAttribute('aria-hidden')).toBe('true');
-    expect(q('.empty-state-glyph')?.textContent).toBe(EMPTY_STATE_GLYPH);
-    expect(q('.empty-state-timecode')?.textContent).toBe(EMPTY_STATE_TIMECODE);
+    expect(q('.empty-state-shell-poster')?.getAttribute('aria-hidden')).toBe('true');
+    expect(q('.empty-state-shell-glyph')?.textContent).toBe(EMPTY_STATE_GLYPH);
+    expect(q('.empty-state-shell-timecode')?.textContent).toBe(EMPTY_STATE_TIMECODE);
   });
 
   it('lets a surface override the poster glyph + timecode', async () => {
     await mount(<EmptyState poster={{ glyph: '✂', timecode: '00:00' }} title="No cuts yet" />);
 
-    expect(q('.empty-state-glyph')?.textContent).toBe('✂');
-    expect(q('.empty-state-timecode')?.textContent).toBe('00:00');
+    expect(q('.empty-state-shell-glyph')?.textContent).toBe('✂');
+    expect(q('.empty-state-shell-timecode')?.textContent).toBe('00:00');
   });
 
   it('omits the poster when it is not asked for, and when it is switched off', async () => {
     await mount(<EmptyState title="No matches" />);
-    expect(q('.empty-state-poster')).toBeNull();
+    expect(q('.empty-state-shell-poster')).toBeNull();
 
     await mount(<EmptyState poster={false} title="No matches" />);
-    expect(q('.empty-state-poster')).toBeNull();
+    expect(q('.empty-state-shell-poster')).toBeNull();
   });
 
   it('omits the hint and the action when the surface has none', async () => {
     await mount(<EmptyState title="No matches" />);
 
-    expect(q('.empty-state-hint')).toBeNull();
-    expect(q('.empty-state-action')).toBeNull();
-    expect(q('.empty-state-title')?.textContent).toBe('No matches');
+    expect(q('.empty-state-shell-hint')).toBeNull();
+    expect(q('.empty-state-shell-action')).toBeNull();
+    expect(q('.empty-state-shell-title')?.textContent).toBe('No matches');
   });
 
   it('wires the action as a real button that fires its handler', async () => {
     const onClick = vi.fn();
     await mount(<EmptyState title="No video open" action={{ label: '← Library', onClick }} />);
 
-    const button = container.querySelector<HTMLButtonElement>('.empty-state-action');
+    const button = container.querySelector<HTMLButtonElement>('.empty-state-shell-action');
     // type=button so an empty state inside a <form> can never submit it.
     expect(button?.type).toBe('button');
     await act(async () => {
@@ -113,7 +113,7 @@ describe('<EmptyState /> — the shared empty-state anatomy', () => {
   it('labels the region for assistive tech when the surface names it', async () => {
     await mount(<EmptyState title="No video open" label="Edit" />);
 
-    expect(q('.empty-state')?.getAttribute('aria-label')).toBe('Edit');
+    expect(q('.empty-state-shell')?.getAttribute('aria-label')).toBe('Edit');
   });
 
   it('gives a NAMED empty state a role that PERMITS the name', async () => {
@@ -132,7 +132,7 @@ describe('<EmptyState /> — the shared empty-state anatomy', () => {
     // here the name and a naming-capable role must travel TOGETHER.
     await mount(<EmptyState title="No video open" label="Edit" />);
 
-    const named = q('.empty-state');
+    const named = q('.empty-state-shell');
     expect(named?.getAttribute('role')).toBe('region');
     expect(named?.getAttribute('aria-label')).toBe('Edit');
   });
@@ -143,7 +143,7 @@ describe('<EmptyState /> — the shared empty-state anatomy', () => {
     // would only add noise. No name -> no role, no aria-label.
     await mount(<EmptyState title="No matches" />);
 
-    const anonymous = q('.empty-state');
+    const anonymous = q('.empty-state-shell');
     expect(anonymous?.getAttribute('role')).toBeNull();
     expect(anonymous?.getAttribute('aria-label')).toBeNull();
   });
@@ -181,6 +181,6 @@ describe('<EmptyState /> — the shared empty-state anatomy', () => {
     expect(q('.edit__empty-hint')).not.toBeNull();
     expect(q('.edit__empty-back')).not.toBeNull();
     // The default block must NOT leak in alongside the skin.
-    expect(q('.empty-state-title')).toBeNull();
+    expect(q('.empty-state-shell-title')).toBeNull();
   });
 });

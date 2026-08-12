@@ -1,29 +1,44 @@
 /* emptyState.css — the shared skins for <EmptyState /> and <Skeleton />.
  *
- * EXTRACTED, not invented. The `.empty-state*` block below is the ghost-poster
- * language the app already shipped on its best screens — `.edit--empty`
- * (components/shell.css), `.make-shorts__empty` (views/makeShorts.css) and
- * `.library__empty` (components/shell.css) — lifted to one place under neutral
- * names. Existing screens keep their own class names (the component skins per
- * screen), so nothing here re-styles them; this is what a NEW surface inherits
- * by default instead of a bare grey paragraph. Cited by selector, not by line:
- * shell.css is owned by other lanes and every line number this file quoted at
- * branch time drifted ~108 lines within days.
+ * EXTRACTED, not invented. The `.empty-state-shell*` block below is the
+ * ghost-poster language the app already shipped on its best screens —
+ * `.edit--empty` (components/shell.css), `.make-shorts__empty`
+ * (views/makeShorts.css) and `.library__empty` (components/shell.css) — lifted to
+ * one place under neutral names. Existing screens keep their own class names (the
+ * component skins per screen), so nothing here re-styles them; this is what a NEW
+ * surface inherits by default instead of a bare grey paragraph. Cited by selector,
+ * not by line: shell.css is owned by other lanes and every line number this file
+ * quoted at branch time drifted ~108 lines within days.
+ *
+ * WHY `-shell`, and not the obvious `.empty-state` (a REGRESSION this shipped for
+ * three commits, measured by a reviewer and fixed here). `.empty-state` is NOT a
+ * free name: panels/ModelsSystemPanel.tsx renders `<div className="empty-state">`
+ * for its pre-analysis prompt, skinned by panels/modelsSystem.css under
+ * `.models-system-panel .empty-state`. That rule wins every property it declares
+ * (0,2,0 beats 0,1,0) but declares NO `text-align`, so a bare `.empty-state
+ * { text-align: center }` here was the only declaration matching that element and
+ * centred a live panel's body copy — order-independent (measured in both sheet
+ * orders), on a surface outside this lane's scope, and invisible to every gate
+ * this branch runs. The probe that missed it counted consumers of the
+ * <EmptyState /> COMPONENT and concluded the CSS had none; the right probe is one
+ * collection lower — who emits the CLASS. Both are now pinned by
+ * emptyState.collision.test.tsx, which fails on ANY unscoped class in this sheet
+ * that production markup outside EmptyState.tsx / Skeleton.tsx also emits.
  *
  * DISCLOSED DUPLICATION (read this before adding to the block below). The
- * `.empty-state*` rules are a property-for-property COPY of the `.edit--empty` /
- * `.edit__empty-*` family in shell.css, and shell.css keeps its original — so
- * two copies of one visual language now ship, with nothing pinning them in sync.
- * Worse, the copy has ZERO production consumers today: the only <EmptyState /> in
- * the app is Edit.tsx, which passes `block="edit__empty"` and therefore emits the
- * shell.css classes, not these. So this block is unverified at the DOM level, not
- * merely at the pixel level. It is deliberate and temporary: skinning REPLACES
- * rather than appends (so a shared default cannot tie the per-screen skin on
- * specificity), and shell.css is out of this lane's scope — it is owned by open
- * PR #424. No cross-sheet pin is shipped here on purpose: it would fail on a
- * sibling lane's legitimate shell.css edit, which is not this lane's call to
- * make. THE FOLLOW-UP THAT CLOSES IT, in one commit, once shell.css is free:
- * point Edit.tsx at the default block and delete the `.edit--empty` /
+ * `.empty-state-shell*` rules are a property-for-property COPY of the
+ * `.edit--empty` / `.edit__empty-*` family in shell.css, and shell.css keeps its
+ * original — so two copies of one visual language now ship, with nothing pinning
+ * them in sync. The copy also has zero production consumers today: the only
+ * <EmptyState /> in the app is Edit.tsx, which passes `block="edit__empty"` and
+ * therefore emits the shell.css classes, not these. So the block's PIXELS are
+ * unverified (its cascade is not: see the test above). It is deliberate and
+ * temporary: skinning REPLACES rather than appends (so a shared default cannot tie
+ * the per-screen skin on specificity), and shell.css is out of this lane's scope —
+ * it is owned by open PR #424. No cross-sheet pin is shipped here on purpose: it
+ * would fail on a sibling lane's legitimate shell.css edit, which is not this
+ * lane's call to make. THE FOLLOW-UP THAT CLOSES IT, in one commit, once shell.css
+ * is free: point Edit.tsx at the default block and delete the `.edit--empty` /
  * `.edit__empty-*` rules.
  *
  * SKELETONS: the `.skeleton` shimmer base + its reduced-motion handling live in
@@ -33,7 +48,7 @@
 
 /* ---- <EmptyState /> ------------------------------------------------------- */
 
-.empty-state {
+.empty-state-shell {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -44,7 +59,7 @@
 
 /* The ghost poster: a deep 16:9 well with a second poster peeking out behind —
    the stack waiting to be filled. */
-.empty-state-poster {
+.empty-state-shell-poster {
   position: relative;
   width: 240px;
   aspect-ratio: 16 / 9;
@@ -59,7 +74,7 @@
     var(--elev-2);
 }
 
-.empty-state-poster::before {
+.empty-state-shell-poster::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -70,13 +85,13 @@
   transform: translate(12px, -10px) rotate(2deg);
 }
 
-.empty-state-glyph {
+.empty-state-shell-glyph {
   font-size: var(--type-display-size);
   color: var(--text-faint);
   user-select: none;
 }
 
-.empty-state-timecode {
+.empty-state-shell-timecode {
   position: absolute;
   right: var(--space-2);
   bottom: var(--space-2);
@@ -90,7 +105,7 @@
   line-height: var(--type-caption-leading);
 }
 
-.empty-state-title {
+.empty-state-shell-title {
   margin: var(--space-2) 0 0;
   font-size: var(--type-subhead-size);
   font-weight: var(--type-title-weight);
@@ -98,14 +113,14 @@
   color: var(--text-secondary);
 }
 
-.empty-state-hint {
+.empty-state-shell-hint {
   margin: 0;
   max-width: 46ch;
   font-size: var(--type-body-size);
   color: var(--text-muted);
 }
 
-.empty-state-action {
+.empty-state-shell-action {
   margin-top: var(--space-3);
   padding: var(--control-pad-btn);
   font-size: var(--type-control-size);
@@ -118,12 +133,12 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 
-.empty-state-action:hover {
+.empty-state-shell-action:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
 
-.empty-state-action:focus-visible {
+.empty-state-shell-action:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }

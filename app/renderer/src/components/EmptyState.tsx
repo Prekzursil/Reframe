@@ -14,8 +14,9 @@
 // SKINNING, not re-designing: `block` picks the BEM prefix for the slots and
 // `className` the root class, so an existing screen keeps its exact stylesheet
 // (zero visual regression on the reference screens) while sharing ONE structure,
-// ONE a11y contract, and ONE CTA affordance. New surfaces take the defaults and
-// get the shared `.empty-state*` skin from emptyState.css.
+// ONE a11y contract across the screens that use THIS component, and ONE CTA
+// affordance. New surfaces take the defaults and get the shared
+// `.empty-state-shell*` skin from emptyState.css.
 import React from 'react';
 import './emptyState.css';
 
@@ -25,8 +26,17 @@ export const EMPTY_STATE_GLYPH = '▶';
 /** The mono placeholder timecode in the poster's corner. */
 export const EMPTY_STATE_TIMECODE = '--:--';
 
-/** The default BEM prefix for the slot classes (`empty-state-title`, …). */
-export const EMPTY_STATE_BLOCK = 'empty-state';
+/**
+ * The default BEM prefix — root `empty-state-shell`, slots
+ * `empty-state-shell-title`, … .
+ *
+ * NOT `empty-state`, and the `-shell` suffix is load-bearing rather than taste:
+ * `empty-state` is already emitted by panels/ModelsSystemPanel.tsx and skinned
+ * there, so a shared sheet declaring a bare `.empty-state` rule reached into that
+ * panel (it centred its body copy) for three commits. See the collision note in
+ * emptyState.css and the pins in emptyState.collision.test.tsx.
+ */
+export const EMPTY_STATE_BLOCK = 'empty-state-shell';
 
 /** The ghost poster's contents — both parts have a shared default. */
 export interface EmptyStatePoster {
@@ -55,7 +65,7 @@ export interface EmptyStateProps {
   action?: EmptyStateAction;
   /** BEM prefix for the slot classes. Defaults to {@link EMPTY_STATE_BLOCK}. */
   block?: string;
-  /** Root class. Defaults to `block` (the shared `.empty-state` skin). */
+  /** Root class. Defaults to `block` (the shared `.empty-state-shell` skin). */
   className?: string;
   /**
    * Names the empty state as a REGION, when the surface has a name worth
