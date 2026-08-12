@@ -523,3 +523,37 @@ once (§4.5). **STILL OPEN** — the comment is unchanged; only the anchor moved
    `app/renderer/src/features/KeepCopyControl.tsx:21`. (§4.5) **Re-anchored 2026-08-10:** the guard is now
    the themed `useConfirm` gate in `Library.deleteShort` (`:474`, `confirm(` at `:488`) — cite the SYMBOL,
    not the line.
+
+## Incoming citations into this file are STALE (recorded 2026-08-12 at `1ad80ce8`)
+
+Three citations in application source point INTO this file at line numbers that no longer hold. They
+are recorded here, at the END of the file so no existing anchor shifts, because the next reader of a
+cited line should inherit the correction instead of re-deriving it — and because nothing validates
+this direction: `C13-anchor` in
+[`docs/validation/tools/verify_ssot_claims.py`](../../validation/tools/verify_ssot_claims.py) scans
+`docs/**/*.md` on the citing side only, and `.quality/docs_check.py` r2 checks that a cited PATH
+resolves, never the line number. All three predate the docs-SSOT branch, so nothing here broke them;
+the branch moved their true anchors further by growing the file.
+
+Deliberately NOT written as a blockquote: `C13-anchor` strips `>` lines from the citing side, so a
+retraction-styled note would make the three anchors below invisible to the very check that would
+catch them rotting again.
+
+| Citing site | Cites | True anchor | Evidence |
+| --- | --- | --- | --- |
+| `app/renderer/src/views/Library.tsx:685` | `uiux-qol-audit-2026-08.md:299` | `:481` | quotes "M6. Drag-and-drop works only on Library", which is at `:481`; `:299` is the unrelated `jobqueue.css` colour bullet |
+| `app/renderer/src/views/Library.test.tsx:1166` | `uiux-qol-audit-2026-08.md:299` | `:481` | same quote, same mismatch |
+| `app/renderer/src/components/jobqueue.conformance.test.ts:9` | `uiux-qol-audit-2026-08.md:198-199` | `:299-300` | its claim is that `jobqueue.css` has no `--cancelled` colour; `:198-199` is the checkbox tap-target paragraph and the cited sentence is at `:299-300` |
+
+The first two are machine-checked from now on: they carry their own quoted excerpt, so the quote and
+the line either agree or they do not, and `C13-code-quote` reports them on every run until the two
+line numbers are corrected in app source (it is an OPEN item, so it reports without failing the
+gate — the fix is outside the docs lane's scope). The third pairs an UNQUOTED claim with its
+citation, which no detector can pair, so it is reported rather than detected. Fixing any of them
+should cite the SYMBOL or a FIXED commit, per this corpus's own citation rule — a bare same-file
+line range is the form that has now rotted here repeatedly.
+
+On this table's own use of line numbers: they are the SUBJECT of the note, not a citation of
+content, which is the only reason they are written as numbers at all — and they are pinned to
+`1ad80ce8` in the heading so a reader can re-derive them instead of trusting them. Anything citing
+what a line SAYS should still name the symbol or the commit.

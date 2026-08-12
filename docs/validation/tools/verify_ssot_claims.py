@@ -72,6 +72,13 @@ OPEN_ITEMS = {
     "C1a",
     "C5a",
     "C5b",
+    # C13-code-quote records a CODE defect this lane may not touch: two citations in
+    # `app/renderer/src/` quote an excerpt and point at the wrong line. It is OPEN rather than
+    # INVARIANT because the fix is in application source and the doc lane that measured it is
+    # scoped to `docs/**`; making it gate the exit code would leave a red gate nobody in scope
+    # can clear. Retire it (and flip the expectation to INVARIANT) in the commit that corrects
+    # the two line numbers.
+    "C13-code-quote",
     "P1-corpus",
 }
 
@@ -557,6 +564,66 @@ check(
     _code_cites > 0 and not _code_cite_bad,
     f"code->docs line citations={_code_cites} (0 would mean the walk broke, not a clean tree), "
     f"unresolvable={len(_code_cite_bad)}: {_code_cite_bad or 'none'}",
+)
+
+# OPEN (a CODE defect, reported not fixed — this lane is scoped to `docs/**`). A citation written
+# as `docs/<file>.md:<N> ("quoted excerpt")` is SELF-CHECKING: the quote either sits near line N or
+# it does not, so unlike the general "did the anchor rot" question this subclass needs no
+# judgement. (The placeholder is written with angle brackets on purpose. Spelling it out as a
+# plausible-looking path makes THIS comment an unresolvable citation, and `.quality/docs_check.py`
+# r2 fails on it — measured twice in one sitting, once here and once in the control note above.
+# The gate is right both times, and it is recorded rather than quietly fixed because that is the
+# same use-vs-mention shape this file has now been bitten by at C5b, C9b, P2.8 and C1b.)
+# MEASURED at `1ad80ce8`: exactly 2 such citations exist across `app/` + `sidecar/`, and BOTH are
+# rotted — `app/renderer/src/views/Library.tsx` and `app/renderer/src/views/Library.test.tsx`
+# cite `docs/plans/v1.5/uiux-qol-audit-2026-08.md:299` while quoting "M6. Drag-and-drop works
+# only on Library", which lives at `:481`; `:299` is the unrelated `jobqueue.css` colour bullet.
+# Zero false positives and zero paraphrase noise in the same run, which is why this ships as a
+# detector rather than a one-off note.
+#
+# A THIRD rotted anchor is NOT machine-checkable and is recorded here instead of guessed at:
+# `app/renderer/src/components/jobqueue.conformance.test.ts:9` cites `:198-199` for the claim
+# that `jobqueue.css` has no `--cancelled` colour, but `:198-199` is the checkbox tap-target
+# paragraph and the cited sentence is at `:299-300`. Its claim precedes the citation unquoted, so
+# only a human reading both sides can pair them — reported, not detected.
+_QUOTED_CITE = re.compile(r"(docs/[A-Za-z0-9_./-]+\.md):(\d+)(?:-\d+)?\s*\(\s*[\"“]([^\"”]{8,200})")
+_quote_rot: list[str] = []
+for _sub in ("app", "sidecar"):
+    for _cp in sorted((ROOT / _sub).rglob("*")):
+        if _cp.suffix not in _CODE_EXT or not _cp.is_file():
+            continue
+        if "node_modules" in _cp.parts or "dist" in _cp.parts or "release" in _cp.parts:
+            continue
+        try:
+            _cbody = _cp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # Flatten comment continuations, so a quote wrapped across `//` lines still reads.
+        _cflat = re.sub(r"\s*\n\s*(?://|#|\*)?\s*", " ", _cbody)
+        for _qm in _QUOTED_CITE.finditer(_cflat):
+            _qtgt, _qn, _quote = _qm.group(1), int(_qm.group(2)), " ".join(_qm.group(3).split())
+            if not (ROOT / _qtgt).is_file():
+                continue
+            if _qtgt not in _target_lines:
+                _target_lines[_qtgt] = (ROOT / _qtgt).read_text(encoding="utf-8", errors="replace").splitlines()
+            _qls = _target_lines[_qtgt]
+            _probe = " ".join(_quote.split()[:4]).lower()
+
+            def _flat_md(lines: list[str]) -> str:
+                return " ".join(re.sub(r"[*`_]", "", " ".join(lines)).split()).lower()
+
+            if _probe and _probe not in _flat_md(_qls[max(0, _qn - 3) : _qn + 3]):
+                _true = next(
+                    (i + 1 for i, _ln in enumerate(_qls) if _probe in _flat_md([_ln])),
+                    0,
+                )
+                _quote_rot.append(f"{_cp.relative_to(ROOT).as_posix()} -> {_qtgt}:{_qn} quotes text at :{_true or '?'}")
+check(
+    "C13-code-quote",
+    True,
+    bool(_quote_rot),
+    f"quoted-excerpt code->docs citations still pointing at the wrong line={len(_quote_rot)}: "
+    f"{_quote_rot or 'none'} (fix is in app source, outside the docs lane's scope)",
 )
 
 # ---------------------------------------------------- C9 keystore / consent gate
