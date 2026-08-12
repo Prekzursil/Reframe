@@ -963,6 +963,32 @@ describe('L5 rail: exactly four destinations plus Settings', () => {
     expect(container.querySelector('.app__destination')).toBeNull();
   });
 
+  // ORPHANED BY THIS CHANGE, disclosed rather than papered over. Shrinking the
+  // rail from 8 to 5 left `DirectorIcon`, `CaptionIcon` and `ExportIcon` in
+  // components/navIcons.tsx with NO production caller — the destinations they
+  // labelled are modes now, and TabBar (which renders the mode switch) takes no
+  // icon. Deleting them is the right end state, but navIcons.tsx is outside this
+  // lane's file scope, so they are RETAINED and covered here instead of silently
+  // dropping the renderer's 100% bar on someone else's file.
+  //
+  // This is a smoke render, and I am not claiming it is more: it proves each
+  // component still returns an <svg>, nothing about placement. FOLLOW-UP for the
+  // owner of navIcons.tsx: delete the three, or give the mode switch icons.
+  it('keeps the three rail icons the L5 shrink orphaned renderable', async () => {
+    const { CaptionIcon, DirectorIcon, ExportIcon } = await import('./components/navIcons');
+    await act(async () => {
+      root.render(
+        <div data-testid="orphaned-icons">
+          <DirectorIcon />
+          <CaptionIcon />
+          <ExportIcon />
+        </div>,
+      );
+    });
+    await flush();
+    expect(container.querySelectorAll('[data-testid="orphaned-icons"] svg')).toHaveLength(3);
+  });
+
   // TabBar puts `aria-controls` on the SELECTED tab only, so the mode panel must
   // carry the matching id — a dangling IDREF is the CRITICAL axe
   // `aria-valid-attr-value` violation TabBar's own comment records from a real CI run.
