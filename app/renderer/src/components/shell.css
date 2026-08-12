@@ -489,6 +489,20 @@ button {
   box-shadow: var(--elev-1);
 }
 
+/* DENSITY, not a different voice. The lane head is a fixed 132px grid column
+   (features/videoTimeline.css:44) carrying a lane name plus two row actions. At the
+   full `--control-pad-btn` those two take 89px of it and squeeze `.vtl__laneName`
+   to 26.4px — narrower than the 41px the DEFAULT name "Video 1" needs
+   (sidecar/media_studio/features/video_tracks.py:230,611), so every lane label
+   truncated to "Vid…" (measured in Chromium at 1280px). The row-action pad is the
+   token for exactly this case. Surface, edge, elevation, radius, hover, press,
+   disabled and focus are all inherited from the voice above and unchanged;
+   `--size-target-min` holds the smaller control at the WCAG 2.5.8 target height. */
+.vtl__laneHead button {
+  padding: var(--control-pad-mini);
+  min-height: var(--size-target-min);
+}
+
 /* GHOST voice: truly quiet — no fill, no edge, no shadow at rest; a low-key nav /
    secondary action that only lifts a whisper of tint on hover. Overrides the
    raised base for these two. (Remove's hover is the destructive-red rule below.) */

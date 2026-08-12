@@ -190,6 +190,21 @@ describe('the bare-`.panel` surfaces join the shared control voice (Q1)', () => 
     }
   });
 
+  it('keeps the lane head DENSE so the lane name is not ellipsised away', () => {
+    // Measured in Chromium at 1280px on the real ancestor chain: the lane head is a
+    // fixed 132px grid column (features/videoTimeline.css:44). At the full
+    // `--control-pad-btn` the two row actions take 89px of it and squeeze
+    // `.vtl__laneName` to 26.4px — narrower than the 41px the DEFAULT lane name
+    // "Video 1" needs (sidecar/media_studio/features/video_tracks.py:230,611), so
+    // every lane label truncated to "Vid…". The row-action pad is the token for this
+    // case; the VOICE is unchanged, only the density, and `--size-target-min` holds
+    // the control at the WCAG 2.5.8 minimum target height.
+    const bodies = bodiesFor(SHELL, '.vtl__laneHead button');
+    const padded = bodies.filter((b) => decl(b, 'padding') === 'var(--control-pad-mini)');
+    expect(padded.length, '.vtl__laneHead button must use the row-action pad').toBe(1);
+    expect(decl(padded[0], 'min-height')).toBe('var(--size-target-min)');
+  });
+
   it('does NOT reach the nested component buttons (the broad-selector trap)', () => {
     // `.vtl__clip` and `.caption-style-swatch` are <button>s living inside these
     // panels with their own (0,1,0) voices. A broad `.vtl button` /
