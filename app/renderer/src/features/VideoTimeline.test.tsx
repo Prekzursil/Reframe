@@ -831,3 +831,42 @@ describe('adding the source clip to a lane (W18)', () => {
     expect(add.title).toContain('source file');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Q7 — the render is no longer an orphan, and its live region has a ROLE
+// ---------------------------------------------------------------------------
+
+describe('Q7: status/progress semantics and selection reporting', () => {
+  it('announces the status line as a live region (role=status)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await click(button('render'));
+    await act(async () => {
+      fake.emitProgress({ jobId: 'job-1', pct: 40, message: 'encoding' });
+    });
+    const line = container.querySelector('[data-role="status"]');
+    expect(line).not.toBeNull();
+    expect(line!.getAttribute('role')).toBe('status');
+  });
+
+  it('labels the render progress element (an unlabelled progress announces nothing)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await click(button('render'));
+    const bar = container.querySelector('progress[data-role="render-progress"]');
+    expect(bar).not.toBeNull();
+    expect(bar!.getAttribute('aria-label')).toBe('Render progress');
+  });
+
+  it('reports the selected clip to its host so the host can drive an inspector', async () => {
+    const fake = makeFakeApi();
+    const onSelectClip = vi.fn<(id: string | null) => void>();
+    (globalThis as { api?: unknown }).api = fake.api;
+    await act(async () => {
+      root.render(<VideoTimeline videoId="v1" onSelectClip={onSelectClip} />);
+    });
+    expect(onSelectClip).toHaveBeenLastCalledWith(null);
+    await click(clipEl('c1'));
+    expect(onSelectClip).toHaveBeenLastCalledWith('c1');
+  });
+});

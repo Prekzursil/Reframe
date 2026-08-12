@@ -86,6 +86,15 @@ export interface VideoTimelineProps {
   sourceDurationSec?: number;
   /** Called with the rendered file path once `tracks.video.render` finishes. */
   onRendered?: (path: string) => void;
+  /**
+   * Q7: report the CURRENT clip selection to the host (`null` = nothing selected).
+   *
+   * The panel already owned a `selected` clip id and used it for Split/Remove, but
+   * that state never left the component — so a host could not make its inspector
+   * follow the selection, which is exactly what the selection-driven workspace IA
+   * requires. Pass a STABLE callback (useCallback): it is an effect dependency.
+   */
+  onSelectClip?: (clipId: string | null) => void;
 }
 
 /** What a mouse gesture in progress is doing. */
@@ -114,6 +123,7 @@ export function VideoTimeline({
   sourcePath = '',
   sourceDurationSec = 0,
   onRendered,
+  onSelectClip,
 }: VideoTimelineProps): React.ReactElement {
   const [stored, setStored] = useState<VideoLane[] | null>(null);
   const [fps, setFps] = useState<Fps>(30);
@@ -128,6 +138,13 @@ export function VideoTimeline({
 
   const dragRef = useRef<Drag | null>(null);
   const trackRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // Q7: publish the selection. ONE effect rather than a call at each `setSelected`
+  // site (there are three: clip click, drag start, and the post-commit clear) —
+  // a per-site call is the shape that goes stale the moment a fourth is added.
+  useEffect(() => {
+    onSelectClip?.(selected);
+  }, [onSelectClip, selected]);
 
   // -- load ------------------------------------------------------------------
   /**
@@ -554,8 +571,11 @@ export function VideoTimeline({
         </button>
       </div>
 
+      {/* Q7: a bare <progress> has an implicit `progressbar` role with NO
+          accessible name, so a screen reader announces a percentage attached to
+          nothing. The label names WHAT is progressing. */}
       {busy === 'render' && (
-        <progress data-role="render-progress" max={100} value={pct}>
+        <progress aria-label="Render progress" data-role="render-progress" max={100} value={pct}>
           {pct}%
         </progress>
       )}
@@ -564,8 +584,12 @@ export function VideoTimeline({
           {error}
         </p>
       )}
+      {/* Q7: the status line reports asynchronous job progress and the final
+          "Rendered <path>". Without role=status it is a silent <p> — the update
+          never reaches assistive tech, so the one confirmation that a render
+          produced a file is invisible to a screen-reader user. */}
       {status !== '' && (
-        <p className="vtl__status" data-role="status">
+        <p className="vtl__status" data-role="status" role="status">
           {status}
         </p>
       )}
