@@ -1,11 +1,25 @@
-/* workspace.css — Workspace chrome + tab strip (SURFACE GROUP B).
-   Deepens the base pass in components/shell.css for the per-video workspace:
-   quiet content-forward tabs with an unmistakable active state, a ghost back
-   button, asymmetric breathing room. Tokens only (styles/tokens.css).
+/* workspace.css — the REFINE surface: preview + docked timeline + inspector.
+   Deepens the base pass in components/shell.css for the per-video workspace.
+   Tokens only (styles/tokens.css). Class names are test-pinned.
+
    NOTE: this sheet executes BEFORE shell.css in the entry chunk, so every
    override here is doubled-up (.workspace .x / .tabbar .tab) — specificity,
-   not source order, must win the ties. Class names are test-pinned; restyle
-   only. */
+   not source order, must win the ties.
+
+   WHAT THIS SHEET NO LONGER CONTAINS, and why it must not come back.
+   Until L5 the workspace painted 21 panels as ONE horizontal tab strip (16 of
+   them at once, plus 3 group captions) inside the app's fixed 1280px window. It
+   overflowed and clipped mid-word. The strip's defences accumulated here — an
+   `overflow-x: auto` scrollport, an "Advanced" disclosure, a `position: sticky`
+   pin, then a scrollport MOVE so Advanced and Export could not be scrolled away.
+   Every one of those rules existed to survive a strip that was already too wide.
+
+   The strip is gone, so they are gone with it. The replacement is structural,
+   not defensive: the ONE horizontal navigation left in the workspace is the
+   3-lane dock head, and the inspector's section list runs VERTICALLY (see
+   `.workspace__inspector .tabbar` below), so it cannot overflow sideways however
+   many panels a selection context gains. Re-introducing a horizontal strip of
+   panels here re-introduces the defect. */
 
 /* ---- header: the title leads, the back control whispers ------------------- */
 
@@ -27,16 +41,195 @@
 
 /* faint mono echo of where you are — the editing-room voice, not a heading */
 .workspace .workspace__title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- tab strip: quiet caps, one amber underline --------------------------- */
-
-/* 8 tabs must survive narrow windows without wrapping the chrome */
-.workspace .tabbar {
-  overflow-x: auto;
+/* Export (design-review P1): the terminal deliver goal keeps a standing, primary
+   affordance. It now lives in the HEADER rather than at the far end of the tab
+   strip, where a growing strip repeatedly pushed it out of the window — a
+   control the user cannot reach is a control that is not there. The single amber
+   accent in the chrome belongs to the active tab, so Export wears an amber-edged
+   outline (not a filled block) to read as primary without shouting. */
+.workspace .workspace__export {
+  appearance: none;
+  margin-left: auto;
   flex: none;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--type-caption-tracking);
+  padding: var(--control-pad-btn);
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
+
+.workspace .workspace__export:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface-deep);
+}
+
+.workspace .workspace__export:active {
+  transform: translateY(1px);
+}
+
+.workspace .workspace__export:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---- the two-column body: stage on the left, inspector on the right ------- */
+
+/* `min-height: 0` on both the row and the stage is load-bearing: without it a
+   flex child refuses to shrink below its content height, the dock is pushed past
+   the bottom of the 820px window, and the "timeline visible with zero navigation
+   actions" invariant fails on a tall panel. */
+.workspace .workspace__main {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--space-5);
+  padding: 0 var(--space-6) var(--space-6);
+}
+
+.workspace .workspace__stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--space-4);
+}
+
+.workspace .workspace__player {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ---- the dock: ONE timeline, several lanes, always visible ---------------- */
+
+/* L5 G-1/G-2. The video timeline used to be tab #12 of 21 — an editor you had to
+   go and FIND. It is docked here, permanently, beside the preview. */
+.workspace .workspace__dock {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-height: 0;
+  height: 34%;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-bg);
+  overflow: hidden;
+}
+
+/* The lane heads are the only horizontal navigation left in the workspace, and
+   they are capped at the three lanes a timeline has. */
+.workspace .workspace__dock > .tabbar {
+  flex: none;
+  padding: 0 var(--space-3);
+  box-shadow: inset 0 -1px 0 var(--edge);
+}
+
+.workspace .workspace__dock-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* the render receipt: "Timeline rendered to <path>" (Q7) */
+.workspace .workspace__dock-note {
+  flex: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  box-shadow: inset 0 1px 0 var(--edge);
+}
+
+/* WAVE 1: the audio lane NAMES the object whose tools the inspector offers. A
+   waveform and per-region audio editing are wave 2 — this is deliberately not a
+   placeholder for a control that is missing, it is the lane head itself. */
+.workspace .workspace__audio-lane {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.workspace .workspace__lane-name {
+  color: var(--text-primary);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-semibold);
+}
+
+.workspace .workspace__lane-source {
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- the inspector: sections exist because something is selected ---------- */
+
+.workspace .workspace__inspector {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 340px;
+  min-height: 0;
+  gap: var(--space-3);
+  padding-left: var(--space-5);
+  box-shadow: inset 1px 0 0 var(--edge);
+}
+
+/* what is selected — a quiet tracked caption, the inspector's only heading */
+.workspace .workspace__inspector-context {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+/* THE ANTI-RATCHET RULE, IN CSS. The section list runs DOWN, not across, so a
+   context that gains a panel grows into vertical space (which scrolls honestly)
+   instead of pushing the last entries off the right edge of a fixed 1280px
+   window. `overflow-x: visible` is written with `.workspace` in the selector so
+   it out-specifies any inherited horizontal-scrollport rule rather than relying
+   on source order. Do not turn this back into a row. */
+.workspace .workspace__inspector .tabbar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  overflow-x: visible;
+}
+
+.workspace .workspace__inspector .tabbar .tab {
+  text-align: left;
+}
+
+.workspace .workspace__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: var(--space-4);
+}
+
+/* ---- tabs: quiet caps, one amber underline -------------------------------- */
 
 .tabbar .tab {
   transition:
@@ -59,192 +252,4 @@
 
 .tabbar .tab[aria-selected="true"]::after {
   background: var(--accent);
-}
-
-/* ---- grouped strip (WU-3a2): named clusters + Advanced disclosure ---------
-   ADDITIVE visual layer. The clusters sit in a row; each wears a quiet tracked
-   caption and a hairline seam so the eye reads Speech · Frame · Audio without a
-   loud divider. "Deliver" collapses behind the Advanced toggle. */
-
-.tabbar.tabbar--grouped {
-  align-items: stretch;
-  gap: 0;
-}
-
-/* THE SCROLLPORT LIVES ON THE TABLIST, NOT ON THE STRIP (v1.5 W17/W18).
- *
- * `.workspace .tabbar` above is `overflow-x: auto`, which made the WHOLE grouped
- * strip the scroll container — Advanced and Export included. Advanced was pinned
- * back into view with `position: sticky` (the F17 fix, kept in the history note
- * below); Export never was, and the e2e spec measured it starting 4px past the
- * right edge at 12 painted tabs. W17/W18 took the strip to 14 painted, pushing
- * Export further out — a control the user cannot reach is a control that is not
- * there, and Export is the terminal goal of the whole app.
- *
- * Moving the scrollport onto `.tabbar__tablist` fixes BOTH with one rule and no
- * DOM change: the tab clusters scroll inside the list, while Advanced and Export
- * are flex siblings OUTSIDE the scrollport and therefore cannot be scrolled away
- * at any tab count. It is strictly stronger than sticky, which only pinned the
- * one control it was applied to and painted it over the tabs beneath.
- *
- * The `overflow-x: visible` is written with `.workspace` in the selector so it
- * out-specifies `.workspace .tabbar` rather than relying on source order. */
-.workspace .tabbar.tabbar--grouped {
-  overflow-x: visible;
-}
-
-/* The real role="tablist" is an INNER wrapper that holds ONLY the tab clusters
-   (the Advanced/Export controls are its siblings, kept out of the list so it
-   owns only tabs). It lays the clusters out inline exactly as the flat strip
-   did — no visual change to the cluster row itself. `min-width: 0` is required:
-   without it the flex item refuses to shrink below its content width and the
-   overflow escapes the strip again. */
-.tabbar--grouped .tabbar__tablist {
-  display: flex;
-  align-items: stretch;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-x: auto;
-}
-
-.tabbar--grouped .tabbar__group {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-right: var(--space-4);
-}
-
-/* hairline seam BETWEEN clusters (not after the last) — a tonal separator */
-.tabbar--grouped .tabbar__group + .tabbar__group {
-  padding-left: var(--space-4);
-  box-shadow: inset 1px 0 0 var(--edge);
-}
-
-/* the cluster name: a whisper, never competing with the tab labels. NOTE: no
-   `opacity` dimming — the muted token alone reads at 7.7:1 on the raised surface,
-   but multiplying it by an alpha collapsed the label to ~3.85:1 (a real WCAG 1.4.3
-   AA fail). Quietness comes from the small tracked-caps size, not a transparency
-   that eats contrast. */
-.tabbar--grouped .tabbar__group-label {
-  color: var(--text-muted);
-  font-size: var(--type-caption-size);
-  font-weight: var(--type-caption-weight);
-  letter-spacing: var(--type-caption-tracking);
-  text-transform: uppercase;
-  white-space: nowrap;
-  align-self: center;
-}
-
-/* Advanced disclosure: shares the tab voice but reads as a control, not a tab.
- *
- * HISTORY, kept because it names a defect that must not come back. This control
- * is the ONLY thing that can collapse the Deliver cluster, so when it leaves the
- * window the cluster becomes uncollapsible — that is F17. It was fixed when the
- * strip held 13 tabs (8 painted collapsed) and left ~94px of overflow; the v1.5
- * wave took it to 17/12 and the nightly e2e caught the regression precisely:
- * `expect(toggle).toBeInViewport()` -> "Received: viewport ratio 0" on windows,
- * macos AND ubuntu. Off-screen entirely, not merely clipped. Collapsing the
- * cluster cannot fix it — the overflow is in the PRIMARY tabs, which paint
- * whether or not the cluster is open.
- *
- * The fix WAS `position: sticky; right: 0` here. It is now the scrollport move
- * above, which keeps this control (and Export, which sticky never covered)
- * permanently outside the scrolling region. Sticky is therefore REMOVED rather
- * than layered on top: nested inside a non-scrolling parent it would resolve
- * against a different ancestor scrollport and could drift.
- *
- * The OPAQUE background is kept (it was `transparent` before F17): `--surface-bg`
- * is the strip's own canvas, so it reads unchanged, and it stays correct if this
- * control is ever moved back over scrolling content. */
-.tabbar--grouped .tabbar__advanced-toggle {
-  appearance: none;
-  align-self: center;
-  background: var(--surface-bg);
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: var(--type-caption-size);
-  font-weight: var(--type-caption-weight);
-  letter-spacing: var(--type-caption-tracking);
-  text-transform: uppercase;
-  padding: 11px 12px;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.tabbar--grouped .tabbar__advanced-toggle:hover {
-  color: var(--text-secondary);
-}
-
-.tabbar--grouped .tabbar__advanced-toggle[aria-expanded="true"] {
-  color: var(--text-primary);
-}
-
-/* a small caret cue that flips when the cluster opens (shape, not colour-only) */
-.tabbar--grouped .tabbar__advanced-toggle::after {
-  content: "▸";
-  display: inline-block;
-  margin-left: var(--space-2);
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-
-.tabbar--grouped .tabbar__advanced-toggle[aria-expanded="true"]::after {
-  transform: rotate(90deg);
-}
-
-/* `:not([hidden])` is load-bearing, not cosmetic. TabBar renders this panel as
-   `<div className="tabbar__advanced-panel" hidden={!advancedOpen}>`, and an
-   author-origin `display` outranks the UA `[hidden] { display: none }` rule — so
-   an unscoped `display: flex` here keeps the collapsed cluster painted, making
-   the "Advanced" disclosure a no-op that also pushes Export off the strip. */
-.tabbar--grouped .tabbar__advanced-panel:not([hidden]) {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-/* Export (design-review P1): the terminal deliver goal gets a standing, primary
-   affordance pushed to the far end of the strip. The single amber accent in the
-   chrome already belongs to the active tab, so Export wears an amber-edged outline
-   (not a filled block) to read as the primary action without shouting. */
-.tabbar--grouped .tabbar__export {
-  appearance: none;
-  margin-left: auto;
-  align-self: center;
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-edge);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: var(--type-control-size);
-  font-weight: var(--weight-semibold);
-  letter-spacing: var(--type-caption-tracking);
-  padding: var(--control-pad-btn);
-  white-space: nowrap;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    transform var(--dur-fast) var(--ease-out);
-}
-
-.tabbar--grouped .tabbar__export:hover {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--surface-deep);
-}
-
-.tabbar--grouped .tabbar__export:active {
-  transform: translateY(1px);
-}
-
-.tabbar--grouped .tabbar__export:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-/* ---- body: panels breathe; the footage well stays the focus --------------- */
-
-.workspace .workspace__body {
-  padding: var(--space-6) var(--space-6) var(--space-8);
 }

@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // jsdom does not implement HTMLMediaElement playback; the real <Player> the
 // Workspace mounts touches load()/play()/pause() (and reads error). Back them so
@@ -43,9 +45,9 @@ vi.mock('../lib/rpc', () => ({
   onProxyState: (cb: (e: ProxyStateEvt) => void) => onProxyStateMock(cb),
 }));
 
-// The 11 feature panels are lazily code-split. Mock each to a deterministic
-// marker so tab-switching renders something assertable WITHOUT pulling each
-// real panel's own rpc wiring into this shell test (they have their own suites).
+// The feature panels are lazily code-split. Mock each to a deterministic marker
+// so switching sections renders something assertable WITHOUT pulling each real
+// panel's own rpc wiring into this shell test (they have their own suites).
 function stubPanel(label: string) {
   return {
     default: (props: Record<string, unknown>) => {
@@ -55,11 +57,6 @@ function stubPanel(label: string) {
         {
           'data-panel': label,
           'data-videoid': String(props.videoId ?? ''),
-          // W18: the video timeline is USELESS without the source geometry —
-          // `tracks.video.addClip` needs a real path + a duration for srcOut, so
-          // the stub surfaces what the Workspace actually passed down.
-          'data-sourcepath': String(props.sourcePath ?? ''),
-          'data-duration': String(props.sourceDurationSec ?? ''),
         },
         label,
       );
@@ -70,7 +67,6 @@ vi.mock('../features/Transcribe', () => stubPanel('Transcribe'));
 vi.mock('../features/Subtitles', () => stubPanel('Subtitles'));
 vi.mock('../features/Tracks', () => stubPanel('Tracks'));
 vi.mock('../features/Convert', () => stubPanel('Convert'));
-vi.mock('../features/ShortMaker', () => stubPanel('ShortMaker'));
 vi.mock('../features/Timeline', () => stubPanel('Timeline'));
 vi.mock('../features/Dub', () => stubPanel('Dub'));
 vi.mock('../features/AudioMix', () => stubPanel('AudioMix'));
@@ -82,43 +78,65 @@ vi.mock('../features/Stabilize', () => stubPanel('Stabilize'));
 vi.mock('../features/TranscriptEditor', () => stubPanel('TranscriptEditor'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
-// W17 / W18: the two surfaces this lane mounts.
-vi.mock('../features/VideoTimeline', () => stubPanel('VideoTimeline'));
 vi.mock('../features/ReframeCorrect', () => stubPanel('ReframeCorrect'));
-// W19: eye-contact correction. `gaze.probe` + `gaze.run` were registered and
-// frozen into the RPC surface but had NO renderer caller at all (0 hits for
-// `gaze`, case-insensitive, under app/renderer); this tab is the entry point.
-//
-// SCOPE OF THAT CLAIM, narrowed after review: this is a STUB, like every other
-// panel here. The `it.each` case below therefore proves the TabBar + `renderPanel()`
-// switch and the props handed down — NOT that
-// `lazy(() => import('../features/Gaze'))` resolves or that the real panel mounts.
-// The lane originally offered it as "the actual reachability test", which was wider
-// than the evidence. The real lazy mount is asserted in `Workspace.seam.test.tsx`
-// ("Workspace ↔ Gaze seam"), which drains macrotasks and renders the REAL panel;
-// that case goes red if `case 'gaze'` is removed from `renderPanel` (measured).
+// W19 / W16-UI: same STUB caveat as every other panel here — this file proves the
+// inspector mapping and the props handed down, NOT that the lazy chunk resolves.
+// The real lazy mounts are asserted in `Workspace.seam.test.tsx`.
+vi.mock('../features/Speed', () => stubPanel('Speed'));
 vi.mock('../features/Gaze', () => stubPanel('Gaze'));
-// W16-UI: auto-b-roll. Same STUB caveat as `Gaze` above — this file proves the
-// TabBar + `renderPanel()` switch and the props handed down, NOT that
-// `lazy(() => import('../features/BrollPanel'))` resolves. The real lazy mount is
-// asserted in `Workspace.seam.test.tsx` ("Workspace ↔ BrollPanel seam").
 vi.mock('../features/BrollPanel', () => stubPanel('BrollPanel'));
+
+// The DOCKED video timeline is not a passive marker: the inspector follows the
+// clip it reports (Q7 `onSelectClip`) and the dock shows the file it produced
+// (Q7 `onRendered`). The stub exposes both edges as buttons so those wires can be
+// driven from a test without mounting the real editor.
+vi.mock('../features/VideoTimeline', () => ({
+  default: (props: Record<string, unknown>) => {
+    const React_ = require('react');
+    const select = props.onSelectClip as ((id: string | null) => void) | undefined;
+    const rendered = props.onRendered as ((path: string) => void) | undefined;
+    return React_.createElement(
+      'div',
+      {
+        'data-panel': 'VideoTimeline',
+        'data-videoid': String(props.videoId ?? ''),
+        'data-sourcepath': String(props.sourcePath ?? ''),
+        'data-duration': String(props.sourceDurationSec ?? ''),
+      },
+      React_.createElement(
+        'button',
+        { type: 'button', 'data-action': 'select-clip', onClick: () => select?.('c1') },
+        'select clip',
+      ),
+      React_.createElement(
+        'button',
+        { type: 'button', 'data-action': 'clear-clip', onClick: () => select?.(null) },
+        'clear clip',
+      ),
+      React_.createElement(
+        'button',
+        {
+          type: 'button',
+          'data-action': 'finish-render',
+          onClick: () => rendered?.('D:/out/timeline.mp4'),
+        },
+        'finish render',
+      ),
+    );
+  },
+}));
 
 import {
   Workspace,
   WORKSPACE_TABS,
-  WORKSPACE_TAB_GROUPS,
-  DEFAULT_WORKSPACE_TAB,
+  WORKSPACE_DOCK_LANES,
+  WORKSPACE_DOCK_PANELS,
+  WORKSPACE_INSPECTOR_SECTIONS,
+  WORKSPACE_PANELS_ELSEWHERE,
   WORKSPACE_EXPORT_TAB,
+  workspacePanelHome,
 } from './Workspace';
 import type { Video, Project } from '../components/api';
-
-// CONTRACT-NOTE: the feature panels (../features/*) are authored by a sibling unit
-// and do not exist on disk when this shell is tested in isolation. The Workspace
-// loads them lazily and falls back to a "panel is not available" placeholder when
-// the dynamic import fails — that fallback is what these tests assert. Once the
-// feature modules land, the real panels render in their place (covered by their
-// own unit tests). This keeps the shell's tests independent of sibling units.
 
 const video: Video = {
   id: 'v1',
@@ -164,51 +182,62 @@ async function flush(): Promise<void> {
   });
 }
 
+async function render(props: Record<string, unknown> = {}): Promise<void> {
+  await act(async () => {
+    root.render(<Workspace video={video} onBack={() => {}} {...props} />);
+  });
+  await flush();
+}
+
+async function clickEl(el: Element | null): Promise<void> {
+  expect(el).not.toBeNull();
+  await act(async () => {
+    (el as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+  await flush();
+}
+
+/** A tab button anywhere in the workspace (dock lane heads + inspector sections). */
+const tabEl = (id: string): Element | null =>
+  container.querySelector(`[role="tab"][data-tab-id="${id}"]`);
+/** The inspector's own tab buttons only. */
+const inspectorTabIds = (): string[] =>
+  Array.from(container.querySelectorAll('.workspace__inspector [role="tab"]')).map(
+    (t) => t.getAttribute('data-tab-id') ?? '',
+  );
+const dockAction = (action: string): Element | null =>
+  container.querySelector(`.workspace__dock [data-action="${action}"]`);
+const selectionLabel = (): string =>
+  container.querySelector('[data-role="selection"]')?.textContent ?? '';
+
+/**
+ * Read the workspace stylesheet from disk. `import.meta.url` is NOT a file URL
+ * under the vitest transform (fileURLToPath rejects it), and `__dirname` does not
+ * exist in the ESM output, so resolve from the runner's cwd and FAIL LOUDLY if
+ * the file is not where we expect — a silently-empty read would make every CSS
+ * assertion below vacuous.
+ */
+function readWorkspaceCss(): string {
+  const candidates = [
+    resolve(process.cwd(), 'renderer/src/views/workspace.css'),
+    resolve(process.cwd(), 'app/renderer/src/views/workspace.css'),
+  ];
+  const found = candidates.find((p) => existsSync(p));
+  expect(found).toBeDefined();
+  return readFileSync(found as string, 'utf8').replace(/\r\n/g, '\n');
+}
+
 describe('Workspace', () => {
-  // SCOPE CHANGE #1 (v1.5 timeline-naming, deliberate): two LABELS moved, ids and
-  // order untouched. 'Timeline' -> 'Subtitle timeline' and 'Timeline export' ->
-  // 'NLE export'. Both old strings promised a video timeline this workspace does
-  // not have: the `timeline` tab mounts features/Timeline.tsx, a subtitle-CUE
-  // editor (`Timeline.tsx:1-8`), and the `nle` tab exports an EDL synthesized
-  // from approved short-maker clips, not a user-authored timeline
-  // (`NleExport.tsx:1-9`).
+  // THE PANEL REGISTRY, pinned exactly and in order. Two labels changed with the
+  // L5 rebuild and nothing else moved:
+  //   'Subtitle timeline' -> 'Caption cues'   (features/Timeline.tsx: subtitle CUES)
+  //   'Video timeline'    -> 'Video clips'    (features/VideoTimeline.tsx: CLIPS)
+  // Those two panels used to sit two tabs apart in one strip while sharing the
+  // word "timeline" for two different document models — work item 6. They are now
+  // the two named LANES of one dock, and the labels say which model each holds.
   //
-  // SCOPE CHANGE #2 (v1.5 expose-engines lane): this list gains 'Stabilize'. The
-  // assertion is WIDENED by exactly one entry, never weakened — every previously
-  // pinned label and its position relative to the others is unchanged. The new
-  // tab is what makes the already-registered `stabilize.run` RPC reachable at
-  // all (it had zero references anywhere under app/ before this lane).
-  //
-  // MERGE NOTE: the two lanes landed independently and both edited this line.
-  // The resolution keeps BOTH — the honest rename AND the new tab — because they
-  // are orthogonal: one corrects a label that lied, the other exposes an engine.
-  //
-  // SCOPE CHANGE #3 (v1.5 audiomix-ui): 'Audio mix' joins the Audio cluster beside
-  // Dub — it is the ONLY renderer entry point to the sidecar's audiomix.merge /
-  // audiomix.normalize (sidechain auto-duck + EBU R128), which had zero callers.
-  //
-  // SCOPE CHANGE #4 (W17 + W18 mount-editor-surfaces): the list gains 'Fix
-  // framing' and 'Video timeline'. Both mount panels that were complete, styled
-  // and 100%-covered but imported by NOTHING except their own test, so neither
-  // was reachable by any user. WIDENED by exactly two entries, never weakened —
-  // every previously pinned label keeps its position relative to the others.
-  //
-  // SCOPE CHANGE #5 (W19 gaze-entrypoint): the list gains 'Eye contact'. It sits
-  // immediately after 'Stabilize' because it is the same KIND of operation — a
-  // whole-clip, token-free, local image correction that writes a new file and
-  // never touches the source — and because `stabilize` is the de-facto neighbour
-  // for "polish the footage" ops in the Frame & Cut cluster. WIDENED by exactly
-  // one entry, never weakened.
-  //
-  // SCOPE CHANGE #6 (W16-UI auto-b-roll): the list gains 'Auto B-roll', placed
-  // immediately after 'Video timeline' because it is the same KIND of operation —
-  // it puts additional footage INTO the timeline for chosen windows. Before it, the
-  // seven `broll.*` RPCs (~58 KB of engine) had zero callers anywhere under `app/`.
-  // WIDENED by exactly one entry, never weakened.
-  //
-  // The assertion remains exact and order-sensitive, seven elements longer than
-  // the pre-v1.5 list and with two labels corrected. Nothing was weakened.
-  it('exposes the contract tabs in order (P2: +Subtitle timeline/Dub/Assets; captions-export: +NLE export; system-advanced: +Diarize/Recipes; expose-engines: +Stabilize; speed: +Speed; audiomix-ui: +Audio mix; W17/W18: +Fix framing/Video timeline; W19: +Eye contact; W16-UI: +Auto B-roll)', () => {
+  // WIDENED/NARROWED: neither. All 21 entries and their order are unchanged.
+  it('exposes all 21 panels in the registry, in order, with the two timeline labels disambiguated', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Search',
@@ -220,18 +249,11 @@ describe('Workspace', () => {
       'Convert',
       'Short-maker',
       'Fix framing',
-      'Subtitle timeline',
-      'Video timeline',
-      // W16-UI: auto-b-roll. Before it, `broll.assets/addAsset/removeAsset/status/
-      // index/suggest/apply` had no caller anywhere in the renderer, so the whole
-      // flagship — engine, registry door and all — was user-unreachable.
+      'Caption cues',
+      'Video clips',
       'Auto B-roll',
       'Stabilize',
-      // W19: eye-contact correction. Before it, gaze.probe/gaze.run had no caller
-      // anywhere in the renderer, so the whole feature was user-unreachable.
       'Eye contact',
-      // v1.5: the Speed panel joins "Frame & Cut". Before it, the re-time engine
-      // had NO control in any panel — only an LLM-planned Director op reached it.
       'Speed',
       'Dub',
       'Audio mix',
@@ -239,241 +261,89 @@ describe('Workspace', () => {
       'Recipes',
       'Assets',
     ]);
+    expect(WORKSPACE_TABS).toHaveLength(21);
   });
 
-  // The naming invariant, pinned per-id so it survives a tab being inserted or
-  // reordered by another lane. This does NOT forbid a future tab labelled
-  // 'Timeline' — a real video timeline may legitimately claim that name. It
-  // forbids these two SPECIFIC panels from claiming it, because neither is one.
-  it('never lets the subtitle-cue editor or the EDL exporter claim the name "Timeline"', () => {
+  // The naming invariant, pinned per-id so it survives a panel being inserted or
+  // reordered by another lane. Neither of these two panels may claim the bare word
+  // "Timeline", and — the part that is new — they may not be confusable with each
+  // other, because they are two different models (cues vs clips).
+  it('never lets the caption-cue editor and the clip editor share one word', () => {
     const byId = (id: string): string | undefined => WORKSPACE_TABS.find((t) => t.id === id)?.label;
-    // features/Timeline.tsx = waveform + draggable subtitle CUES.
-    expect(byId('timeline')).toBe('Subtitle timeline');
+    expect(byId('timeline')).toBe('Caption cues');
+    expect(byId('videoTimeline')).toBe('Video clips');
     // features/NleExport.tsx = CMX3600 EDL / CSV handoff for Premiere/Resolve.
     expect(byId('nle')).toBe('NLE export');
-    expect(WORKSPACE_TABS.map((t) => t.label)).not.toContain('Timeline export');
-    // W18 closes the other half of that 2026 note: the tab comment said "a
-    // genuine video-timeline tab is free to claim it later". features/
-    // VideoTimeline.tsx IS that panel and now claims the name.
-    expect(byId('videoTimeline')).toBe('Video timeline');
+    const labels = WORKSPACE_TABS.map((t) => t.label);
+    expect(labels).not.toContain('Timeline');
+    expect(labels).not.toContain('Timeline export');
+    // Both are dock LANES now, and the lane heads carry the same disambiguated
+    // names — so the two models are never presented as interchangeable tabs.
+    expect(WORKSPACE_DOCK_LANES.map((l) => l.label)).toEqual([
+      'Video clips',
+      'Caption cues',
+      'Program audio',
+    ]);
   });
 
-  // A constant saying "Subtitle timeline" is not the same signal as a BUTTON
-  // showing it — the two tests above read WORKSPACE_TABS directly, so a rename
-  // that never reached the rendered strip would still pass them. This one goes
-  // through the real TabBar and reads the DOM, which is the thing a user sees.
-  // Verified as a real detector by mutation: reverting either label in
-  // Workspace.tsx turns this red (see the commit body for the captured output).
-  it('renders the honest labels on the real tab buttons, not just in the array', async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-    const tabText = (id: string): string | null | undefined =>
-      container.querySelector(`[role="tab"][data-tab-id="${id}"]`)?.textContent;
-    expect(tabText('timeline')).toBe('Subtitle timeline');
-    expect(tabText('nle')).toBe('NLE export');
+  // A constant saying "Caption cues" is not the same signal as a BUTTON showing
+  // it — the two tests above read the arrays directly. This one goes through the
+  // real TabBar and reads the DOM, which is what a user sees.
+  it('renders the disambiguated lane names on the real dock buttons, not just in the array', async () => {
+    await render();
+    expect(tabEl('video')?.textContent).toBe('Video clips');
+    expect(tabEl('captions')?.textContent).toBe('Caption cues');
+    expect(tabEl('audio')?.textContent).toBe('Program audio');
   });
 
-  it('puts Stabilize in the "Frame & Cut" cluster so it is reachable without the Advanced disclosure', () => {
-    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
-    expect(frame?.tabIds).toContain('stabilize');
-    expect(frame?.advanced).not.toBe(true);
-  });
-
-  // W19. A tab id present in WORKSPACE_TABS but absent from every GROUP would not
-  // paint at all (TabBar renders from the groups when `groups` is passed), and the
-  // "every id stays in the tablist" test below would catch that — but not the
-  // weaker failure of parking it behind the Advanced disclosure. Eye-contact
-  // correction is a normal editing op, not an advanced/deliver one, so it must be
-  // in a VISIBLE cluster: burying an ethics-gated control makes the gate harder to
-  // find, which is the opposite of the point.
-  it('puts Eye contact in the VISIBLE "Frame & Cut" cluster, not behind Advanced', async () => {
-    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
-    expect(frame?.tabIds).toContain('gaze');
-    expect(frame?.advanced).not.toBe(true);
-    // and in no other cluster (exactly-once membership across the strip)
-    const owners = WORKSPACE_TAB_GROUPS.filter((g) => g.tabIds.includes('gaze'));
-    expect(owners).toHaveLength(1);
-
-    // A SECOND, mechanically different signal: the config array above is a claim
-    // about intent; this reads the rendered DOM. The `gaze` tab must sit OUTSIDE
-    // `.tabbar__advanced-panel` (the container the disclosure hides), which is what
-    // "painted by default" actually means. jsdom does not compute visibility, so DOM
-    // POSITION is the strongest check available at this level — the true pixel check
-    // is `.tab:visible` in the nightly `app/e2e/preview.spec.ts`.
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-    const gazeTab = container.querySelector('[role="tab"][data-tab-id="gaze"]');
-    expect(gazeTab).not.toBeNull();
-    expect(gazeTab?.closest('.tabbar__advanced-panel')).toBeNull();
-    // Control for that assertion: a tab that IS behind the disclosure must be found
-    // inside it, otherwise the `.closest()` selector could be silently wrong and the
-    // check above would pass for every tab.
-    expect(
-      container
-        .querySelector('[role="tab"][data-tab-id="tracks"]')
-        ?.closest('.tabbar__advanced-panel'),
-    ).not.toBeNull();
-  });
-
-  // W16-UI. Auto-b-roll must be in a VISIBLE cluster, and for a reason specific to
-  // it rather than by analogy: the panel is where the UNCALIBRATED match threshold
-  // and the NO-UNDO apply disclosure live. Parking it behind the Advanced
-  // disclosure would hide the two honesty surfaces the feature ships with, which is
-  // the opposite of the point. It is also the only door to the seven `broll.*`
-  // methods, so a hidden tab is a hidden flagship.
-  it('puts Auto B-roll in the VISIBLE "Frame & Cut" cluster, not behind Advanced', async () => {
-    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
-    expect(frame?.tabIds).toContain('broll');
-    expect(frame?.advanced).not.toBe(true);
-    // exactly-once membership across the strip
-    expect(WORKSPACE_TAB_GROUPS.filter((g) => g.tabIds.includes('broll'))).toHaveLength(1);
-
-    // A SECOND, mechanically different signal: the array above states intent, this
-    // reads the rendered DOM. jsdom computes no visibility, so DOM POSITION
-    // (outside the container the disclosure hides) is the strongest check here; the
-    // pixel check is `.tab:visible` in the nightly `app/e2e/preview.spec.ts`.
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-    const tab = container.querySelector('[role="tab"][data-tab-id="broll"]');
-    expect(tab).not.toBeNull();
-    expect(tab?.closest('.tabbar__advanced-panel')).toBeNull();
-    // Control for that assertion: a tab that IS behind the disclosure must be found
-    // INSIDE it, or the `.closest()` selector could be silently wrong and the check
-    // above would pass for every tab in the strip.
-    expect(
-      container
-        .querySelector('[role="tab"][data-tab-id="tracks"]')
-        ?.closest('.tabbar__advanced-panel'),
-    ).not.toBeNull();
-  });
-
-  it('mounts the b-roll panel on its tab, threaded with the videoId it needs', async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} initialTab="broll" />);
-    });
-    await flush();
-    const panel = container.querySelector('[data-panel="BrollPanel"]');
-    expect(panel).not.toBeNull();
-    // `broll.suggest` and `broll.apply` are both videoId-scoped; without it the
-    // panel could list and index a library but never match or render anything.
-    expect(panel?.getAttribute('data-videoid')).toBe('v1');
-  });
-
-  it('puts Speed in the Frame & Cut group and selects it from a deep-link', async () => {
-    // The REAL panel mount is asserted in Workspace.seam.test.tsx, which drains
-    // macrotasks — the lazy chunk is a genuine dynamic import and this file's
-    // microtask-only flush() can leave the Suspense fallback up.
-    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
-    expect(frame?.tabIds).toContain('speed');
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} initialTab="speed" />);
-    });
-    await flush();
-    const speedTab = [...container.querySelectorAll('[role="tab"]')].find(
-      (t) => t.textContent === 'Speed',
-    );
-    expect(speedTab).toBeDefined();
-    expect(speedTab?.getAttribute('aria-selected')).toBe('true');
-  });
-
-  it('mounts the audio mixer on the Audio mix tab (the only audiomix.* caller)', async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-
-    const tab = [...container.querySelectorAll('[role="tab"]')].find(
-      (t) => t.textContent === 'Audio mix',
-    ) as HTMLElement;
-    expect(tab).toBeDefined();
-    await act(async () => {
-      tab.click();
-    });
-    await flush();
-
-    const panel = container.querySelector('[data-panel="AudioMix"]');
-    expect(panel).not.toBeNull();
-    expect(panel?.getAttribute('data-videoid')).toBe('v1');
-  });
-
-  it('opens the project via project.open and shows the title + tabs', async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-
+  it('opens the project via project.open and shows the title', async () => {
+    await render();
     expect(rpcMock).toHaveBeenCalledWith('project.open', { id: 'v1' });
     expect(container.textContent).toContain('Talk');
-    expect(container.querySelectorAll('[role="tab"]').length).toBe(WORKSPACE_TABS.length);
+    expect(inspectorTabIds()).toEqual([...WORKSPACE_INSPECTOR_SECTIONS.project]);
   });
 
-  it('mounts a feature panel slot (placeholder until the panel module exists)', async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-    // WU-3a2: the default tab is now Subtitles, but the Transcribe tab LABEL is
-    // still present in the (grouped) strip — a body slot renders regardless.
+  it('mounts a feature panel slot for the default (project) selection', async () => {
+    await render();
     expect(container.querySelector('.workspace__body')).not.toBeNull();
-    expect(container.textContent).toContain('Transcribe');
+    expect(container.querySelector('[data-panel="Transcribe"]')).not.toBeNull();
   });
 
-  it('switches the active tab when clicked', async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-
-    const tabs = container.querySelectorAll('[role="tab"]');
-    // index 1 = Subtitles
-    await act(async () => {
-      (tabs[1] as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
-    expect(tabs[1].getAttribute('aria-selected')).toBe('true');
-    expect(tabs[0].getAttribute('aria-selected')).toBe('false');
+  it('switches the active inspector section when a section is clicked', async () => {
+    await render();
+    await clickEl(tabEl('diarize'));
+    expect(tabEl('diarize')?.getAttribute('aria-selected')).toBe('true');
+    expect(tabEl('transcribe')?.getAttribute('aria-selected')).toBe('false');
+    expect(container.querySelector('[data-panel="Diarize"]')).not.toBeNull();
   });
 
-  it('honours an initial tab deep-link (Task Hub) instead of the first tab', async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} initialTab="subtitles" />);
-    });
-    await flush();
-
-    const idx = WORKSPACE_TABS.findIndex((t) => t.id === 'subtitles');
-    const tabs = container.querySelectorAll('[role="tab"]');
-    expect(tabs[idx].getAttribute('aria-selected')).toBe('true');
-    expect(tabs[0].getAttribute('aria-selected')).toBe('false');
+  it('honours an initial deep-link (Task Hub) instead of the default selection', async () => {
+    await render({ initialTab: 'subtitles' });
+    // 'subtitles' is a CUE-context tool, so the deep-link also opens the caption
+    // lane — otherwise the link would land on a section its own context hides.
+    expect(selectionLabel()).toBe('Caption cues');
+    expect(tabEl('subtitles')?.getAttribute('aria-selected')).toBe('true');
     expect(container.querySelector('[data-panel="Subtitles"]')).not.toBeNull();
+    expect(container.querySelector('[data-panel="Timeline"]')).not.toBeNull();
+  });
+
+  it('ignores an unrecognised deep-link rather than rendering an empty inspector', async () => {
+    await render({ initialTab: 'no-such-panel' });
+    expect(selectionLabel()).toBe('Project');
+    expect(container.querySelector('[data-panel="Transcribe"]')).not.toBeNull();
   });
 
   it('calls onBack when the back button is pressed', async () => {
     const onBack = vi.fn();
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={onBack} />);
-    });
-    await flush();
-
-    const back = container.querySelector('button.workspace__back') as HTMLButtonElement;
-    await act(async () => {
-      back.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
+    await render({ onBack });
+    await clickEl(container.querySelector('button.workspace__back'));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces a project.open error', async () => {
     rpcMock.mockReset();
     rpcMock.mockRejectedValue(new Error('open failed'));
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
+    await render();
     expect(container.textContent).toContain('open failed');
   });
 
@@ -483,10 +353,7 @@ describe('Workspace', () => {
       if (method === 'project.open') return Promise.reject('boom-string');
       return Promise.resolve({ playable: true });
     });
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
+    await render();
     expect(container.querySelector('.workspace__error')?.textContent).toContain('boom-string');
   });
 
@@ -496,86 +363,35 @@ describe('Workspace', () => {
       if (method === 'project.open') return Promise.resolve(null);
       return Promise.resolve({ playable: true });
     });
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
+    await render();
     expect(container.querySelector('.workspace__error')).toBeNull();
-    // tabs still render (the shell does not depend on project to show tabs)
-    expect(container.querySelectorAll('[role="tab"]').length).toBe(WORKSPACE_TABS.length);
+    // the shell does not depend on `project` to show its navigation
+    expect(inspectorTabIds().length).toBeGreaterThan(0);
   });
 
-  // Each tab id -> the marker its mocked panel renders. Exercises every case of
-  // renderPanel() (the switch) including the 'transcribe'/default fall-through.
-  const tabPanels: Array<[string, string]> = [
-    ['transcribe', 'Transcribe'],
-    ['search', 'SemanticSearch'],
-    ['subtitles', 'Subtitles'],
-    ['transcriptEdit', 'TranscriptEditor'],
-    ['diarize', 'Diarize'],
-    ['refine', 'Refine'],
-    ['tracks', 'Tracks'],
-    ['convert', 'Convert'],
-    ['shortmaker', 'ShortMaker'],
-    ['reframeFix', 'ReframeCorrect'],
-    ['timeline', 'Timeline'],
-    ['videoTimeline', 'VideoTimeline'],
-    ['stabilize', 'Stabilize'],
-    ['gaze', 'Gaze'],
-    ['dub', 'Dub'],
-    ['nle', 'NleExport'],
-    ['recipes', 'Recipes'],
-    ['assets', 'Assets'],
-  ];
-
-  it.each(tabPanels)('renders the %s panel for its tab', async (tabId, marker) => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-
-    // WU-3a2: tabs render in NAMED clusters, so DOM order no longer mirrors the
-    // WORKSPACE_TABS array — locate the tab by its stable id, not a positional
-    // index. Every tab stays a real role="tab" (Advanced/Deliver ones live in the
-    // collapsed panel but remain in the DOM and reachable).
-    const tab = container.querySelector(`[role="tab"][data-tab-id="${tabId}"]`);
-    expect(tab).not.toBeNull();
-    await act(async () => {
-      (tab as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
-
-    const panel = container.querySelector(`[data-panel="${marker}"]`);
-    expect(panel).not.toBeNull();
-    // panels that receive videoId get the opened video's id
-    if (marker !== 'Assets') {
-      expect(panel?.getAttribute('data-videoid')).toBe('v1');
-    }
-  });
-
-  it("wires the tabpanel container's id + aria-labelledby to the active tab's aria-controls", async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-
-    // The active tab's aria-controls must resolve to the panel's id, and the
-    // panel's aria-labelledby back to the active tab's id (round-trip a11y wiring).
+  it("wires the inspector tabpanel's id + aria-labelledby to the active section", async () => {
+    await render();
     const panel = container.querySelector('.workspace__body[role="tabpanel"]');
     expect(panel).not.toBeNull();
-    const activeTab = container.querySelector('[role="tab"][aria-selected="true"]');
+    const activeTab = container.querySelector(
+      '.workspace__inspector [role="tab"][aria-selected="true"]',
+    );
     expect(activeTab).not.toBeNull();
     expect(panel?.getAttribute('id')).toBe(activeTab?.getAttribute('aria-controls'));
     expect(panel?.getAttribute('aria-labelledby')).toBe(activeTab?.getAttribute('id'));
 
-    // Switching tabs re-points the panel wiring at the newly-active tab.
-    const diarizeTab = container.querySelector('[role="tab"][data-tab-id="diarize"]');
-    await act(async () => {
-      (diarizeTab as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
+    await clickEl(tabEl('diarize'));
     expect(panel?.getAttribute('id')).toBe('tabpanel-diarize');
     expect(panel?.getAttribute('aria-labelledby')).toBe('tab-diarize');
+  });
+
+  it('wires the dock tabpanel to the selected lane', async () => {
+    await render();
+    const dockPanel = container.querySelector('.workspace__dock-body[role="tabpanel"]');
+    expect(dockPanel?.getAttribute('id')).toBe('tabpanel-video');
+    expect(dockPanel?.getAttribute('aria-labelledby')).toBe('tab-video');
+    await clickEl(tabEl('captions'));
+    expect(dockPanel?.getAttribute('id')).toBe('tabpanel-captions');
   });
 
   // WU B3: the mstream resolver builds the proxy; the Workspace only REACTS to
@@ -586,10 +402,7 @@ describe('Workspace', () => {
       cb = fn;
       return () => undefined;
     });
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
+    await render();
     expect(cb).not.toBeNull();
     return cb as unknown as (e: ProxyStateEvt) => void;
   }
@@ -773,11 +586,7 @@ describe('Workspace', () => {
   });
 
   it('shows no player note when the source is already playable (no build events)', async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-
+    await render();
     // the Workspace never kicks the build itself (the resolver does).
     expect(container.querySelector('.workspace__player-note')).toBeNull();
     expect(rpcMock).not.toHaveBeenCalledWith('media.playable', expect.anything());
@@ -787,11 +596,7 @@ describe('Workspace', () => {
   it('unsubscribes from proxy-state on unmount', async () => {
     const off = vi.fn();
     onProxyStateMock.mockReturnValue(off);
-
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
+    await render();
     expect(onProxyStateMock).toHaveBeenCalledTimes(1);
 
     await act(async () => root.unmount());
@@ -801,368 +606,328 @@ describe('Workspace', () => {
   });
 });
 
-// WU-3a2: the 13 flat tabs are regrouped into 4 NAMED clusters behind
-// progressive disclosure. ADDITIVE — every tab stays a real role="tab" and every
-// panel reachable; only the visual grouping + the default tab change.
-describe('Workspace tab clusters (WU-3a2)', () => {
-  function groupLabels(): string[] {
-    return Array.from(container.querySelectorAll('.tabbar__group-label')).map(
-      (el) => el.textContent ?? '',
-    );
-  }
+// ---------------------------------------------------------------------------
+// THE L5 ACCEPTANCE GATE. Four of the five mechanical invariants live here (the
+// fifth — the rail has exactly 5 entries — is asserted in App.test.tsx, which
+// owns the rail). Each is a real test, not a claim.
+// ---------------------------------------------------------------------------
 
-  async function mount(): Promise<void> {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-  }
+describe('L5 invariant: all 21 panels stay reachable (reconcile, never drop)', () => {
+  // INVARIANT 5, the mechanical half. A reorganisation cannot silently delete a
+  // feature: every registry id must have exactly one home, and every home entry
+  // must name a real registry id (so the mapping cannot drift into ghosts either).
+  it('partitions every registry id across inspector / dock / elsewhere exactly once', () => {
+    const homes = WORKSPACE_TABS.map((t) => workspacePanelHome(t.id));
+    expect(homes.filter((h) => h === null)).toEqual([]);
 
-  it('defaults to the Subtitles tab (off Transcribe)', async () => {
-    expect(DEFAULT_WORKSPACE_TAB).toBe('subtitles');
-    await mount();
-
-    const subtitles = container.querySelector('[role="tab"][data-tab-id="subtitles"]');
-    const transcribe = container.querySelector('[role="tab"][data-tab-id="transcribe"]');
-    expect(subtitles?.getAttribute('aria-selected')).toBe('true');
-    expect(transcribe?.getAttribute('aria-selected')).toBe('false');
-    expect(container.querySelector('[data-panel="Subtitles"]')).not.toBeNull();
+    const claimed = [
+      ...WORKSPACE_INSPECTOR_SECTIONS.clip,
+      ...WORKSPACE_INSPECTOR_SECTIONS.cue,
+      ...WORKSPACE_INSPECTOR_SECTIONS.audio,
+      ...WORKSPACE_INSPECTOR_SECTIONS.project,
+      ...Object.keys(WORKSPACE_DOCK_PANELS),
+      ...WORKSPACE_PANELS_ELSEWHERE,
+    ];
+    expect(claimed).toHaveLength(21);
+    expect([...new Set(claimed)].sort()).toEqual(WORKSPACE_TABS.map((t) => t.id).sort());
   });
 
-  it('renders the four named clusters as section labels', async () => {
-    await mount();
-    expect(groupLabels()).toEqual(WORKSPACE_TAB_GROUPS.map((g) => g.label));
-    expect(groupLabels()).toEqual(['Speech & Text', 'Frame & Cut', 'Audio', 'Deliver']);
+  // The owner's L5 G-5 table, transcribed. Pinned literally so a later lane
+  // cannot quietly re-home a consent surface (gaze / broll) out of the context
+  // where its tool is used.
+  it('matches the owner-locked selection mapping', () => {
+    expect(WORKSPACE_INSPECTOR_SECTIONS.clip).toEqual([
+      'reframeFix',
+      'speed',
+      'stabilize',
+      'gaze',
+      'broll',
+    ]);
+    expect(WORKSPACE_INSPECTOR_SECTIONS.cue).toEqual(['subtitles', 'transcriptEdit']);
+    expect(WORKSPACE_INSPECTOR_SECTIONS.audio).toEqual(['audiomix', 'dub']);
+    expect(WORKSPACE_INSPECTOR_SECTIONS.project).toEqual([
+      'transcribe',
+      'search',
+      'diarize',
+      'refine',
+      'recipes',
+      'convert',
+      'nle',
+      'tracks',
+      'assets',
+    ]);
+    expect(WORKSPACE_DOCK_PANELS).toEqual({ videoTimeline: 'video', timeline: 'captions' });
+    expect(WORKSPACE_PANELS_ELSEWHERE).toEqual(['shortmaker']);
   });
 
-  it('keeps every tab reachable: every id stays in the tablist across clusters', async () => {
-    await mount();
-    const ids = Array.from(container.querySelectorAll('[role="tab"]'))
-      .map((t) => t.getAttribute('data-tab-id'))
-      .sort();
-    expect(ids).toEqual(WORKSPACE_TABS.map((t) => t.id).sort());
+  // INVARIANT 5, the behavioural half: an ENUMERATED WALK. Every inspector panel
+  // is opened for real, through its own selection context, and its marker asserted
+  // in the DOM. Deleting a `case` from renderPanel(), or dropping an id from the
+  // mapping, turns exactly one of these red.
+  const inspectorPanels: Array<[string, string]> = [
+    ['transcribe', 'Transcribe'],
+    ['search', 'SemanticSearch'],
+    ['diarize', 'Diarize'],
+    ['refine', 'Refine'],
+    ['recipes', 'Recipes'],
+    ['convert', 'Convert'],
+    ['nle', 'NleExport'],
+    ['tracks', 'Tracks'],
+    ['assets', 'Assets'],
+    ['subtitles', 'Subtitles'],
+    ['transcriptEdit', 'TranscriptEditor'],
+    ['audiomix', 'AudioMix'],
+    ['dub', 'Dub'],
+    ['reframeFix', 'ReframeCorrect'],
+    ['speed', 'Speed'],
+    ['stabilize', 'Stabilize'],
+    ['gaze', 'Gaze'],
+    ['broll', 'BrollPanel'],
+  ];
+
+  it.each(inspectorPanels)('reaches the %s panel through its selection', async (id, marker) => {
+    const home = workspacePanelHome(id);
+    await render();
+    // Put the workspace into the context that owns this panel, the way a user
+    // would: pick the lane, and for clip tools pick a clip inside the video lane.
+    if (home === 'cue') await clickEl(tabEl('captions'));
+    if (home === 'audio') await clickEl(tabEl('audio'));
+    if (home === 'clip') await clickEl(dockAction('select-clip'));
+    await clickEl(tabEl(id));
+
+    const panel = container.querySelector(`[data-panel="${marker}"]`);
+    expect(panel).not.toBeNull();
+    if (marker !== 'Assets') {
+      expect(panel?.getAttribute('data-videoid')).toBe('v1');
+    }
   });
 
-  // GATE LINK — deliberately LITERAL, and NOT a tautology.
-  //
-  // Every other tab assertion in this file compares the DOM against
-  // WORKSPACE_TABS, so all of them stay green when a tab is added. The nightly
-  // e2e strip assertions (`app/e2e/preview.spec.ts`, "Advanced disclosure
-  // actually COLLAPSES the Deliver cluster") hardcode these same two counts —
-  // and e2e is opt-in + nightly, so it gates no PR. The v1.5 wave added
-  // `transcriptEdit`, `timeline`, `speed` and `audiomix` and shipped that spec
-  // stale four times over; the strip had been 13/8 and was 17/12 before anyone
-  // measured it.
-  //
-  // These literals are the missing link: adding or regrouping a tab now fails
-  // HERE, in the suite `quality` actually runs on every PR, and says which file
-  // to update. Update both together, or the nightly goes red again.
-  //
-  // W17/W18 UPDATE: 17 -> 19 and 12 -> 14. Both new tabs go in the VISIBLE
-  // "Frame & Cut" cluster, so the painted count rises too. That is a real
-  // layout cost — the strip already scrolls (`workspace.css` `overflow-x:
-  // auto`) — and it is the price of the panels being reachable at all. The
-  // matching literals in `app/e2e/preview.spec.ts:229-230` were updated in the
-  // same commit; that is the whole point of this test existing.
-  //
-  // W19 UPDATE: 19 -> 20 and 14 -> 15. The new `gaze` tab goes in the VISIBLE
-  // "Frame & Cut" cluster for the reason given by its own test above, so both
-  // counts move. The matching literals in `app/e2e/preview.spec.ts` were updated
-  // in the SAME commit — that file is owned by another live lane this wave, so the
-  // edit there is confined to the two count literals and the sentences that state
-  // them, nothing else.
-  //
-  // W16-UI UPDATE: 20 -> 21 and 15 -> 16. The new `broll` tab joins the VISIBLE
-  // "Frame & Cut" cluster (see its own test below for why it must not sit behind
-  // the Advanced disclosure), so BOTH counts move by one and the hidden count is
-  // unchanged at 5. Numbers RE-DERIVED from the source in this commit, not read off
-  // a failing run: WORKSPACE_TABS has 21 entries, and the four groups hold
-  // 6 (speech) + 8 (frame) + 2 (audio) + 5 (deliver, `advanced`) = 21, so 16 paint
-  // while Deliver is collapsed. `app/e2e/preview.spec.ts` was updated in the SAME
-  // commit; that is the whole point of this test existing.
-  it('pins the strip counts that the nightly e2e spec hardcodes', () => {
-    expect(WORKSPACE_TABS).toHaveLength(21);
-    const hiddenWhenCollapsed = WORKSPACE_TAB_GROUPS.filter((g) => g.advanced).reduce(
-      (n, g) => n + g.tabIds.length,
-      0,
-    );
-    expect(hiddenWhenCollapsed).toBe(5);
-    // What actually paints while the Advanced cluster is collapsed.
-    expect(WORKSPACE_TABS.length - hiddenWhenCollapsed).toBe(16);
-    // Every tab belongs to EXACTLY ONE group, so the two numbers above are a
-    // partition of the strip rather than two independent counts that could drift
-    // apart (an id in no group would not paint at all).
-    const grouped = WORKSPACE_TAB_GROUPS.flatMap((g) => g.tabIds);
-    expect(grouped).toHaveLength(WORKSPACE_TABS.length);
-    expect([...new Set(grouped)].sort()).toEqual(WORKSPACE_TABS.map((t) => t.id).sort());
+  it('reaches both dock panels with no navigation beyond picking the lane', async () => {
+    await render();
+    // videoTimeline: ZERO actions (invariant 4, asserted again below).
+    expect(container.querySelector('[data-panel="VideoTimeline"]')).not.toBeNull();
+    await clickEl(tabEl('captions'));
+    expect(container.querySelector('[data-panel="Timeline"]')).not.toBeNull();
   });
 
-  it('collapses the Deliver cluster behind Advanced by default and toggles it open/closed', async () => {
-    await mount();
-
-    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
-    const panel = container.querySelector('.tabbar__advanced-panel') as HTMLElement;
-    expect(toggle).not.toBeNull();
-    // collapsed by default; the Deliver group lives inside the collapsed panel.
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(panel.hidden).toBe(true);
-    expect(panel.querySelector('[data-tab-id="tracks"]')).not.toBeNull();
-
-    // expand
-    await act(async () => {
-      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(panel.hidden).toBe(false);
-
-    // collapse again (covers the toggle updater in both directions)
-    await act(async () => {
-      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(panel.hidden).toBe(true);
+  it('routes the one panel another destination owns instead of dropping it', async () => {
+    // `shortmaker` moved to the Produce rail destination (L5 G-6). It must not be
+    // an inspector section here, and the deep-link must still reach its owner.
+    expect(workspacePanelHome('shortmaker')).toBe('elsewhere');
+    const onOpenMakeShorts = vi.fn();
+    await render({ initialTab: 'shortmaker', onOpenMakeShorts });
+    expect(onOpenMakeShorts).toHaveBeenCalledTimes(1);
+    expect(onOpenMakeShorts).toHaveBeenCalledWith('v1');
+    expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
+    expect(inspectorTabIds()).not.toContain('shortmaker');
   });
 
-  it('reaches an Advanced (Deliver) panel after expanding the disclosure', async () => {
-    await mount();
-
-    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
-    await act(async () => {
-      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
-
-    const tracks = container.querySelector(
-      '[role="tab"][data-tab-id="tracks"]',
-    ) as HTMLButtonElement;
-    await act(async () => {
-      tracks.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
-    expect(tracks.getAttribute('aria-selected')).toBe('true');
-    expect(container.querySelector('[data-panel="Tracks"]')).not.toBeNull();
+  it('does not crash on a shortmaker deep-link with no owner wired', async () => {
+    // Without the callback there is nothing to redirect to; the workspace opens on
+    // its default rather than mounting a second ShortMaker copy (WU-3a4's
+    // single-owner rule, now enforced by the rail rather than by a fallback).
+    await render({ initialTab: 'shortmaker' });
+    expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
+    expect(selectionLabel()).toBe('Project');
   });
 });
 
-// W17 + W18: two complete, 100%-covered editor surfaces that no user could
-// reach. `panels/ReframeOverridePanel.tsx` and `features/VideoTimeline.tsx` were
-// each imported by exactly one file — their own test. OWNER RULING 2026-08-09:
-// mount them, do not delete them.
-describe('W17/W18 mounted editor surfaces', () => {
-  async function mount(): Promise<void> {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-  }
-
-  async function open(tabId: string): Promise<void> {
-    const tab = container.querySelector(`[role="tab"][data-tab-id="${tabId}"]`);
-    expect(tab).not.toBeNull();
-    await act(async () => {
-      (tab as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
-  }
-
-  it('puts both in the visible "Frame & Cut" cluster, not behind Advanced', () => {
-    const frame = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'frame');
-    expect(frame?.tabIds).toContain('reframeFix');
-    expect(frame?.tabIds).toContain('videoTimeline');
-    expect(frame?.advanced).not.toBe(true);
-    // and every new id is a real tab, not an orphan group entry
-    const ids = WORKSPACE_TABS.map((t) => t.id);
-    expect(ids).toContain('reframeFix');
-    expect(ids).toContain('videoTimeline');
-  });
-
-  // THE red-proof assertion for W18. Mounting VideoTimeline is not enough: its
-  // only path to putting an ARBITRARY clip in a lane is `tracks.video.addClip`,
-  // which needs a real source path and a duration for `srcOut`.
-  //
-  // CORRECTED 2026-08-10 — this comment used to end "without both, every lane is
-  // permanently empty and the mount is theatre", which is false:
-  // `tracks.video.list` auto-seeds lane 0 with the whole source
-  // (`video_tracks.py:595-612,653`). Without the props the editor can still trim
-  // and split that seeded clip; what it cannot do is fill a lane made by
-  // `addLane` or put material back after a remove/razor.
-  it('hands the video timeline the source path AND duration addClip needs', async () => {
-    await mount();
-    await open('videoTimeline');
-    const panel = container.querySelector('[data-panel="VideoTimeline"]');
+describe('L5 invariant: the timeline is docked, not navigated to', () => {
+  // INVARIANT 4. The video timeline used to be tab #12 of 21. It is now visible
+  // the moment the workspace opens, with ZERO clicks, keystrokes or deep-links.
+  it('shows the video timeline with zero navigation actions', async () => {
+    await render();
+    const dock = container.querySelector('.workspace__dock');
+    expect(dock).not.toBeNull();
+    const panel = dock?.querySelector('[data-panel="VideoTimeline"]');
     expect(panel).not.toBeNull();
+    // and it is threaded with what `tracks.video.addClip` needs (W18).
     expect(panel?.getAttribute('data-sourcepath')).toBe('/movies/talk.mp4');
     expect(panel?.getAttribute('data-duration')).toBe('605');
   });
 
-  it('mounts the reframe correction surface on its own tab', async () => {
-    await mount();
-    await open('reframeFix');
-    const panel = container.querySelector('[data-panel="ReframeCorrect"]');
-    expect(panel).not.toBeNull();
-    expect(panel?.getAttribute('data-videoid')).toBe('v1');
+  it('keeps the preview mounted alongside it (coexisting, not swapped)', async () => {
+    await render();
+    expect(container.querySelector('.workspace__player video')).not.toBeNull();
+    expect(container.querySelector('.workspace__dock [data-panel="VideoTimeline"]')).not.toBeNull();
+  });
+
+  it('opens the caption-cue lane on a dock deep-link, and the inspector follows it', async () => {
+    await render({ initialTab: 'timeline' });
+    expect(container.querySelector('[data-panel="Timeline"]')).not.toBeNull();
+    // A dock panel is not an inspector SECTION, so nothing is pinned — but the
+    // lane is now the selection, and the inspector follows the selection. That is
+    // the rule working, not an exception to it.
+    expect(selectionLabel()).toBe('Caption cues');
+    expect(inspectorTabIds()).toEqual([...WORKSPACE_INSPECTOR_SECTIONS.cue]);
+  });
+
+  it('renders the program-audio lane when it is selected', async () => {
+    await render();
+    await clickEl(tabEl('audio'));
+    const laneEl = container.querySelector('[data-role="program-audio"]');
+    expect(laneEl).not.toBeNull();
+    expect(laneEl?.textContent).toContain('Program audio');
+    expect(laneEl?.textContent).toContain('Talk');
   });
 });
 
-// design-review P1: EXPORT is the terminal goal but the "Deliver" cluster
-// (Convert/NLE export/Recipes/Assets/Tracks) is collapsed behind Advanced.
-// A persistent Export action surfaces it from the default view WITHOUT un-hiding
-// the whole cluster by default — clicking it jumps to the primary export panel
-// (Convert) and reveals the Deliver cluster so its siblings are reachable.
-describe('Workspace Export affordance (design-review P1)', () => {
-  async function mount(): Promise<void> {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-  }
+describe('L5 invariant: navigation cannot overflow the fixed 1280px window', () => {
+  // INVARIANT 1, made structural rather than eyeballed.
+  //
+  // SCOPE OF THIS CLAIM, stated plainly: jsdom performs NO layout, so no unit
+  // test in this suite can measure pixels. What it CAN do is assert the two
+  // structural properties that made overflow possible, and which a future lane
+  // would have to undo to bring it back:
+  //   (a) the number of items in a horizontal navigation is BOUNDED and small;
+  //   (b) the unbounded list — the inspector's sections, which is where a new
+  //       feature lands — runs VERTICALLY, so it cannot grow sideways at all.
+  // The true pixel assertion at 1280x820 belongs to the Playwright e2e spec,
+  // which this lane does not own. UNVERIFIED here, by construction.
+  it('leaves exactly one horizontal navigation in the workspace, capped at 3 lanes', async () => {
+    await render();
+    expect(WORKSPACE_DOCK_LANES).toHaveLength(3);
+    const dockTabs = container.querySelectorAll('.workspace__dock [role="tab"]');
+    expect(dockTabs).toHaveLength(3);
+    // The 16-painted-tab strip and its scrollport are gone, not merely hidden.
+    expect(container.querySelector('.tabbar--grouped')).toBeNull();
+    expect(container.querySelector('.tabbar__tablist')).toBeNull();
+  });
 
-  it('targets a real Deliver-cluster tab as the export destination', () => {
+  it('grows a context vertically: the inspector list is a column in the stylesheet', () => {
+    // Reading the sheet is the only way to assert a CSS decision from jsdom, and
+    // it is a real detector: flipping this rule back to a row turns it red.
+    // USE-vs-MENTION: the sheet's header comment NAMES `overflow-x: auto` while
+    // explaining why the scrollport was removed, so the last assertion must read
+    // DECLARATIONS only. Measured: without this strip it fails on the prose.
+    const css = readWorkspaceCss().replace(/\/\*[\s\S]*?\*\//g, '');
+    // CONTROL first: the selector must actually exist, or the slice below would be
+    // the whole file and `toContain` could pass by accident.
+    expect(css).toContain('.workspace .workspace__inspector .tabbar {');
+    const rule = css.slice(css.indexOf('.workspace .workspace__inspector .tabbar {'));
+    const block = rule.slice(0, rule.indexOf('}'));
+    expect(block).toContain('flex-direction: column');
+    // And no rule in this sheet re-creates a horizontally scrolling tab strip.
+    expect(css).not.toContain('overflow-x: auto');
+  });
+
+  it('has no "Advanced" trapdoor left to hide a surface behind', async () => {
+    await render();
+    // The two-level IA (painted-forever vs a one-way Advanced hatch) is the
+    // measured root cause. Selection-driven disclosure replaces it; if either of
+    // these comes back, the growth pressure comes back with it.
+    expect(container.querySelector('.tabbar__advanced-toggle')).toBeNull();
+    expect(container.querySelector('.tabbar__advanced-panel')).toBeNull();
+  });
+
+  // The consent/honesty surfaces are the reason the old strip could only grow.
+  // They must now appear WITH their tool, at the moment of use — not behind a
+  // disclosure, and not painted forever.
+  it.each([
+    ['gaze'],
+    ['broll'],
+  ])('surfaces the %s consent/honesty tool on selection, never behind a disclosure', async (id) => {
+    await render();
+    expect(inspectorTabIds()).not.toContain(id);
+    await clickEl(dockAction('select-clip'));
+    expect(inspectorTabIds()).toContain(id);
+    expect(tabEl(id)?.closest('[hidden]')).toBeNull();
+  });
+});
+
+describe('the inspector follows the selection (L5 G-5)', () => {
+  it('opens on the project context with nothing selected', async () => {
+    await render();
+    expect(selectionLabel()).toBe('Project');
+    expect(inspectorTabIds()).toEqual([...WORKSPACE_INSPECTOR_SECTIONS.project]);
+  });
+
+  it('swaps to clip tools when a clip is selected in the docked timeline', async () => {
+    await render();
+    await clickEl(dockAction('select-clip'));
+    expect(selectionLabel()).toBe('Selected clip');
+    expect(inspectorTabIds()).toEqual([...WORKSPACE_INSPECTOR_SECTIONS.clip]);
+    expect(container.querySelector('[data-panel="ReframeCorrect"]')).not.toBeNull();
+  });
+
+  it('returns to project tools when the clip selection is cleared', async () => {
+    await render();
+    await clickEl(dockAction('select-clip'));
+    await clickEl(dockAction('clear-clip'));
+    expect(selectionLabel()).toBe('Project');
+    expect(inspectorTabIds()).toEqual([...WORKSPACE_INSPECTOR_SECTIONS.project]);
+  });
+
+  it('ignores a repeated report of the SAME selection (the mount-time null)', async () => {
+    // The panel reports its initial `null` on mount. That is state, not a user
+    // action, so it must not clear a pinned deep-link the user has not touched.
+    await render({ initialTab: 'gaze' });
+    expect(selectionLabel()).toBe('Selected clip');
+    await clickEl(dockAction('clear-clip'));
+    expect(selectionLabel()).toBe('Selected clip');
+    expect(tabEl('gaze')?.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('lets a real selection change take over from a pinned deep-link', async () => {
+    await render({ initialTab: 'gaze' });
+    await clickEl(tabEl('captions'));
+    expect(selectionLabel()).toBe('Caption cues');
+    expect(inspectorTabIds()).toEqual([...WORKSPACE_INSPECTOR_SECTIONS.cue]);
+  });
+
+  it('reads audio tools off the program-audio lane', async () => {
+    await render();
+    await clickEl(tabEl('audio'));
+    expect(selectionLabel()).toBe('Program audio');
+    expect(inspectorTabIds()).toEqual([...WORKSPACE_INSPECTOR_SECTIONS.audio]);
+    expect(container.querySelector('[data-panel="AudioMix"]')).not.toBeNull();
+  });
+
+  it('keeps a chosen section active while its context holds', async () => {
+    await render();
+    await clickEl(tabEl('search'));
+    expect(container.querySelector('[data-panel="SemanticSearch"]')).not.toBeNull();
+    // switching lanes is a selection change, so the pin drops
+    await clickEl(tabEl('captions'));
+    expect(container.querySelector('[data-panel="Subtitles"]')).not.toBeNull();
+  });
+});
+
+describe('Q7: the docked render is no longer an orphan', () => {
+  it('reports the rendered file to the workspace as a live region', async () => {
+    await render();
+    expect(container.querySelector('.workspace__dock-note')).toBeNull();
+    await clickEl(dockAction('finish-render'));
+    const note = container.querySelector('.workspace__dock-note');
+    expect(note?.textContent).toContain('D:/out/timeline.mp4');
+    expect(note?.getAttribute('role')).toBe('status');
+  });
+});
+
+describe('Workspace Export affordance (design-review P1)', () => {
+  it('targets a real project-scoped panel as the export destination', () => {
     expect(WORKSPACE_EXPORT_TAB).toBe('convert');
-    const deliver = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'deliver');
-    expect(deliver?.tabIds).toContain(WORKSPACE_EXPORT_TAB);
+    expect(workspacePanelHome(WORKSPACE_EXPORT_TAB)).toBe('project');
     expect(WORKSPACE_TABS.some((t) => t.id === WORKSPACE_EXPORT_TAB)).toBe(true);
   });
 
-  it('surfaces a persistent Export action in the default view with the Deliver cluster still collapsed', async () => {
-    await mount();
-    const exportBtn = container.querySelector('button.tabbar__export');
+  it('surfaces a persistent Export action in the header, outside any scrollport', async () => {
+    await render();
+    const exportBtn = container.querySelector('.workspace__header button.workspace__export');
     expect(exportBtn).not.toBeNull();
     expect(exportBtn?.textContent).toContain('Export');
-    // The Deliver cluster is NOT un-hidden by default (advanced stays collapsed).
-    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    // The Convert panel is not active yet.
     expect(container.querySelector('[data-panel="Convert"]')).toBeNull();
   });
 
-  it('jumps to the Convert export panel and reveals the Deliver cluster on click', async () => {
-    await mount();
-    const exportBtn = container.querySelector('button.tabbar__export') as HTMLButtonElement;
-    await act(async () => {
-      exportBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
+  it('jumps to the Convert export panel on click, from any selection', async () => {
+    await render();
+    // start somewhere else entirely: a clip selected, clip tools showing
+    await clickEl(dockAction('select-clip'));
+    expect(selectionLabel()).toBe('Selected clip');
 
-    // The primary export panel (Convert) is now active + rendered in the body.
+    await clickEl(container.querySelector('button.workspace__export'));
     expect(container.querySelector('[data-panel="Convert"]')).not.toBeNull();
-    expect(
-      container.querySelector('[role="tab"][data-tab-id="convert"]')?.getAttribute('aria-selected'),
-    ).toBe('true');
-    // The Deliver cluster is revealed so the sibling deliver tools are reachable.
-    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect((container.querySelector('.tabbar__advanced-panel') as HTMLElement).hidden).toBe(false);
-  });
-});
-
-// WU-3a4: the "Short-maker" tab is a SINGLE-OWNER deep-link. When the Make Shorts
-// thread is wired (App→Edit→Workspace via onOpenMakeShorts), selecting it — by
-// click OR an initialTab='shortmaker' deep-link (the Task Hub "Reframe to vertical"
-// card / a remembered 'reframe' choice) — navigates to the top-level Make Shorts
-// section (the ONE ShortMaker owner) with this video pre-selected, instead of
-// mounting a SECOND ShortMaker copy here. ADDITIVE: the tab entry stays, and
-// without the callback it still mounts ShortMaker in place (backward-compatible).
-describe('Short-maker tab single-owner deep-link (WU-3a4)', () => {
-  function shortmakerTab(): HTMLButtonElement {
-    return container.querySelector('[role="tab"][data-tab-id="shortmaker"]') as HTMLButtonElement;
-  }
-  function selected(tabId: string): string | null | undefined {
-    return container
-      .querySelector(`[role="tab"][data-tab-id="${tabId}"]`)
-      ?.getAttribute('aria-selected');
-  }
-
-  it('redirects the Short-maker TAB CLICK to Make Shorts (no second ShortMaker mounted)', async () => {
-    const onOpenMakeShorts = vi.fn();
-    await act(async () => {
-      root.render(
-        <Workspace video={video} onBack={() => {}} onOpenMakeShorts={onOpenMakeShorts} />,
-      );
-    });
-    await flush();
-
-    await act(async () => {
-      shortmakerTab().dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flush();
-
-    expect(onOpenMakeShorts).toHaveBeenCalledTimes(1);
-    expect(onOpenMakeShorts).toHaveBeenCalledWith('v1');
-    // No second ShortMaker copy is mounted; the active tab stays the default.
-    expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
-    expect(selected('subtitles')).toBe('true');
-    expect(selected('shortmaker')).toBe('false');
-  });
-
-  it('redirects an initialTab="shortmaker" deep-link on mount instead of mounting ShortMaker', async () => {
-    const onOpenMakeShorts = vi.fn();
-    await act(async () => {
-      root.render(
-        <Workspace
-          video={video}
-          onBack={() => {}}
-          initialTab="shortmaker"
-          onOpenMakeShorts={onOpenMakeShorts}
-        />,
-      );
-    });
-    await flush();
-
-    expect(onOpenMakeShorts).toHaveBeenCalledTimes(1);
-    expect(onOpenMakeShorts).toHaveBeenCalledWith('v1');
-    expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
-    // Falls back to the workspace default rather than the redirected tab.
-    expect(selected('subtitles')).toBe('true');
-    expect(selected('shortmaker')).toBe('false');
-  });
-
-  it('still MOUNTS ShortMaker in place for an initialTab="shortmaker" when no redirect is wired (additive fallback)', async () => {
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} initialTab="shortmaker" />);
-    });
-    await flush();
-
-    expect(container.querySelector('[data-panel="ShortMaker"]')).not.toBeNull();
-    expect(selected('shortmaker')).toBe('true');
-  });
-
-  // F18: 'shortmaker' sits at index 5 of the keyboard-reachable order
-  // (transcribe, search, subtitles, diarize, refine, shortmaker, timeline, dub),
-  // so stepping FORWARD through the strip walks onto it. TabBar.move() ACTIVATED
-  // the next tab before focusing it, and handleSelect turns a 'shortmaker'
-  // activation into a top-level route change that UNMOUNTS this very tablist — so
-  // one ArrowRight from Refine ejected the keyboard user out of the Workspace with
-  // no announcement. ARIA APG mandates MANUAL activation when activation has a
-  // non-instantaneous side effect, so the arrow must MOVE FOCUS ONLY here.
-  it('ArrowRight from Refine moves focus to Short-maker WITHOUT ejecting to Make Shorts', async () => {
-    const onOpenMakeShorts = vi.fn();
-    await act(async () => {
-      root.render(
-        <Workspace video={video} onBack={() => {}} onOpenMakeShorts={onOpenMakeShorts} />,
-      );
-    });
-    await flush();
-
-    const refine = container.querySelector(
-      '[role="tab"][data-tab-id="refine"]',
-    ) as HTMLButtonElement;
-    await act(async () => {
-      refine.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
-      );
-    });
-    await flush();
-
-    // THE red-proof assertion: arrow-stepping must not fire the deep-link.
-    expect(onOpenMakeShorts).not.toHaveBeenCalled();
-    // Focus still MOVES (this one is deliberately NOT red-proof — move() focuses
-    // the tab pre-fix too — it pins that the fix did not swallow the key instead).
-    expect(document.activeElement).toBe(shortmakerTab());
-    // Nothing activated: the default tab keeps the selection.
-    expect(selected('subtitles')).toBe('true');
-    expect(selected('shortmaker')).toBe('false');
+    expect(tabEl('convert')?.getAttribute('aria-selected')).toBe('true');
+    expect(selectionLabel()).toBe('Project');
   });
 });
