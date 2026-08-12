@@ -317,12 +317,28 @@ describe('LibraryCard', () => {
     const trigger = container.querySelector('.library__card-menu-trigger') as HTMLButtonElement;
     const panel = container.querySelector('.library__card-menu-panel') as HTMLDivElement;
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
-    expect(trigger.getAttribute('aria-haspopup')).toBe('true');
     expect(trigger.getAttribute('aria-label')).toBe('More actions for Talk');
     expect(panel).not.toBeNull();
     expect(panel.hidden).toBe(true);
     expect(trigger.getAttribute('aria-controls')).toBe(panel.id);
     expect(panel.id).not.toBe('');
+  });
+
+  it('advertises a disclosure, not a menu widget, on the overflow trigger', async () => {
+    await renderCard({
+      deliver: { shortcuts: [{ id: 'convert', label: 'Convert…' }], onSelect: vi.fn() },
+    });
+    const trigger = container.querySelector('.library__card-menu-trigger') as HTMLButtonElement;
+    // ARIA 1.2 makes aria-haspopup="true" a SYNONYM for "menu", so setting it would
+    // announce a menu button over a popup that keeps none of the APG menu contract
+    // (no role=menu/menuitem, no roving tabindex, no arrow keys, no Escape, no focus
+    // return). The house disclosure — CardProvenanceDisclosure:42-57 — sets
+    // aria-expanded + aria-controls and NOTHING else; this trigger must match it, and
+    // no axe rule catches a haspopup/role mismatch, so the assertion is the only gate.
+    expect(trigger.hasAttribute('aria-haspopup')).toBe(false);
+    // The panel is always mounted, so this also covers the item rows while closed.
+    expect(container.querySelector('[role="menu"]')).toBeNull();
+    expect(container.querySelector('[role="menuitem"]')).toBeNull();
   });
 
   it('opens the overflow menu and deep-links a shortcut into Deliver pre-filled', async () => {
