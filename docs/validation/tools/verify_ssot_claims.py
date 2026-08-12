@@ -964,17 +964,48 @@ check(
     f"{len(P1_PROMOTED) - len(_unpromoted)}/{len(P1_PROMOTED)} promoted audit docs are TRACKED "
     f"(missing: {_unpromoted or 'none'})",
 )
+# MACHINE-LOCAL — and now it SAYS so instead of guessing. `review_dir` is untracked and
+# exists on exactly one box, so everywhere else `present` is empty for reasons that have
+# nothing to do with the claim. Because P1-corpus is an OPEN item, `check()` then labelled
+# that NON-measurement "NOW-FIXED (retire it from OPEN_ITEMS)" — precisely the failure the
+# comment above condemns, left live for every reader who is not the author. MEASURED
+# 2026-08-13 with `$HOME`/`$USERPROFILE` pointed at an empty directory: this line invited a
+# stranger to retire an item nobody had touched. Re-pointing at the tree (what `P1-shell`
+# below now does) is NOT available here: `git ls-files` matches none of the 12 basenames
+# anywhere in the repo — settling experiment run 2026-08-13, 0 of 12 promoted. So measure
+# when the corpus is reachable and report NOT-MEASURED when it is not; an OPEN item that
+# cannot be decided must stay undecided, not flip either way.
+_corpus_reachable = review_dir.is_dir()
 present = [f for f in P1_SCRATCH if (review_dir / f).is_file()]
 check(
     "P1-corpus",
     True,
-    len(present) == len(P1_SCRATCH),
-    f"{len(present)}/{len(P1_SCRATCH)} untracked authority files found in {review_dir} "
-    f"(missing: {[f for f in P1_SCRATCH if f not in present] or 'none'})",
+    (len(present) == len(P1_SCRATCH)) if _corpus_reachable else True,
+    (
+        f"{len(present)}/{len(P1_SCRATCH)} untracked authority files found in {review_dir} "
+        f"(missing: {[f for f in P1_SCRATCH if f not in present] or 'none'})"
+    )
+    if _corpus_reachable
+    else (
+        f"NOT-MEASURED — the untracked scratch corpus {review_dir} is absent on this "
+        f"machine, so this OPEN item cannot be decided here and is neither confirmed nor "
+        f"retired. Measure it on the box that holds ~/.reframe-review."
+    ),
 )
-shell_audit = review_dir / "shell-audit"
-pngs = len(list(shell_audit.glob("*.png"))) if shell_audit.is_dir() else 0
-check("P1-shell", True, pngs >= 8, f"shell-audit PNG count={pngs} (plan: 8)")
+# INVARIANT, and machine-independent since 2026-08-13. This used to count PNGs under the
+# untracked `review_dir`, so it held on ONE box; everywhere else it printed
+# `BROKEN :: shell-audit PNG count=0` and took the exit code with it — contradicting
+# docs/plans/v1.5/README.md, which hands every reader this command and promises that a
+# non-zero exit names a claim that "no longer resolves as recorded". The 8 captures were
+# PROMOTED into the tree, so assert the durable property the way `P1-promoted` already
+# does: TRACKED, not merely present on disk, so an untracked stray cannot satisfy it.
+_shell_pngs = [f for f in git("ls-files", "--", "docs/plans/v1.5/shell-audit").splitlines() if f.endswith(".png")]
+check(
+    "P1-shell",
+    True,
+    len(_shell_pngs) >= 8,
+    f"TRACKED docs/plans/v1.5/shell-audit PNG count={len(_shell_pngs)} (plan: 8)",
+)
 
 # --------------------------------------------------------------------- report
 print("=== SSOT CLAIM VERIFICATION ===")

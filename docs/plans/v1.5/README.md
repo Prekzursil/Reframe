@@ -124,6 +124,25 @@ python docs/validation/tools/verify_ssot_claims.py
 
 It exits non-zero and names each **registered** claim that no longer resolves as recorded.
 
+> **CORRECTED (2026-08-13) — that promise was false off ONE machine, and is true now.** The
+> `P1-shell` INVARIANT counted PNGs under the UNTRACKED scratch directory
+> `~/.reframe-review/shell-audit` — a path this README mentions once, at the top, as the corpus's
+> historical *origin*, never as a prerequisite of the command above. So a reviewer, a CI runner or
+> any later reader got exit 1 naming `P1-shell`, a claim that had not drifted at all, while its
+> OPEN sibling `P1-corpus` flipped to `NOW-FIXED (retire it from OPEN_ITEMS)` on 0/12 files found —
+> inviting a stranger to retire a check on a measurement that never ran, which is verbatim the
+> failure the verifier condemns in its own comment above `P1_SCRATCH`. MEASURED both states with
+> `$HOME`/`$USERPROFILE` pointed at an empty directory. `P1-shell` now asserts the **TRACKED**
+> captures at [`shell-audit/`](shell-audit) (8 PNGs — the promote-then-assert shape `P1-promoted`
+> already used), and `P1-corpus` prints `NOT-MEASURED` where the scratch corpus is absent instead
+> of guessing. Held by [`test_verify_ssot_claims.py`](../../validation/tools/test_verify_ssot_claims.py),
+> which runs the documented command in a hermetic HOME and carries a control proving the
+> redirection took effect — without that control the test would pass for the wrong reason on the
+> author's box. **Residual, stated not hidden:** `P1-corpus` still reads that scratch directory, so
+> elsewhere it reports rather than measures. It is an OPEN item and never gates the exit code, and
+> re-pointing it is not available — `git ls-files` matches none of its 12 basenames anywhere in the
+> tree (0 of 12 promoted, measured 2026-08-13), unlike the 8 captures above.
+
 > **SCOPE, corrected — it does NOT check this file.** The earlier wording ("re-checks every
 > load-bearing factual claim behind this reconciliation") was wider than the tool, and the proof
 > was sitting in its own output: it exited 0 (`total=40 as-predicted=40 mismatched=0`, the count at
