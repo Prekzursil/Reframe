@@ -165,7 +165,12 @@ export function SidecarBanner(): React.ReactElement | null {
           aria-live="assertive" and mounted app-wide, so it is the loudest string
           in the product — the internal process name must not appear here. The
           `sidecar-banner*` CLASS NAMES are deliberately unchanged: they are
-          code, not copy, and shell.css depends on them.
+          code, not copy, and SidecarBanner.css depends on them (16 matching
+          lines). An earlier revision of this note said shell.css, which
+          contains ZERO `sidecar` tokens; shell.css only supplies the GLOBAL
+          reduced-motion rule referenced at SidecarBanner.css:35-38 and never
+          names the class. SidecarBanner.test.tsx now pins this citation
+          against the CSS tree, so it cannot drift back a third time.
           KNOWN AMBIGUITY (disclosed, not resolved — the term is brief-locked):
           "engine" is overloaded in this product's copy. features/
           AiDisclosure.tsx:151 ("Chatterbox — the engine selected above"),

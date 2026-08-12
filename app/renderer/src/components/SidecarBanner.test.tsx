@@ -5,6 +5,9 @@
 // Restart action. Pins: nothing while 'running', the banner on 'down', the
 // Restart click invoking restartSidecar() + flipping to "Restarting…", and the
 // banner clearing once 'running' is pushed again.
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -400,5 +403,46 @@ describe('SidecarBanner', () => {
     });
     expect(repairSetup).not.toHaveBeenCalled();
     expect(repairBtn()).not.toBeNull();
+  });
+});
+
+// ---- Q6 citation pin: the class-name note must name a REAL dependent ---------
+// The copy note above the banner markup keeps the `sidecar-banner*` class names
+// out of the rename by asserting a stylesheet depends on them. That citation was
+// wrong, and it was wrong TWICE: it named `shell.css` (which contains zero
+// `sidecar` tokens) and the second occurrence was re-typed by the very commit
+// whose job was to correct this comment's anchors. Nothing checks prose, so this
+// is the check — the stylesheet the sentence names is compared against the
+// stylesheets that measurably key off the class names. Scanning the source is
+// the only way: the running renderer cannot see its own comments.
+describe('the class-name citation in SidecarBanner.tsx names a real dependent', () => {
+  // `process.cwd()` is the vitest root (`app/`, see vitest.config.ts) — NOT
+  // `import.meta.url`, which is not a file: URL under the vite-node runner.
+  const COMPONENTS = join(process.cwd(), 'renderer', 'src', 'components');
+  const entries = readdirSync(COMPONENTS);
+  const owners = entries
+    .filter((name) => name.endsWith('.css'))
+    .filter((name) => readFileSync(join(COMPONENTS, name), 'utf8').includes('sidecar-banner'));
+
+  // SCOPE, disclosed: the owner scan is this directory only. Measured
+  // 2026-08-12, SidecarBanner.css is the ONLY *.css in the repo containing
+  // `sidecar-banner`, so that is currently exhaustive; if a dependent rule ever
+  // lands in another directory the citation becomes INCOMPLETE (not false) and
+  // this pin would not catch it. Settling experiment: widen the scan to a
+  // recursive walk of renderer/src.
+  it('resolved the component directory (detector control)', () => {
+    // Without this, a wrong root yields an EMPTY owner set and the pin below
+    // passes vacuously. Assert the count of the thing actually being compared.
+    expect(entries).toContain('SidecarBanner.tsx');
+    expect(owners).toEqual(['SidecarBanner.css']);
+  });
+
+  it('cites the stylesheet that actually depends on the class names', () => {
+    const source = readFileSync(join(COMPONENTS, 'SidecarBanner.tsx'), 'utf8');
+    const cited = [...source.matchAll(/([\w.-]+\.css) depends on them/g)].map((m) => m[1]);
+    // The phrase is the pin: if a rewrite drops it, this goes red instead of
+    // silently measuring nothing.
+    expect(cited).toHaveLength(1);
+    expect(cited[0]).toBe(owners[0]);
   });
 });

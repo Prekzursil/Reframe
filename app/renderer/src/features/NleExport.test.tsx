@@ -182,8 +182,16 @@ describe('NleExport', () => {
     render();
     click('Export timeline');
     await flush();
+    // EXACT, not substring — the same standard the banner pin uses. A
+    // `toContain` here was not a pin: appending " Restart the app." to the
+    // source string left all 21 tests in this file green (measured 2026-08-12),
+    // so appended or prepended copy could drift in unchallenged and
+    // `not.toMatch(/sidecar/i)` only bans the token, never the sentence. No
+    // isolation helper is needed: the failure branch is the ONLY role="alert"
+    // node here (the success/path region next to it is role="status", see
+    // NleExport.tsx:234-248), so the alert's textContent IS the message.
     const alert = container.querySelector('[role="alert"]')?.textContent ?? '';
-    expect(alert).toContain('The engine is not available.');
+    expect(alert).toBe('The engine is not available.');
     expect(alert).not.toMatch(/sidecar/i);
     expect(exportMock).not.toHaveBeenCalled();
   });
