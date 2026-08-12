@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { rpc, type Video } from '../components/api';
 import { useConfirm } from '../components/ConfirmDialog';
-import { CapabilitiesChip } from './CapabilitiesChip';
 import { LibraryCard } from './LibraryCard';
 import { LibraryToolbar } from './LibraryToolbar';
 import { ShortsGalleryModal } from './ShortsGalleryModal';
@@ -65,10 +64,17 @@ export interface LibraryProps {
    */
   toast?: (toast: ToastMessage) => void;
   /**
-   * WU-14: fired when the library's readiness roll-up action button is clicked
-   * (e.g. download a model / add a provider key). The parent owns the routing
-   * to the providers/assets flows; absent -> the roll-up still renders, the
-   * action is simply a no-op.
+   * INERT (Q3). This used to feed the Library's readiness roll-up / capabilities
+   * chip, which is DELETED: nothing in this view raises a readiness action any
+   * more, so this prop is deliberately NOT destructured below and no handler is
+   * wired to it.
+   *
+   * It stays DECLARED for exactly one reason: `App.tsx:543` still passes
+   * `onReadinessAction={handleReadinessAction}`, and removing the prop from this
+   * interface would make that call site a TS2322 excess-property error and break
+   * `npm run typecheck`. Retiring the prop and its `App.tsx:429-434` handler is
+   * owned by the rail/flow (`App.tsx`) lane — delete this declaration in the same
+   * commit that removes the call site, not before.
    */
   onReadinessAction?: (action: ReadinessAction) => void;
   /**
@@ -163,7 +169,7 @@ function loadLineage(id: string): Promise<LineageResult> {
 export function Library({
   onOpen,
   toast: externalToast,
-  onReadinessAction,
+  // `onReadinessAction` is intentionally NOT destructured — see LibraryProps.
   provenance,
   shorts,
   onEditShort,
@@ -544,10 +550,34 @@ export function Library({
         </div>
       </header>
 
-      {/* design-review P2/§4: the model-readiness roll-up demoted to a compact
-          "Capabilities: N of M installed" disclosure chip (a plumbing count, kept
-          separate from the visible card count). */}
-      <CapabilitiesChip onAction={onReadinessAction} />
+      {/* Q3: NOTHING readiness-shaped renders here any more. The
+          "Capabilities: N of M installed" disclosure chip that used to sit
+          between the header and the toolbar is DELETED, for two measured reasons:
+
+            1. Its action button was a DECOY on the app's landing surface. For an
+               `assets.ensure` row the button's accessible name was "Download the
+               <X> model" (components/readinessMeta.ts:113) and clicking it only
+               NAVIGATED to Settings — no download started, and the destination
+               reset scroll to the top of a 1209-line panel without scrolling to
+               or highlighting the row (there is no `scrollIntoView` call site
+               anywhere under renderer/src). Announced as a download, it downloaded
+               nothing.
+            2. Its counter was not user-meaningful. The denominator was an internal
+               capability enumeration (already moved 11 -> 12; the owner reports
+               seeing 13), so it was DELETED rather than relocated — moving a
+               meaningless denominator to a new home preserves the defect.
+
+          Readiness now lives in ONE place, Settings -> Models & System, where the
+          fix actions are in reach of the controls that perform them. If an
+          in-Library readiness signal is ever wanted back, the bar is: a
+          CONDITIONAL single-line banner whose button runs the shared asset-download
+          path (ModelsSystemPanel.tsx:682-714) IN PLACE — never a navigation decoy,
+          and never an always-on chip.
+
+          SCOPE: the decoy verdict covers `assets.ensure` rows only. `openProviders`
+          and `setConsent` rows SHOULD navigate, and they still do — from Settings.
+          Nothing here removes navigation from those. Pinned by Library.test.tsx
+          "Library readiness surface (Q3 — chip deleted, not relocated)". */}
 
       {/* W54: `videos.length` — the RAW count — gates the search + sort controls,
           which used to mount unconditionally as a sibling of the
