@@ -158,8 +158,14 @@ export function SidecarBanner(): React.ReactElement | null {
 
   return (
     <div className="sidecar-banner" role="alert" aria-live="assertive">
+      {/* USER-FACING COPY: "the engine" is the noun the rest of the UI already
+          renders (AudioMix.tsx:377, BrollPanel.tsx:202,980). This banner is
+          role="alert" aria-live="assertive" and mounted app-wide, so it is the
+          loudest string in the product — the internal process name must not
+          appear here. The `sidecar-banner*` CLASS NAMES are deliberately
+          unchanged: they are code, not copy, and shell.css depends on them. */}
       <span className="sidecar-banner__message">
-        {restarting ? 'Restarting sidecar…' : 'Sidecar stopped'}
+        {restarting ? 'Restarting the engine…' : 'The engine stopped'}
       </span>
       {restarting ? null : (
         <button type="button" className="sidecar-banner__action" onClick={onRestart}>

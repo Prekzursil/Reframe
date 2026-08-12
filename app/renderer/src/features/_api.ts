@@ -293,7 +293,10 @@ export function waitForJobDone<T>(
     if (typeof api.onSidecarStatus === 'function') {
       offStatus = api.onSidecarStatus((status) => {
         if (status !== 'running') {
-          settleReject(new Error('The sidecar stopped mid-job; please retry.'));
+          // USER-FACING COPY: "the engine" is the noun the rest of the UI already
+          // renders (AudioMix.tsx:377, BrollPanel.tsx:202,980). "sidecar" is the
+          // internal process name and must not reach a role="alert" region.
+          settleReject(new Error('The engine stopped mid-job; please retry.'));
         }
       });
     }
@@ -301,7 +304,8 @@ export function waitForJobDone<T>(
       timer = setTimeout(() => {
         settleReject(
           new Error(
-            'Timed out waiting for the job to finish — the sidecar may have ' +
+            // USER-FACING COPY: see the note on the status-death message above.
+            'Timed out waiting for the job to finish — the engine may have ' +
               'stopped responding. Please try again.',
           ),
         );

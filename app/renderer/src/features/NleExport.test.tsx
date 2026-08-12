@@ -171,14 +171,20 @@ describe('NleExport', () => {
     expect(container.querySelector('.export-path')?.textContent).toContain('Saved 1 clip to');
   });
 
-  it('reports "sidecar bridge is not available" when there is no api', async () => {
+  // Q6 caveat, stated inline: this is a `!hasApi()` branch a working PACKAGED
+  // install never reaches (the preload always installs `window.api`), so it is
+  // the lowest-value of the five copy sites — fixed for consistency, not because
+  // a shipped user was seeing it. UNVERIFIED that any user has ever hit it;
+  // settling experiment: instrument this branch in a packaged build and see
+  // whether it ever fires.
+  it('names "the engine", not "sidecar", when there is no api', async () => {
     apiAvailable = false;
     render();
     click('Export timeline');
     await flush();
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'sidecar bridge is not available',
-    );
+    const alert = container.querySelector('[role="alert"]')?.textContent ?? '';
+    expect(alert).toContain('The engine is not available.');
+    expect(alert).not.toMatch(/sidecar/i);
     expect(exportMock).not.toHaveBeenCalled();
   });
 

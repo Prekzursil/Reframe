@@ -122,7 +122,7 @@ describe('SidecarBanner', () => {
     const el = banner();
     expect(el).not.toBeNull();
     expect(el!.getAttribute('role')).toBe('alert');
-    expect(el!.textContent).toContain('Sidecar stopped');
+    expect(el!.textContent).toContain('The engine stopped');
     expect(restartBtn()).not.toBeNull();
     expect(restartBtn()!.textContent).toBe('Restart');
   });
@@ -137,6 +137,22 @@ describe('SidecarBanner', () => {
     // Optimistic in-flight state: button gone, message switches to restarting.
     expect(restartBtn()).toBeNull();
     expect(banner()!.textContent).toContain('Restarting');
+  });
+
+  // ---- Q6: the loudest copy in the product ---------------------------------
+  // This banner is mounted app-wide with role="alert" aria-live="assertive", so
+  // its message is read out the moment the engine dies. It must speak the noun
+  // the rest of the UI already renders ("the engine"), never the internal
+  // process name. The `sidecar-banner` CSS class stays exactly as-is on purpose:
+  // that is code, and the assertion below reads textContent, not markup.
+  it('names "the engine", not "sidecar", in the down + restarting copy', () => {
+    mount();
+    pushStatus('down');
+    expect(banner()!.textContent).toContain('The engine stopped');
+    expect(banner()!.textContent).not.toMatch(/sidecar/i);
+    pushStatus('restarting');
+    expect(banner()!.textContent).toContain('Restarting the engine');
+    expect(banner()!.textContent).not.toMatch(/sidecar/i);
   });
 
   it('clears the banner once the supervisor reports running again', () => {
@@ -180,7 +196,7 @@ describe('SidecarBanner', () => {
     });
     // The .catch() re-enables the button (failure not swallowed) — still 'down'.
     expect(restartBtn()).not.toBeNull();
-    expect(banner()!.textContent).toContain('Sidecar stopped');
+    expect(banner()!.textContent).toContain('The engine stopped');
   });
 
   it('Restart no-ops when the bridge lacks restartSidecar (SidecarBanner.tsx:52)', () => {
@@ -203,7 +219,7 @@ describe('SidecarBanner', () => {
     });
     // No restart fn -> the button stays offered (never went into "Restarting…").
     expect(restartBtn()).not.toBeNull();
-    expect(banner()!.textContent).toContain('Sidecar stopped');
+    expect(banner()!.textContent).toContain('The engine stopped');
   });
 
   it('degrades to inert when no bridge is present', () => {
@@ -242,7 +258,7 @@ describe('SidecarBanner', () => {
     installBridgeWithBootstrap();
     mount();
     pushStatus('down');
-    expect(banner()!.textContent).toContain('Sidecar stopped');
+    expect(banner()!.textContent).toContain('The engine stopped');
     pushBootstrapError('FAILED:bootstrap I/O error | fix: free disk space');
     // The actionable first-run failure replaces the generic status banner.
     expect(banner()!.textContent).toContain('I/O error');

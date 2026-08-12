@@ -343,6 +343,55 @@ describe('waitForJobDone', () => {
   });
 });
 
+// ---- Q6: the crash/hang voice must not leak developer vocabulary ----------
+// `waitForJobDone` is the ONE shared wait behind every deferred-job panel, and
+// both messages it authors itself are rendered VERBATIM inside role="alert".
+// They must use the product noun the rest of the UI already renders — "the
+// engine" (AudioMix.tsx:377, BrollPanel.tsx:202,980) — never the internal
+// process name. Deliberately scoped to these two strings: a blanket /sidecar/i
+// ban across the file would also hit `onSidecarStatus`, `SidecarStatus` and the
+// CSS class names, which are CODE, not copy. Note this is the CRASH/HANG voice
+// only — the ordinary failure path (`extractJobError`) forwards the engine's own
+// message untouched and already carries no "sidecar" token.
+describe('waitForJobDone user-facing copy (Q6)', () => {
+  /** Settle a wait to its REJECTION MESSAGE so the exact copy can be pinned. */
+  const rejectionMessage = (p: Promise<unknown>): Promise<string> =>
+    p.then(
+      () => 'RESOLVED — expected a rejection',
+      (e: Error) => e.message,
+    );
+
+  it('says "the engine", not "sidecar", when the process dies mid-job', async () => {
+    const { api, fireStatus } = fakeApi({ withSidecarStatus: true });
+    const settled = rejectionMessage(
+      waitForJobDone(api, 'job-voice', (r) => pickField<string>(r, 'path')),
+    );
+    fireStatus('down');
+    const message = await settled;
+    expect(message).toBe('The engine stopped mid-job; please retry.');
+    expect(message).not.toMatch(/sidecar/i);
+  });
+
+  it('says "the engine", not "sidecar", in the hang/timeout message', async () => {
+    vi.useFakeTimers();
+    try {
+      const { api } = fakeApi();
+      const settled = rejectionMessage(
+        waitForJobDone(api, 'job-hang', (r) => pickField<string>(r, 'path'), 1000),
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      const message = await settled;
+      expect(message).toBe(
+        'Timed out waiting for the job to finish — the engine may have stopped responding. ' +
+          'Please try again.',
+      );
+      expect(message).not.toMatch(/sidecar/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('JobAbortedError', () => {
   it('carries a default message and the JobAbortedError name', () => {
     const err = new JobAbortedError();
