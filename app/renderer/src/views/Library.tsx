@@ -556,12 +556,24 @@ export function Library({
 
             1. Its action button was a DECOY on the app's landing surface. For an
                `assets.ensure` row the button's accessible name was "Download the
-               <X> model" (components/readinessMeta.ts:113) and clicking it only
-               NAVIGATED to Settings — no download started, and the destination
-               reset scroll to the top of a 1209-line panel without scrolling to
-               or highlighting the row (there is no `scrollIntoView` call site
-               anywhere under renderer/src). Announced as a download, it downloaded
-               nothing.
+               <X> model" (components/readinessMeta.ts:113), but the chip only
+               forwarded the action to its parent, and the Library's parent handler
+               is `App.tsx:429-434` — `openSettings(actionSection(action))`, pure
+               navigation. No download ever started. Contrast the SURVIVING copy of
+               the same roll-up in Settings, whose handler passes the very same
+               `assets.ensure` action to `runAssetJob(action.assets)` and really
+               downloads (panels/ModelsSystemPanel.tsx:746-765): identical button,
+               identical label, one works and one did not.
+
+               The destination did not even land the user near the row: Settings
+               force-resets its scroll container to the top on every section change
+               (`panelRef.current!.scrollTop = 0`, views/Settings.tsx:273-275) and
+               nothing scrolls to or highlights the relevant row — there is no
+               `scrollIntoView` CALL SITE anywhere under renderer/src (the only
+               textual hits are this comment, its test, and Settings.tsx:264 saying
+               the same thing). Measured: the panel it lands in,
+               ModelsSystemPanel.tsx, is 1136 lines. Announced as a download, it
+               downloaded nothing.
             2. Its counter was not user-meaningful. The denominator was an internal
                capability enumeration (already moved 11 -> 12; the owner reports
                seeing 13), so it was DELETED rather than relocated — moving a
