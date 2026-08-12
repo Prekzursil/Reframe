@@ -1048,12 +1048,17 @@ describe('Library source provenance (WU-1f)', () => {
 // ---------------------------------------------------------------------------
 // Q3: the CapabilitiesChip is DELETED from the Library landing route
 // ---------------------------------------------------------------------------
-// The chip put a button on the app's landing surface whose accessible name was
-// "Download the <X> model" (components/readinessMeta.ts:113) and whose only
-// effect was to NAVIGATE to Settings — no download ever started, and the
-// destination reset scroll to the top of a long panel without scrolling to or
-// highlighting the row in question (zero `scrollIntoView` call sites exist under
-// renderer/src). That is a decoy on the primary landing surface.
+// The chip was painted on the app's landing surface unconditionally, and ONE
+// EXPAND CLICK deep — its row list was gated behind the disclosure's own `open`
+// state (origin/main:views/CapabilitiesChip.tsx:37,82,98) — it offered a button
+// whose accessible name was "Download the <X> model"
+// (components/readinessMeta.ts:113) and whose only effect was to NAVIGATE to
+// Settings. No download ever started, and the destination reset scroll to the top
+// of a long panel without scrolling to or highlighting the row in question (zero
+// `scrollIntoView` call sites exist under renderer/src). That is a decoy on the
+// primary landing surface. (Earlier wording here said the chip "put a button on
+// the landing surface", which read as immediately-on-screen and was wider than
+// the evidence; the third pin below encodes the two-step reality.)
 //
 // Its "N of M installed" counter is deleted rather than relocated: the
 // denominator is an internal capability enumeration (it has already moved 11→12
