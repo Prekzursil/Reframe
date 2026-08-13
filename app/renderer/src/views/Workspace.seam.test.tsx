@@ -334,8 +334,14 @@ describe('Workspace ↔ Subtitles seam', () => {
       return Promise.resolve({});
     });
 
+    // L5: the workspace no longer LANDS on Subtitles. Its default selection is
+    // "nothing selected" → project tools; Subtitles is a CUE-scoped tool, opened
+    // by selecting the caption lane or, as here, by the deep-link the Task Hub
+    // already sends (`taskHub.ts:109` → `{kind:'workspace', tab:'subtitles'}`).
+    // The seam under test — the panel adopting `project.tracks[0]` when
+    // `project.open` resolves after the mount — is unchanged.
     await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="subtitles" />);
     });
     await flushUntil(present('.subtitles-panel'));
 

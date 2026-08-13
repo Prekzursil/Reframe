@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import './workspace.css';
-import { TabBar, tabId, tabPanelId, type TabDef, type TabGroup } from '../components/TabBar';
+import { TabBar, tabId, tabPanelId, type TabDef } from '../components/TabBar';
 import { Player, type PlayerHandle } from '../components/Player';
 import { rpc, type Project, type Video } from '../components/api';
 import { onProxyState } from '../lib/rpc';
@@ -12,23 +12,38 @@ export interface WorkspaceProps {
   /** Return to the Library home. */
   onBack: () => void;
   /**
-   * The tab to open on (a Task Hub deep-link, e.g. 'shortmaker' / 'subtitles').
-   * ADDITIVE: omitted → the workspace default (DEFAULT_WORKSPACE_TAB, Subtitles).
+   * The panel to open on (a Task Hub deep-link, e.g. 'shortmaker' / 'subtitles').
+   * ADDITIVE: omitted → the workspace default (the video lane, project tools).
+   *
+   * A deep-link PINS its panel's selection context until the user changes the
+   * selection, so a link to a clip-scoped tool (`gaze`, `speed`, …) opens that
+   * tool even before a clip has been clicked. See `context` below.
    */
   initialTab?: string;
   /**
-   * WU-3a4: the SINGLE-OWNER deep-link into the top-level Make Shorts section.
-   * When wired (the App→Edit thread), selecting the "Short-maker" tab — by click
-   * OR an `initialTab='shortmaker'` deep-link (the Task Hub "Reframe to vertical"
-   * card / a remembered 'reframe' choice) — navigates to Make Shorts (the ONE
-   * ShortMaker owner) with this video pre-selected, INSTEAD of mounting a second
-   * ShortMaker copy here. ADDITIVE: omitted → the tab falls back to mounting
-   * ShortMaker in place (backward-compatible; nothing is deleted).
+   * WU-3a4: open the SINGLE Make Shorts owner with THIS video pre-selected.
+   *
+   * Since L5 the rail hosts Make Shorts under **Produce**, so the workspace mounts
+   * no ShortMaker copy — but the rail's own entry (`App.tsx openMakeShorts()`)
+   * carries no videoId, so it cannot replace the in-editor route this drives. The
+   * header control is the caller (see `handleMakeShorts`).
+   *
+   * GRIND round 3, refuted-and-fixed: round 2 fired this ONLY from an
+   * `initialTab === 'shortmaker'` guard that production cannot satisfy —
+   * `Edit.tsx:158` passes `resumeFor(...).tab`, which is only `'subtitles'` or
+   * `null` (`lib/taskHub.ts:99-117`), `shortmaker` is pinned in
+   * `REDIRECT_ONLY_WORKSPACE_TABS` (`taskHub.ts:94`) and `Edit.test.tsx:223`
+   * enforces that it never becomes an `initialTab`. A prop fired only from a
+   * branch no shipping code can reach is the same Q7 orphan class this lane exists
+   * to close, so the guard is gone and a real control took its place.
+   *
+   * ADDITIVE: omitted → no control is rendered (a button that calls nothing is
+   * worse than no button); Make Shorts stays reachable from the Produce rail.
    */
   onOpenMakeShorts?: (videoId: string) => void;
 }
 
-// STATIC lazy imports (punch #3): all 8 panels exist now, so the old
+// STATIC lazy imports (punch #3): all panels exist now, so the old
 // runtime-variable specifier (`@vite-ignore` + absence shim) is obsolete — and
 // actively harmful: Rollup cannot statically analyze a variable import, so every
 // PACKAGED build shipped an empty shell. Static literals let the bundler emit
@@ -37,7 +52,6 @@ const Transcribe = lazy(() => import('../features/Transcribe'));
 const Subtitles = lazy(() => import('../features/Subtitles'));
 const Tracks = lazy(() => import('../features/Tracks'));
 const Convert = lazy(() => import('../features/Convert'));
-const ShortMaker = lazy(() => import('../features/ShortMaker'));
 const TimelinePanel = lazy(() => import('../features/Timeline'));
 const Dub = lazy(() => import('../features/Dub'));
 // v1.5: constant-factor speed / slow motion over the existing re-time engine.
@@ -51,57 +65,43 @@ const NleExport = lazy(() => import('../features/NleExport'));
 // system-advanced group: per-video Diarize + Refine + Recipes panels.
 const Diarize = lazy(() => import('../features/Diarize'));
 const Refine = lazy(() => import('../features/Refine'));
-// v1.5 expose-engines: per-video camera-shake removal. The `stabilize.run` RPC
-// and its output dir already existed; this tab is what makes them reachable.
+// v1.5 expose-engines: per-video camera-shake removal.
 const Stabilize = lazy(() => import('../features/Stabilize'));
 // v1.5 flagship #2: transcript-native editing (strike a word -> the video cuts).
 const TranscriptEditor = lazy(() => import('../features/TranscriptEditor'));
 const Recipes = lazy(() => import('../features/Recipes'));
 // intelligence A: semantic transcript search (seeks the player on a hit).
 const SemanticSearch = lazy(() => import('../features/SemanticSearch'));
-// W18: the multi-lane VIDEO timeline (clips, razor, drag-to-trim, undo). Built
-// complete and 100%-covered, and imported by NOTHING but its own test until now.
+// W18: the multi-lane VIDEO timeline (clips, razor, drag-to-trim, undo). It is
+// no longer a tab — it is DOCKED at the bottom of the stage (L5 G-1).
 const VideoTimeline = lazy(() => import('../features/VideoTimeline'));
-// W17: manual per-shot reframe correction (panels/ReframeOverridePanel), wrapped
-// by the container that finds a clip and loads its persisted decision plan.
+// W17: manual per-shot reframe correction.
 const ReframeCorrect = lazy(() => import('../features/ReframeCorrect'));
-// W19: eye-contact correction. `gaze.probe` + `gaze.run` were registered
-// (`features/gaze.py:699-700`) and frozen into the RPC surface, but `gaze` appeared
-// ZERO times, case-insensitively, anywhere under `app/renderer` — so the entire
-// feature, ethics gate included, was unreachable by any user. This mounts it.
+// W19: eye-contact correction, carrying its likeness-attestation ethics gate.
 const Gaze = lazy(() => import('../features/Gaze'));
-// W16-UI: auto-b-roll — the last v1.5 flagship with no user surface. The sidecar
-// ships ~58 KB of engine (features/broll_ops.py, broll_plan.py, broll_index.py,
-// broll_compose.py) behind SEVEN registered RPCs, and `broll` matched ZERO files
-// under `app/` while matching 15 under `sidecar/` (detector controlled both ways).
-// BR1 (#393) added the registration door, so the library can now be filled from the
-// app; this mounts the surface that fills and uses it.
+// W16-UI: auto-b-roll, carrying its uncalibrated-threshold + no-undo disclosures.
 const BrollPanel = lazy(() => import('../features/BrollPanel'));
 
 /**
- * v1.5 timeline-naming — two LABELS name their real subject. Ids are untouched
- * (`timeline` / `nle` are load-bearing for deep-links, taskHub and useJob's
- * FEATURE_LABELS), and nothing is added, removed or reordered.
+ * THE PANEL REGISTRY — all 21 per-video panels, with the label each is shown
+ * under. This list is NOT a tab strip any more.
  *
- * `timeline` mounts features/Timeline.tsx — a waveform strip plus a lane of
- * draggable subtitle CUES (Timeline.tsx:1-8), whose sidecar registers exactly
- * one method, `timeline.peaks` (timeline.py:324). No clip lane, no razor. The
- * bare name "Timeline" promised a video timeline that is not here.
+ * WHAT CHANGED AND WHY (L5, owner-locked). Until this lane the workspace painted
+ * this list as ONE horizontal strip: 21 entries, 16 of them painted at once plus
+ * 3 group captions, inside the app's fixed 1280px window. It overflowed, clipped
+ * mid-word, and "Short-maker" wrapped to a second line.
  *
- * W18 RECONCILED (2026-08-09): that last clause used to read "a genuine
- * video-timeline tab is free to claim it later", written while
- * features/VideoTimeline.tsx already existed on disk — complete, styled and
- * covered — but imported by nothing except its own test. So this file and that
- * one disagreed about whether the app has a video timeline. It does: the
- * `videoTimeline` tab below mounts it, and it is the ONLY caller of the nine
- * `tracks.video.*` methods (video_tracks.py:883-891), all nine of which were
- * user-unreachable before this lane.
+ * The measured ROOT CAUSE was not the count — it was that the IA had exactly TWO
+ * levels: painted-forever, or behind a one-way "Advanced" trapdoor. Every feature
+ * carrying an honesty or consent surface (W17 reframeFix, W19 gaze, W16-UI broll)
+ * therefore HAD to stay top-level, each argued correctly, and the strip could only
+ * grow. Selection-driven disclosure is the missing THIRD level: a panel appears
+ * because something is SELECTED, so shipping a feature never adds permanent
+ * chrome and the ratchet cannot re-form.
  *
- * `nle` mounts features/NleExport.tsx — a CMX3600 EDL / CSV handoff whose
- * events are approved short-maker clips laid back-to-back
- * (nle_export.py:162,175-177), i.e. a synthesized rough cut, not a timeline the
- * user authored. Deliver.tsx already calls the same panel "Pro handoff"; this
- * label was the outlier.
+ * ANTI-RATCHET INVARIANT — do not undo this. Re-homing any of these into a fixed,
+ * always-present list (a tab strip, a permanent accordion, a "tools" grid) puts
+ * the IA back on two levels and the growth pressure returns.
  */
 export const WORKSPACE_TABS: TabDef[] = [
   { id: 'transcribe', label: 'Transcribe' },
@@ -113,28 +113,16 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'tracks', label: 'Tracks' },
   { id: 'convert', label: 'Convert' },
   { id: 'shortmaker', label: 'Short-maker' },
-  // W17: the correction path for a wrong auto-crop. It sits next to Short-maker
-  // because the clips it corrects are the ones Short-maker produced.
   { id: 'reframeFix', label: 'Fix framing' },
-  { id: 'timeline', label: 'Subtitle timeline' },
-  // W18: the real video timeline (see the reconciliation note above).
-  { id: 'videoTimeline', label: 'Video timeline' },
-  // W16-UI: auto-b-roll sits next to the video timeline because it is the same KIND
-  // of operation — it puts additional footage INTO the timeline for chosen windows.
-  // It is NOT filed under "Advanced": the panel carries the feature's two honesty
-  // surfaces (an UNCALIBRATED match threshold, and an apply with no undo), and
-  // hiding those behind a disclosure toggle would defeat the point of shipping them.
+  // WORK ITEM 6 — "Subtitle timeline" vs "Video timeline" were two DIFFERENT
+  // models sharing one word while sitting two tabs apart in the same strip.
+  // They are now the two LANES of one dock and are named for what they hold:
+  // `timeline` holds caption CUES, `videoTimeline` holds video CLIPS.
+  { id: 'timeline', label: 'Caption cues' },
+  { id: 'videoTimeline', label: 'Video clips' },
   { id: 'broll', label: 'Auto B-roll' },
   { id: 'stabilize', label: 'Stabilize' },
-  // W19: eye-contact correction sits next to Stabilize because it is the same KIND
-  // of operation — a whole-clip, token-free, fully local image correction that
-  // writes a NEW file and never rewrites the source. It is NOT filed under
-  // "Advanced": it carries a likeness-attestation ethics gate, and burying that
-  // gate behind a disclosure would make the consent surface harder to find.
   { id: 'gaze', label: 'Eye contact' },
-  // v1.5: constant-factor speed / slow motion. The re-time ENGINE was already
-  // wired for the Director, but nothing in the renderer could reach it, so a
-  // user had to prompt the planner and hope. This is the direct control.
   { id: 'speed', label: 'Speed' },
   { id: 'dub', label: 'Dub' },
   { id: 'audiomix', label: 'Audio mix' },
@@ -143,68 +131,104 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'assets', label: 'Assets' },
 ];
 
+/** What is currently selected, which is what the inspector follows (L5 G-5). */
+export type InspectorContext = 'clip' | 'cue' | 'audio' | 'project';
+
+/** The dock's lanes. ONE timeline, several lanes (L5 G-2). */
+export type DockLane = 'video' | 'captions' | 'audio';
+
 /**
- * WU-3a2: the flat tab list regrouped into 4 NAMED clusters for progressive
- * disclosure. This is an ADDITIVE VISUAL layer over WORKSPACE_TABS — every tab
- * id above appears in exactly one group and every panel stays reachable; the
- * ids/labels/behaviour are unchanged. "Deliver" is flagged `advanced` so it
- * collapses behind the "Advanced" disclosure; the other three show expanded.
+ * L5 G-5, transcribed mechanically from the owner's mapping table. A panel
+ * appears BECAUSE something is selected; nothing selected → project tools.
+ *
+ * RECONCILE-DON'T-DROP: every id in `WORKSPACE_TABS` is accounted for exactly
+ * once — here, in `WORKSPACE_DOCK_PANELS` (the two timeline lanes), or in
+ * `WORKSPACE_PANELS_ELSEWHERE` (owned by another rail destination).
+ * `workspacePanelHome()` below is the mechanical check.
  */
-export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
-  {
-    id: 'speech',
-    label: 'Speech & Text',
-    tabIds: ['transcribe', 'search', 'subtitles', 'transcriptEdit', 'diarize', 'refine'],
-  },
-  {
-    id: 'frame',
-    label: 'Frame & Cut',
-    // W17/W18: 'reframeFix' and 'videoTimeline' join the VISIBLE cluster. That
-    // takes the painted strip from 12 to 14 (it already scrolls — workspace.css
-    // `overflow-x: auto`), a real cost accepted deliberately: burying a
-    // correction surface behind the Advanced disclosure would leave a wrong
-    // auto-crop effectively uncorrectable, which is the defect being fixed.
-    //
-    // W19: 'gaze' joins the same VISIBLE cluster, taking the painted strip to 15
-    // for the same reason — plus one specific to it: the panel IS the likeness
-    // consent gate, so it must be findable, not filed under Advanced.
-    //
-    // W16-UI: 'broll' joins it too, taking the painted strip to 16. Same shape of
-    // argument, different surfaces: the b-roll panel is where the uncalibrated match
-    // threshold is presented as a dial and where "apply cannot be undone" is stated
-    // before the click. Both belong in front of the user, not behind a toggle.
-    tabIds: [
-      'shortmaker',
-      'reframeFix',
-      'timeline',
-      'videoTimeline',
-      'broll',
-      'stabilize',
-      'gaze',
-      'speed',
-    ],
-  },
-  { id: 'audio', label: 'Audio', tabIds: ['dub', 'audiomix'] },
-  {
-    id: 'deliver',
-    label: 'Deliver',
-    tabIds: ['convert', 'nle', 'recipes', 'assets', 'tracks'],
-    advanced: true,
-  },
+export const WORKSPACE_INSPECTOR_SECTIONS: Record<InspectorContext, readonly string[]> = {
+  clip: ['reframeFix', 'speed', 'stabilize', 'gaze', 'broll'],
+  cue: ['subtitles', 'transcriptEdit'],
+  audio: ['audiomix', 'dub'],
+  // "Nothing selected" is the PROJECT. `convert` / `nle` / `tracks` / `assets`
+  // are project-scoped output + library tools; L5 G-3 wants them in the Deliver
+  // destination and Settings, which live in views this lane does not own
+  // (Deliver.tsx has an open PR against it). They are kept reachable here rather
+  // than dropped — see the lane report's residual.
+  project: [
+    'transcribe',
+    'search',
+    'diarize',
+    'refine',
+    'recipes',
+    'convert',
+    'nle',
+    'tracks',
+    'assets',
+  ],
+};
+
+/** The two panels that ARE the dock (not inspector sections). */
+export const WORKSPACE_DOCK_PANELS: Record<string, DockLane> = {
+  videoTimeline: 'video',
+  timeline: 'captions',
+};
+
+/** Panels a DIFFERENT rail destination owns. `shortmaker` lives in Produce. */
+export const WORKSPACE_PANELS_ELSEWHERE: readonly string[] = ['shortmaker'];
+
+/** The dock lane heads. Selecting one is a SELECTION, which the inspector follows. */
+export const WORKSPACE_DOCK_LANES: TabDef[] = [
+  { id: 'video', label: 'Video clips' },
+  { id: 'captions', label: 'Caption cues' },
+  { id: 'audio', label: 'Program audio' },
 ];
 
-/**
- * WU-3a2: the workspace lands on Subtitles (the most-used editing surface),
- * NOT Transcribe (a one-time prerequisite). Deep-links (initialTab) still win.
- */
-export const DEFAULT_WORKSPACE_TAB = 'subtitles';
+/** A human name for the current selection, shown at the top of the inspector. */
+export const INSPECTOR_CONTEXT_LABEL: Record<InspectorContext, string> = {
+  clip: 'Selected clip',
+  cue: 'Caption cues',
+  audio: 'Program audio',
+  project: 'Project',
+};
 
 /**
- * design-review P1: the primary Export/Deliver destination. EXPORT is the user's
- * terminal goal — it lives in the "Deliver" cluster (collapsed behind Advanced),
- * so the persistent Export action jumps straight to the Convert panel (produces
- * the final rendered file) AND reveals the Deliver cluster so the sibling deliver
- * tools become visible. A member of WORKSPACE_TAB_GROUPS.deliver.tabIds.
+ * Where a panel lives now. Returns its inspector context, `'dock'`, or
+ * `'elsewhere'`; `null` means the id is homeless, which is the reorganisation
+ * bug this function exists to make mechanically detectable.
+ */
+export function workspacePanelHome(
+  panelId: string,
+): InspectorContext | 'dock' | 'elsewhere' | null {
+  for (const context of ['clip', 'cue', 'audio', 'project'] as const) {
+    if (WORKSPACE_INSPECTOR_SECTIONS[context].includes(panelId)) return context;
+  }
+  if (panelId in WORKSPACE_DOCK_PANELS) return 'dock';
+  if (WORKSPACE_PANELS_ELSEWHERE.includes(panelId)) return 'elsewhere';
+  return null;
+}
+
+/** What is selected, given the lane in focus and the clip picked inside it. */
+function contextOfSelection(lane: DockLane, clipId: string | null): InspectorContext {
+  if (lane === 'captions') return 'cue';
+  if (lane === 'audio') return 'audio';
+  // The video lane: a clip selected in it, or nothing selected in it.
+  return clipId === null ? 'project' : 'clip';
+}
+
+/** Which dock lane a selection context corresponds to. */
+function laneOfContext(context: InspectorContext): DockLane {
+  if (context === 'cue') return 'captions';
+  if (context === 'audio') return 'audio';
+  // Both 'clip' and 'project' are read off the video lane: a clip selected in it,
+  // or nothing selected in it.
+  return 'video';
+}
+
+/**
+ * design-review P1 (retained): the primary Export destination. Export is the
+ * user's terminal goal, so it keeps a standing affordance — now in the workspace
+ * header rather than at the far end of a scrolling strip it kept falling off.
  */
 export const WORKSPACE_EXPORT_TAB = 'convert';
 
@@ -213,9 +237,11 @@ interface OpenResult {
 }
 
 /**
- * Workspace.tsx — the tabbed per-video workspace.
- * Opens the project (project.open) and mounts the active feature panel, passing
- * each the props it declares (videoId + project-derived optionals).
+ * Workspace.tsx — the per-video REFINE surface.
+ *
+ * Layout (L5 G-1): preview on top, the TIMELINE DOCKED beneath it (zero
+ * navigation actions to reach it), and a right-hand INSPECTOR whose sections are
+ * driven by the current selection.
  */
 export function Workspace({
   video,
@@ -223,25 +249,109 @@ export function Workspace({
   initialTab,
   onOpenMakeShorts,
 }: WorkspaceProps): React.ReactElement {
-  // WU-3a4: when the Make Shorts deep-link is wired, the 'shortmaker' tab NEVER
-  // becomes the active in-workspace panel (it redirects to the single owner), so a
-  // 'shortmaker' initialTab falls back to the workspace default instead.
-  const redirectShortmaker = initialTab === 'shortmaker' && onOpenMakeShorts != null;
-  const [active, setActive] = useState<string>(
-    redirectShortmaker ? DEFAULT_WORKSPACE_TAB : (initialTab ?? DEFAULT_WORKSPACE_TAB),
-  );
-  // WU-3a2: the "Advanced" (Deliver) cluster is collapsed by default; the toggle
-  // lives here so the presentational TabBar stays a pure, hook-free component.
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const toggleAdvanced = useCallback(() => setAdvancedOpen((open) => !open), []);
-  // design-review P1: the persistent Export action surfaces the terminal deliver
-  // goal from the default view — it activates the primary export panel (Convert)
-  // and opens the Deliver cluster so its sibling tools are reachable at once,
-  // without un-hiding the cluster by default.
-  const handleExport = useCallback(() => {
-    setActive(WORKSPACE_EXPORT_TAB);
-    setAdvancedOpen(true);
+  // Which dock lane is selected. The deep-link decides the opening lane so a link
+  // to a caption tool does not open on the video lane and hide its own target.
+  const [lane, setLane] = useState<DockLane>(() => {
+    if (initialTab !== undefined && initialTab in WORKSPACE_DOCK_PANELS) {
+      return WORKSPACE_DOCK_PANELS[initialTab];
+    }
+    const home = initialTab === undefined ? null : workspacePanelHome(initialTab);
+    return home === 'dock' || home === 'elsewhere' || home === null ? 'video' : laneOfContext(home);
+  });
+  // The clip selected INSIDE the video lane (Q7 — VideoTimeline now reports it).
+  const [clipId, setClipId] = useState<string | null>(null);
+  const clipRef = useRef<string | null>(null);
+  /**
+   * The section the user (or a deep-link) explicitly chose. It PINS its own
+   * context until the selection changes, which is what makes a deep-link to a
+   * clip-scoped tool land on that tool before any clip has been clicked. Cleared
+   * by any real selection change, after which the selection is authoritative.
+   */
+  const [sectionPref, setSectionPref] = useState<string | null>(() => {
+    if (initialTab === undefined) return null;
+    const home = workspacePanelHome(initialTab);
+    return home === 'dock' || home === 'elsewhere' || home === null ? null : initialTab;
+  });
+
+  const context: InspectorContext =
+    sectionPref === null
+      ? contextOfSelection(lane, clipId)
+      : (workspacePanelHome(sectionPref) as InspectorContext);
+  const sections = WORKSPACE_INSPECTOR_SECTIONS[context];
+  // `sectionPref` is only ever set to a panel of `context` (it DEFINES the context
+  // when set), so it never needs re-validating against the list.
+  const active = sectionPref ?? sections[0];
+
+  const selectSection = useCallback((id: string) => setSectionPref(id), []);
+
+  const selectLane = useCallback((id: string) => {
+    setLane(id as DockLane);
+    // Changing lane IS a selection change: the inspector goes back to following
+    // the selection instead of the pinned deep-link/section.
+    setSectionPref(null);
   }, []);
+
+  /**
+   * Q7: the timeline reports its selection, so the inspector follows the real
+   * editing surface instead of a separate switch.
+   *
+   * Two reports are NOT user actions and must not be treated as one:
+   *   * the mount-time `null` from a panel nobody has touched — the ref guard
+   *     keeps that a no-op so it cannot wipe a deep-link;
+   *   * the same `null` after a REMOUNT. `renderLane()` returns a different
+   *     element TYPE per lane, so leaving and re-entering the video lane rebuilds
+   *     the panel and it re-reports `null` (VideoTimeline.tsx:145-147). Clearing
+   *     `sectionPref` on that report sent `handleExport` — which switches the lane
+   *     back to 'video' — to `sections[0]` (Transcribe) instead of Convert. A
+   *     vanished clip only invalidates a pin that is CLIP-scoped; a project / cue
+   *     / audio pin is about something else and survives.
+   * Conversely a NON-null report is a user gesture even when the id is unchanged:
+   * after Export pins a project panel the clip is still selected, so re-picking it
+   * is the obvious way back to its tools and must drop the pin (VideoTimeline
+   * re-publishes a re-pick precisely so this can work). But "unchanged id" is NOT
+   * always a re-pick: `startDrag` (VideoTimeline.tsx:287) calls `setSelected(clip.id)`
+   * and is bound to onMouseDown on the clip BODY (:681) and on BOTH trim edges (:689,
+   * :695), so beginning a drag or a trim on the already-selected clip publishes its id
+   * too. Dropping a CLIP-scoped pin on those gestures tore down the panel the user was
+   * configuring — Speed / Eye contact / Auto B-roll, and `gaze` is the W19 likeness-
+   * attestation consent surface — losing its local state mid-gesture. So the pin is
+   * dropped only when it belongs to another context (Export's Convert, giving the clip
+   * inspector back) or when the clip genuinely CHANGED (a real selection change, after
+   * which the selection is authoritative again).
+   */
+  const handleSelectClip = useCallback((id: string | null) => {
+    if (id === null) {
+      if (clipRef.current === null) return;
+      clipRef.current = null;
+      setClipId(null);
+      setSectionPref((pref) =>
+        pref !== null && workspacePanelHome(pref) === 'clip' ? null : pref,
+      );
+      return;
+    }
+    const previous = clipRef.current;
+    clipRef.current = id;
+    setClipId(id);
+    setSectionPref((pref) =>
+      pref !== null && previous === id && workspacePanelHome(pref) === 'clip' ? pref : null,
+    );
+  }, []);
+
+  // Q7: `tracks.video.render` really encodes a file; before this the only mount
+  // omitted `onRendered`, so the finished file was announced nowhere outside the
+  // panel. The dock now carries it as a live region.
+  const [renderNote, setRenderNote] = useState<string | null>(null);
+  const handleRendered = useCallback((path: string) => {
+    setRenderNote(`Timeline rendered to ${path}`);
+  }, []);
+
+  // Export jumps the inspector to the panel that produces the final file. It is a
+  // project-scoped tool, so it also drops the pinned clip/cue context.
+  const handleExport = useCallback(() => {
+    setLane('video');
+    setSectionPref(WORKSPACE_EXPORT_TAB);
+  }, []);
+
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   // U1: the workspace player strip + its imperative handle (Timeline seeks it).
@@ -278,28 +388,14 @@ export function Workspace({
     void reloadProject();
   }, [reloadProject]);
 
-  // WU-3a4: an `initialTab='shortmaker'` deep-link with the Make Shorts thread
-  // wired redirects to the single owner on mount — the tab never renders a second
-  // ShortMaker copy here (the active tab already fell back to the default above).
-  useEffect(() => {
-    if (initialTab === 'shortmaker' && onOpenMakeShorts) {
-      onOpenMakeShorts(video.id);
-    }
-  }, [initialTab, onOpenMakeShorts, video.id]);
-
-  // WU-3a4: intercept the 'shortmaker' selection → deep-link to the single Make
-  // Shorts owner (when wired); every other tab activates in place. Without the
-  // callback, 'shortmaker' activates like any tab and mounts ShortMaker (fallback).
-  const handleSelect = useCallback(
-    (id: string) => {
-      if (id === 'shortmaker' && onOpenMakeShorts) {
-        onOpenMakeShorts(video.id);
-        return;
-      }
-      setActive(id);
-    },
-    [onOpenMakeShorts, video.id],
-  );
+  // WU-3a4: the in-editor route to the single Make Shorts owner, carrying the open
+  // video so it lands PRE-SELECTED — what origin/main's painted `shortmaker` tab
+  // did before L5 moved the panel to the Produce rail (whose own entry has no
+  // videoId). Rendered only when an owner is wired; see the prop's note for why
+  // the round-2 `initialTab === 'shortmaker'` guard it replaces was unreachable.
+  const handleMakeShorts = useCallback(() => {
+    onOpenMakeShorts?.(video.id);
+  }, [onOpenMakeShorts, video.id]);
 
   // WU B3: the mstream resolver is now authoritative for playability — it
   // single-flights the proxy build and NEVER streams the raw, undecodable
@@ -383,33 +479,8 @@ export function Workspace({
         return <Tracks videoId={video.id} availableTracks={tracks} />;
       case 'convert':
         return <Convert videoId={video.id} path={video.path} />;
-      case 'shortmaker':
-        return <ShortMaker videoId={video.id} />;
       case 'reframeFix':
         return <ReframeCorrect videoId={video.id} />;
-      case 'timeline':
-        return (
-          <TimelinePanel videoId={video.id} durationSec={video.durationSec} playerRef={playerRef} />
-        );
-      case 'videoTimeline':
-        // `sourcePath`/`sourceDurationSec` are NOT decoration: `tracks.video
-        // .addClip` is the only way an ARBITRARY clip reaches a lane, and it
-        // needs a real file path plus a `srcOut`.
-        //
-        // CORRECTED 2026-08-10: this used to say passing them "stops every lane
-        // from being permanently empty", which is false. `tracks.video.list`
-        // auto-seeds lane 0 with the whole source on first contact
-        // (`video_tracks.py:595-612,653`), so the panel is never blank. What the
-        // props buy is the ability to put material BACK — onto a lane created by
-        // `addLane` (those do start empty) or after a remove/razor — instead of
-        // an edit session that can only subtract.
-        return (
-          <VideoTimeline
-            videoId={video.id}
-            sourcePath={video.path}
-            sourceDurationSec={video.durationSec}
-          />
-        );
       case 'broll':
         // No extra props: every `broll.*` method takes either nothing or
         // `{videoId, …}` — the library half is per MACHINE (a `brollDir` scan plus
@@ -421,8 +492,7 @@ export function Workspace({
       case 'gaze':
         // No extra props: `gaze.run` accepts only {videoId|path, strength,
         // likeness*} (`gaze.py:619-637`), and the panel owns the strength control
-        // plus the likeness attestation itself. Passing a duration/path here would
-        // imply per-run inputs the RPC does not take.
+        // plus the likeness attestation itself.
         return <Gaze videoId={video.id} />;
       case 'speed':
         // durationSec drives the before/after prediction only; the sidecar
@@ -446,6 +516,41 @@ export function Workspace({
     }
   }
 
+  function renderLane(): React.ReactElement {
+    if (lane === 'captions') {
+      return (
+        <TimelinePanel videoId={video.id} durationSec={video.durationSec} playerRef={playerRef} />
+      );
+    }
+    if (lane === 'audio') {
+      // WAVE 1 is shell only: this lane NAMES the object whose tools the
+      // inspector then offers (Audio mix / Dub). It adds no capability — a
+      // waveform and per-region audio editing are wave 2.
+      return (
+        <div className="workspace__audio-lane" data-role="program-audio">
+          <span className="workspace__lane-name">Program audio</span>
+          <span className="workspace__lane-source">{video.title}</span>
+        </div>
+      );
+    }
+    // `sourcePath`/`sourceDurationSec` are NOT decoration: `tracks.video.addClip`
+    // is the only way an ARBITRARY clip reaches a lane, and it needs a real file
+    // path plus a `srcOut`. `tracks.video.list` auto-seeds lane 0 with the whole
+    // source on first contact (`video_tracks.py:595-612,653`), so the lane is
+    // never blank; what the props buy is the ability to put material BACK.
+    return (
+      <VideoTimeline
+        videoId={video.id}
+        sourcePath={video.path}
+        sourceDurationSec={video.durationSec}
+        onRendered={handleRendered}
+        onSelectClip={handleSelectClip}
+      />
+    );
+  }
+
+  const sectionTabs = sections.map((id) => WORKSPACE_TABS.find((tab) => tab.id === id) as TabDef);
+
   return (
     <div className="workspace">
       <header className="workspace__header">
@@ -455,53 +560,21 @@ export function Workspace({
         <h1 className="workspace__title" title={video.path}>
           {video.title}
         </h1>
+        {/* The in-editor route to Make Shorts, with this video pre-selected. It is
+            SECONDARY chrome (quiet border, no fill): Export is the terminal goal
+            and keeps the single accent, so this cannot read as a second primary. */}
+        {onOpenMakeShorts ? (
+          <button type="button" className="workspace__makeshorts" onClick={handleMakeShorts}>
+            Make Shorts
+          </button>
+        ) : null}
+        {/* Export used to sit at the far end of the tab strip, where the growing
+            strip repeatedly pushed it out of the 1280px window. In the header it
+            cannot be scrolled away at any panel count. */}
+        <button type="button" className="workspace__export" onClick={handleExport}>
+          Export
+        </button>
       </header>
-
-      <div className="workspace__player">
-        {/* key is the videoId ONLY: switching videos remounts (a genuinely
-            different source), but a proxy swap for the SAME video reuses the
-            element via reloadToken (shake-free). */}
-        <Player
-          ref={playerRef}
-          videoId={video.id}
-          key={video.id}
-          reloadToken={playerEpoch}
-          onError={handlePlayerError}
-        />
-        {playerNote ? (
-          <div className="workspace__player-note" role="status" aria-live="polite">
-            {playerNote}
-          </div>
-        ) : null}
-        {playerError ? (
-          <div className="workspace__player-error" role="alert">
-            {playerError}
-          </div>
-        ) : null}
-      </div>
-
-      <TabBar
-        tabs={WORKSPACE_TABS}
-        active={active}
-        onSelect={handleSelect}
-        groups={WORKSPACE_TAB_GROUPS}
-        advancedOpen={advancedOpen}
-        onToggleAdvanced={toggleAdvanced}
-        onExport={handleExport}
-        // F18: 'shortmaker' sits mid-strip in the arrow-nav order, and when the
-        // deep-link is wired its activation is a top-level route change that
-        // UNMOUNTS this tablist — so arrow-stepping onto it must MOVE FOCUS ONLY
-        // (ARIA APG manual activation). Deliberate click/Enter still deep-links.
-        //
-        // The ternary is BEHAVIOURAL, not merely test-preserving: do NOT
-        // "simplify" it to an unconditional navIds={['shortmaker']}. Without
-        // onOpenMakeShorts there is no redirect, so 'shortmaker' legitimately
-        // activates IN PLACE and mounts ShortMaker here; marking it manual in that
-        // configuration would make that panel unreachable by forward arrow-stepping
-        // (click/Enter only). Note the pinned additive-fallback test does not catch
-        // this — it dispatches no key — so only this comment protects it.
-        navIds={onOpenMakeShorts ? ['shortmaker'] : undefined}
-      />
 
       {error ? (
         <div className="workspace__error" role="alert">
@@ -509,15 +582,80 @@ export function Workspace({
         </div>
       ) : null}
 
-      <div
-        className="workspace__body"
-        role="tabpanel"
-        id={tabPanelId(active)}
-        aria-labelledby={tabId(active)}
-      >
-        <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
-          {renderPanel()}
-        </Suspense>
+      <div className="workspace__main">
+        <div className="workspace__stage">
+          <div className="workspace__player">
+            {/* key is the videoId ONLY: switching videos remounts (a genuinely
+                different source), but a proxy swap for the SAME video reuses the
+                element via reloadToken (shake-free). */}
+            <Player
+              ref={playerRef}
+              videoId={video.id}
+              key={video.id}
+              reloadToken={playerEpoch}
+              onError={handlePlayerError}
+            />
+            {playerNote ? (
+              <div className="workspace__player-note" role="status" aria-live="polite">
+                {playerNote}
+              </div>
+            ) : null}
+            {playerError ? (
+              <div className="workspace__player-error" role="alert">
+                {playerError}
+              </div>
+            ) : null}
+          </div>
+
+          {/* THE DOCK (L5 G-1 / G-2): one timeline, several lanes, permanently
+              visible beside the preview — reachable with ZERO navigation actions
+              once this component is mounted. That last clause is the honest scope:
+              the Refine DESTINATION still lands on views/Edit.tsx's Task Hub on a
+              first open (Edit.tsx:69, :163), so the ">= 1 click" is upstream of
+              here, in a file this lane does not own.
+              Selecting a lane, or a clip inside the video lane, is what drives the
+              inspector. */}
+          <section className="workspace__dock" aria-label="Timeline">
+            <TabBar tabs={WORKSPACE_DOCK_LANES} active={lane} onSelect={selectLane} />
+            <div
+              className="workspace__dock-body"
+              role="tabpanel"
+              id={tabPanelId(lane)}
+              aria-labelledby={tabId(lane)}
+            >
+              <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
+                {renderLane()}
+              </Suspense>
+            </div>
+            {renderNote ? (
+              <p className="workspace__dock-note" role="status">
+                {renderNote}
+              </p>
+            ) : null}
+          </section>
+        </div>
+
+        {/* THE INSPECTOR (L5 G-5): its sections exist because something is
+            selected. Adding a feature adds a section to a context — never a
+            permanent piece of chrome — which is what stops the strip re-growing.
+            The section list is VERTICAL (workspace.css), so it cannot overflow
+            horizontally however many panels a context gains. */}
+        <aside className="workspace__inspector" aria-label="Inspector">
+          <p className="workspace__inspector-context" data-role="selection">
+            {INSPECTOR_CONTEXT_LABEL[context]}
+          </p>
+          <TabBar tabs={sectionTabs} active={active} onSelect={selectSection} />
+          <div
+            className="workspace__body"
+            role="tabpanel"
+            id={tabPanelId(active)}
+            aria-labelledby={tabId(active)}
+          >
+            <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
+              {renderPanel()}
+            </Suspense>
+          </div>
+        </aside>
       </div>
     </div>
   );

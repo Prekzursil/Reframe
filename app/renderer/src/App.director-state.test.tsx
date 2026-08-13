@@ -245,6 +245,27 @@ function tab(label: string): HTMLButtonElement {
   return found;
 }
 
+/**
+ * L5 G-6: Director is no longer a rail destination — it is Produce's second MODE.
+ * Reaching it is now two clicks (Produce, then Director), and leaving Produce
+ * unmounts it exactly as leaving the old tab did, so the F32 defect this suite
+ * measures is unchanged.
+ */
+function modeTab(label: string): HTMLButtonElement {
+  const btns = Array.from(
+    container.querySelectorAll<HTMLButtonElement>('.app__destination [role="tab"]'),
+  );
+  const found = btns.find((b) => b.textContent === label);
+  if (!found) throw new Error(`mode tab "${label}" not found`);
+  return found;
+}
+
+/** Navigate to Produce, then its Director mode. */
+async function goToDirector(): Promise<void> {
+  await click(tab('Produce'));
+  await click(modeTab('Director'));
+}
+
 async function click(el: HTMLElement): Promise<void> {
   await act(async () => {
     el.click();
@@ -287,7 +308,7 @@ async function planAndReview(): Promise<void> {
   await flush();
   // Open a video (routes into Edit), then switch to the Director tab.
   await click(buttonByText('open-video'));
-  await click(tab('Director'));
+  await goToDirector();
   // The Director route is lazy — give Suspense room to resolve it.
   await flush(6);
   await typeGoal(PLAN.goal);
@@ -316,7 +337,7 @@ describe('App — Director session state across a tab switch (F32)', () => {
     await click(tab('Library'));
     expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="plan-summary"]')).toBeNull();
-    await click(tab('Director'));
+    await goToDirector();
     await flush(6);
 
     // The plan, the goal it was made from, and the review decision all survive.
@@ -335,7 +356,7 @@ describe('App — Director session state across a tab switch (F32)', () => {
     expect(container.querySelector('.director-cost')).not.toBeNull();
 
     await click(tab('Library'));
-    await click(tab('Director'));
+    await goToDirector();
     await flush(6);
 
     // `preview` is deliberately NOT hoisted (it is cheaply re-fetchable by planId),
@@ -353,7 +374,7 @@ describe('App — Director session state across a tab switch (F32)', () => {
     // served for vid-2 — applying it would run vid-1's ops against the wrong source.
     await click(tab('Library'));
     await click(buttonByText('open-other-video'));
-    await click(tab('Director'));
+    await goToDirector();
     await flush(6);
 
     expect(container.querySelector('[data-testid="plan-summary"]')).toBeNull();
