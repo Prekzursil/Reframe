@@ -5,7 +5,8 @@
 // caller already has (e.g. a converted file or an explicit proxy URL).
 //
 // Two modes:
-//   * full playback — plain <video> with native controls (Workspace player);
+//   * full playback — a <video> with either Chromium's native control bar
+//     (the default, unchanged) or the custom Transport (`transport`, L8);
 //   * window mode — `window={{start, end}}` (source-absolute seconds, i.e.
 //     a Candidate's `sourceStart` .. `sourceStart + durationSec`): the player
 //     seeks to `start` once metadata is available and stops (or loops) at
@@ -17,7 +18,8 @@
 // The window math (`clampToWindow` / `windowEndReached`) and the URL builder
 // (`mediaUrl` / `resolveSrc`) are exported pure functions, unit-tested in
 // Player.test.tsx.
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { TRANSPORT_DEFAULT_FPS, Transport, frameDuration } from './Transport';
 import './player.css';
 
 // CONTRACT-NOTE: scheme + host mirror app/main/mediaProtocol.ts (MEDIA_SCHEME /
@@ -70,8 +72,26 @@ export interface PlayerProps {
   loop?: boolean;
   /** Start playing as soon as possible (window mode: after the initial seek). */
   autoPlay?: boolean;
-  /** Show native controls (default true). */
+  /**
+   * Show Chromium's NATIVE control bar. Defaults to `true` without `transport`
+   * (every existing mount keeps exactly what it had) and to `false` with it.
+   * Pass it explicitly to override either way — including `transport` + native
+   * bar together, so enabling the custom transport never silently REMOVES a
+   * control surface a caller was relying on.
+   */
   controls?: boolean;
+  /**
+   * Render the custom {@link Transport} (play/pause, scrubbable position,
+   * current/total time, frame-step, J/K/L shuttle) instead of the native bar.
+   * Opt-in: the default is unchanged so no existing call site shifts under it.
+   */
+  transport?: boolean;
+  /**
+   * Frame rate used for frame-stepping and the reverse shuttle cadence
+   * (default {@link TRANSPORT_DEFAULT_FPS}). Pass the probed rate when known —
+   * the fallback steps by 1/30s, which is not one frame on a 24/25/50fps source.
+   */
+  fps?: number;
   muted?: boolean;
   className?: string;
   /**
@@ -161,7 +181,9 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     window: win = null,
     loop = false,
     autoPlay = false,
-    controls = true,
+    controls,
+    transport = false,
+    fps = TRANSPORT_DEFAULT_FPS,
     muted = false,
     className,
     reloadToken,
@@ -172,6 +194,24 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const resolvedSrc = resolveSrc(videoId, src);
+  // The native bar is the default ONLY while the custom transport is off; an
+  // explicit `controls` always wins so nothing is silently taken away.
+  const nativeControls = controls ?? !transport;
+
+  // Transport-facing playback state. Kept here (not in Transport) so the
+  // transport stays a pure controlled view and the same state can later feed
+  // the multi-lane timeline playhead.
+  const [playhead, setPlayhead] = useState(0);
+  const [mediaDuration, setMediaDuration] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [rate, setRate] = useState(1);
+  // The reverse shuttle PAUSES the element on purpose; the `pause` listener has
+  // to tell that apart from the user stopping playback, and it is bound once,
+  // so it reads the rate off a ref instead of a stale closure.
+  const rateRef = useRef(rate);
+  rateRef.current = rate;
+  const frameSec = frameDuration(fps);
+  const floorSec = win ? win.start : 0;
 
   // Latest-value refs so the once-bound listeners never go stale and the
   // listener effect doesn't re-bind on every parent render.
@@ -284,6 +324,99 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     video.load();
   }, [reloadToken]);
 
+  // L8: mirror the element's own state into React so the custom transport can
+  // render it. Bound ONLY when the transport is mounted — a caller on the
+  // native bar pays nothing (no extra listeners, no re-render per timeupdate).
+  useEffect(() => {
+    if (!transport) return undefined;
+    const video = videoRef.current;
+    /* v8 ignore next -- React attaches refs before effects run; unreachable */
+    if (!video) return undefined;
+    const syncTime = (): void => setPlayhead(video.currentTime);
+    const syncDuration = (): void =>
+      setMediaDuration(Number.isFinite(video.duration) ? video.duration : 0);
+    const syncPlaying = (): void => setPlaying(true);
+    const syncPaused = (): void => {
+      // A reverse shuttle drives playback by pausing + stepping; its own pause
+      // event must not read as "stopped".
+      if (rateRef.current >= 0) setPlaying(false);
+    };
+    const syncEnded = (): void => setPlaying(false);
+    video.addEventListener('timeupdate', syncTime);
+    video.addEventListener('seeked', syncTime);
+    video.addEventListener('loadedmetadata', syncDuration);
+    video.addEventListener('durationchange', syncDuration);
+    video.addEventListener('play', syncPlaying);
+    video.addEventListener('pause', syncPaused);
+    video.addEventListener('ended', syncEnded);
+    return () => {
+      video.removeEventListener('timeupdate', syncTime);
+      video.removeEventListener('seeked', syncTime);
+      video.removeEventListener('loadedmetadata', syncDuration);
+      video.removeEventListener('durationchange', syncDuration);
+      video.removeEventListener('play', syncPlaying);
+      video.removeEventListener('pause', syncPaused);
+      video.removeEventListener('ended', syncEnded);
+    };
+  }, [transport]);
+
+  // L8 shuttle driver. Forward rates ride the element's own playbackRate;
+  // REVERSE cannot — HTMLMediaElement rejects a negative rate — so the head is
+  // walked back one frame per frame-interval while the element stays paused.
+  useEffect(() => {
+    if (!transport) return undefined;
+    const video = videoRef.current;
+    /* v8 ignore next -- React attaches refs before effects run; unreachable */
+    if (!video) return undefined;
+    if (rate > 0) {
+      video.playbackRate = rate;
+      return undefined;
+    }
+    if (!playing) return undefined;
+    video.pause();
+    const stepSec = Math.abs(rate) * frameSec;
+    const timer = setInterval(() => {
+      const next = video.currentTime - stepSec;
+      if (next <= floorSec) {
+        video.currentTime = floorSec;
+        setPlayhead(floorSec);
+        setPlaying(false);
+        setRate(1);
+        return;
+      }
+      video.currentTime = next;
+      setPlayhead(next);
+    }, frameSec * 1000);
+    return () => clearInterval(timer);
+  }, [transport, playing, rate, frameSec, floorSec]);
+
+  /** Transport intent: play or pause. Stopping always ends a shuttle. */
+  const handlePlayPause = (play: boolean): void => {
+    const video = videoRef.current;
+    /* v8 ignore next -- the transport only renders while the element is mounted */
+    if (!video) return;
+    if (play) {
+      safePlay(video);
+      setPlaying(true);
+      return;
+    }
+    video.pause();
+    setPlaying(false);
+    setRate(1);
+  };
+
+  /** Transport intent: seek (through the same window clamp as the ref handle). */
+  const handleSeek = (timeSec: number): void => {
+    const video = videoRef.current;
+    /* v8 ignore next -- the transport only renders while the element is mounted */
+    if (!video) return;
+    const target = clampToWindow(timeSec, winRef.current);
+    video.currentTime = target;
+    // Chromium raises `seeked` for this, but updating now keeps the scrubber
+    // pinned to the pointer instead of trailing the event.
+    setPlayhead(target);
+  };
+
   useImperativeHandle(
     ref,
     (): PlayerHandle => ({
@@ -314,18 +447,34 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   );
 
   return (
-    <video
-      ref={videoRef}
-      className={className ?? 'player__video'}
-      src={resolvedSrc || undefined}
-      controls={controls}
-      muted={muted}
-      // Window mode must not autoplay from t=0 — playback starts after the
-      // initial seek (handled in the window effect above).
-      autoPlay={autoPlay && !win}
-      preload="metadata"
-      playsInline
-    />
+    // A fragment, not a wrapper: without `transport` the rendered DOM is byte
+    // for byte what it was, so no existing mount's layout or CSS shifts.
+    <>
+      <video
+        ref={videoRef}
+        className={className ?? 'player__video'}
+        src={resolvedSrc || undefined}
+        controls={nativeControls}
+        muted={muted}
+        // Window mode must not autoplay from t=0 — playback starts after the
+        // initial seek (handled in the window effect above).
+        autoPlay={autoPlay && !win}
+        preload="metadata"
+        playsInline
+      />
+      {transport ? (
+        <Transport
+          currentTime={playhead}
+          duration={mediaDuration}
+          isPlaying={playing}
+          rate={rate}
+          fps={fps}
+          onPlayPause={handlePlayPause}
+          onSeek={handleSeek}
+          onRateChange={setRate}
+        />
+      ) : null}
+    </>
   );
 });
 

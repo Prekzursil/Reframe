@@ -27,6 +27,8 @@ const playMock = vi.fn(() => Promise.resolve());
 const pauseMock = vi.fn();
 const loadMock = vi.fn();
 const currentTimes = new WeakMap<HTMLMediaElement, number>();
+const durations = new WeakMap<HTMLMediaElement, number>();
+const playbackRates = new WeakMap<HTMLMediaElement, number>();
 const readyStates = new WeakMap<HTMLMediaElement, number>();
 const pausedStates = new WeakMap<HTMLMediaElement, boolean>();
 const errorStates = new WeakMap<HTMLMediaElement, { code: number } | null>();
@@ -79,6 +81,23 @@ beforeAll(() => {
     configurable: true,
     get(this: HTMLMediaElement) {
       return false;
+    },
+  });
+  // jsdom reports no duration at all; back it per-element so the transport can
+  // be driven with a real one (and with the NaN a not-yet-loaded media reports).
+  Object.defineProperty(HTMLMediaElement.prototype, 'duration', {
+    configurable: true,
+    get(this: HTMLMediaElement) {
+      return durations.get(this) ?? Number.NaN;
+    },
+  });
+  Object.defineProperty(HTMLMediaElement.prototype, 'playbackRate', {
+    configurable: true,
+    get(this: HTMLMediaElement) {
+      return playbackRates.get(this) ?? 1;
+    },
+    set(this: HTMLMediaElement, v: number) {
+      playbackRates.set(this, v);
     },
   });
 });
@@ -544,5 +563,207 @@ describe('Player imperative handle', () => {
     });
     expect(() => ref.current!.play()).not.toThrow();
     expect(playMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L8 — the custom transport (Transport.tsx) mounted INSTEAD of Chromium's
+// default control bar. The seven production mounts are NOT migrated here, so
+// the default must stay exactly as it was: native controls, no transport.
+// ---------------------------------------------------------------------------
+describe('Player custom transport (L8)', () => {
+  function group(): HTMLElement {
+    const el = container.querySelector('[role="group"][aria-label="Video transport"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  }
+
+  function button(name: string): HTMLButtonElement {
+    const el = group().querySelector(`button[aria-label="${name}"]`);
+    expect(el).not.toBeNull();
+    return el as HTMLButtonElement;
+  }
+
+  function scrubber(): HTMLInputElement {
+    return group().querySelector('input[type="range"]') as HTMLInputElement;
+  }
+
+  function click(el: HTMLElement): void {
+    act(() => {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+  }
+
+  function press(key: string): void {
+    act(() => {
+      group().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    });
+  }
+
+  function fire(video: HTMLVideoElement, type: string): void {
+    act(() => {
+      video.dispatchEvent(new Event(type));
+    });
+  }
+
+  it('keeps the native bar by default so no existing mount silently loses it', () => {
+    const video = render({ videoId: 'vid-1' });
+    expect(video.hasAttribute('controls')).toBe(true);
+    expect(container.querySelector('[role="group"][aria-label="Video transport"]')).toBeNull();
+  });
+
+  it('replaces the native bar with the custom transport when transport is on', () => {
+    const video = render({ videoId: 'vid-1', transport: true });
+    expect(video.hasAttribute('controls')).toBe(false);
+    expect(button('Play')).toBeTruthy();
+  });
+
+  it('keeps the native bar reachable behind the explicit controls prop', () => {
+    // Nothing is silently taken away: an opt-in caller can still ask for both.
+    const video = render({ videoId: 'vid-1', transport: true, controls: true });
+    expect(video.hasAttribute('controls')).toBe(true);
+    expect(button('Play')).toBeTruthy();
+  });
+
+  it('mirrors the media duration and playhead into the transport', () => {
+    const video = render({ videoId: 'vid-1', transport: true });
+    durations.set(video, 90);
+    fire(video, 'loadedmetadata');
+    video.currentTime = 12;
+    fire(video, 'timeupdate');
+    expect(scrubber().max).toBe('90');
+    expect(scrubber().value).toBe('12');
+  });
+
+  it('reports a zero duration while the media reports a non-finite one', () => {
+    const video = render({ videoId: 'vid-1', transport: true });
+    fire(video, 'durationchange'); // duration is NaN until metadata lands
+    expect(scrubber().max).toBe('0');
+  });
+
+  it('drives play and pause from the transport toggle', () => {
+    render({ videoId: 'vid-1', transport: true });
+    click(button('Play'));
+    expect(playMock).toHaveBeenCalledTimes(1);
+    click(button('Pause'));
+    expect(pauseMock).toHaveBeenCalledTimes(1);
+    expect(button('Play')).toBeTruthy();
+  });
+
+  it('tracks the media element own play / pause / ended events', () => {
+    const video = render({ videoId: 'vid-1', transport: true });
+    fire(video, 'play');
+    expect(button('Pause')).toBeTruthy();
+    fire(video, 'pause');
+    expect(button('Play')).toBeTruthy();
+    fire(video, 'play');
+    fire(video, 'ended');
+    expect(button('Play')).toBeTruthy();
+  });
+
+  it('seeks from the transport through the window clamp', () => {
+    const video = render({ videoId: 'vid-1', transport: true, window: { start: 10, end: 20 } });
+    click(button('Previous frame'));
+    expect(video.currentTime).toBe(10);
+  });
+
+  it('frame-steps by exactly one frame at the caller-supplied fps', () => {
+    const video = render({ videoId: 'vid-1', transport: true, fps: 25 });
+    durations.set(video, 60);
+    fire(video, 'loadedmetadata');
+    click(button('Next frame'));
+    expect(video.currentTime).toBeCloseTo(1 / 25, 10);
+    expect(scrubber().value).toBe(String(1 / 25));
+  });
+
+  it('L accelerates the forward rate and K returns to 1x and pauses', () => {
+    const video = render({ videoId: 'vid-1', transport: true });
+    press('l');
+    expect(playMock).toHaveBeenCalled();
+    expect(video.playbackRate).toBe(1);
+    press('l');
+    expect(video.playbackRate).toBe(2);
+    press('k');
+    expect(video.playbackRate).toBe(1);
+    expect(pauseMock).toHaveBeenCalled();
+    expect(button('Play')).toBeTruthy();
+  });
+
+  it('J shuttles in reverse by walking the playhead back a frame at a time', () => {
+    vi.useFakeTimers();
+    try {
+      const video = render({ videoId: 'vid-1', transport: true });
+      durations.set(video, 60);
+      fire(video, 'loadedmetadata');
+      video.currentTime = 5;
+      press('j');
+      // Reverse cannot ride play() — HTMLMediaElement has no negative rate.
+      expect(pauseMock).toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(100); // 3 frames at the default 30fps
+      });
+      expect(video.currentTime).toBeCloseTo(5 - 3 / 30, 6);
+      expect(button('Pause')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores the pause event the reverse shuttle itself raises', () => {
+    // The reverse driver pauses the element; if that pause read as "the user
+    // stopped playback" the shuttle would immediately kill itself.
+    vi.useFakeTimers();
+    try {
+      const video = render({ videoId: 'vid-1', transport: true });
+      video.currentTime = 5;
+      press('j');
+      fire(video, 'pause');
+      expect(button('Pause')).toBeTruthy();
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(video.currentTime).toBeLessThan(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops the reverse shuttle when the element reports ended', () => {
+    // `ended` is the ONE stop signal the shuttle honours besides an explicit
+    // pause: the element is paused while shuttling, so a queued end event can
+    // still land after J. Without this the timer would keep walking the head.
+    vi.useFakeTimers();
+    try {
+      const video = render({ videoId: 'vid-1', transport: true });
+      video.currentTime = 5;
+      press('j');
+      fire(video, 'ended');
+      const parked = video.currentTime;
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(video.currentTime).toBe(parked);
+      expect(button('Play')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the reverse shuttle at the window start and resets to 1x', () => {
+    vi.useFakeTimers();
+    try {
+      const video = render({ videoId: 'vid-1', transport: true, window: { start: 2, end: 20 } });
+      fire(video, 'loadedmetadata');
+      video.currentTime = 2.05;
+      press('j');
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(video.currentTime).toBe(2);
+      expect(video.playbackRate).toBe(1);
+      expect(button('Play')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
