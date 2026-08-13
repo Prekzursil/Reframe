@@ -131,7 +131,11 @@ export function NleExport({ videoId }: NleExportProps): React.ReactElement {
 
   const runExport = useCallback(async () => {
     if (!hasApi()) {
-      setError('The sidecar bridge is not available.');
+      // USER-FACING COPY: product noun, not the internal process name. This
+      // branch is unreachable in a working packaged install (the preload always
+      // installs `window.api`), so it is fixed for consistency, not for a
+      // reported symptom.
+      setError('The engine is not available.');
       return;
     }
     setBusy(true);

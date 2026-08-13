@@ -1,19 +1,28 @@
-// SocialPublishPanel.test.tsx — C14 Publish panel.
+// SocialPublishPanel.test.tsx — Deliver -> "Publish" is ONE honest blocked state (Q4).
 //
-// The assertions that matter here are the honesty ones, because the panel's whole
-// reason to exist is to not promise a publish that cannot happen:
+// Most of what is asserted here is ABSENCE, because the defect being fixed was a
+// surface that LOOKED operable and was not: a platform picker, a title field, a
+// scheduler and a "Publish now / Schedule" button whose enable condition required a
+// non-empty clip path that the only production mount never passed and no other
+// surface in the tree supplies. Directly above that permanently-disabled button the
+// panel asserted that a platform-held schedule survives the machine being switched
+// off — a capability claim painted over a control that cannot fire.
 //
-//   * a BLOCKED platform is un-selectable and shows its own reason verbatim;
-//   * a `local-queue` plan shows the server's warning that Reframe must be running;
-//   * a `platform` plan says the opposite (it posts with the computer off);
-//   * the pre-audit visibility cap is shown BEFORE the first publish.
+// So the guard has to be written against the shapes that made it look alive:
+// controls, a queue, and a backend round-trip. Each is anchored on a DIFFERENT
+// locator (element vocabulary, class, RPC spy) so a partial re-introduction cannot
+// slip past one of them.
 
 // @vitest-environment jsdom
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SocialCapability, SocialQueueEntry, SocialSchedulePlan } from '../lib/rpc';
+// 52 sibling renderer tests set this; the pre-Q4 version of THIS file did not, so
+// every `act()` here printed "the current testing environment is not configured to
+// support act(...)" to stderr. Warning noise in a suite is how a real warning stops
+// being read.
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 const capabilitiesMock = vi.fn();
 const planMock = vi.fn();
@@ -21,6 +30,12 @@ const enqueueMock = vi.fn();
 const queueMock = vi.fn();
 const cancelMock = vi.fn();
 
+// Mocked even though the panel no longer imports it. A spy that is never called is
+// the only way to assert the panel does NOT consult a backend that cannot publish,
+// and it keeps this file honest if someone re-wires one of the five social.* calls:
+// the RPC methods, the planner and the queue store are all still built and
+// registered (docs/wiring/WIRING-social-publish.md), so re-wiring is easy and would
+// be wrong until an uploader exists.
 vi.mock('../lib/rpc', () => ({
   client: {
     social: {
@@ -33,59 +48,45 @@ vi.mock('../lib/rpc', () => ({
   },
 }));
 
-import {
-  SocialPublishPanel,
-  platformLabel,
-  statusLabel,
-  toEpochSeconds,
-} from './SocialPublishPanel';
+import type { SocialCapability, SocialSchedulePlan } from '../lib/rpc';
+import { SocialPublishPanel } from './SocialPublishPanel';
 
-const YOUTUBE: SocialCapability = {
-  id: 'youtube',
-  label: 'YouTube',
+/**
+ * A publishable platform and a PLATFORM-HELD plan — the exact server state under
+ * which the old panel printed its worst sentence, the one claiming the post goes
+ * out with the machine switched off, directly above a button that could not enable.
+ *
+ * Seeded even though nothing consumes it: without it the absence assertions below
+ * would pass vacuously (an unmocked panel simply errors out of that branch), and a
+ * guard that cannot observe the state it guards against is not a guard. Measured:
+ * with these two mocks in place the pre-fix panel renders `.social-publish__held`
+ * and the assertion goes red.
+ *
+ * Facebook Page, not YouTube, because `describe_capabilities()` returns the matrix
+ * id-sorted (sidecar/media_studio/features/social_publish.py:250) and the panel
+ * defaulted to the first PUBLISHABLE row — so Facebook Page is what a real user saw.
+ */
+const FACEBOOK_PAGE: SocialCapability = {
+  id: 'facebook_page',
+  label: 'Facebook Page',
   publishable: true,
-  personalAccount: true,
-  desktopLoopbackOauth: true,
+  personalAccount: false,
+  desktopLoopbackOauth: false,
   nativeScheduling: true,
-  nativeScheduleMaxSec: null,
+  nativeScheduleMaxSec: 6_000_000,
   requiresClientSecret: true,
-  unauditedVisibility: 'Until your project passes the audit, uploads are forced PRIVATE.',
-  docUrl: 'https://developers.google.com/youtube/v3/docs/videos/insert',
+  unauditedVisibility: 'Publishing needs Advanced Access to pages_manage_posts.',
+  docUrl: 'https://developers.facebook.com/docs/pages-api',
   blockedReason: null,
 };
 
-const INSTAGRAM: SocialCapability = {
-  ...YOUTUBE,
-  id: 'instagram_reels',
-  label: 'Instagram Reels',
-  publishable: false,
-  personalAccount: false,
-  nativeScheduling: false,
-  blockedReason: "Instagram's API only serves a PROFESSIONAL account.",
-};
-
-const IMMEDIATE_PLAN: SocialSchedulePlan = {
-  platform: 'youtube',
-  kind: 'immediate',
-  publishAt: null,
+const PLATFORM_HELD_PLAN: SocialSchedulePlan = {
+  platform: 'facebook_page',
+  kind: 'platform',
+  publishAt: 1_800_003_600,
   requiresAppRunning: false,
   warning: '',
-  unauditedVisibility: YOUTUBE.unauditedVisibility,
-};
-
-const ENTRY: SocialQueueEntry = {
-  id: 'e1',
-  platform: 'youtube',
-  videoId: 'v1',
-  clipPath: 'clip.mp4',
-  title: 'My clip',
-  description: '',
-  publishAt: null,
-  kind: 'immediate',
-  requiresAppRunning: false,
-  status: 'pending',
-  createdAt: 1_800_000_000,
-  error: '',
+  unauditedVisibility: FACEBOOK_PAGE.unauditedVisibility,
 };
 
 let container: HTMLElement | undefined;
@@ -93,16 +94,12 @@ let root: Root | undefined;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  capabilitiesMock.mockResolvedValue({ platforms: [YOUTUBE, INSTAGRAM] });
-  planMock.mockResolvedValue({ plan: IMMEDIATE_PLAN });
+  capabilitiesMock.mockResolvedValue({ platforms: [FACEBOOK_PAGE] });
+  planMock.mockResolvedValue({ plan: PLATFORM_HELD_PLAN });
   queueMock.mockResolvedValue({ entries: [] });
-  enqueueMock.mockResolvedValue({ entry: ENTRY });
-  cancelMock.mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
-  // Guarded: the pure-helper tests never mount, so an unconditional unmount here
-  // failed them all with a confusing "cannot read properties of undefined".
   if (root !== undefined) {
     const mounted = root;
     act(() => mounted.unmount());
@@ -117,340 +114,109 @@ function dom(): HTMLElement {
   return container;
 }
 
-async function render(props: { clipPath?: string; videoId?: string } = {}): Promise<void> {
+async function render(): Promise<void> {
   const host = document.createElement('div');
   document.body.appendChild(host);
   container = host;
   const mounted = createRoot(host);
   root = mounted;
   await act(async () => {
-    mounted.render(<SocialPublishPanel clipPath="clip.mp4" videoId="v1" {...props} />);
+    mounted.render(<SocialPublishPanel />);
   });
+  // A second flush: if the panel still opened an async effect, its state update
+  // would land here, so the assertions below cannot pass merely by being early.
   await act(async () => {
     await Promise.resolve();
   });
 }
 
-function select(): HTMLSelectElement {
-  return dom().querySelector('select[aria-label="Platform"]') as HTMLSelectElement;
-}
-
-function input(label: string): HTMLInputElement {
-  return dom().querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
-}
-
-/**
- * Set a CONTROLLED React field's value the way React notices.
- *
- * A plain `el.value = x` + `change` does NOT reach a controlled input: React caches
- * the node's value via the prototype setter and treats an unchanged cached value as
- * "no change", so onChange never fires. Going through the prototype descriptor keeps
- * React's tracker in sync, and inputs need an `input` event (selects use `change`).
- */
-function setValue(el: HTMLInputElement | HTMLSelectElement, value: string): void {
-  const isSelect = el instanceof HTMLSelectElement;
-  const proto = isSelect ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  setter?.call(el, value);
-  el.dispatchEvent(new Event(isSelect ? 'change' : 'input', { bubbles: true }));
-}
-
-function buttonByText(text: string): HTMLButtonElement | undefined {
-  return Array.from(dom().querySelectorAll('button')).find((b) => b.textContent?.trim() === text) as
-    | HTMLButtonElement
-    | undefined;
-}
-
-/** The action/load error slot (distinct from the schedule-preview one). */
-function errorText(): string | undefined {
-  return dom().querySelector('.social-publish__error')?.textContent ?? undefined;
-}
-
-/** The schedule-PREVIEW error slot. */
-function planErrorText(): string | undefined {
-  return dom().querySelector('.social-publish__plan-error')?.textContent ?? undefined;
-}
-
-describe('<SocialPublishPanel /> — pure helpers', () => {
-  it('toEpochSeconds returns null for an empty value', () => {
-    expect(toEpochSeconds('')).toBeNull();
-  });
-
-  it('toEpochSeconds returns null for an unparseable value', () => {
-    expect(toEpochSeconds('not-a-date')).toBeNull();
-  });
-
-  it('toEpochSeconds converts a datetime-local value to whole seconds', () => {
-    expect(toEpochSeconds('2026-08-09T10:30')).toBe(
-      Math.floor(new Date('2026-08-09T10:30').getTime() / 1000),
+describe('<SocialPublishPanel /> — the honest blocked state', () => {
+  it('says direct publish is unavailable in this build', async () => {
+    await render();
+    expect(dom().querySelector('.social-publish__blocked')?.textContent).toContain(
+      'Direct publish is not available in this build',
     );
   });
 
-  it('statusLabel distinguishes a platform-held schedule from a Reframe-held one', () => {
-    // "pending" alone would wrongly imply the app must stay open for a
-    // platform-scheduled post.
-    expect(statusLabel({ ...ENTRY, kind: 'platform' })).toBe('scheduled on the platform');
-    expect(statusLabel({ ...ENTRY, kind: 'local-queue', requiresAppRunning: true })).toBe(
-      'queued in Reframe',
+  it('names the surface that DOES work instead of leaving the user stuck', async () => {
+    // The old empty state said "Export a clip first" — an instruction with no
+    // affordance anywhere on this screen to satisfy it.
+    await render();
+    expect(dom().textContent).toContain('Platform presets');
+    expect(dom().textContent).not.toContain('Export a clip first');
+  });
+
+  // The wayfinding must name the tab that PERFORMS each step. A previous revision said
+  // "Render the platform-shaped file under Platform presets" — false, because
+  // ExportPresetsPanel's whole wire surface is exportPresets.list/save/delete/reset; it
+  // shapes a preset and renders nothing. Rendering is Batch publish (client.batch.*).
+  // Asserting only "Platform presets" (the test above) passes for BOTH the accurate and the
+  // inaccurate wording, so it cannot protect this correction — these assertions can.
+  it('routes rendering to Batch publish, not to Platform presets', async () => {
+    await render();
+    const text = dom().textContent ?? '';
+    expect(text).toContain('Batch publish');
+    // The exact false direction must not return.
+    expect(text).not.toContain('Render the platform-shaped file under Platform presets');
+    expect(text).not.toMatch(/render[^.]*under Platform presets/i);
+  });
+
+  it('states all three steps, in order, each attached to its own surface', async () => {
+    await render();
+    const text = (dom().textContent ?? '').replace(/\s+/g, ' ');
+    const shape = text.indexOf('Shape the output under Platform presets');
+    const render_ = text.indexOf('render it under Batch publish');
+    const post = text.indexOf('post it from that platform');
+    expect(shape).toBeGreaterThan(-1);
+    expect(render_).toBeGreaterThan(shape);
+    expect(post).toBeGreaterThan(render_);
+  });
+
+  it('carries an accessible name for the destination', async () => {
+    await render();
+    expect(dom().querySelector('section.social-publish')?.getAttribute('aria-label')).toBe(
+      'Direct publish',
     );
-  });
-
-  it('statusLabel passes a terminal status through', () => {
-    expect(statusLabel({ ...ENTRY, status: 'done' })).toBe('done');
-    expect(statusLabel({ ...ENTRY, status: 'cancelled' })).toBe('cancelled');
-  });
-
-  it('platformLabel resolves a known id to its label', () => {
-    expect(platformLabel([YOUTUBE, INSTAGRAM], 'instagram_reels')).toBe('Instagram Reels');
-  });
-
-  it('platformLabel falls back to the raw id for an unknown platform', () => {
-    // The fallback arm, exercised directly. Inline in the JSX this arm was
-    // unreachable, so the test that claimed to cover it was passing vacuously.
-    expect(platformLabel([YOUTUBE], 'mastodon')).toBe('mastodon');
-  });
-
-  it('platformLabel handles an empty matrix', () => {
-    expect(platformLabel([], 'youtube')).toBe('youtube');
   });
 });
 
-describe('<SocialPublishPanel /> — blocked platforms', () => {
-  it('lists a blocked platform as disabled and marked unavailable', async () => {
+describe('<SocialPublishPanel /> — nothing that cannot fire', () => {
+  it('renders no button, select, input or textarea at all', async () => {
     await render();
-    const blocked = Array.from(select().options).find((o) => o.value === 'instagram_reels');
-    expect(blocked?.disabled).toBe(true);
-    expect(blocked?.textContent).toContain('unavailable');
+    expect(dom().querySelectorAll('button')).toHaveLength(0);
+    expect(dom().querySelectorAll('select')).toHaveLength(0);
+    expect(dom().querySelectorAll('input')).toHaveLength(0);
+    expect(dom().querySelectorAll('textarea')).toHaveLength(0);
   });
 
-  it('defaults to the first PUBLISHABLE platform, never a blocked one', async () => {
-    capabilitiesMock.mockResolvedValue({ platforms: [INSTAGRAM, YOUTUBE] });
+  it('offers no queue, because nothing can enqueue', async () => {
     await render();
-    expect(select().value).toBe('youtube');
+    expect(dom().querySelector('.social-publish__queue')).toBeNull();
+    expect(dom().textContent).not.toContain('Nothing queued yet');
+    expect(dom().querySelectorAll('h4')).toHaveLength(0);
   });
 
-  it('shows the platform own reason verbatim when a blocked one is selected', async () => {
+  it('makes no social RPC call', async () => {
     await render();
-    await act(async () => setValue(select(), 'instagram_reels'));
-    expect(dom().textContent).toContain('PROFESSIONAL account');
-  });
-
-  it('does not ask the server for a plan for a blocked platform', async () => {
-    await render();
-    planMock.mockClear();
-    await act(async () => setValue(select(), 'instagram_reels'));
+    expect(capabilitiesMock).not.toHaveBeenCalled();
     expect(planMock).not.toHaveBeenCalled();
-  });
-
-  it('selects nothing when NO platform is publishable', async () => {
-    capabilitiesMock.mockResolvedValue({ platforms: [INSTAGRAM] });
-    await render();
-    expect(select().value).toBe('');
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(queueMock).not.toHaveBeenCalled();
+    expect(cancelMock).not.toHaveBeenCalled();
   });
 });
 
-describe('<SocialPublishPanel /> — the scheduling disclosure', () => {
-  it('shows the server warning verbatim for a local-queue plan', async () => {
-    planMock.mockResolvedValue({
-      plan: {
-        ...IMMEDIATE_PLAN,
-        kind: 'local-queue',
-        requiresAppRunning: true,
-        warning: 'Reframe must be running then.',
-      },
-    });
+describe('<SocialPublishPanel /> — the claims it must not make', () => {
+  it('no longer promises a post goes out with the computer switched off', async () => {
     await render();
-    expect(dom().querySelector('.social-publish__warning')?.textContent).toBe(
-      'Reframe must be running then.',
-    );
+    expect(dom().querySelector('.social-publish__held')).toBeNull();
+    expect(dom().textContent ?? '').not.toMatch(/computer is off/i);
   });
 
-  it('says a platform-held schedule survives the computer being off', async () => {
-    planMock.mockResolvedValue({ plan: { ...IMMEDIATE_PLAN, kind: 'platform' } });
+  it('makes no scheduling promise of any kind', async () => {
     await render();
-    expect(dom().querySelector('.social-publish__held')?.textContent).toContain('computer is off');
-  });
-
-  it('names the platform the schedule is held on', async () => {
-    planMock.mockResolvedValue({ plan: { ...IMMEDIATE_PLAN, kind: 'platform' } });
-    await render();
-    expect(dom().querySelector('.social-publish__held')?.textContent).toContain('YouTube');
-  });
-
-  it('shows the pre-audit visibility cap before any publish', async () => {
-    await render();
-    expect(dom().querySelector('.social-publish__audit')?.textContent).toContain('PRIVATE');
-  });
-
-  it('omits the audit note when the platform has none', async () => {
-    planMock.mockResolvedValue({ plan: { ...IMMEDIATE_PLAN, unauditedVisibility: '' } });
-    await render();
-    expect(dom().querySelector('.social-publish__audit')).toBeNull();
-  });
-
-  it('re-previews the plan when the time changes', async () => {
-    await render();
-    planMock.mockClear();
-    await act(async () => setValue(input('Publish at'), '2026-08-09T10:30'));
-    expect(planMock).toHaveBeenCalledWith(
-      'youtube',
-      Math.floor(new Date('2026-08-09T10:30').getTime() / 1000),
-    );
-  });
-
-  it('surfaces a plan failure and clears the stale plan', async () => {
-    planMock.mockRejectedValue(new Error('bad time'));
-    await render();
-    expect(planErrorText()).toBe('bad time');
-    expect(dom().querySelector('.social-publish__plan')).toBeNull();
-  });
-
-  it('stringifies a non-Error plan rejection', async () => {
-    planMock.mockRejectedValue('nope');
-    await render();
-    expect(planErrorText()).toBe('Could not check that time');
-  });
-});
-
-describe('<SocialPublishPanel /> — queueing', () => {
-  it('disables the button until a clip and a title are present', async () => {
-    await render({ clipPath: '' });
-    expect(buttonByText('Publish now')?.disabled).toBe(true);
-    expect(dom().textContent).toContain('Export a clip first');
-  });
-
-  it('disables the button when the title is only whitespace', async () => {
-    await render();
-    await act(async () => setValue(input('Post title'), '   '));
-    expect(buttonByText('Publish now')?.disabled).toBe(true);
-  });
-
-  it('sends the job with the clip, title and provenance video id', async () => {
-    await render();
-    await act(async () => setValue(input('Post title'), 'My clip'));
-    await act(async () => buttonByText('Publish now')?.click());
-    expect(enqueueMock).toHaveBeenCalledWith({
-      platform: 'youtube',
-      clipPath: 'clip.mp4',
-      title: 'My clip',
-      description: '',
-      videoId: 'v1',
-      publishAt: null,
-    });
-  });
-
-  it('labels the button Schedule once a time is chosen', async () => {
-    await render();
-    await act(async () => setValue(input('Publish at'), '2026-08-09T10:30'));
-    expect(buttonByText('Schedule')).toBeDefined();
-  });
-
-  it('reloads the queue after a successful enqueue', async () => {
-    await render();
-    await act(async () => setValue(input('Post title'), 'My clip'));
-    queueMock.mockClear();
-    await act(async () => buttonByText('Publish now')?.click());
-    expect(queueMock).toHaveBeenCalled();
-  });
-
-  it('surfaces an enqueue failure', async () => {
-    enqueueMock.mockRejectedValue(new Error('refused'));
-    await render();
-    await act(async () => setValue(input('Post title'), 'My clip'));
-    await act(async () => buttonByText('Publish now')?.click());
-    expect(errorText()).toBe('refused');
-  });
-
-  it('stringifies a non-Error enqueue rejection', async () => {
-    enqueueMock.mockRejectedValue('boom');
-    await render();
-    await act(async () => setValue(input('Post title'), 'My clip'));
-    await act(async () => buttonByText('Publish now')?.click());
-    expect(errorText()).toBe('Could not queue that publish');
-  });
-});
-
-describe('<SocialPublishPanel /> — the queue list', () => {
-  it('says so when nothing is queued', async () => {
-    await render();
-    expect(dom().textContent).toContain('Nothing queued yet');
-  });
-
-  it('lists an entry with its human status', async () => {
-    queueMock.mockResolvedValue({ entries: [ENTRY] });
-    await render();
-    expect(dom().querySelector('.social-publish__queue')?.textContent).toContain('My clip');
-  });
-
-  it('cancels a pending entry and reloads', async () => {
-    queueMock.mockResolvedValue({ entries: [ENTRY] });
-    await render();
-    await act(async () => buttonByText('Cancel')?.click());
-    expect(cancelMock).toHaveBeenCalledWith('e1');
-  });
-
-  it('offers no Cancel for a terminal entry', async () => {
-    queueMock.mockResolvedValue({ entries: [{ ...ENTRY, status: 'done' }] });
-    await render();
-    expect(buttonByText('Cancel')).toBeUndefined();
-  });
-
-  it('surfaces a cancel failure', async () => {
-    queueMock.mockResolvedValue({ entries: [ENTRY] });
-    cancelMock.mockRejectedValue(new Error('cancel boom'));
-    await render();
-    await act(async () => buttonByText('Cancel')?.click());
-    expect(errorText()).toBe('cancel boom');
-  });
-
-  it('stringifies a non-Error cancel rejection', async () => {
-    queueMock.mockResolvedValue({ entries: [ENTRY] });
-    cancelMock.mockRejectedValue('x');
-    await render();
-    await act(async () => buttonByText('Cancel')?.click());
-    expect(errorText()).toBe('Cancel failed');
-  });
-});
-
-describe('<SocialPublishPanel /> — load failures', () => {
-  it('surfaces a capabilities failure', async () => {
-    capabilitiesMock.mockRejectedValue(new Error('no platforms'));
-    await render();
-    expect(errorText()).toBe('no platforms');
-  });
-
-  it('stringifies a non-Error capabilities rejection', async () => {
-    capabilitiesMock.mockRejectedValue('nope');
-    await render();
-    expect(errorText()).toBe('Failed to load platforms');
-  });
-
-  it('surfaces a queue-load failure', async () => {
-    queueMock.mockRejectedValue(new Error('queue down'));
-    await render();
-    expect(dom().textContent).toContain('queue down');
-  });
-
-  it('stringifies a non-Error queue rejection', async () => {
-    queueMock.mockRejectedValue('nope');
-    await render();
-    expect(dom().textContent).toContain('Failed to load the publish queue');
-  });
-
-  it('renders with no props at all (defaults)', async () => {
-    // Mounted by hand rather than via render(), which always supplies clipPath —
-    // this exercises the prop DEFAULTS (clipPath='' / videoId='').
-    const host = document.createElement('div');
-    document.body.appendChild(host);
-    container = host;
-    const mounted = createRoot(host);
-    root = mounted;
-    await act(async () => {
-      mounted.render(<SocialPublishPanel />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(dom().textContent).toContain('Export a clip first');
+    const text = dom().textContent ?? '';
+    expect(text).not.toMatch(/schedule/i);
+    expect(text).not.toMatch(/publish now/i);
   });
 });

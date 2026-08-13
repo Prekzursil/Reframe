@@ -527,20 +527,20 @@ describe('useJob × sidecar-status interruption (v1.5 crash fix)', () => {
     });
 
     expect(api!.state.running).toBe(false);
-    expect(api!.state.error).toBe('Sidecar stopped — the job was interrupted');
+    expect(api!.state.error).toBe('The engine stopped — the job was interrupted');
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({
         jobId: 'jc1',
         method: 'shortmaker.select',
         feature: 'shortmaker',
         label: 'Short-maker',
-        message: 'Sidecar stopped — the job was interrupted',
+        message: 'The engine stopped — the job was interrupted',
         type: 'JobInterrupted',
       }),
     );
     const toastEl = document.body.querySelector('.toast--error');
     expect(toastEl).not.toBeNull();
-    expect(toastEl!.textContent).toContain('Short-maker failed: Sidecar stopped');
+    expect(toastEl!.textContent).toContain('Short-maker failed: The engine stopped');
   });
 
   it('also fails the active job when the sidecar gives up (down)', async () => {
@@ -553,7 +553,24 @@ describe('useJob × sidecar-status interruption (v1.5 crash fix)', () => {
       statusCb!('down');
     });
     expect(api!.state.running).toBe(false);
-    expect(api!.state.error).toBe('Sidecar stopped — the job was interrupted');
+    expect(api!.state.error).toBe('The engine stopped — the job was interrupted');
+  });
+
+  // Q6: this message is the SECOND job-plumbing crash string (the first lives in
+  // _api.ts waitForJobDone). It lands in `state.error` and in the error toast,
+  // both user-facing, so it uses "the engine" like the rest of the UI.
+  it('names "the engine", not "sidecar", in the interruption message', async () => {
+    rpcMock.mockResolvedValueOnce({ jobId: 'jc-voice' });
+    await renderWithToasts();
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await act(async () => {
+      statusCb!('down');
+    });
+    const message = api!.state.error ?? '';
+    expect(message).toBe('The engine stopped — the job was interrupted');
+    expect(message).not.toMatch(/sidecar/i);
   });
 
   it('leaves the active job untouched on a running status', async () => {

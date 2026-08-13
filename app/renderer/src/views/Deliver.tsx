@@ -8,6 +8,13 @@
 // (batch publish), ExportPresetsPanel (the 9:16 / 4:5 / 1:1 / 16:9 preset matrix),
 // and NleExport (EDL / CSV pro handoff) — under the TabBar's role=tablist a11y.
 // Finishing Phase-5 links INTO here.
+//
+// Q5: the four target ratios used to render as a row of labelled pills directly
+// above the tab strip — list items of spans with no handler, no role and no state,
+// carrying a comment that called them display-only. In the exact position and visual
+// grammar of a target selector, one tab away from the REAL multi-select in
+// ExportPresetsPanel, that reads as a chooser that ignores clicks. They are now what
+// they always were: information, stated in the intro sentence.
 
 import React, { useState } from 'react';
 import { TabBar, tabId, tabPanelId, type TabDef } from '../components/TabBar';
@@ -21,18 +28,13 @@ import './deliver.css';
 const TABS: TabDef[] = [
   { id: 'batch', label: 'Batch publish' },
   { id: 'presets', label: 'Platform presets' },
-  // C14: direct publish / scheduling. Sits beside "Platform presets" deliberately —
-  // the presets produce the platform-shaped file, this sends it.
+  // C14 direct publish. KEPT beside "Platform presets", and kept even though this
+  // build cannot publish, because that is where a user goes looking for it: the
+  // presets produce the platform-shaped file, and this tab is the one place that
+  // answers what happens next. It now says so instead of offering a control that
+  // could never fire (Q4 — see features/SocialPublishPanel.tsx).
   { id: 'publish', label: 'Publish' },
   { id: 'handoff', label: 'Pro handoff' },
-];
-
-/** The target aspect matrix Deliver publishes across (display only). */
-const ASPECTS: readonly { ratio: string; label: string }[] = [
-  { ratio: '9:16', label: 'Vertical' },
-  { ratio: '4:5', label: 'Feed' },
-  { ratio: '1:1', label: 'Square' },
-  { ratio: '16:9', label: 'Widescreen' },
 ];
 
 export interface DeliverProps {
@@ -53,17 +55,9 @@ export function Deliver({ video, onBack }: DeliverProps): React.ReactElement {
         <h2 className="deliver-view__title">Deliver</h2>
       </header>
       <p className="deliver-view__intro">
-        Publish across videos and platforms — batch renders, per-platform presets, and a handoff to
-        your pro editor.
+        Finish a batch of videos in one place — batch renders, per-platform presets for 9:16, 4:5,
+        1:1 and 16:9, and a handoff to your pro editor.
       </p>
-      <ul className="deliver-view__aspects" aria-label="Target aspect ratios">
-        {ASPECTS.map((aspect) => (
-          <li key={aspect.ratio} className="deliver-view__aspect">
-            <span className="deliver-view__aspect-ratio">{aspect.ratio}</span>
-            <span className="deliver-view__aspect-label">{aspect.label}</span>
-          </li>
-        ))}
-      </ul>
 
       <TabBar tabs={TABS} active={active} onSelect={setActive} />
       <div
@@ -74,7 +68,7 @@ export function Deliver({ video, onBack }: DeliverProps): React.ReactElement {
       >
         {active === 'batch' ? <BatchQueue /> : null}
         {active === 'presets' ? <ExportPresetsPanel /> : null}
-        {active === 'publish' ? <SocialPublishPanel videoId={video?.id ?? ''} /> : null}
+        {active === 'publish' ? <SocialPublishPanel /> : null}
         {active === 'handoff' ? (
           video ? (
             <NleExport videoId={video.id} />
