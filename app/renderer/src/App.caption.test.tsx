@@ -111,23 +111,47 @@ function tab(label: string): HTMLButtonElement {
   return found;
 }
 
-describe('App Caption rail destination', () => {
+/**
+ * A MODE tab inside the active destination. L5 took the rail to 4 + Settings, so
+ * Caption / Director / Publish are modes of Refine / Produce / Deliver, not rail
+ * destinations.
+ */
+function modeTab(label: string): HTMLButtonElement {
+  const btns = Array.from(
+    container.querySelectorAll<HTMLButtonElement>('.app__destination [role="tab"]'),
+  );
+  const found = btns.find((b) => b.textContent === label);
+  if (!found) throw new Error(`mode tab "${label}" not found`);
+  return found;
+}
+
+// L5: Caption is Refine's second MODE, not a rail destination.
+async function openCaption(): Promise<void> {
+  await act(async () => {
+    tab('Refine').click();
+  });
+  await flush();
+  await act(async () => {
+    modeTab('Caption design').click();
+  });
+  await flush();
+}
+
+describe('App Caption phase (Refine mode)', () => {
   it('mounts the Caption phase with an empty video when opened directly', async () => {
     await act(async () => {
       root.render(<App />);
     });
     await flush();
     expect(container.querySelector('[data-testid="caption"]')).toBeNull();
-    await act(async () => {
-      tab('Caption').click();
-    });
-    await flush();
+    await openCaption();
     const view = container.querySelector('[data-testid="caption"]');
     expect(view).not.toBeNull();
     expect(view!.getAttribute('data-video-id')).toBe('');
-    expect(tab('Caption').getAttribute('aria-selected')).toBe('true');
+    expect(tab('Refine').getAttribute('aria-selected')).toBe('true');
+    expect(modeTab('Caption design').getAttribute('aria-selected')).toBe('true');
     const panel = container.querySelector<HTMLElement>('[role="tabpanel"]')!;
-    expect(panel.id).toBe('toptabpanel-caption');
+    expect(panel.id).toBe('toptabpanel-refine');
   });
 
   it('threads the open video into the Caption phase', async () => {
@@ -139,10 +163,7 @@ describe('App Caption rail destination', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="library"] button')!.click();
     });
     await flush();
-    await act(async () => {
-      tab('Caption').click();
-    });
-    await flush();
+    await openCaption();
     expect(container.querySelector('[data-testid="caption"]')!.getAttribute('data-video-id')).toBe(
       'v1',
     );
@@ -153,10 +174,7 @@ describe('App Caption rail destination', () => {
       root.render(<App />);
     });
     await flush();
-    await act(async () => {
-      tab('Caption').click();
-    });
-    await flush();
+    await openCaption();
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="caption"] button')!.click();
     });

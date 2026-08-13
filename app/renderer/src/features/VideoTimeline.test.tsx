@@ -831,3 +831,63 @@ describe('adding the source clip to a lane (W18)', () => {
     expect(add.title).toContain('source file');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Q7 — the render is no longer an orphan, and its live region has a ROLE
+// ---------------------------------------------------------------------------
+
+describe('Q7: status/progress semantics and selection reporting', () => {
+  it('announces the status line as a live region (role=status)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await click(button('render'));
+    await act(async () => {
+      fake.emitProgress({ jobId: 'job-1', pct: 40, message: 'encoding' });
+    });
+    const line = container.querySelector('[data-role="status"]');
+    expect(line).not.toBeNull();
+    expect(line!.getAttribute('role')).toBe('status');
+  });
+
+  it('labels the render progress element (an unlabelled progress announces nothing)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await click(button('render'));
+    const bar = container.querySelector('progress[data-role="render-progress"]');
+    expect(bar).not.toBeNull();
+    expect(bar!.getAttribute('aria-label')).toBe('Render progress');
+  });
+
+  it('reports the selected clip to its host so the host can drive an inspector', async () => {
+    const fake = makeFakeApi();
+    const onSelectClip = vi.fn<(id: string | null) => void>();
+    (globalThis as { api?: unknown }).api = fake.api;
+    await act(async () => {
+      root.render(<VideoTimeline videoId="v1" onSelectClip={onSelectClip} />);
+    });
+    expect(onSelectClip).toHaveBeenLastCalledWith(null);
+    await click(clipEl('c1'));
+    expect(onSelectClip).toHaveBeenLastCalledWith('c1');
+  });
+
+  it('re-reports a clip the user picks again, even though the id has not changed', async () => {
+    // A host can PIN a panel of another scope over the clip inspector (the
+    // workspace Export button does exactly that). The clip is still selected here,
+    // so re-picking it is the user asking for its tools back — and the host can
+    // only honour that if the gesture reaches it. Holding the selection as a bare
+    // `string | null` swallowed it: React bails out on an identical value, so the
+    // publish effect never re-fired.
+    const fake = makeFakeApi();
+    const onSelectClip = vi.fn<(id: string | null) => void>();
+    (globalThis as { api?: unknown }).api = fake.api;
+    await act(async () => {
+      root.render(<VideoTimeline videoId="v1" onSelectClip={onSelectClip} />);
+    });
+    await click(clipEl('c1'));
+    const afterFirstPick = onSelectClip.mock.calls.length;
+
+    await click(clipEl('c1'));
+    expect(onSelectClip.mock.calls.length).toBe(afterFirstPick + 1);
+    expect(onSelectClip).toHaveBeenLastCalledWith('c1');
+  });
+});
