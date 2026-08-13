@@ -415,10 +415,17 @@ check(
 # quantifiers by habit (`**two**`, `**16**`, `**not**`), so the likelier spelling of a future
 # re-widening is the one the guard cannot see.
 #
-# Widening `_C8_UNIVERSAL` is NOT the fix and was rejected on measurement, not taste: both
-# retraction paragraphs QUOTE the banned wording in order to retire it, and C8-scope-prose
-# deliberately does not `_live_text`, so allowing `*` or `>` between the tokens would fire on
-# the retractions themselves. Closing it needs the use-vs-mention narrowing C1b uses (drop
+# Widening `_C8_UNIVERSAL` is NOT the fix and was rejected on measurement, not taste — and the
+# measurement is NOT the probe table below, which only ever exercises the SHIPPED pattern and
+# therefore cannot speak for a widened one. It is this: the emphasised spelling
+# `**any** design doc` literally occurs 3 times in the retraction prose (twice in
+# `docs/INDEX.md`, once in `docs/build/DESIGN-DIRECTION.md`; MEASURED 2026-08-13, settling
+# experiment `git grep -c -F '**any** design doc' -- docs`), those paragraphs QUOTE the banned
+# wording in order to retire it, and C8-scope-prose deliberately does not `_live_text` — so
+# allowing `*` or `>` between the tokens would fire on the retractions themselves. What the probe
+# table below DOES measure is the necessary other half: that the current pattern still misses
+# those spellings, so the qualifier in the prose cannot go stale unnoticed. Closing it needs the
+# use-vs-mention narrowing C1b uses (drop
 # double-quoted spans), which is a behaviour change this pass did not measure. So the honest
 # repair is the SENTENCE — and this check makes it stick in both directions: the probe table is
 # re-run against the shipped pattern on every run, so a later regex change fails here and forces
