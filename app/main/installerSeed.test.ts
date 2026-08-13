@@ -17,6 +17,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import {
   INSTALLER_PROFILE_SEED_FILE,
+  UNINSTALL_DATA_DIR_MARKER,
+  UNINSTALL_DATA_ROOT_DIRNAME,
+  UNINSTALL_REMOVABLE_MODEL_DIRS,
+  UNINSTALL_USER_DATA_DIRNAME,
   adoptInstallerProfileSeed,
   installerSeedPath,
   parseInstallerSeed,
@@ -31,10 +35,12 @@ import {
   INSTALL_PROFILE_IDS,
   type PersistedInstallProfile,
 } from './installProfiles';
+import { DATA_DIR_MARKER } from './dataRoot';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
 const INSTALLER_NSH = resolve(REPO_ROOT, 'build', 'installer.nsh');
+const ELECTRON_BUILDER_YML = resolve(REPO_ROOT, 'electron-builder.yml');
 
 /** Extract a `!define NAME "value"` from an NSIS source. */
 function nshDefine(src: string, name: string): string {
@@ -279,5 +285,171 @@ describe('build/installer.nsh conforms to installProfiles.ts (no hand-maintained
     // A component page that shipped model bytes would need `File` directives for
     // them; the packs are asset NAMES routed to bootstrap.py, never payload.
     expect(nsh).not.toMatch(/^\s*File\s/m);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (3) the UNINSTALL keep-vs-remove contract (WU-L7)
+// ---------------------------------------------------------------------------
+//
+// Same job as block (2), other direction. The uninstaller has to name the data
+// root, the Electron userData folder and the marker file in NSIS — three path
+// literals the app also owns in TypeScript. installerSeed.ts holds the single
+// declaration and these tests pin BOTH sides of it: the TS constants against the
+// app's own sources, and build/installer.nsh against the TS constants. Without
+// that chain the uninstaller becomes a second, silently-drifting implementation
+// of the data-root path policy — exactly what installerSeed.ts's header refuses
+// to allow for the install direction.
+
+/** The body of a `!macro NAME … !macroend` block. */
+function nshMacroBody(src: string, name: string): string {
+  const m = src.match(new RegExp(`^!macro ${name}$([\\s\\S]*?)^!macroend$`, 'm'));
+  if (!m) throw new Error(`!macro ${name} not found in installer.nsh`);
+  return m[1];
+}
+
+describe('uninstall data contract — installerSeed.ts owns the path literals', () => {
+  it('reuses the app data-folder marker filename VERBATIM (one name, one owner)', () => {
+    expect(UNINSTALL_DATA_DIR_MARKER).toBe(DATA_DIR_MARKER);
+  });
+
+  it('names the SAME appData home main.ts resolves', () => {
+    // main.ts resolveDataRoot(): join(app.getPath('appData'), 'media-studio').
+    // brand.test.ts already pins that literal as un-renameable; this pins the
+    // uninstaller to the same string rather than a copy of it.
+    const main = readFileSync(resolve(REPO_ROOT, 'app', 'main', 'main.ts'), 'utf8');
+    expect(main).toContain(`join(app.getPath('appData'), '${UNINSTALL_DATA_ROOT_DIRNAME}')`);
+  });
+
+  it('names the Electron userData folder (= package.json productName)', () => {
+    // Electron prefers productName over name for app.getPath('userData'), so the
+    // stable data-dir.txt marker lives at %APPDATA%/<productName>/data-dir.txt.
+    const pkg = JSON.parse(readFileSync(resolve(REPO_ROOT, 'app', 'package.json'), 'utf8')) as {
+      productName: string;
+    };
+    expect(UNINSTALL_USER_DATA_DIRNAME).toBe(pkg.productName);
+  });
+
+  it('lists only dirs the sidecar really provisions UNDER the data root', () => {
+    const manifest = readFileSync(
+      resolve(REPO_ROOT, 'sidecar', 'media_studio', 'assets', 'manifest.py'),
+      'utf8',
+    );
+    const bootstrap = readFileSync(
+      resolve(REPO_ROOT, 'sidecar', 'runtime_setup', 'bootstrap.py'),
+      'utf8',
+    );
+    const manager = readFileSync(
+      resolve(REPO_ROOT, 'sidecar', 'media_studio', 'assets', 'manager.py'),
+      'utf8',
+    );
+    expect([...UNINSTALL_REMOVABLE_MODEL_DIRS]).toEqual(['models', 'envs', 'tools']);
+    expect(manifest).toContain('dest="models/'); // weights
+    expect(bootstrap).toContain('"envs"'); // first-run python envs
+    expect(manager).toContain('"tools"'); // downloaded tooling
+  });
+});
+
+describe('build/installer.nsh — the uninstall keep-vs-remove page (WU-L7)', () => {
+  const nsh = readFileSync(INSTALLER_NSH, 'utf8');
+
+  it('hooks the two electron-builder UNINSTALLER macros', () => {
+    // customUnWelcomePage is the first uninstaller page (app-builder-lib
+    // templates/nsis/assistedInstaller.nsh:66-71); customUnInstall runs inside
+    // Section "un.Uninstall" BEFORE the files are removed (uninstaller.nsh:156-158).
+    expect(nsh).toMatch(/^!macro customUnWelcomePage$/m);
+    expect(nsh).toMatch(/^!macro customUnInstall$/m);
+  });
+
+  it('pins the data-root folder name against installerSeed.ts', () => {
+    expect(nshDefine(nsh, 'REFRAME_DATA_ROOT_DIRNAME')).toBe(UNINSTALL_DATA_ROOT_DIRNAME);
+  });
+
+  it('pins the Electron userData folder name against installerSeed.ts', () => {
+    expect(nshDefine(nsh, 'REFRAME_USER_DATA_DIRNAME')).toBe(UNINSTALL_USER_DATA_DIRNAME);
+  });
+
+  it('pins the data-folder marker filename against installerSeed.ts', () => {
+    expect(nshDefine(nsh, 'REFRAME_DATA_DIR_MARKER')).toBe(UNINSTALL_DATA_DIR_MARKER);
+  });
+
+  it('pins the removable model/runtime dirs, in the same order', () => {
+    expect(nshIdList(nsh, 'REFRAME_UNINSTALL_MODEL_DIRS')).toEqual([
+      ...UNINSTALL_REMOVABLE_MODEL_DIRS,
+    ]);
+  });
+
+  it('actually removes EVERY pinned dir (the id list is not decorative)', () => {
+    const body = nshMacroBody(nsh, 'customUnInstall');
+    for (const dir of UNINSTALL_REMOVABLE_MODEL_DIRS) {
+      expect(body).toContain(`RMDir /r "$ReframeUnDataRoot\\${dir}"`);
+    }
+  });
+
+  it('DEFAULTS TO KEEP — both removal flags are initialised to 0 before the page', () => {
+    const body = nshMacroBody(nsh, 'customUnWelcomePage');
+    expect(body).toContain('StrCpy $ReframeUnRemoveModels "0"');
+    expect(body).toContain('StrCpy $ReframeUnRemoveUserData "0"');
+  });
+
+  it('states the reclaimable size on both choices (an informed choice, not a dare)', () => {
+    const body = nshMacroBody(nsh, 'customUnWelcomePage');
+    expect(body).toContain('${un.GetSize}');
+    expect(body).toContain('$ReframeUnModelsSize');
+    expect(body).toContain('$ReframeUnUserSize');
+  });
+
+  it('NEVER deletes on an in-place auto-update (silent + --updated, both checked)', () => {
+    // electron-updater runs the OLD uninstaller with /S, and the installer always
+    // appends --updated for an in-place upgrade (app-builder-lib
+    // templates/nsis/include/installUtil.nsh:205-206). Deleting the data root on an
+    // UPGRADE would be the worst possible bug this feature could ship.
+    const body = nshMacroBody(nsh, 'customUnInstall');
+    expect(body).toContain('"--updated"');
+    expect(body).toMatch(/\$\{AndIfNot\} \$\{Silent\}/);
+  });
+
+  it('never Return/Aborts out of customUnInstall (it runs INSIDE the uninstall Section)', () => {
+    // uninstaller.nsh:156-158 expands this macro inside Section "un.Uninstall",
+    // ABOVE the RMDir of $INSTDIR — an early Return would skip the real uninstall.
+    const body = nshMacroBody(nsh, 'customUnInstall');
+    expect(body).not.toMatch(/^\s*(Return|Abort)\b/m);
+  });
+
+  it('declares every uninstaller-pass Var INSIDE a macro (the /WX warning-6001 trap)', () => {
+    // electron-builder compiles this script TWICE and only the uninstaller pass
+    // inserts the un-macros. A Var declared at FILE scope but referenced only from
+    // an un-macro is "declared and never referenced" in the installer pass ->
+    // warning 6001 -> /WX -> NO INSTALLER IS PRODUCED AT ALL. Declaring them inside
+    // the macro means they exist exactly in the pass that uses them.
+    const fileScopeVars = [...nsh.matchAll(/^Var\s+(\S+)/gm)].map((m) => m[1]);
+    expect(fileScopeVars.filter((v) => v.startsWith('ReframeUn'))).toEqual([]);
+
+    const vars = nshMacroBody(nsh, 'reframeUnVars');
+    const used = new Set([...nsh.matchAll(/\$(ReframeUn\w+)/g)].map((m) => m[1]));
+    expect(used.size).toBeGreaterThan(0);
+    for (const name of used) {
+      expect(vars).toContain(`Var /GLOBAL ${name}`);
+    }
+  });
+});
+
+describe('electron-builder.yml — the uninstall page must stay reachable', () => {
+  const yml = readFileSync(ELECTRON_BUILDER_YML, 'utf8');
+
+  it('keeps deleteAppDataOnUninstall FALSE (flipping it deletes appData on UPGRADE)', () => {
+    // app-builder-lib templates/nsis/uninstaller.nsh:223-227 wipes %APPDATA%/<app>
+    // whenever DELETE_APP_DATA_ON_UNINSTALL is defined and the run is not an update.
+    // Our page replaces that blunt switch with an explicit opt-in; the switch stays off.
+    expect(yml).toMatch(/^\s*deleteAppDataOnUninstall: false$/m);
+  });
+
+  it('does NOT set removeDefaultUninstallWelcomePage (it would DELETE our page)', () => {
+    // assistedInstaller.nsh:66 wraps the customUnWelcomePage hook in
+    // `!ifndef removeDefaultUninstallWelcomePage` — setting that option silently
+    // drops the keep-vs-remove page instead of merely dropping MUI's welcome page.
+    // Matched as a YAML KEY (line-anchored), not as a bare substring, so the comment
+    // in electron-builder.yml that warns about this option does not trip its own guard.
+    expect(yml).not.toMatch(/^\s*removeDefaultUninstallWelcomePage\s*:/m);
   });
 });

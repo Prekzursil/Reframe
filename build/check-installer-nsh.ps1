@@ -77,7 +77,16 @@ try {
   # $InsertMacros mirrors whether app-builder-lib expands the custom macros in this pass.
   # `Page custom` needs a page slot, so MUI_PAGE_DIRECTORY stands in for the directory page
   # customPageAfterChangeDir is inserted after.
-  function Build-Harness([bool]$InsertMacros) {
+  #
+  # v3 (WU-L7): $Uninstaller selects the UN half. v2 fixed the install half's blindness but
+  # left pass 2 inserting NOTHING -- and then WU-L7 added ~400 lines of customUnWelcomePage +
+  # customUnInstall, which pass 2 therefore never handed to makensis. The header above calls
+  # that exact shape "a probe that is silent in the broken state"; the un-macros had reproduced
+  # it. app-builder-lib DOES expand un-macros in the uninstaller pass -- customUnWelcomePage
+  # replaces MUI_UNPAGE_WELCOME (assistedInstaller.nsh:66-71) and customUnInstall is inserted
+  # in the uninstall Section (uninstaller.nsh:156-157) -- so the harness must too, or the check
+  # is measuring an empty file.
+  function Build-Harness([bool]$InsertMacros, [bool]$Uninstaller) {
     $h = @(
       '!include MUI2.nsh'
       '!include LogicLib.nsh'
@@ -92,28 +101,56 @@ try {
       ''
       '!insertmacro MUI_PAGE_DIRECTORY'
     )
-    if ($InsertMacros) {
+    if ($InsertMacros -and -not $Uninstaller) {
       # app-builder-lib inserts this exact macro here (assistedInstaller.nsh:42).
       $h += '!ifmacrodef customPageAfterChangeDir'
       $h += '  !insertmacro customPageAfterChangeDir'
       $h += '!endif'
     }
     $h += '!insertmacro MUI_PAGE_INSTFILES'
+    if ($Uninstaller) {
+      # assistedInstaller.nsh:66-71 -- customUnWelcomePage REPLACES MUI_UNPAGE_WELCOME when
+      # defined, so mirror the substitution rather than emitting both.
+      $h += '!ifmacrodef customUnWelcomePage'
+      $h += '  !insertmacro customUnWelcomePage'
+      $h += '!else'
+      $h += '  !insertmacro MUI_UNPAGE_WELCOME'
+      $h += '!endif'
+      $h += '!insertmacro MUI_UNPAGE_INSTFILES'
+    }
     $h += '!insertmacro MUI_LANGUAGE "English"'
     $h += ''
     $h += 'Section "install"'
-    if ($InsertMacros) {
+    if ($InsertMacros -and -not $Uninstaller) {
       # app-builder-lib inserts this exact macro here (installSection.nsh:81).
       $h += '  !ifmacrodef customInstall'
       $h += '    !insertmacro customInstall'
       $h += '  !endif'
     }
+    if ($Uninstaller) {
+      # HARNESS ARTIFACT, not a product requirement: declaring an uninstall Section without ever
+      # calling WriteUninstaller raises "warning 6020: Uninstaller script code found but
+      # WriteUninstaller never used", which /WX turns into a failure. The real script writes one
+      # (app-builder-lib installSection.nsh), so the harness must too or pass 2 fails for a reason
+      # that has nothing to do with installer.nsh. Measured: without this line the pass exits 1
+      # on 6020 alone.
+      $h += '  WriteUninstaller "$INSTDIR\Uninstall.exe"'
+    }
     $h += 'SectionEnd'
+    if ($Uninstaller) {
+      # uninstaller.nsh:156-157 -- customUnInstall is expanded inside the uninstall Section.
+      $h += ''
+      $h += 'Section "Uninstall"'
+      $h += '  !ifmacrodef customUnInstall'
+      $h += '    !insertmacro customUnInstall'
+      $h += '  !endif'
+      $h += 'SectionEnd'
+    }
     return ($h -join "`r`n")
   }
 
-  function Invoke-Pass([string]$Label, [bool]$InsertMacros, [string[]]$ExtraArgs) {
-    Set-Content -LiteralPath (Join-Path $work 'harness.nsi') -Value (Build-Harness $InsertMacros) -Encoding UTF8
+  function Invoke-Pass([string]$Label, [bool]$InsertMacros, [string[]]$ExtraArgs, [bool]$Uninstaller = $false) {
+    Set-Content -LiteralPath (Join-Path $work 'harness.nsi') -Value (Build-Harness $InsertMacros $Uninstaller) -Encoding UTF8
     Push-Location $work
     try {
       # /WX is what electron-builder uses. Without it this check cannot see warning 6001.
@@ -135,9 +172,15 @@ try {
   $rc = Invoke-Pass 'installer' $true @()
   if ($rc -ne 0) { exit $rc }
 
-  # Pass 2 -- the uninstaller. -DBUILD_UNINSTALLER and NO custom macros, which is what
-  # app-builder-lib actually compiles. This is the pass that caught the 6001 escape.
-  $rc = Invoke-Pass 'uninstaller' $false @('/DBUILD_UNINSTALLER')
+  # Pass 2 -- the uninstaller, -DBUILD_UNINSTALLER, WITH the un-macros expanded.
+  #
+  # This previously passed $InsertMacros=$false and inserted nothing at all. That was correct
+  # only while installer.nsh had no un-macros: the pass existed to prove the INSTALL-half Vars
+  # are properly guarded, and it caught the original 6001 escape by doing so. Once WU-L7 added
+  # customUnWelcomePage + customUnInstall, "insert nothing" silently stopped covering ~400 new
+  # lines -- the same silent-in-the-broken-state shape this script's header warns about.
+  # $Uninstaller=$true expands them exactly where app-builder-lib does.
+  $rc = Invoke-Pass 'uninstaller' $false @('/DBUILD_UNINSTALLER') $true
   if ($rc -ne 0) { exit $rc }
 
   Write-Host "SUCCESS:installer-nsh both passes compiled with $($makensis.FullName)"

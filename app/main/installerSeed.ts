@@ -35,6 +35,7 @@
 // PURE-BY-SEAM: all filesystem access is injected ({@link InstallerSeedIo}) so the
 // decision is fully testable; main.ts owns the concrete seam.
 import { join } from 'node:path';
+import { DATA_DIR_MARKER } from './dataRoot';
 import type { FirstRunKind } from './firstRunGate';
 import {
   INSTALL_PROFILE_FILE,
@@ -48,6 +49,63 @@ import {
  * parser, no translation layer. installerSeed.test.ts pins the equality.
  */
 export const INSTALLER_PROFILE_SEED_FILE = INSTALL_PROFILE_FILE;
+
+// ---------------------------------------------------------------------------
+// WU-L7 — the UNINSTALL side of the same contract
+// ---------------------------------------------------------------------------
+//
+// THE PROBLEM. Uninstalling used to strand the whole data root: `deleteAppDataOnUninstall`
+// is false (correctly — see below), there was no `customUnInstall`, and the data root is
+// not `%APPDATA%/<app>` anyway, so NSIS never went near it. Many GB of downloaded models
+// and the user's entire library simply stayed on disk with no choice offered.
+//
+// build/installer.nsh now adds an uninstaller page that offers keep-vs-remove, DEFAULTING
+// TO KEEP. To do that the NSIS side has to name three paths the app also names in
+// TypeScript. These four constants are the single declaration of those names, and
+// installerSeed.test.ts pins BOTH directions: each constant against the app source that
+// really owns it, and build/installer.nsh's `!define`s against these constants. Without
+// that chain the uninstaller would be a SECOND implementation of the data-root path
+// policy — the drift this module's header already refuses to allow for the install
+// direction.
+//
+// WHAT THE UNINSTALLER CANNOT SEE, stated plainly: `MEDIA_STUDIO_CONFIG_DIR` is a runtime
+// env override (main.ts resolveDataRoot), so a root chosen that way is invisible to NSIS
+// and is simply never offered for removal. That is the safe direction — the uninstaller
+// keeps data it cannot positively identify.
+
+/**
+ * The appData child that holds the data root by default —
+ * `join(app.getPath('appData'), 'media-studio')` in main.ts `resolveDataRoot`. Stable
+ * across the v1.3 brand rename on purpose (brand.test.ts pins the literal), so the
+ * uninstaller must use this name and NOT the product name.
+ */
+export const UNINSTALL_DATA_ROOT_DIRNAME = 'media-studio';
+
+/**
+ * Electron's `userData` folder name — `%APPDATA%/<productName>`. Two things live there
+ * that the uninstaller cares about: the STABLE `data-dir.txt` marker (dataRootIo
+ * `stableDataDirMarkerPath`, the copy an update cannot delete) and the app's own
+ * settings/cache. Pinned against `app/package.json` `productName`, because that is what
+ * Electron actually resolves `app.getPath('userData')` from.
+ */
+export const UNINSTALL_USER_DATA_DIRNAME = 'Reframe';
+
+/**
+ * The data-folder marker filename, reused VERBATIM from {@link DATA_DIR_MARKER} so the
+ * uninstaller reads the exact file the app writes. Precedence the uninstaller replays
+ * (dataRootIo `resolveDataDirMarker`): the STABLE `<userData>/data-dir.txt` first, then
+ * the LEGACY `<exeDir>/data-dir.txt` (`<exeDir>` IS `$INSTDIR`), then the default home.
+ */
+export const UNINSTALL_DATA_DIR_MARKER = DATA_DIR_MARKER;
+
+/**
+ * The data-root children that hold DOWNLOADED bytes rather than the user's own work —
+ * model weights (`models/`, sidecar assets/manifest.py `dest="models/…"`), the first-run
+ * Python environments (`envs/`, runtime_setup/bootstrap.py) and fetched tooling
+ * (`tools/`, assets/manager.py). They are re-downloadable, which is why the uninstaller
+ * offers them as a SEPARATE choice from the irreplaceable library/projects/settings.
+ */
+export const UNINSTALL_REMOVABLE_MODEL_DIRS: readonly string[] = ['models', 'envs', 'tools'];
 
 /** Absolute path of the installer seed for an install directory. */
 export function installerSeedPath(installDir: string): string {
