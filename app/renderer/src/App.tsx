@@ -25,10 +25,28 @@
 //                exactly the two choices `resumeFor` maps to `{kind:'workspace'}`
 //                (lib/taskHub.ts:109 'subtitles', :111 'advanced'). So the L5
 //                "timeline with zero navigation actions" invariant holds from the
-//                Workspace mount, NOT from a first open of this destination. That
-//                gap is REAL and is not this lane's to close: Edit.tsx is outside
-//                its file scope and byte-unchanged on this branch. Follow-up in
-//                the PR residuals.
+//                Workspace mount, NOT from a first open of this destination.
+//
+//                THAT GAP IS REAL AND UNOWNED — and the reason previously given for
+//                deferring it is now FALSE. This block used to close with "Edit.tsx
+//                is outside its file scope and byte-unchanged on this branch",
+//                which was true when the L5 lane wrote it and was invalidated two
+//                commits later: #427 (a4dbec7c) adopted the shared EmptyState in
+//                views/Edit.tsx, so `git diff --name-status 1fa9a69f a4dbec7c --
+//                app` lists `M app/renderer/src/views/Edit.tsx`. The deferral was
+//                therefore resting on a premise that no longer holds, with no lane
+//                owning the fix — which is how a locked acceptance invariant stays
+//                broken indefinitely while every individual PR looks reasonable.
+//                (#427 changed only the no-video empty state, so it did NOT make
+//                the invariant worse. The defect is the orphaned ownership.)
+//
+//                OWNER DECISION REQUIRED, deliberately not taken here: closing it
+//                means flipping Edit.tsx:70 `useState<'hub'|'workspace'>('hub')` to
+//                land on 'workspace' when a video is already open. That is a
+//                PRODUCT change — it demotes the Task Hub from the default landing
+//                surface — not a mechanical repair, so it is surfaced rather than
+//                applied. Until it is taken, G-7 invariant 2 does not hold and no
+//                doc, comment or PR body may claim otherwise.
 //   * Deliver  — getting files out: "Finish" (Phase-5 guarded commit for ONE
 //                video, views/Export.tsx) and "Publish" (cross-video / batch
 //                publish + platform presets + the pro EDL/CSV handoff),
