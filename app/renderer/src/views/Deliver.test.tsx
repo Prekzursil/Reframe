@@ -20,9 +20,12 @@ vi.mock('../features/NleExport', () => ({
     <div data-stub="nle-export" data-video={videoId} />
   ),
 }));
+// Records the prop KEYS it was mounted with. Q4 removed every control from the
+// Publish panel, so it now takes nothing: passing it a videoId again would be the
+// first step back to a per-video publish action this build cannot perform.
 vi.mock('../features/SocialPublishPanel', () => ({
-  SocialPublishPanel: ({ videoId }: { videoId: string }) => (
-    <div data-stub="social-publish" data-video={videoId} />
+  SocialPublishPanel: (props: Record<string, unknown>) => (
+    <div data-stub="social-publish" data-props={JSON.stringify(Object.keys(props))} />
   ),
 }));
 
@@ -67,16 +70,53 @@ const clickTab = (label: string): void => {
 };
 
 describe('Deliver view', () => {
-  it('scopes Deliver as batch/cross-video with the target aspect matrix, and routes back', () => {
+  it('scopes Deliver as batch/cross-video, states the aspect matrix as prose, and routes back', () => {
     render(VIDEO);
     expect(q('.deliver-view__title')?.textContent).toBe('Deliver');
-    // The 9:16 / 4:5 / 1:1 / 16:9 aspect matrix is shown.
-    const ratios = all('.deliver-view__aspect-ratio').map((el) => el.textContent);
-    expect(ratios).toEqual(['9:16', '4:5', '1:1', '16:9']);
+    // Q5: the four ratios are INFORMATION, so they read as prose in the intro.
+    const intro = q('.deliver-view__intro')?.textContent ?? '';
+    expect(intro).toContain('9:16');
+    expect(intro).toContain('4:5');
+    expect(intro).toContain('1:1');
+    expect(intro).toContain('16:9');
     // Batch publish is the default landing.
     expect(q('[data-stub="batch-queue"]')).not.toBeNull();
     act(() => q<HTMLButtonElement>('.deliver-view__back')?.click());
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the ratios as text, NOT as pills in the grammar of a target selector', () => {
+    // Q5. The row of labelled spans had no handler and no role while sitting
+    // directly above the tab strip, where the real multi-select (one tab away in
+    // ExportPresetsPanel) trained the user to expect a chooser. Absence is the
+    // assertion, so each locator is anchored to a different attribute of the old
+    // markup — class, element vocabulary, and the accessible name.
+    render(VIDEO);
+    expect(q('.deliver-view__aspects')).toBeNull();
+    expect(all('.deliver-view__aspect')).toEqual([]);
+    expect(all('.deliver-view__aspect-ratio')).toEqual([]);
+    expect(all('.deliver-view__aspect-label')).toEqual([]);
+    expect(q('[aria-label="Target aspect ratios"]')).toBeNull();
+  });
+
+  it('keeps all four Deliver destinations reachable from one tab strip', () => {
+    // Wave-1 acceptance, structural half: removing the pill row must not cost a
+    // destination. Geometric overflow at 1280px is NOT measurable under jsdom
+    // (no layout engine) — that check belongs to the Playwright pass, and this
+    // change only ever REMOVES a horizontally-laid-out row above the strip.
+    render(VIDEO);
+    expect(all('[role="tab"]').map((el) => el.textContent)).toEqual([
+      'Batch publish',
+      'Platform presets',
+      'Publish',
+      'Pro handoff',
+    ]);
+    clickTab('Platform presets');
+    expect(q('[data-stub="export-presets"]')).not.toBeNull();
+    clickTab('Publish');
+    expect(q('[data-stub="social-publish"]')).not.toBeNull();
+    clickTab('Pro handoff');
+    expect(q('[data-stub="nle-export"]')).not.toBeNull();
   });
 
   it('switches to the platform-preset matrix', () => {
@@ -86,17 +126,19 @@ describe('Deliver view', () => {
     expect(q('[data-stub="batch-queue"]')).toBeNull();
   });
 
-  it('switches to the C14 Publish panel and passes the open video for provenance', () => {
+  it('switches to the Publish panel and mounts it with NO props', () => {
+    // Q4: the panel is a blocked state, not a per-video action. Handing it a
+    // videoId again would re-imply that opening a video enables a publish.
     render(VIDEO);
     clickTab('Publish');
-    expect(q('[data-stub="social-publish"]')?.getAttribute('data-video')).toBe('v1');
+    expect(q('[data-stub="social-publish"]')?.getAttribute('data-props')).toBe('[]');
     expect(q('[data-stub="batch-queue"]')).toBeNull();
   });
 
-  it('still shows Publish with no video open (a clip can be published standalone)', () => {
+  it('still shows Publish with no video open (it is a destination, not a per-video action)', () => {
     render(null);
     clickTab('Publish');
-    expect(q('[data-stub="social-publish"]')?.getAttribute('data-video')).toBe('');
+    expect(q('[data-stub="social-publish"]')?.getAttribute('data-props')).toBe('[]');
   });
 
   it('hands the open video off to the pro-editor export', () => {
