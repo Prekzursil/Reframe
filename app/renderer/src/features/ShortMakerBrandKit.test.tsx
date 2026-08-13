@@ -112,6 +112,41 @@ describe('<ShortMakerBrandKit />', () => {
     expect(container.querySelector('.sm-data-folder-path')).toBeNull();
   });
 
+  // THE FOURTH BARE "Loading…". The EmptyState/Skeleton lane enumerated three
+  // (Settings.tsx, Workspace.tsx, App.tsx) and shipped components/Skeleton.tsx;
+  // this site was named nowhere on that branch and kept a hand-rolled
+  // `<span aria-live="polite">Loading…</span>`. These two tests pin the adoption
+  // so it cannot silently revert to a bare string.
+  it('renders the SHARED skeleton for the data-folder wait, not a bare "Loading…"', () => {
+    mount({ dataFolderLoaded: false });
+    const region = container.querySelector('.sm-data-folder-loading') as HTMLElement;
+    // The shared component, identified by ITS class — a hand-rolled span cannot
+    // pass this without becoming the component.
+    expect(region.classList.contains('skeleton-group')).toBe(true);
+    expect(region.classList.contains('skeleton-group--line')).toBe(true);
+    // One shimmer bar riding the single `.skeleton` base rule in shell.css.
+    expect(region.querySelectorAll('span.skeleton.skeleton--line')).toHaveLength(1);
+    // The bare string is gone from the VISIBLE design (it survives only as the
+    // clipped label asserted below).
+    expect(region.textContent).not.toBe('Loading…');
+  });
+
+  it('keeps the wait announceable: a busy status region that names the data folder', () => {
+    mount({ dataFolderLoaded: false });
+    const region = container.querySelector('.sm-data-folder-loading') as HTMLElement;
+    // `role="status"` carries an IMPLICIT `aria-live="polite"` (+ aria-atomic)
+    // per WAI-ARIA, which is why dropping the explicit attribute preserves the
+    // semantics rather than losing them. jsdom computes no implicit ARIA, so the
+    // role is the thing a test can pin — pinned here precisely so a future edit
+    // cannot delete the role and leave the wait with no live semantics at all.
+    expect(region.getAttribute('role')).toBe('status');
+    expect(region.getAttribute('aria-busy')).toBe('true');
+    // Content, not a name: Skeleton renders the wait as a clipped text node and
+    // deliberately ships no aria-label (pinned by Skeleton.test.tsx).
+    expect(region.getAttribute('aria-label')).toBeNull();
+    expect(region.querySelector('.skeleton-group__label')?.textContent).toBe('Loading data folder');
+  });
+
   it('shows the resolved data-folder path once loaded', () => {
     mount({ dataFolderLoaded: true, dataFolder: 'D:/MediaStudio/data' });
     expect(container.querySelector('.sm-data-folder-path')?.textContent).toBe(

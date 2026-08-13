@@ -8,6 +8,7 @@
 
 import React from 'react';
 
+import { Skeleton } from '../components/Skeleton';
 import { CAPTION_STYLES } from './shortMakerLogic';
 import { type BrandSettings } from './shortMakerPresets';
 
@@ -122,10 +123,51 @@ export function ShortMakerBrandKit({
               <button type="button" aria-label="Change data folder" onClick={onChangeDataFolder}>
                 Change…
               </button>
+              {/* THE FOURTH BARE "Loading…". The EmptyState/Skeleton lane
+                  enumerated three (Settings.tsx, Workspace.tsx, App.tsx) and
+                  shipped components/Skeleton.tsx; this site was named nowhere on
+                  that branch, so it kept the hand-rolled
+                  `<span aria-live="polite">Loading…</span>` that Library.tsx's
+                  own comment writes down as forbidden. It is the shared
+                  <Skeleton /> now. Three things about this specific adoption:
+
+                  * `variant="line"` — the real thing that lands here is ONE
+                    inline value (a path), not a panel, so the ghost is one bar.
+                  * the `sm-data-folder-loading` class is KEPT, not replaced: it
+                    still carries the caption-size/faint treatment in
+                    shortmaker-p3.css and it is the selector the existing test
+                    and any future CSS pin on.
+                  * `aria-live="polite"` is not lost, it MOVES: a labelled
+                    Skeleton is `role="status"`, whose implicit live semantics
+                    are exactly `aria-live="polite"` + `aria-atomic="true"` per
+                    WAI-ARIA — so the wait stays announceable and gains a
+                    specific string ("Loading data folder") where it used to say
+                    only "Loading…". Whether an AT SPEAKS a freshly-inserted
+                    status region is NOT-CHECKED here for the same three reasons
+                    Skeleton.tsx already documents; this is a semantics claim,
+                    not an announcement promise.
+
+                  DISCLOSED, and it is the one thing this lane could NOT close:
+                  `.skeleton-group .skeleton--line` is `width: 100%`, and this
+                  group is a shrink-to-fit flex ITEM of `.sm-data-folder-row`
+                  (shortmaker-p3.css), so the percentage resolves against an
+                  indefinite width and the bar is INFERRED to compute to 0px —
+                  i.e. visually invisible — until the group is given a definite
+                  width. That fix is one rule in shortmaker-p3.css, which is
+                  OUTSIDE this lane's file scope and is therefore reported, not
+                  written: `.shortmaker .sm-data-folder-loading { width: 160px; }`
+                  (160px ≈ the caption-width of a typical path). UNVERIFIED at
+                  pixel level in either direction — jsdom has no layout engine so
+                  no test in this repo can settle it. SETTLING EXPERIMENT: run
+                  the built app, open Brand kit before the data folder resolves,
+                  and read `getBoundingClientRect().width` on
+                  `.sm-data-folder-loading` — 0 confirms the inference. */}
               {!dataFolderLoaded ? (
-                <span className="sm-data-folder-loading" aria-live="polite">
-                  Loading…
-                </span>
+                <Skeleton
+                  variant="line"
+                  className="sm-data-folder-loading"
+                  label="Loading data folder"
+                />
               ) : dataFolder ? (
                 <span className="sm-data-folder-path" title={dataFolder}>
                   {dataFolder}
