@@ -26,6 +26,7 @@
 // auto-resumed — auto-resuming one bounces the user straight back out of the video
 // they just opened, which is unescapable and survives restart.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { EmptyState } from '../components/EmptyState';
 import { Workspace } from './Workspace';
 import { TaskHub } from './TaskHub';
 import { hasApi, rpc, type Video } from '../lib/rpc';
@@ -172,38 +173,49 @@ export function Edit({
   onDirector,
 }: EditProps): React.ReactElement {
   if (!video) {
+    // Q8: the anatomy (ghost poster -> title -> hint -> a way forward) now has ONE
+    // definition, components/EmptyState.tsx. `block` keeps this screen's own
+    // `edit__empty-*` skin (components/shell.css) class-for-class, so sharing
+    // the structure costs zero pixels here — this screen IS the reference bar, and
+    // Edit.empty.test.tsx pins both the delegation and the unchanged classes.
+    //
+    // ONE attribute is deliberately NOT byte-identical to what shipped: the root
+    // now carries `role="region"` beside its `aria-label`. origin/main named a
+    // role-less div, where ARIA 1.2 declares "Name from: prohibited"; measured on
+    // this repo's own axe-core 4.12.1 that shape is a needs-review ("aria-label
+    // attribute is not well supported on a div with no valid role attribute") and
+    // this one PASSES — so the honest delta is unreliable -> dependable, not
+    // "was broken" (see resolveA11y in EmptyState.tsx). Attribute-only,
+    // zero CSS impact — the sole `[role=…]` selector in any renderer stylesheet is
+    // shell.css's :focus-visible list (button/tab/input, never region) — so the
+    // "zero visual regression" claim survives; it is the a11y tree that changed.
+    //
+    // HINT COPY — docs/plans/v1.5/editing-surface-audit-2026-08.md:52 — this used
+    // to read "trim, cut, join, reframe, caption, and more — every edit tool lives
+    // here". Three of those verbs are not reachable from this section, and the
+    // "every tool lives here" clause was the widest part of the claim: Make Shorts
+    // and the Director are top-level rail destinations, and WU-3a4 deliberately
+    // moved ShortMaker OUT of the Workspace. The audit at :44 measures the tab list
+    // as "no trim, no cut, no join tab"; :45-48 finds those engines reachable "only
+    // through" the AI Director and concludes "a user cannot drag a cut"; rows 1-3
+    // (:82-84) mark trim/cut/split "engine BUILT ... UI MISSING". So the copy names
+    // only verbs this section actually reaches, and says where the missing one
+    // lives instead of implying it is here. Pinned by Edit.test.tsx. If a manual
+    // cut surface lands later, widen this sentence in the SAME commit that ships it.
+    //
+    // ACTION — M2: Edit was the only one of eight empty states with no way forward.
+    // Same affordance and voice as the sibling views (Caption.tsx:102-104,
+    // Export.tsx:251-253), which already shipped it.
     return (
-      <div className="edit edit--empty" aria-label="Edit">
-        <div className="edit__empty-poster" aria-hidden="true">
-          <span className="edit__empty-glyph">▶</span>
-          <span className="edit__empty-timecode">--:--</span>
-        </div>
-        <p className="edit__empty-title">No video open</p>
-        {/* docs/plans/v1.5/editing-surface-audit-2026-08.md:52 — this used to read
-            "trim, cut, join, reframe, caption, and more — every edit tool lives
-            here". Three of those verbs are not reachable from this section, and
-            the "every tool lives here" clause was the widest part of the claim:
-            Make Shorts and the Director are top-level rail destinations, and
-            WU-3a4 deliberately moved ShortMaker OUT of the Workspace.
-            docs/plans/v1.5/editing-surface-audit-2026-08.md:44 measures the tab
-            list as "no trim, no cut, no join tab"; :45-48 finds those engines
-            reachable "only through" the AI Director and concludes "a user cannot
-            drag a cut"; rows 1-3 (:82-84) mark trim/cut/split "engine BUILT ...
-            UI MISSING". So the copy now names only verbs this section actually
-            reaches, and says where the missing one lives instead of implying it
-            is here. Pinned by Edit.test.tsx. If a manual cut surface lands
-            later, widen this sentence in the SAME commit that ships it. */}
-        <p className="edit__empty-hint">
-          Open a video from the Library to transcribe it, add subtitles, reframe it to vertical, dub
-          it, or hand it to the AI Director. Shortening a clip goes through the Director for now.
-        </p>
-        {/* M2 — Edit was the only one of eight empty states with no way forward.
-            Same affordance and voice as the sibling views (Caption.tsx:102-104,
-            Export.tsx:251-253), which already shipped it. */}
-        <button type="button" className="edit__empty-back" onClick={onBack}>
-          ← Library
-        </button>
-      </div>
+      <EmptyState
+        className="edit edit--empty"
+        label="Edit"
+        block="edit__empty"
+        poster
+        title="No video open"
+        hint="Open a video from the Library to transcribe it, add subtitles, reframe it to vertical, dub it, or hand it to the AI Director. Shortening a clip goes through the Director for now."
+        action={{ label: '← Library', onClick: onBack, className: 'edit__empty-back' }}
+      />
     );
   }
   return (

@@ -34,6 +34,7 @@ import { ProvidersKeys } from '../features/ProvidersKeys';
 import { PathsPanel, type PathsBridge } from '../components/PathsPanel';
 import { ManagedStoreMeter } from '../components/ManagedStoreMeter';
 import { SetupStatusPanel } from '../components/SetupStatusPanel';
+import { Skeleton } from '../components/Skeleton';
 import { CaptionPreferences } from '../components/CaptionPreferences';
 import { SavePresetsControls } from '../components/SavePresetsControls';
 import { ThirdPartyNotices } from '../features/ThirdPartyNotices';
@@ -153,8 +154,36 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     // WU-PROVIDERS: a readiness fix action of kind openProviders/setConsent on
     // this panel routes to the Providers & Keys section (where key + consent
     // management now lives), fixing the previous early-return dead-end.
+    // Q8: the fallback was the literal string "Loading…" — the exact thing
+    // Library.tsx's own comment writes down as forbidden ("never a bare
+    // LOADING…"), on the heaviest panel in the app. It is now the shared
+    // <Skeleton />, which buys two things and no more:
+    //   * the layout JUMP IS REDUCED, not removed — the ghost echoes the SHAPE
+    //     (heading bar over body lines) of what lands, not its HEIGHT, and
+    //     ModelsSystemPanel is far taller than four bars. UNVERIFIED at pixel
+    //     level; settle it by measuring the fallback's offsetHeight against the
+    //     loaded panel's with the chunk throttled.
+    //   * the wait is a BUSY STATUS REGION (role=status + aria-busy) whose
+    //     content is a real, clipped text node, where it used to be a plain div
+    //     carrying the visible string "Loading…". The region is deliberately
+    //     UNNAMED — the same commit dropped `aria-label`, because role=status
+    //     takes its name from the author only, so a name would sit BESIDE the
+    //     content instead of being read as it (pinned: Skeleton.test.tsx asserts
+    //     aria-label is null). So the delta is the role, the busy state and the
+    //     shape — NOT text where there was none; the old div had visible text.
+    //     Whether a screen reader SPEAKS it on insertion is NOT-CHECKED — see
+    //     the a11y note in Skeleton.tsx for why that is a weaker claim than it
+    //     looks, and the experiment that settles it.
     render: (ctx) => (
-      <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
+      <Suspense
+        fallback={
+          <Skeleton
+            variant="panel"
+            className="panel panel--loading"
+            label="Loading Models & System"
+          />
+        }
+      >
         <ModelsSystemPanel onOpenProviders={() => ctx.goTo('providers')} />
       </Suspense>
     ),
