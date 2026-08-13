@@ -139,6 +139,20 @@ function tab(label: string): HTMLButtonElement {
   return found;
 }
 
+/**
+ * A MODE tab inside the active destination. L5 took the rail to 4 + Settings, so
+ * Caption / Director / Publish are modes of Refine / Produce / Deliver, not rail
+ * destinations.
+ */
+function modeTab(label: string): HTMLButtonElement {
+  const btns = Array.from(
+    container.querySelectorAll<HTMLButtonElement>('.app__destination [role="tab"]'),
+  );
+  const found = btns.find((b) => b.textContent === label);
+  if (!found) throw new Error(`mode tab "${label}" not found`);
+  return found;
+}
+
 async function clickTab(label: string): Promise<void> {
   await act(async () => {
     tab(label).click();
@@ -153,24 +167,35 @@ async function openVideo(): Promise<void> {
   await flush();
 }
 
-describe('App Export rail destination', () => {
+// L5: Export is Deliver's FIRST mode ("Finish"), and the cross-video publish
+// half is its second ("Publish"). Neither is a rail destination any more.
+async function openPublish(): Promise<void> {
+  await clickTab('Deliver');
+  await act(async () => {
+    modeTab('Publish').click();
+  });
+  await flush();
+}
+
+describe('App Export phase (Deliver > Finish)', () => {
   it('mounts the Export phase with an empty video when opened directly', async () => {
     await mount();
     expect(container.querySelector('[data-testid="export"]')).toBeNull();
-    await clickTab('Export');
+    await clickTab('Deliver');
     const view = container.querySelector('[data-testid="export"]');
     expect(view).not.toBeNull();
     expect(view!.getAttribute('data-video-id')).toBe('');
-    expect(tab('Export').getAttribute('aria-selected')).toBe('true');
+    expect(tab('Deliver').getAttribute('aria-selected')).toBe('true');
+    expect(modeTab('Finish').getAttribute('aria-selected')).toBe('true');
     expect(container.querySelector<HTMLElement>('[role="tabpanel"]')!.id).toBe(
-      'toptabpanel-export',
+      'toptabpanel-deliver',
     );
   });
 
   it('threads the open video into the Export phase', async () => {
     await mount();
     await openVideo();
-    await clickTab('Export');
+    await clickTab('Deliver');
     expect(container.querySelector('[data-testid="export"]')!.getAttribute('data-video-id')).toBe(
       'v1',
     );
@@ -178,7 +203,7 @@ describe('App Export rail destination', () => {
 
   it('routes back to the Library from the Export phase', async () => {
     await mount();
-    await clickTab('Export');
+    await clickTab('Deliver');
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="export"] button')!.click();
     });
@@ -190,7 +215,7 @@ describe('App Export rail destination', () => {
   it('links a finished Export INTO the Deliver rail (with the video threaded)', async () => {
     await mount();
     await openVideo();
-    await clickTab('Export');
+    await clickTab('Deliver');
     // "Continue to Deliver" from the finished export.
     const deliverBtn = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[data-testid="export"] button'),
@@ -203,13 +228,14 @@ describe('App Export rail destination', () => {
     expect(deliver).not.toBeNull();
     expect(deliver!.getAttribute('data-video-id')).toBe('v1');
     expect(tab('Deliver').getAttribute('aria-selected')).toBe('true');
+    expect(modeTab('Publish').getAttribute('aria-selected')).toBe('true');
   });
 });
 
-describe('App Deliver rail destination', () => {
-  it('mounts the Deliver rail directly from its tab', async () => {
+describe('App Publish surface (Deliver > Publish)', () => {
+  it('mounts the publish surface from its mode tab', async () => {
     await mount();
-    await clickTab('Deliver');
+    await openPublish();
     const view = container.querySelector('[data-testid="deliver"]');
     expect(view).not.toBeNull();
     expect(view!.getAttribute('data-video-id')).toBe('');
@@ -219,9 +245,9 @@ describe('App Deliver rail destination', () => {
     );
   });
 
-  it('routes back to the Library from the Deliver rail', async () => {
+  it('routes back to the Library from the publish surface', async () => {
     await mount();
-    await clickTab('Deliver');
+    await openPublish();
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="deliver"] button')!.click();
     });

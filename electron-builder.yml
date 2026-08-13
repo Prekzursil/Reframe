@@ -219,12 +219,25 @@ nsis:
   # The ids/labels in that .nsh are pinned against app/main/installProfiles.ts by
   # app/main/installerSeed.test.ts, so the page and the app cannot drift apart.
   include: installer.nsh
-  # First-run state lives in %APPDATA%/media-studio (envs/models/tools);
-  # uninstall keeps it so a reinstall needs no re-download. KEEP false: it is also
-  # what makes an upgrade safe — the uninstaller electron-updater runs in-place only
-  # touches %APPDATA%/<app> when this is true (app-builder-lib
-  # templates/nsis/uninstaller.nsh:223-248), and it NEVER touches the data root.
+  # KEEP FALSE. This switch is not the data-root question and never was — when it is
+  # true, app-builder-lib's uninstaller wipes %APPDATA%/<app> on a non-update uninstall
+  # (templates/nsis/uninstaller.nsh:223-248) and NOTHING ELSE. The data root (library,
+  # projects, envs/models/tools) lives at %APPDATA%/media-studio or wherever
+  # data-dir.txt points, so flipping this would still strand every GB that matters
+  # while making an interrupted upgrade riskier.
+  #
+  # WU-L7 answers the real question in the right place instead: the same installer.nsh
+  # now exports `customUnWelcomePage` + `customUnInstall`, which put a keep-vs-remove
+  # page in front of the user with the reclaimable size measured live. Both offers
+  # DEFAULT TO KEEP, an explicit tick on a visible page is the only thing that deletes
+  # anything, and a silent / `--updated` run (i.e. every in-place auto-update) can never
+  # reach the delete branch.
   deleteAppDataOnUninstall: false
+  # DO NOT SET `removeDefaultUninstallWelcomePage`. It reads like "drop MUI's welcome
+  # page", but assistedInstaller.nsh:66 wraps the WHOLE `!ifmacrodef customUnWelcomePage`
+  # block in `!ifndef removeDefaultUninstallWelcomePage` — so setting it silently deletes
+  # the WU-L7 keep-vs-remove page and restores the stranded-data-root behaviour with no
+  # error anywhere. app/main/installerSeed.test.ts asserts it stays unset.
   shortcutName: Reframe
 
 # Nothing native to rebuild in the app package itself (natives live in
