@@ -364,9 +364,34 @@ check(
 check("P2.9b", True, seed_right, f"docs/plans/_archive/provider-hub/CATALOG-SEED.md present={seed_right}")
 
 appt = read("app/renderer/src/App.tsx") or ""
-RAILS = ["library", "makeshorts", "edit", "caption", "export", "deliver", "director", "settings"]
-rails_found = [r for r in RAILS if f"'{r}'" in appt or f'"{r}"' in appt]
-check("P2.10a", True, len(rails_found) == 8, f"App.tsx names {len(rails_found)}/8 rails: {rails_found}")
+# P2.10a — the top-level rail.
+#
+# DERIVED from App.tsx's own `tabs` array, which that file declares to BE the SSOT for the
+# rail ("The `tabs` array below is the SSOT for the rail", App.tsx:3). Compared against the
+# owner-locked L5 destination list, which is a product decision and therefore legitimately
+# pinned here — unlike a version string, it does not drift on its own.
+#
+# THIS CHECK WAS ITSELF THE DRIFT (2026-08-13). It hardcoded the pre-L5 eight
+# ["library","makeshorts","edit","caption","export","deliver","director","settings"] and
+# substring-matched them anywhere in App.tsx. When #431 cut the rail to four + Settings the
+# check went red — and reported a MEANINGLESS "5/8", because "caption" and "director" still
+# matched as MODE ids elsewhere in the file while the three genuinely-removed destinations
+# did not. So the number it printed was neither the old rail nor the new one. That is the
+# same failure the version checks above already recorded ("the checker itself was the
+# drift"): a probe that hardcodes a value the product is allowed to change.
+#
+# Parsing the array instead of substring-matching the file also closes the use-vs-mention
+# hole: a mode id, a comment, or a route literal can no longer satisfy a rail assertion.
+_tabs = re.search(r"const tabs: TopTab\[\] = useMemo\(\s*\(\)\s*=>\s*\[(.*?)\n\s*\],", appt, re.S)
+rails_found = re.findall(r"\{\s*id:\s*['\"]([a-zA-Z]+)['\"]", _tabs.group(1)) if _tabs else []
+RAIL_LOCKED = ["library", "produce", "refine", "deliver", "settings"]
+check(
+    "P2.10a",
+    True,
+    rails_found == RAIL_LOCKED,
+    f"App.tsx `tabs` declares the rail as {rails_found} (L5-locked: {RAIL_LOCKED})"
+    + ("" if _tabs else " -- PARSE FAILED: the `tabs` array shape changed, so this measured nothing"),
+)
 setts = read("app/renderer/src/views/Settings.tsx") or ""
 SUBTABS = ["models", "setup", "providers", "storage", "preferences", "health", "licenses", "presets"]
 subs_found = [s for s in SUBTABS if f"'{s}'" in setts or f'"{s}"' in setts]

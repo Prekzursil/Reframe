@@ -77,23 +77,33 @@ bundles — **prompt-driven editing (Director)**, **repurpose**, **intelligence*
 **editing-refine**, and **UX quality-of-life** — all plug into this one substrate, so there
 is exactly one place to manage keys, cost, and privacy.
 
-### The tabs
+### The rail
 
-The app organises everything into **eight** top-level sections (an ARIA tablist; the
-active section is derived from the route, so the strip can never desync). The list below
-is derived from `app/renderer/src/App.tsx` — it previously said "five" and named only
-five, omitting Caption, Export and Deliver:
+The app organises everything into **four destinations plus Settings** (an ARIA tablist; the
+active destination is derived from the route, so the rail can never desync). The list below is
+derived from the `tabs` array in `app/renderer/src/App.tsx`, which that file declares to be the
+SSOT for the rail.
 
-| Tab | What it's for |
-|-----|---------------|
-| **Library** | Your video library home. Add videos; open one to drill into the **Edit** section for that video. |
-| **Make Shorts** | The novice front door / short-maker: AI moment-pick **and** manual-interval shorts → boundary-snap → cut → vertical 9:16 reframe → caption editor → export, plus the single produced-Shorts gallery and batch / template repurposing (it carries the interrupted-batch resume badge). |
-| **Edit** | The per-video manual surface — trim / cut / join, reframe, the caption position & style editor, audio mix / duck / loudnorm, stabilize, transcribe, export — hosted in the per-video Workspace. |
-| **Caption** | The caption stage on its own rail: the draggable / resizable caption box over a real frame, cue editing, and the burn-in vs soft-mux choice. |
-| **Export** | The guarded export stage — pick a platform preset, review what will be written, then commit; determinate progress with a cancel. |
-| **Deliver** | Post-export delivery: where finished files go, and the produced-clip hand-off. |
-| **Director** | Prompt-driven AI video editing: describe an edit, review the storyboard / diff and its cost, then apply real ffmpeg op-engines (reframe, zoom/pan, retime, overlay, lower-third, remove fillers, translate captions, export). |
-| **Settings** | Sub-navigated into **eight** panels (from `views/Settings.tsx`): **Models & System** (pick / download models, hardware tiers, paths), **Setup**, **Providers & Keys** (add / redact API keys, per-key usage bars, consent toggles, **monthly spend cap**), **Storage**, **Caption defaults**, **System Health** diagnostics, **Licenses**, and **Export presets**. |
+**This section previously described EIGHT tabs** — Library / Make Shorts / Edit / Caption / Export /
+Deliver / Director / Settings — and was invalidated by the L5 navigation rebuild (`69665321`).
+**Nothing was removed from the product:** four of those eight had two answers in two places
+("where do I make a short?", "where do I finish?"), so each old destination became a **mode** of the
+destination that owns its job, reached by a small sub-navigation inside it. The mapping is given
+below so a reader arriving from the old docs can find what they knew.
+
+| Destination | What it's for | Modes (former top-level tabs) |
+|-----|---------------|---------------|
+| **Library** | Your video library home. Add videos; opening one routes into **Refine**. | — |
+| **Produce** | Both AI paths in one place, because they are the same job — AI proposes, you review. | **Make Shorts** (candidate-driven: AI moment-pick **and** manual-interval shorts → boundary-snap → cut → vertical 9:16 reframe → caption editor → export, plus the produced-Shorts gallery and batch / template repurposing, carrying the interrupted-batch resume badge) · **Director** (prompt-driven: describe an edit, review the storyboard / diff and its cost, then apply real ffmpeg op-engines) |
+| **Refine** | The editor for one video. | **Editor** (trim / cut / join, reframe, audio mix / duck / loudnorm, stabilize, transcribe — a preview with a docked timeline and a selection-driven inspector) · **Caption design** (the draggable / resizable caption box over a real frame, cue editing, burn-in vs soft-mux) |
+| **Deliver** | Getting files out. | **Finish** (the guarded per-video commit — pick a platform preset, review what will be written, then commit, with determinate progress and a cancel) · **Publish** (cross-video / batch, platform presets, and the pro EDL/CSV hand-off) |
+| **Settings** | A sub-tabbed area. `SETTINGS_SECTIONS` in `views/Settings.tsx` is the SSOT for which sub-sections exist — deliberately not re-listed here, because the duplicated list is exactly what rotted last time. | — |
+
+> **Reading `Refine` accurately:** "Editor" does not open on the Workspace directly. `views/Edit.tsx`
+> opens on its Task Hub and mounts the Workspace — preview, docked timeline, selection-driven
+> inspector — only after a card is picked, or immediately when a remembered hub choice resumes there.
+> So the L5 "timeline with zero navigation actions" invariant holds **from the Workspace mount**, not
+> from a first open of this destination. That gap is real and tracked as a follow-up.
 
 **Providers & Keys + spend cap.** Keys live **only on your machine** — never transmitted
 anywhere but the owning provider, never logged. A persisted, month-keyed **cumulative spend
