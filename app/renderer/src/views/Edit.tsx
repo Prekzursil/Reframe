@@ -1,14 +1,33 @@
-// Edit.tsx — the V1 "Edit" SECTION (per-video editing, IA §h) + the TASK HUB
-// landing (WU-3a1).
+// Edit.tsx — the "Editor" mode of the REFINE destination (per-video editing) +
+// the per-video TASK HUB (WU-3a1).
 //
-// Opening a video from the Library routes here. Instead of dropping the user
-// straight into the 13-tab Workspace on Transcribe (a prerequisite, not a
-// destination), Edit now LANDS on a per-video Task Hub: four large job cards
-// (Reframe to vertical / Make shorts / Add subtitles / Director), each routing
-// into the RIGHT EXISTING flow, plus a persistent "Advanced / all tools" escape
-// that opens the full Workspace UNCHANGED. Nothing is deleted — every edit /
-// transcript / audio capability stays reachable (via a card or the escape), and
-// when no video is open the same empty state shows.
+// LANDING — L5 G-7 INVARIANT 2, "the timeline is VISIBLE in Refine with ZERO
+// navigation actions" (L5-NAVIGATION-DECISIONS.md G-7:214). Opening a video from
+// the Library routes here, and here now mounts the Workspace — preview on top,
+// timeline DOCKED at the bottom, selection-driven inspector — IMMEDIATELY.
+//
+// It did not before. `useState<'hub'|'workspace'>('hub')` opened on the Task Hub
+// and reached the Workspace only after a card was picked (or when a remembered
+// workspace-scoped choice resumed there), so the invariant held from the
+// Workspace MOUNT and not from a first open of the destination: one click stood
+// between "I opened my video" and "there is a timeline". That was the only one of
+// the five locked invariants still failing, and it had no owner — the L5 lane
+// deferred it as "Edit.tsx is outside its file scope and byte-unchanged on this
+// branch", a premise PR #427 falsified when it adopted the shared EmptyState here
+// (App.tsx carries that retraction). This lane owns and closes it.
+//
+// THE TASK HUB IS NOT DELETED. It is a designed surface (views/TaskHub.tsx) and
+// every card, the "Advanced / all tools" escape, the per-video choice
+// persistence and `lib/taskHub.ts resumeFor` keep working exactly as before —
+// what changed is only which mode Edit SEEDS. A caller that wants the job
+// chooser asks for it with `initialMode='hub'`; the default, and therefore the
+// Library → Refine path, lands on the editor.
+// DISCLOSED INLINE, not buried: no production caller passes `initialMode` today,
+// so on this branch the hub renders in tests only. Wiring a caller (e.g. a
+// first-import "what do you want to do with it?" moment) is App.tsx's, and
+// App.tsx is outside this lane's file scope — reported as a scope-escape rather
+// than edited here. Nothing about the hub was removed, so that wiring is one prop
+// away and no capability was dropped.
 //
 // ADDITIVE: the four cards route into existing surfaces, never reimplementations —
 //   - Reframe to vertical → the single Make Shorts owner, PRE-SELECTED to this video
@@ -38,9 +57,21 @@ import {
   resumeFor,
 } from '../lib/taskHub';
 
+/** What Edit shows for an open video: the job chooser, or the editor itself. */
+export type EditMode = 'hub' | 'workspace';
+
 export interface EditProps {
   /** The video to edit, or null when none has been opened yet. */
   video: Video | null;
+  /**
+   * Which mode to SEED for an open video. Defaults to `'workspace'` so the
+   * destination opens on the docked timeline with zero navigation actions
+   * (L5 G-7 invariant 2). Pass `'hub'` to open the per-video Task Hub instead.
+   * A remembered workspace-scoped choice still overrides the seed (it resumes at
+   * its tab); a remembered NAVIGATE-AWAY choice is still only marked last-used
+   * and never auto-navigated to.
+   */
+  initialMode?: EditMode;
   /** Return to the Library home. */
   onBack: () => void;
   /** Route to the top-level Make Shorts section (the "Make shorts" job card). */
@@ -66,8 +97,12 @@ function EditVideo({
   onMakeShorts,
   onMakeShortsForVideo,
   onDirector,
+  initialMode,
 }: EditProps & { video: Video }): React.ReactElement {
-  const [mode, setMode] = useState<'hub' | 'workspace'>('hub');
+  // A video IS open in this component (the null case never reaches here), so the
+  // seed is the editor unless a caller explicitly asked for the job chooser.
+  const seed: EditMode = initialMode ?? 'workspace';
+  const [mode, setMode] = useState<EditMode>(seed);
   // The Workspace tab to land on (null = its own default first tab).
   const [tab, setTab] = useState<string | null>(null);
   const [lastChoice, setLastChoice] = useState<string | null>(null);
@@ -76,11 +111,14 @@ function EditVideo({
   const settingsRef = useRef<Record<string, unknown> | null>(null);
   const videoId = video.id;
 
-  // On (re)open of a video: reset to the hub, then best-effort read the remembered
-  // choice — a workspace-scoped one resumes IN PLACE so a returning power user is
-  // not slowed by the hub; a section choice only marks "last used".
+  // On (re)open of a video: reset to the seeded mode, then best-effort read the
+  // remembered choice — a workspace-scoped one resumes IN PLACE at its own tab; a
+  // section choice only marks "last used" and never navigates (auto-resuming one
+  // bounces the user out of the video they just opened, restart-durably, with no
+  // UI to clear it). Neither branch can now put an interstitial in front of the
+  // timeline: the seed is already the editor.
   useEffect(() => {
-    setMode('hub');
+    setMode(seed);
     setTab(null);
     setLastChoice(null);
     settingsRef.current = null;
@@ -104,7 +142,7 @@ function EditVideo({
     return () => {
       cancelled = true;
     };
-  }, [videoId]);
+  }, [videoId, seed]);
 
   // Persist the picked choice for this video (best-effort, in-memory reflected
   // immediately). Read-modify-write against the cached settings so sibling videos'
@@ -171,6 +209,7 @@ export function Edit({
   onMakeShorts,
   onMakeShortsForVideo,
   onDirector,
+  initialMode,
 }: EditProps): React.ReactElement {
   if (!video) {
     // Q8: the anatomy (ghost poster -> title -> hint -> a way forward) now has ONE
@@ -225,6 +264,7 @@ export function Edit({
       onMakeShorts={onMakeShorts}
       onMakeShortsForVideo={onMakeShortsForVideo}
       onDirector={onDirector}
+      initialMode={initialMode}
     />
   );
 }
