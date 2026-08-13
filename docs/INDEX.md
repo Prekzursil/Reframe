@@ -98,7 +98,7 @@ re-copy this number.)
 
 | file | charter |
 |---|---|
-| [`README.md`](../README.md) | the only user-facing description of WHAT SHIPS: the 8 rails, the 8 Settings sections, install + run. |
+| [`README.md`](../README.md) | the only user-facing description of WHAT SHIPS: the rail destinations, the 8 Settings sections, install + run. |
 | [`CHANGELOG.md`](../CHANGELOG.md) | the only release history; every version in `app/package.json` has a heading. |
 | [`QUALITY-CHARTER.md`](../QUALITY-CHARTER.md) | the only place gate COMPOSITION and tool VERSION PINS are declared. |
 | [`SECURITY.md`](../SECURITY.md) | the only vuln-reporting policy. |

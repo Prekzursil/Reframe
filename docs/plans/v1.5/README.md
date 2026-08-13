@@ -102,7 +102,13 @@ They are at `docs/_archive/2026-07/` because they are superseded, and one is
 **actively wrong** in a way worth remembering:
 
 - `docs/_archive/2026-07/reframe-visual-audit.md` — its P0 ("16+ horizontal top-level tabs") is refuted by
-  `App.tsx`, which renders 8 vertical rails.
+  `App.tsx`, which renders a vertical rail. **Re-measured 2026-08-13: the rail is FIVE destinations**
+  (Library / Produce / Refine / Deliver / Settings), derived from the `tabs` array `App.tsx` declares to be
+  its SSOT. This line previously said "8 vertical rails", which was true when written and was invalidated by
+  the L5 navigation rebuild (`69665321`, PR #431) that cut the rail from eight destinations to four +
+  Settings. The refutation of the archived P0 still stands — vertical, not 16 horizontal tabs — only the
+  count moved. Do not re-pin a raw count here: `P2.10a` in `docs/validation/tools/verify_ssot_claims.py`
+  now DERIVES the rail from that array and is the machine-checked authority.
 - `docs/_archive/2026-07/reframe-reconcile-audit.md` — asserts *"there is NO 'YuNet' anywhere in the repo
   (zero matches)"*. YuNet is referenced throughout the tree — hundreds of occurrences across
   dozens of files, and the detector it
