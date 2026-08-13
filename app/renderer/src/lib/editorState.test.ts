@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type CropFraming,
   type EditorAction,
   type EditorState,
   clampSelection,
+  cropFraming,
+  cropViewport,
   editorReducer,
   initialEditorState,
   transcriptReady,
@@ -159,5 +162,100 @@ describe('editorReducer', () => {
     const prev = base();
     const next = editorReducer(prev, { type: 'bogus' } as unknown as EditorAction);
     expect(next).toBe(prev);
+  });
+});
+
+// The crop rect the REFRAME phase computes, expressed in the SAME shape the
+// per-shot override layer and the sidecar already use (`Crop = [x, y, w, h]` in
+// source pixels, reframeOverride.ts). These tests pin the two doors into state
+// (seed + `setCropPlan`) and the one read a preview needs (`cropViewport`), so a
+// removed normalisation or a removed selector goes red here.
+const FRAMING: CropFraming = { crop: [100, 0, 600, 1080], sourceWidth: 1920, sourceHeight: 1080 };
+
+describe('cropFraming', () => {
+  it('rejects a source frame that is not a positive finite size', () => {
+    expect(cropFraming([0, 0, 10, 10], 0, 100)).toBeNull();
+    expect(cropFraming([0, 0, 10, 10], 100, 0)).toBeNull();
+    expect(cropFraming([0, 0, 10, 10], Number.NaN, 100)).toBeNull();
+    expect(cropFraming([0, 0, 10, 10], 100, Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it('rejects a rect that is degenerate or not finite', () => {
+    expect(cropFraming([Number.NaN, 0, 10, 10], 100, 100)).toBeNull();
+    expect(cropFraming([0, Number.NaN, 10, 10], 100, 100)).toBeNull();
+    expect(cropFraming([0, 0, 0, 10], 100, 100)).toBeNull();
+    expect(cropFraming([0, 0, 10, 0], 100, 100)).toBeNull();
+  });
+
+  it('keeps an in-frame rect and records the frame it is measured against', () => {
+    expect(cropFraming([100, 0, 600, 1080], 1920, 1080)).toEqual(FRAMING);
+  });
+
+  it('pulls an off-frame rect fully inside the source frame', () => {
+    expect(cropFraming([-50, -50, 4000, 4000], 1920, 1080)?.crop).toEqual([0, 0, 1920, 1080]);
+  });
+});
+
+describe('crop framing carried by the editor state', () => {
+  it('seeds a usable framing through initialEditorState', () => {
+    const state = initialEditorState({
+      video: { videoId: 'v1', window: WINDOW },
+      cropPlan: { engine: 'reframe_multispeaker', framing: FRAMING },
+    });
+    expect(state.cropPlan?.framing).toEqual(FRAMING);
+    expect(cropViewport(state)).toEqual({ x: 100 / 1920, y: 0, width: 600 / 1920, height: 1 });
+  });
+
+  it('seeds a plan whose framing is unusable WITHOUT the framing', () => {
+    const state = initialEditorState({
+      video: { videoId: 'v1', window: WINDOW },
+      cropPlan: { engine: 'verthor', framing: { ...FRAMING, sourceWidth: 0 } },
+    });
+    expect(state.cropPlan?.engine).toBe('verthor');
+    expect(state.cropPlan?.framing).toBeUndefined();
+    expect(cropViewport(state)).toBeNull();
+  });
+
+  it('setCropPlan stores a framing a preview can read back as fractions', () => {
+    const next = editorReducer(base(), {
+      type: 'setCropPlan',
+      cropPlan: { engine: 'reframe_multispeaker', framing: FRAMING },
+    });
+    expect(cropViewport(next)).toEqual({ x: 100 / 1920, y: 0, width: 600 / 1920, height: 1 });
+  });
+
+  it('setCropPlan clamps an off-frame rect instead of storing it raw', () => {
+    const next = editorReducer(base(), {
+      type: 'setCropPlan',
+      cropPlan: {
+        framing: { crop: [-400, -400, 600, 1080], sourceWidth: 1920, sourceHeight: 1080 },
+      },
+    });
+    expect(next.cropPlan?.framing?.crop).toEqual([0, 0, 600, 1080]);
+  });
+
+  it('setCropPlan drops an unusable framing rather than storing a NaN preview', () => {
+    const next = editorReducer(base(), {
+      type: 'setCropPlan',
+      cropPlan: { engine: 'verthor', framing: { ...FRAMING, crop: [0, 0, 0, 1080] } },
+    });
+    expect(next.cropPlan?.engine).toBe('verthor');
+    expect(next.cropPlan?.framing).toBeUndefined();
+    expect(cropViewport(next)).toBeNull();
+  });
+
+  it('setCropPlan keeps the very same plan object when nothing needs normalising', () => {
+    const plan = { engine: 'verthor', framing: FRAMING };
+    expect(editorReducer(base(), { type: 'setCropPlan', cropPlan: plan }).cropPlan).toBe(plan);
+  });
+
+  it('setCropPlan clears the plan back to null', () => {
+    const seeded = base({ cropPlan: { engine: 'verthor', framing: FRAMING } });
+    expect(editorReducer(seeded, { type: 'setCropPlan', cropPlan: null }).cropPlan).toBeNull();
+  });
+
+  it('cropViewport is null with no plan at all and with a plan that has no rect', () => {
+    expect(cropViewport(base())).toBeNull();
+    expect(cropViewport(base({ cropPlan: { engine: 'verthor' } }))).toBeNull();
   });
 });
