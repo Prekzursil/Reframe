@@ -293,7 +293,15 @@ export function waitForJobDone<T>(
     if (typeof api.onSidecarStatus === 'function') {
       offStatus = api.onSidecarStatus((status) => {
         if (status !== 'running') {
-          settleReject(new Error('The sidecar stopped mid-job; please retry.'));
+          // USER-FACING COPY: "the engine" is the noun the rest of the UI already
+          // RENDERS (AudioMix.tsx:377, BrollPanel.tsx:204,:407,:984). "sidecar"
+          // is the internal process name and must not reach a role="alert"
+          // region. RESIDUAL, deliberately NOT fixed here: app/main/sidecar.ts
+          // still authors six 'sidecar …' Error strings (:350 :386 :421 :434
+          // :554 :632) that reach the renderer unnormalized, so during a crash
+          // this banner and a panel alert can disagree. app/main/** is outside
+          // this change's scope — Q6 stays open until a follow-up owns it.
+          settleReject(new Error('The engine stopped mid-job; please retry.'));
         }
       });
     }
@@ -301,7 +309,8 @@ export function waitForJobDone<T>(
       timer = setTimeout(() => {
         settleReject(
           new Error(
-            'Timed out waiting for the job to finish — the sidecar may have ' +
+            // USER-FACING COPY: see the note on the status-death message above.
+            'Timed out waiting for the job to finish — the engine may have ' +
               'stopped responding. Please try again.',
           ),
         );

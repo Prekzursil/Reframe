@@ -171,14 +171,28 @@ describe('NleExport', () => {
     expect(container.querySelector('.export-path')?.textContent).toContain('Saved 1 clip to');
   });
 
-  it('reports "sidecar bridge is not available" when there is no api', async () => {
+  // Q6 caveat, stated inline: this is a `!hasApi()` branch a working PACKAGED
+  // install never reaches (the preload always installs `window.api`), so it is
+  // the lowest-value of the five copy sites — fixed for consistency, not because
+  // a shipped user was seeing it. UNVERIFIED that any user has ever hit it;
+  // settling experiment: instrument this branch in a packaged build and see
+  // whether it ever fires.
+  it('names "the engine", not "sidecar", when there is no api', async () => {
     apiAvailable = false;
     render();
     click('Export timeline');
     await flush();
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'sidecar bridge is not available',
-    );
+    // EXACT, not substring — the same standard the banner pin uses. A
+    // `toContain` here was not a pin: appending " Restart the app." to the
+    // source string left all 21 tests in this file green (measured 2026-08-12),
+    // so appended or prepended copy could drift in unchallenged and
+    // `not.toMatch(/sidecar/i)` only bans the token, never the sentence. No
+    // isolation helper is needed: the failure branch is the ONLY role="alert"
+    // node here (the success/path region next to it is role="status", see
+    // NleExport.tsx:234-248), so the alert's textContent IS the message.
+    const alert = container.querySelector('[role="alert"]')?.textContent ?? '';
+    expect(alert).toBe('The engine is not available.');
+    expect(alert).not.toMatch(/sidecar/i);
     expect(exportMock).not.toHaveBeenCalled();
   });
 

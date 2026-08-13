@@ -158,8 +158,34 @@ export function SidecarBanner(): React.ReactElement | null {
 
   return (
     <div className="sidecar-banner" role="alert" aria-live="assertive">
+      {/* USER-FACING COPY: "the engine" is the noun the rest of the UI already
+          RENDERS (AudioMix.tsx:377, BrollPanel.tsx:204,:407,:984 — earlier
+          revisions of this note cited BrollPanel.tsx:202,980, which are a JSDoc
+          and a JSX comment, not copy). This banner is role="alert"
+          aria-live="assertive" and mounted app-wide, so it is the loudest string
+          in the product — the internal process name must not appear here. The
+          `sidecar-banner*` CLASS NAMES are deliberately unchanged: they are
+          code, not copy, and SidecarBanner.css depends on them — the only
+          stylesheet in this directory that keys off the class. An earlier
+          revision of this note cited shell.css instead; shell.css never names
+          the class and only supplies the GLOBAL reduced-motion rule referenced
+          at SidecarBanner.css:35-38. Do NOT restate a count for shell.css
+          either: it belongs to another lane, and origin/main has already added
+          a `sidecar/...` PATH inside a CSS comment there (shell.css:499
+          @78c415c9), so any count of it is stale before this branch even
+          merges. SidecarBanner.test.tsx pins the STYLESHEET-NAME half, so that
+          half cannot drift back a third time; the evidence prose around it is
+          NOT pinned and can still go stale on a sibling merge.
+          KNOWN AMBIGUITY (disclosed, not resolved — the term is brief-locked):
+          "engine" is overloaded in this product's copy. features/
+          AiDisclosure.tsx:151 ("Chatterbox — the engine selected above"),
+          features/ExportPresetsPanel.tsx:324 (<th>Engine</th>), features/
+          SystemHealth.tsx:184 (<h3>Engines</h3>) and the "ASR engine" <select>
+          at panels/ModelsSystemPanel.tsx:1121-1126 all denote a USER-SELECTED
+          model backend, so this string can be read as "the dub/ASR engine I
+          picked stopped". Renaming is out of scope here; see the PR body. */}
       <span className="sidecar-banner__message">
-        {restarting ? 'Restarting sidecar…' : 'Sidecar stopped'}
+        {restarting ? 'Restarting the engine…' : 'The engine stopped'}
       </span>
       {restarting ? null : (
         <button type="button" className="sidecar-banner__action" onClick={onRestart}>
