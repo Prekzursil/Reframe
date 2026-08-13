@@ -86,6 +86,15 @@ export interface VideoTimelineProps {
   sourceDurationSec?: number;
   /** Called with the rendered file path once `tracks.video.render` finishes. */
   onRendered?: (path: string) => void;
+  /**
+   * Q7: report the CURRENT clip selection to the host (`null` = nothing selected).
+   *
+   * The panel already owned a `selected` clip id and used it for Split/Remove, but
+   * that state never left the component — so a host could not make its inspector
+   * follow the selection, which is exactly what the selection-driven workspace IA
+   * requires. Pass a STABLE callback (useCallback): it is an effect dependency.
+   */
+  onSelectClip?: (clipId: string | null) => void;
 }
 
 /** What a mouse gesture in progress is doing. */
@@ -114,6 +123,7 @@ export function VideoTimeline({
   sourcePath = '',
   sourceDurationSec = 0,
   onRendered,
+  onSelectClip,
 }: VideoTimelineProps): React.ReactElement {
   const [stored, setStored] = useState<VideoLane[] | null>(null);
   const [fps, setFps] = useState<Fps>(30);
@@ -122,12 +132,34 @@ export function VideoTimeline({
   const [busy, setBusy] = useState<Busy>('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
+  /**
+   * The selected clip, held as an OBJECT so that every set is a distinct selection
+   * EVENT. A host may PIN a panel of another scope over the clip inspector (the
+   * workspace's Export button does exactly that) while this clip stays selected;
+   * re-picking it is then the user asking for its tools back, and the host can only
+   * honour that if the gesture reaches it. A bare `string | null` cannot express it
+   * — React bails out on an identical value, so the publish effect never re-fired
+   * and the click looked like a no-op.
+   */
+  const [pick, setPick] = useState<{ id: string | null }>({ id: null });
+  const selected = pick.id;
+  // Memoised because `removeClip` captures it inside a `useCallback` that does not
+  // list it: a stable identity keeps that closure honest rather than merely harmless.
+  const setSelected = useCallback((id: string | null): void => setPick({ id }), []);
   const [playhead, setPlayhead] = useState(0);
   const [pct, setPct] = useState(0);
 
   const dragRef = useRef<Drag | null>(null);
   const trackRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // Q7: publish the selection. ONE effect rather than a call at each `setSelected`
+  // site (there are three: clip click, drag start, and the post-commit clear) —
+  // a per-site call is the shape that goes stale the moment a fourth is added.
+  // The dependency is the `pick` OBJECT, not the id: that is what makes a re-pick
+  // of the already-selected clip publish again (see the state's own note).
+  useEffect(() => {
+    onSelectClip?.(pick.id);
+  }, [onSelectClip, pick]);
 
   // -- load ------------------------------------------------------------------
   /**
@@ -554,8 +586,11 @@ export function VideoTimeline({
         </button>
       </div>
 
+      {/* Q7: a bare <progress> has an implicit `progressbar` role with NO
+          accessible name, so a screen reader announces a percentage attached to
+          nothing. The label names WHAT is progressing. */}
       {busy === 'render' && (
-        <progress data-role="render-progress" max={100} value={pct}>
+        <progress aria-label="Render progress" data-role="render-progress" max={100} value={pct}>
           {pct}%
         </progress>
       )}
@@ -564,8 +599,12 @@ export function VideoTimeline({
           {error}
         </p>
       )}
+      {/* Q7: the status line reports asynchronous job progress and the final
+          "Rendered <path>". Without role=status it is a silent <p> — the update
+          never reaches assistive tech, so the one confirmation that a render
+          produced a file is invisible to a screen-reader user. */}
       {status !== '' && (
-        <p className="vtl__status" data-role="status">
+        <p className="vtl__status" data-role="status" role="status">
           {status}
         </p>
       )}
