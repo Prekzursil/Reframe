@@ -64,11 +64,26 @@ body,
  *
  * 2. WINDOWS HIGH CONTRAST. `--focus-ring` is pure box-shadow (tokens.css) and Chromium
  *    force-sets `box-shadow: none` under `forced-colors: active`. With `outline: none` also
- *    declared, borderless controls — the Workspace `.tab` (shell.css `border: none`) and
- *    `.tabbar__advanced-toggle` (workspace.css `border: none`) — had NO focus affordance at
- *    all, one OS toggle away. forced-colors PRESERVES outline width/style and substitutes a
- *    system color, so a real outline survives. Same pattern already proven to survive in
+ *    declared, borderless controls — the Workspace `.tab` (shell.css `border: none`, still
+ *    live below) and the header segmented controls `.quality-toggle__btn` /
+ *    `.routing-toggle__btn` (shell.css `border: none`) — had NO focus affordance at all, one
+ *    OS toggle away. forced-colors PRESERVES outline width/style and substitutes a system
+ *    color, so a real outline survives. Same pattern already proven to survive in
  *    directorPanel.css and captionBox.css.
+ *
+ *    CORRECTED (was: `.tabbar__advanced-toggle`, workspace.css). That was true when #424
+ *    wrote it and is FALSE now: #431 deleted the grouped-TabBar skin from workspace.css, and
+ *    the branch that emitted the class has since been removed from components/TabBar.tsx, so
+ *    half of #424's recorded evidence named a control that no longer exists. The REPAIR this
+ *    comment justifies is unaffected — it never depended on that example, and the two
+ *    replacements above are live, borderless and in this same file. Kept as a correction
+ *    rather than a deletion so the next reader inherits the fact, not a quiet gap.
+ *
+ *    A stale citation is not merely untidy here: TabBar.test.tsx's skin contract greps the
+ *    stylesheets for a rule per emitted class, and on its first run this very sentence made
+ *    the DELETED `.tabbar__advanced-toggle` report as STYLED — 6 of 7 unstyled classes found,
+ *    the 7th masked by prose about it. The test now strips comments before matching (use, not
+ *    mention); keep citations accurate so the next detector is not blunted the same way.
  *
  * The box-shadow ring is kept as the styled enhancement wherever it still wins the cascade.
  */

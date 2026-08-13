@@ -3,7 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { TabBar, tabId, tabPanelId, type TabDef, type TabGroup } from './TabBar';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { TabBar, tabId, tabPanelId, type TabDef } from './TabBar';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -62,121 +65,12 @@ describe('TabBar', () => {
   });
 });
 
-// WU-3a2: the optional `groups` prop renders tabs in NAMED clusters with an
-// "Advanced" disclosure. Purely ADDITIVE — the flat path above is unchanged.
-const GROUP_TABS: TabDef[] = [
-  { id: 't1', label: 'One' },
-  { id: 't2', label: 'Two' },
-  { id: 't3', label: 'Three' },
-];
-const GROUPS: TabGroup[] = [
-  { id: 'g1', label: 'Primary', tabIds: ['t1', 't2'] },
-  { id: 'g2', label: 'More', tabIds: ['t3'], advanced: true },
-];
-
-describe('TabBar (grouped clusters, WU-3a2)', () => {
-  it('renders named clusters with section labels and stable data-tab-id', () => {
-    const html = renderToStaticMarkup(
-      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} />,
-    );
-    expect(html).toContain('tabbar--grouped');
-    expect(html).toContain('tabbar__group-label');
-    expect(html).toContain('Primary');
-    expect(html).toContain('More');
-    expect(html).toContain('data-tab-id="t1"');
-    expect(html).toContain('data-tab-id="t3"');
-    // All 3 tabs stay real role="tab" buttons even with one cluster collapsed.
-    expect((html.match(/role="tab"/g) ?? []).length).toBe(3);
-  });
-
-  it('collapses the advanced cluster by default (aria-expanded=false, panel hidden)', () => {
-    const html = renderToStaticMarkup(
-      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} />,
-    );
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toMatch(/class="tabbar__advanced-panel"[^>]*hidden/);
-  });
-
-  it('expands the advanced cluster when advancedOpen is true (panel not hidden)', () => {
-    const html = renderToStaticMarkup(
-      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} advancedOpen />,
-    );
-    expect(html).toContain('aria-expanded="true"');
-    expect(html).not.toMatch(/class="tabbar__advanced-panel"[^>]*hidden/);
-  });
-
-  it('omits the Advanced toggle when no cluster is flagged advanced', () => {
-    const primaryOnly: TabGroup[] = [{ id: 'g1', label: 'Primary', tabIds: ['t1', 't2', 't3'] }];
-    const html = renderToStaticMarkup(
-      <TabBar tabs={GROUP_TABS} active="t2" onSelect={() => {}} groups={primaryOnly} />,
-    );
-    expect(html).not.toContain('tabbar__advanced-toggle');
-    expect(html).toContain('tabbar--grouped');
-    expect((html.match(/role="tab"/g) ?? []).length).toBe(3);
-  });
-
-  it('renders a persistent Export action only when onExport is provided', () => {
-    // design-review P1: EXPORT is the terminal goal, so it gets a standing button
-    // in the grouped strip — absent by default (no onExport).
-    const without = renderToStaticMarkup(
-      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} />,
-    );
-    expect(without).not.toContain('tabbar__export');
-
-    const withExport = renderToStaticMarkup(
-      <TabBar
-        tabs={GROUP_TABS}
-        active="t1"
-        onSelect={() => {}}
-        groups={GROUPS}
-        onExport={() => {}}
-      />,
-    );
-    expect(withExport).toContain('tabbar__export');
-    expect(withExport).toContain('Export');
-  });
-
-  it('invokes onExport when the Export action is clicked', () => {
-    const onExport = vi.fn();
-    const el = TabBar({
-      tabs: GROUP_TABS,
-      active: 't1',
-      onSelect: () => {},
-      groups: GROUPS,
-      onExport,
-    }) as React.ReactElement;
-    const children = el.props.children as React.ReactNode[];
-    // The Export button is the last child of the grouped root.
-    const exportButton = children[children.length - 1] as React.ReactElement;
-    exportButton.props.onClick();
-    expect(onExport).toHaveBeenCalledTimes(1);
-  });
-
-  it('invokes onToggleAdvanced when the disclosure toggle is clicked', () => {
-    const onToggle = vi.fn();
-    const el = TabBar({
-      tabs: GROUP_TABS,
-      active: 't1',
-      onSelect: () => {},
-      groups: GROUPS,
-      advancedOpen: false,
-      onToggleAdvanced: onToggle,
-    }) as React.ReactElement;
-    // The Advanced disclosure toggle now sits as a direct SIBLING of the tablist
-    // (moved OUT of role="tablist" so the list owns only tabs). The grouped root's
-    // children are [tablistDiv, toggleOrNull, exportOrNull]; locate the toggle by
-    // its stable class rather than by position.
-    const children = (el.props.children as React.ReactNode[]).flat();
-    const toggleButton = children.find(
-      (c): c is React.ReactElement =>
-        typeof c === 'object' &&
-        c !== null &&
-        String((c as React.ReactElement).props?.className ?? '') === 'tabbar__advanced-toggle',
-    ) as React.ReactElement;
-    toggleButton.props.onClick();
-    expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-});
+// The grouped-cluster suite that stood here (WU-3a2: `groups` / `advancedOpen` /
+// `onToggleAdvanced` / `onExport`) was REMOVED with the branch it exercised. Those
+// eight tests were green the whole time #431 shipped a Workspace with no grouped
+// skin — they asserted on emitted markup and never asked whether that markup had a
+// stylesheet, so they read as coverage of a path no caller could safely use. The
+// skin contract at the bottom of this file is the guard that would have caught it.
 
 // WU-a11y: the ARIA tabs keyboard model (roving tabindex + arrow/Home/End nav +
 // tab↔panel id wiring), ported from TopTabBar. Rendered under jsdom so focus and
@@ -255,40 +149,21 @@ describe('TabBar keyboard model (roving tabindex + arrow nav)', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('grouped mode: arrow nav traverses primary tabs and skips a collapsed advanced tab', () => {
-    const onSelect = vi.fn();
-    renderBar({ tabs: GROUP_TABS, active: 't1', onSelect, groups: GROUPS, advancedOpen: false });
-    // ArrowRight from t1 -> t2 (t3 is in the collapsed cluster, not in the order).
-    key(btn('t1'), 'ArrowRight');
-    expect(onSelect).toHaveBeenLastCalledWith('t2');
-    // ArrowRight from t2 (last reachable) wraps to t1, NOT t3.
-    key(btn('t2'), 'ArrowRight');
-    expect(onSelect).toHaveBeenLastCalledWith('t1');
-    // A keydown on the hidden advanced tab t3 is a no-op (index -1 branch).
-    onSelect.mockClear();
-    key(btn('t3'), 'ArrowRight');
-    expect(onSelect).not.toHaveBeenCalled();
-  });
-
-  it('grouped mode: an open advanced cluster joins the arrow-nav order', () => {
-    const onSelect = vi.fn();
-    renderBar({ tabs: GROUP_TABS, active: 't2', onSelect, groups: GROUPS, advancedOpen: true });
-    // ArrowRight from t2 (last primary) -> t3 (advanced now reachable), focus follows.
-    key(btn('t2'), 'ArrowRight');
-    expect(onSelect).toHaveBeenLastCalledWith('t3');
-    expect(document.activeElement).toBe(btn('t3'));
-  });
-
   // F18: `navIds` marks the tabs whose activation navigates AWAY and unmounts this
   // tablist. Arrow-stepping onto one of those must MOVE FOCUS ONLY (ARIA APG
   // manual activation) — automatic activation there ejected the keyboard user out
   // of the surface being navigated.
+  //
+  // RETARGETED to the flat strip. These three previously drove `navIds` through the
+  // grouped branch, but `navIds` is checked in `move()` for BOTH modes, so grouped
+  // mode was never what they measured — it was scaffolding. Deleting it changes the
+  // fixture, not the behaviour under test.
   it('arrow-stepping onto a navIds tab moves focus only, never activating it', () => {
     const onSelect = vi.fn();
-    renderBar({ tabs: GROUP_TABS, active: 't1', onSelect, groups: GROUPS, navIds: ['t2'] });
-    key(btn('t1'), 'ArrowRight');
+    renderBar({ tabs: TABS, active: 'a', onSelect, navIds: ['b'] });
+    key(btn('a'), 'ArrowRight');
     expect(onSelect).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(btn('t2'));
+    expect(document.activeElement).toBe(btn('b'));
   });
 
   // Membership is per-TARGET, not "navIds is non-empty ⇒ the whole strip is
@@ -296,19 +171,81 @@ describe('TabBar keyboard model (roving tabindex + arrow nav)', () => {
   // every tab to manual activation the moment one nav id exists.
   it('arrow-stepping onto a NON-member still activates while navIds is present', () => {
     const onSelect = vi.fn();
-    renderBar({ tabs: GROUP_TABS, active: 't2', onSelect, groups: GROUPS, navIds: ['t2'] });
-    // ArrowRight from t2 (last reachable) wraps to t1, which is NOT a nav id.
-    key(btn('t2'), 'ArrowRight');
-    expect(onSelect).toHaveBeenLastCalledWith('t1');
-    expect(document.activeElement).toBe(btn('t1'));
+    renderBar({ tabs: TABS, active: 'b', onSelect, navIds: ['b'] });
+    // ArrowRight from b (last) wraps to a, which is NOT a nav id.
+    key(btn('b'), 'ArrowRight');
+    expect(onSelect).toHaveBeenLastCalledWith('a');
+    expect(document.activeElement).toBe(btn('a'));
   });
 
   it('still ACTIVATES a navIds tab on a deliberate click', () => {
     const onSelect = vi.fn();
-    renderBar({ tabs: GROUP_TABS, active: 't1', onSelect, groups: GROUPS, navIds: ['t2'] });
+    renderBar({ tabs: TABS, active: 'a', onSelect, navIds: ['b'] });
     act(() => {
-      btn('t2').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      btn('b').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(onSelect).toHaveBeenCalledWith('t2');
+    expect(onSelect).toHaveBeenCalledWith('b');
+  });
+});
+
+// SKIN CONTRACT. A component may not ship a class name that no stylesheet styles.
+//
+// This pins the exact cross-branch defect that produced it: PR #431 deleted the
+// grouped-TabBar block (`.tabbar--grouped` / `.tabbar__*`) from views/workspace.css
+// while TabBar.tsx still implemented grouped mode in full. Nothing went red, because
+// every unit test asserted on the emitted MARKUP and no test ever asked whether that
+// markup had a skin. The next caller to pass `groups=` would have rendered a
+// completely unstyled strip.
+//
+// Reading the SOURCE (not one rendered instance) is deliberate: a prop-gated branch
+// renders only when some caller opts in, so a render-based check is blind to exactly
+// the case that bites — the branch nobody calls yet. The source always shows it.
+describe('TabBar skin contract (every emitted class has a rule)', () => {
+  const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+  /** Every `.css` under the renderer source tree — the full corpus that could
+   *  legitimately style this component (shell.css, views/workspace.css, ...). */
+  const cssFiles = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) return cssFiles(full);
+      return entry.name.endsWith('.css') ? [full] : [];
+    });
+
+  /** Class names a component emits: plain `className="a b"` plus the string
+   *  literals inside a `className={cond ? 'a b' : 'a'}` expression. */
+  const emittedClasses = (source: string): string[] => {
+    const found = new Set<string>();
+    const add = (list: string): void => {
+      for (const cls of list.split(/\s+/)) if (cls) found.add(cls);
+    };
+    for (const m of source.matchAll(/className="([^"]*)"/g)) add(m[1]);
+    for (const m of source.matchAll(/className=\{([^}]*)\}/g))
+      for (const literal of m[1].matchAll(/'([^']*)'/g)) add(literal[1]);
+    return [...found].sort();
+  };
+
+  it('declares a CSS rule for every class name TabBar.tsx renders', () => {
+    const source = readFileSync(join(SRC_ROOT, 'components', 'TabBar.tsx'), 'utf8');
+    const classes = emittedClasses(source);
+    // Detector control: if the extractor ever silently stops finding classes, an
+    // empty list would make the assertion below vacuously true. `.tab` is the one
+    // class this component cannot stop emitting.
+    expect(classes).toContain('tab');
+
+    const css = cssFiles(SRC_ROOT)
+      .map((file) => readFileSync(file, 'utf8'))
+      // USE, NOT MENTION. Comments must be stripped before the search or a class
+      // merely NAMED in prose reads as styled. Measured, not theorised: on the first
+      // run of this test `.tabbar__advanced-toggle` — deleted from workspace.css by
+      // #431 — was reported STYLED, because shell.css's focus-ring comment still
+      // cited it as a live example. 6 of the 7 unstyled classes were found and the
+      // 7th was masked by a sentence about it.
+      .map((sheet) => sheet.replace(/\/\*[\s\S]*?\*\//g, ' '))
+      .join('\n');
+    // `(?![\w-])` is load-bearing: without it `.tab` would match `.tabbar` and a
+    // genuinely unstyled class could report as styled by a longer neighbour.
+    const unstyled = classes.filter((cls) => !new RegExp(`\\.${cls}(?![\\w-])`).test(css));
+    expect(unstyled).toEqual([]);
   });
 });
