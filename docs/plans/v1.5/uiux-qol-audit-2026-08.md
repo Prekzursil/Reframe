@@ -54,6 +54,18 @@ reader who trusts my first pass would be misled.
    **stale**. I judged the app against `docs/design-system.md` (ACTIVE), citing the older doc only where
    the newer one restates the same intent.
 
+   > **RESOLVED 2026-08-12 (measured at `1fa9a69f`).** True when written; no longer true. That doc's
+   > palette values are deleted and its font bullets corrected, and the class is pinned by
+   > `C8-colour:*` / `C8-binding:*` in `docs/validation/tools/verify_ssot_claims.py`. The finding is
+   > kept rather than deleted so a later reader inherits the resolution instead of re-deriving the
+   > defect. **Two citation defects in the sentence above, recorded because this repo has been bitten
+   > by both before.** (a) `tokens.css:103` is a bare line number into a file that moves: the sentence
+   > it points at spans `:101-110` today and the anchor survived only by luck. Cite the SYMBOL
+   > (`--font-ui` / `--font-editorial`) or a FIXED commit. (b) That comment never mentions the ladder
+   > at all — it supersedes the `system-ui`/`Georgia` font leads only — so attributing the `#08090b`
+   > verdict to it was a real over-attribution. The ladder claim was independently true; its evidence
+   > is the value comparison against `tokens.css`, not that comment.
+
 **My detector failures, and what each nearly caused me to report:**
 
 | My wrong reading | Broken probe | What corrected it |
@@ -143,7 +155,21 @@ accent-valued declarations per component.
 
 ### 3.3 Two label voices coexist, sometimes on one screen
 
-`docs/design-system.md:43` defines caption 11 px/600 tracked CAPS as *the* label voice. Honoured on
+`docs/design-system.md`'s `## Type` table defines the `--type-caption-size` role — caption 11 px/600
+tracked CAPS — as *the* label voice.
+
+> **CORRECTED (2026-08-12) — cited by SYMBOL, not by line.** This sentence cited
+> `docs/design-system.md:43`, which was byte-exact at `1fa9a69f`, until a 9-line retraction
+> inserted at that file's `:34` pushed the caption row down to `:52` and left the citation
+> resolving onto a line of the retraction itself. Fifth bare-same-file-line-range rot in this
+> corpus, and the first caused by the very pass that wrote the no-bare-line-ranges rule down.
+> `C13-anchor` now fails on any `docs/*.md:N` citation that resolves onto a `>` line. Scope,
+> stated rather than implied: it catches only the *retraction-line* subclass, and it skips
+> blockquotes, so this note is invisible to it. Three anchors in this file (`:49`, `:65-66`,
+> `:78-81`) rotted onto ordinary lines BEFORE this branch and are untouched — they need a
+> sweep that re-derives each true anchor, which this pass did not do.
+
+Honoured on
 Library (`SORT`), the header (`AI MODEL`) and most Settings headings — but Deliver renders `Sources` and
 `Template` as sentence-case body text, Make Shorts renders `Video`, EXPORT PRESETS renders `Save current
 settings as`, and MODELS & SYSTEM mixes a sentence-case `OpenRouter spend` heading among tracked-caps
@@ -497,3 +523,75 @@ once (§4.5). **STILL OPEN** — the comment is unchanged; only the anchor moved
    `app/renderer/src/features/KeepCopyControl.tsx:21`. (§4.5) **Re-anchored 2026-08-10:** the guard is now
    the themed `useConfirm` gate in `Library.deleteShort` (`:474`, `confirm(` at `:488`) — cite the SYMBOL,
    not the line.
+
+## Incoming citations into this file are STALE (recorded 2026-08-12, re-measured 2026-08-13 at `78c415c9`)
+
+Three citations in application source point INTO this file at line numbers that no longer hold. They
+are recorded here, at the END of the file so no existing anchor shifts, because the next reader of a
+cited line should inherit the correction instead of re-deriving it — and because nothing validates
+this direction: `C13-anchor` in
+[`docs/validation/tools/verify_ssot_claims.py`](../../validation/tools/verify_ssot_claims.py) scans
+`docs/**/*.md` on the citing side only, and `.quality/docs_check.py` r2 checks that a cited PATH
+resolves, never the line number. All three predate the docs-SSOT branch, so nothing here broke them;
+the branch moved their true anchors further by growing the file.
+
+Deliberately NOT written as a blockquote: `C13-anchor` strips `>` lines from the citing side, so a
+retraction-styled note would make the three anchors below invisible to the very check that would
+catch them rotting again.
+
+| Citing site | Cites | True anchor | Evidence |
+| --- | --- | --- | --- |
+| `app/renderer/src/views/Library.tsx` — the `W53` drop-scope comment above `library__empty-hint` | `uiux-qol-audit-2026-08.md:299` | `:481` | quotes "M6. Drag-and-drop works only on Library", which is at `:481`; `:299` is the unrelated `jobqueue.css` colour bullet |
+| `app/renderer/src/views/Library.test.tsx` — the `W53` comment inside `describe('Library first-run honesty + control gating (W53/W54)')` | `uiux-qol-audit-2026-08.md:299` | `:481` | same quote, same mismatch |
+| `app/renderer/src/components/jobqueue.conformance.test.ts` — its file-header comment (`W13 / audit H4b-c`) | `uiux-qol-audit-2026-08.md:198-199` | `:299-300` | its claim is that `jobqueue.css` has no `--cancelled` colour; `:198-199` is the checkbox tap-target paragraph and the cited sentence is at `:299-300` |
+
+> **CORRECTED (2026-08-13) — this table broke its own closing rule, and the rot was already
+> live.** The Citing-site column above used to hold bare line anchors into app source
+> (`…/Library.tsx:685`, `…/Library.test.tsx:1166`, `…/jobqueue.conformance.test.ts:9`), eleven
+> lines above a sentence saying "a bare same-file line range is the form that has now rotted here
+> repeatedly". Two of the three had rotted before anyone outside this branch could read them:
+> MEASURED 2026-08-13 against `origin/main` = `78c415c9`, PR #423 grew `Library.tsx` from 684 to
+> 773 lines (that citation moved from `:685` to `:780`, and `:685` there is now an unrelated
+> closing `div`) and `Library.test.tsx` from 1495 to 1537 (`:1166` moved to `:1209`); the third,
+> in a 185-line file unchanged by both merged PRs, had not moved. The column now names the SYMBOL,
+> and `C13-cite-form` in
+> [`verify_ssot_claims.py`](../../validation/tools/verify_ssot_claims.py) fails if a row ever
+> locates a citing site by a line number again — it keys on the leading path cell, which the
+> symbol form still has, so it does not go inert now that the violation is fixed.
+
+The first two are machine-checked from now on: they carry their own quoted excerpt, so the quote and
+the line either agree or they do not, and `C13-code-quote` reports them on every run until the two
+line numbers are corrected in app source (it is an OPEN item, so it reports without failing the
+gate — the fix is outside the docs lane's scope). The third pairs an UNQUOTED claim with its
+citation, which no detector can pair, so it is reported rather than detected. Fixing any of them
+should cite the SYMBOL or a FIXED commit, per this corpus's own citation rule — a bare same-file
+line range is the form that has now rotted here repeatedly.
+
+On this table's own use of line numbers: the ones that remain are the SUBJECT of the note — the
+wrong anchor a citation carries, and the right one — not a citation of content, which is the only
+reason they are written as numbers at all. They are re-derived rather than trusted: for the first
+two rows `C13-code-quote` re-finds the quote on every run and prints the true anchor it lands on,
+and the heading pins the re-measurement to `78c415c9`, a commit on the default branch. Anything
+citing what a line SAYS should still name the symbol.
+
+> **CORRECTED (2026-08-13) — the pin this paragraph offered as its mitigation was itself
+> unresolvable.** It used to say the numbers "are pinned to 1ad80ce8 in the heading so a reader
+> can re-derive them instead of trusting them". MEASURED: this repo squash-merges (the four
+> commits below `78c415c9` each have exactly one parent and a `(#NNN)` title), and 1ad80ce8 is
+> a pre-merge commit on this branch — not an ancestor of `78c415c9` — so once the branch is
+> squashed and deleted, `git cat-file -e` on it fails in a fresh clone and the mitigation
+> resolves to nothing. Ten such pins shipped on this branch across five files (1ad80ce8 in
+> `docs/INDEX.md`, `docs/build/DESIGN-DIRECTION.md`, this file and
+> [`verify_ssot_claims.py`](../../validation/tools/verify_ssot_claims.py); cddc178a in
+> [`plans/v1.5/README.md`](README.md)). The two dead hashes are written here WITHOUT backticks on
+> purpose: in this corpus a backticked hex string IS a pin a reader is expected to resolve, so
+> dropping the backticks is what makes the difference between USING one and TALKING ABOUT one
+> mechanical — the use-vs-mention narrowing this corpus has needed at four other checks. All are
+> now either re-pointed at a default-branch commit,
+> replaced by the shipped check that re-derives the value on every run, or dropped where they only
+> recorded which commit made a correction — a fact `git log` answers and a hash does not. The
+> class is held by `C13-pin-durable`, which fails on any pin reachable from HEAD but not from the
+> base or the default branch. GitHub keeps a squash-merged PR's commits reachable via
+> `refs/pull/<n>/head`, so a branch-local pin is degraded rather than destroyed (INFERRED, likely
+> 55-80% — settling experiment: squash-merge, delete the branch, then `git cat-file -t 1ad80ce8`
+> in a fresh clone); that is why this was worth correcting but did not block.

@@ -63,5 +63,21 @@ dependency is declared + pinned (`speechbrain==1.1.0`). See
 
 ## Still deferred
 
-Items deferred from V1 (per G-22) that have **not** yet shipped: B-roll, emoji /
-keyword SFX triggers, AI avatars, and a publishing scheduler.
+Items deferred from V1 (per G-22) that have **not** yet shipped: emoji / keyword SFX
+triggers, AI avatars, and a publishing scheduler.
+
+> **CORRECTED (2026-08-12, measured at `1fa9a69f`).** This list also named **B-roll**, and
+> the code contradicts that: auto B-roll shipped as v1.5 flagship #3. Four sidecar engine
+> modules (`sidecar/media_studio/features/broll_plan.py`, `broll_index.py`, `broll_ops.py`,
+> `broll_compose.py`) with six test modules under `sidecar/tests/`, seven `broll.*` RPCs
+> registered from `sidecar/media_studio/handlers/composition.py`, and a 46 KB renderer
+> surface at `app/renderer/src/features/BrollPanel.tsx` reached from a real Workspace tab —
+> `app/renderer/src/views/Workspace.seam.test.tsx` mounts `initialTab="broll"` and asserts
+> the lazy `.broll-panel` actually renders, which is the signal that separates a shipped
+> surface from an orphaned component. Removed rather than moved to the shipped list because
+> the paragraph above is scoped to *deferred* items. **Not re-verified by this pass:** the
+> other three entries are left exactly as they stood — `social_publish.py` /
+> `social_queue.py` exist in the tree, so "publishing scheduler" is the next one worth
+> measuring, but this lane did not establish whether it is user-reachable and will not
+> assert either way. `docs/validation/tools/verify_ssot_claims.py` `C11a`/`C11b` now pin
+> both halves: the engine must stay on disk AND this sentence must not re-list B-roll.

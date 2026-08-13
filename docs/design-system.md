@@ -31,7 +31,16 @@ accent. Source of truth = `tokens.css`; this doc is the portable spec, ready to 
 
 ### Status (separate from accent)
 `--status-success #46c483` · `--status-error #e5484d` · `--status-warn #e7c14b` (+ `-soft`).
-Sanctioned off-ladder exception: abundance `--abundance #9b6cff` (never color-alone).
+Sanctioned off-ladder exception: abundance `--status-abundance #9b6cff` (never color-alone).
+
+> **CORRECTED (2026-08-12, measured at `1fa9a69f`).** The abundance token was named
+> `--abundance` here; `tokens.css:92` declares it `--status-abundance` and no `--abundance`
+> exists anywhere under `app/` (control: the same search for `--status-abundance` returns
+> `tokens.css`, `components/usageBar.css` and `styles/tokens.conformance.test.ts`, so the
+> zero is a real absence and not a broken matcher). The hex was right; the name a reader
+> would have copied into `var()` was not, and this doc's own conformance guard forbids
+> undefined tokens. Now pinned by `C8-binding:design-system.md` in
+> `docs/validation/tools/verify_ssot_claims.py`.
 
 ## Type (role = size / weight / tracking / leading)
 | Role | Size | Weight | Notes |
