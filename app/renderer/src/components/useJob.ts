@@ -289,7 +289,9 @@ export function useJob(options?: UseJobOptions) {
     const unsubscribe = onSidecarStatusBridge((status) => {
       if (status === 'running' || !activeJobId.current) return;
       surfaceError({
-        message: 'Sidecar stopped — the job was interrupted',
+        // USER-FACING COPY: lands in `state.error` and in the error toast, so it
+        // uses the product noun ("the engine"), never the internal process name.
+        message: 'The engine stopped — the job was interrupted',
         type: 'JobInterrupted',
       });
     });
