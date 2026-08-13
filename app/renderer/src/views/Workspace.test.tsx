@@ -753,22 +753,54 @@ describe('L5 invariant: all 21 panels stay reachable (reconcile, never drop)', (
     expect(container.querySelector('[data-panel="Timeline"]')).not.toBeNull();
   });
 
-  it('routes the one panel another destination owns instead of dropping it', async () => {
-    // `shortmaker` moved to the Produce rail destination (L5 G-6). It must not be
-    // an inspector section here, and the deep-link must still reach its owner.
-    expect(workspacePanelHome('shortmaker')).toBe('elsewhere');
+  it('offers Make Shorts for the OPEN video from inside the workspace', async () => {
+    // WHY THIS CONTROL EXISTS — GRIND round 3, refuted-and-fixed. On origin/main
+    // `shortmaker` was a PAINTED tab (origin/main Workspace.tsx:115, non-advanced
+    // group :177) whose `handleSelect` (:295) deep-linked to the single Make Shorts
+    // owner with the open video PRE-SELECTED: one click, from inside the editor.
+    // L5 moved Make Shorts to the Produce rail, and the rail's entry
+    // (`App.tsx` `openMakeShorts()`) carries NO videoId — so without a control here
+    // the user must leave the editor and re-pick the source video. That is a
+    // context regression, not a capability drop, and this is its in-scope fix.
+    //
+    // It is ALSO what makes `onOpenMakeShorts` a live prop again. The round-2 code
+    // fired it only from an `initialTab === 'shortmaker'` guard that production
+    // cannot satisfy (Edit.tsx:158 passes `resumeFor(...).tab`, which is only
+    // 'subtitles' or null; taskHub.ts:94 pins `shortmaker` REDIRECT_ONLY and
+    // Edit.test.tsx:223 enforces it) — i.e. exactly the Q7 orphan class this lane
+    // exists to close, re-created one prop over. A real control, not an injected
+    // prop, is what this test drives.
     const onOpenMakeShorts = vi.fn();
-    await render({ initialTab: 'shortmaker', onOpenMakeShorts });
+    await render({ onOpenMakeShorts });
+    await clickEl(container.querySelector('.workspace__header button.workspace__makeshorts'));
     expect(onOpenMakeShorts).toHaveBeenCalledTimes(1);
     expect(onOpenMakeShorts).toHaveBeenCalledWith('v1');
+  });
+
+  it('routes the one panel another destination owns instead of dropping it', async () => {
+    // `shortmaker` moved to the Produce rail destination (L5 G-6). It must not be
+    // an inspector section here; the in-editor route to its owner is the header
+    // control above, which carries this video's id.
+    expect(workspacePanelHome('shortmaker')).toBe('elsewhere');
+    await render({ onOpenMakeShorts: vi.fn() });
     expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
     expect(inspectorTabIds()).not.toContain('shortmaker');
   });
 
-  it('does not crash on a shortmaker deep-link with no owner wired', async () => {
-    // Without the callback there is nothing to redirect to; the workspace opens on
-    // its default rather than mounting a second ShortMaker copy (WU-3a4's
-    // single-owner rule, now enforced by the rail rather than by a fallback).
+  it('renders no Make Shorts control when no owner is wired', async () => {
+    // The prop is optional, so the control is conditional — a button that calls
+    // nothing is worse than no button.
+    await render();
+    expect(container.querySelector('.workspace__makeshorts')).toBeNull();
+    expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
+  });
+
+  it('opens on its default when handed the deep-link another destination owns', async () => {
+    // GRACEFUL DEGRADATION, not a live route. `shortmaker` is the one id whose home
+    // is 'elsewhere', and production cannot produce it as an `initialTab` at all
+    // (see the citation chain above), so nothing here certifies a user path: what is
+    // asserted is that an id the workspace does not host mounts no second ShortMaker
+    // copy and leaves the inspector on the project context.
     await render({ initialTab: 'shortmaker' });
     expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
     expect(selectionLabel()).toBe('Project');
@@ -882,8 +914,13 @@ describe('L5 invariant: navigation cannot overflow the fixed 1280px window', () 
       el.getAttribute('data-tab-id'),
     );
     // 12 = 3 dock lanes + the 9 project sections. App.tsx paints the 2 REFINE_MODES
-    // tabs around this view on the Refine/editor route (App.test.tsx owns that list),
-    // so the number `preview.spec.ts:235-236` reads for that route is 14 visible —
+    // tabs (App.tsx:141-144) around this view on the Refine/editor route. RESCOPED in
+    // GRIND round 3: this comment used to say "App.test.tsx owns that list", which was
+    // FALSE as a coverage claim — no assertion pinned REFINE_MODES anywhere, so a third
+    // mode could land silently. It is true now, and the test that makes it true is
+    // App.test.tsx's "pins the painted Refine mode tabs that the nightly e2e route
+    // counts". Together the two files pin 12 + 2, so the number
+    // `preview.spec.ts:235-236` reads for that route is 14 visible —
     // not the 21 total / 16 visible it still hardcodes, and nothing is collapsed now
     // so total and visible are the same number. Those two lines are BROKEN by this
     // branch and are outside this lane's file scope: see the PR's scope-escape note.

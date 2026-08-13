@@ -907,6 +907,40 @@ describe('L5 rail: exactly four destinations plus Settings', () => {
     expect(tab('Refine').getAttribute('aria-selected')).toBe('true');
   });
 
+  // CROSS-SURFACE GUARD — GRIND round 3, closing a half-built one.
+  //
+  // The composite `app/e2e/preview.spec.ts` counts on the Refine/editor route is
+  // 14 `.tab` elements = |REFINE_MODES| (2) + 3 dock lanes + 9 project sections.
+  // `Workspace.test.tsx` ("pins the painted tab set that the nightly e2e spec
+  // counts") pins the last two terms (12). The FIRST term was pinned by NOTHING:
+  // `rg REFINE_MODES app/` returned only the declaration (App.tsx:141-144), its
+  // single use in `renderDestination`, and a comment — no assertion anywhere. And
+  // `modeTab()` above is find-by-label, so it throws on a REMOVAL and is blind to
+  // an ADDITION. Adding a third Refine mode moved the e2e's true count 14 -> 15
+  // with zero unit tests going red: the same staleness class the deleted "pins the
+  // strip counts that the nightly e2e spec hardcodes" test used to prevent, and
+  // the mode-list ratchet the PRODUCE/REFINE/DELIVER note warns about one level
+  // down ("a destination whose mode list starts growing is the tab-strip ratchet
+  // reappearing").
+  //
+  // This is NOT a red-first test — it pins present, correct behaviour. Its
+  // detector strength was checked by MUTATION (both-states): adding a third
+  // REFINE_MODES entry makes it fail on the id list; the run is quoted in the PR.
+  it('pins the painted Refine mode tabs that the nightly e2e route counts', async () => {
+    await mount();
+    await act(async () => {
+      tab('Refine').click();
+    });
+    await flush();
+    // Scoped to the destination's OWN TabBar, like `modeTab()`: the mounted view
+    // may carry its own tablist and must not be counted as a mode.
+    expect(
+      Array.from(container.querySelectorAll('.app__destination > .tabbar [role="tab"]')).map(
+        (t) => t.textContent,
+      ),
+    ).toEqual(['Editor', 'Caption design']);
+  });
+
   it('hosts finish and publish under Deliver', async () => {
     await mount();
     await act(async () => {

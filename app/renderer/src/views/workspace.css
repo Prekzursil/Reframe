@@ -46,6 +46,53 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Make Shorts (GRIND round 3): the in-editor route to the single Make Shorts
+   owner, carrying the open video so it lands PRE-SELECTED. origin/main reached it
+   from a painted `Short-maker` tab; L5 moved the panel to the Produce rail, whose
+   own entry carries no videoId, so without this the user has to leave the editor
+   and re-pick the source. It sits in the header for the same reason Export does —
+   no panel count can push it out.
+
+   SECONDARY by construction: same geometry as Export, but a neutral border and no
+   accent. The chrome's single amber belongs to Export (and the active tab); two
+   primaries in one header is the "cheap" tell the owner's standard rules out. */
+.workspace .workspace__makeshorts {
+  appearance: none;
+  margin-left: auto;
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--type-caption-tracking);
+  padding: var(--control-pad-btn);
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.workspace .workspace__makeshorts:hover {
+  background: var(--surface-hover);
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+.workspace .workspace__makeshorts:active {
+  transform: translateY(1px);
+}
+
+.workspace .workspace__makeshorts:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 /* Export (design-review P1): the terminal deliver goal keeps a standing, primary
    affordance. It now lives in the HEADER rather than at the far end of the tab
    strip, where a growing strip repeatedly pushed it out of the window — a

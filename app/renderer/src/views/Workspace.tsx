@@ -21,12 +21,24 @@ export interface WorkspaceProps {
    */
   initialTab?: string;
   /**
-   * WU-3a4 (retained): the SINGLE-OWNER deep-link into the top-level Make Shorts
-   * section. Since L5 the rail hosts Make Shorts under **Produce**, so the
-   * workspace no longer mounts a ShortMaker copy at all — an
-   * `initialTab='shortmaker'` deep-link still bounces to the single owner here.
-   * ADDITIVE: omitted → the deep-link is ignored and the workspace opens on its
-   * default (ShortMaker stays reachable from the Produce rail destination).
+   * WU-3a4: open the SINGLE Make Shorts owner with THIS video pre-selected.
+   *
+   * Since L5 the rail hosts Make Shorts under **Produce**, so the workspace mounts
+   * no ShortMaker copy — but the rail's own entry (`App.tsx openMakeShorts()`)
+   * carries no videoId, so it cannot replace the in-editor route this drives. The
+   * header control is the caller (see `handleMakeShorts`).
+   *
+   * GRIND round 3, refuted-and-fixed: round 2 fired this ONLY from an
+   * `initialTab === 'shortmaker'` guard that production cannot satisfy —
+   * `Edit.tsx:158` passes `resumeFor(...).tab`, which is only `'subtitles'` or
+   * `null` (`lib/taskHub.ts:99-117`), `shortmaker` is pinned in
+   * `REDIRECT_ONLY_WORKSPACE_TABS` (`taskHub.ts:94`) and `Edit.test.tsx:223`
+   * enforces that it never becomes an `initialTab`. A prop fired only from a
+   * branch no shipping code can reach is the same Q7 orphan class this lane exists
+   * to close, so the guard is gone and a real control took its place.
+   *
+   * ADDITIVE: omitted → no control is rendered (a button that calls nothing is
+   * worse than no button); Make Shorts stays reachable from the Produce rail.
    */
   onOpenMakeShorts?: (videoId: string) => void;
 }
@@ -376,14 +388,14 @@ export function Workspace({
     void reloadProject();
   }, [reloadProject]);
 
-  // WU-3a4 (retained): an `initialTab='shortmaker'` deep-link bounces to the
-  // single Make Shorts owner. Since L5 the workspace does not mount ShortMaker at
-  // all, so there is nothing left to fall back to and nothing to intercept.
-  useEffect(() => {
-    if (initialTab === 'shortmaker' && onOpenMakeShorts) {
-      onOpenMakeShorts(video.id);
-    }
-  }, [initialTab, onOpenMakeShorts, video.id]);
+  // WU-3a4: the in-editor route to the single Make Shorts owner, carrying the open
+  // video so it lands PRE-SELECTED — what origin/main's painted `shortmaker` tab
+  // did before L5 moved the panel to the Produce rail (whose own entry has no
+  // videoId). Rendered only when an owner is wired; see the prop's note for why
+  // the round-2 `initialTab === 'shortmaker'` guard it replaces was unreachable.
+  const handleMakeShorts = useCallback(() => {
+    onOpenMakeShorts?.(video.id);
+  }, [onOpenMakeShorts, video.id]);
 
   // WU B3: the mstream resolver is now authoritative for playability — it
   // single-flights the proxy build and NEVER streams the raw, undecodable
@@ -548,6 +560,14 @@ export function Workspace({
         <h1 className="workspace__title" title={video.path}>
           {video.title}
         </h1>
+        {/* The in-editor route to Make Shorts, with this video pre-selected. It is
+            SECONDARY chrome (quiet border, no fill): Export is the terminal goal
+            and keeps the single accent, so this cannot read as a second primary. */}
+        {onOpenMakeShorts ? (
+          <button type="button" className="workspace__makeshorts" onClick={handleMakeShorts}>
+            Make Shorts
+          </button>
+        ) : null}
         {/* Export used to sit at the far end of the tab strip, where the growing
             strip repeatedly pushed it out of the 1280px window. In the header it
             cannot be scrolled away at any panel count. */}
