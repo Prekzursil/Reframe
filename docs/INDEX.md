@@ -207,7 +207,7 @@ the ids survive the move out of the repo root; this entry is how they stay finda
 | [`build/RUN-CHECKLIST.md`](build/RUN-CHECKLIST.md) | the only run procedure. **DRAFT** — its pins are stale against `sidecar/pyproject.toml`; rewrite pending. |
 | [`build/COMPLETENESS-REPORT.md`](build/COMPLETENESS-REPORT.md) | superseded and wrong at the headline, kept because `HIGH-1` / `HIGH-3` finding ids are cited by five live source files. |
 | [`build/INTEGRATION-REPORT.md`](build/INTEGRATION-REPORT.md) | same — header, do not delete. |
-| [`build/DESIGN-DIRECTION.md`](build/DESIGN-DIRECTION.md) | superseded by [`design-system.md`](design-system.md). **CONTRADICTION RESOLVED 2026-08-12 at `1fa9a69f`:** the palette values are DELETED from that doc — it now carries direction only and points at `tokens.css` — and the class is checked by `C8-colour:*` / `C8-binding:*` in [`validation/tools/verify_ssot_claims.py`](validation/tools/verify_ssot_claims.py), which fail if either of the **two** design docs enumerated in that file's `DESIGN_DOCS` tuple (`design-system.md`, `build/DESIGN-DIRECTION.md`) prints a colour `tokens.css` does not define or binds a token name to a value it does not hold. **CORRECTED (2026-08-12):** this cell said "pinned going forward … if **any** design doc", which is REFUTED on two axes — the tuple is a two-file allowlist, not a universal (a third ACTIVE design doc, [`plans/v1.5/DESIGN-DIRECTION.md`](plans/v1.5/DESIGN-DIRECTION.md), is deliberately uncovered because its off-token hexes are a prototype-*rejection* table), and the verifier is **manual**, invoked by no CI job and no `pre-commit` hook (settling experiment: `git grep -n verify_ssot_claims -- .github/ .pre-commit-config.yaml` returns zero hits). `C8-scope-prose` guards this sentence against re-widening, but **only in the UNEMPHASISED, unwrapped spelling** — MEASURED 2026-08-12 at `1ad80ce8`: its pattern needs literal whitespace between the words, so the `**any** design doc` quoted just above, `*any* design doc`, and a re-widening that wraps across a blockquote continuation (the raw `>` lands between the words, and this check deliberately does not strip blockquote markers) all report GREEN. **CORRECTED (2026-08-12):** this cell previously said only "now fails if this sentence re-widens", which was itself wider than the code — treat it as a partial re-introduction guard, not a ban. Widening the pattern is not the fix: it would fire on the retraction quotes here and in [`build/DESIGN-DIRECTION.md`](build/DESIGN-DIRECTION.md), which this check cannot blockquote-strip away; closing it needs the use-vs-mention narrowing `C1b` uses. `C8-scope-measured` re-measures the shipped pattern on every run, so this qualifier fails loudly rather than going quietly stale. Settling experiment: drop the emphasis from the quoted quantifier above and confirm that check goes red. Its type-pairing section was stale on the same axis and is corrected in place (system-ui/Georgia -> the bundled Inter / IBM Plex Mono / Newsreader faces). The measurement below stood until that commit and is kept because the COUNT itself was twice mis-stated, which is the more useful lesson: **9** of the **16** palette values it stated contradicted `tokens.css`. **DOUBLY REFUTED, both wordings kept.** (1) The cell originally read *"9 of its 14"*. (2) A re-verification pass then rewrote it to *"**8** of its 14 … **REFUTED: this cell said 9 of 14.** The `14` is right (6 surface + 4 text + 1 accent + 3 status); the `9` is not"* — **that correction was inverted and is itself REFUTED: the `9` was right and the `14` was wrong.** Measured by TOKEN NAME at `81a04965` against the stored blobs, `## Palette (exact values)` names **15** tokens carrying an exact value, plus the accent written with no token name (`#f2a33c`, which `tokens.css` carries as `--accent`) = 16 values. Nine disagree: the six `--surface-*`, **`--edge`** (`rgba(255,255,255,0.07)` vs `rgba(255, 255, 255, 0.09)`), `--text-muted` and `--text-faint`. Six agree: `--edge-strong`, `--text-primary`, `--text-secondary`, the three `--status-*`. The "14" is reached only by dropping `--edge` and `--edge-strong`, which are named with exact values in the prose two lines under the surface table rather than in it — and `--edge` is the ninth disagreement, so dropping it is what turned 9 into 8. Enumeration basis, stated so the `16` can be checked rather than trusted: one value per named token plus the accent, the same basis the original `14` used. The section also prints three further accent shades and two washes, which no reading here counted; on the widest basis it states 21 colour values. Detector note, because the first pass here was a detector failure and not a finding: my initial pairer emitted a bogus `---` token from the table separator and silently dropped `--surface-deep`; the reading above comes from a line-oriented pairer that refuses to print a tally unless it first finds every hand-checked token. Merge-and-archive is tracked as phase-2 item 2.7 and is still NOT done — what closed on 2026-08-12 is the doc-vs-code CONTRADICTION, not the merge; the file survives as direction-only prose. |
+| [`build/DESIGN-DIRECTION.md`](build/DESIGN-DIRECTION.md) | superseded by [`design-system.md`](design-system.md); direction-only prose since its palette values were deleted, and that doc-vs-code contradiction is closed **and machine-checked** (`C8-colour:*` / `C8-binding:*`). Merge-and-archive (phase-2 item 2.7) is **NOT** done. Corrections ledger, incl. the twice-mis-stated palette count: [§ DESIGN-DIRECTION](#design-direction). |
 
 ## Archive
 
@@ -237,3 +237,86 @@ now. Their bodies are left intact as historical record; the header is the correc
 | [`plans/v1.5/distribution-audit-2026-08.md`](plans/v1.5/distribution-audit-2026-08.md) | installer, updater, code-signing and backward-compatibility audit |
 | [`plans/v1.5/editing-surface-audit-2026-08.md`](plans/v1.5/editing-surface-audit-2026-08.md) | general video-editing surface audit (what exists vs what a pro editor needs) |
 | [`plans/v1.5/uiux-qol-audit-2026-08.md`](plans/v1.5/uiux-qol-audit-2026-08.md) | UI/UX + quality-of-life audit driven against the INSTALLED app |
+
+## Corrections
+
+Retractions too long to live in a table cell. A row above states the current position in one
+line and links here; this is where the working is kept, so a reader inherits the correction
+instead of re-deriving it. Nothing here is deleted when it is superseded — it is marked.
+
+### DESIGN-DIRECTION
+
+**Where this came from.** Until 2026-08-13 all of the following sat inline in the
+`build/DESIGN-DIRECTION.md` cell of [§ Build and run](#build-and-run): 4,623 characters, 682
+words, four nested corrections and a detector post-mortem, in a file whose job is navigation and
+against a 126-character median table row (MEASURED 2026-08-13, n=90 rows; the next-longest row is
+936). A GFM table cell cannot contain a line break, so it rendered as one unwrapped blob roughly
+37× the median. Nothing below is retracted by the move; only its container changed. The mechanism
+this corpus uses for a retraction — a multi-line `> **CORRECTED**` block, as in
+[`ROADMAP.md`](ROADMAP.md), [`design-system.md`](design-system.md) and
+[`build/DESIGN-DIRECTION.md`](build/DESIGN-DIRECTION.md) — is the one thing a table row cannot
+host, which is why the ledger outgrew it.
+
+**Status.** `build/DESIGN-DIRECTION.md` is superseded by [`design-system.md`](design-system.md).
+**CONTRADICTION RESOLVED 2026-08-12 at `1fa9a69f`:** the palette values are DELETED from that doc
+— it now carries direction only and points at `tokens.css` — and the class is checked by
+`C8-colour:*` / `C8-binding:*` in
+[`validation/tools/verify_ssot_claims.py`](validation/tools/verify_ssot_claims.py), which fail if
+either of the **two** design docs enumerated in that file's `DESIGN_DOCS` tuple
+(`design-system.md`, `build/DESIGN-DIRECTION.md`) prints a colour `tokens.css` does not define or
+binds a token name to a value it does not hold. Merge-and-archive is tracked as phase-2 item 2.7
+and is still **NOT** done — what closed on 2026-08-12 is the doc-vs-code CONTRADICTION, not the
+merge; the file survives as direction-only prose. Its type-pairing section was stale on the same
+axis and is corrected in place (system-ui/Georgia -> the bundled Inter / IBM Plex Mono /
+Newsreader faces).
+
+> **CORRECTED (2026-08-12) — the guard is an allowlist, not a universal.** This entry said
+> "pinned going forward … if **any** design doc", which is REFUTED on two axes: the tuple is a
+> two-file allowlist, not a universal (a third ACTIVE design doc,
+> [`plans/v1.5/DESIGN-DIRECTION.md`](plans/v1.5/DESIGN-DIRECTION.md), is deliberately uncovered
+> because its off-token hexes are a prototype-*rejection* table), and the verifier is **manual**,
+> invoked by no CI job and no `pre-commit` hook (settling experiment:
+> `git grep -n verify_ssot_claims -- .github/ .pre-commit-config.yaml` returns zero hits).
+> `C8-scope-prose` guards this sentence against re-widening, but **only in the UNEMPHASISED,
+> unwrapped spelling** — MEASURED 2026-08-12, and re-derived on every run by `C8-scope-measured`
+> rather than pinned to a commit a reader may not have: its pattern needs literal whitespace
+> between the words, so the `**any** design doc` quoted just above, `*any* design doc`, and a
+> re-widening that wraps across a blockquote continuation (the raw `>` lands between the words,
+> and that check deliberately does not strip blockquote markers) all report GREEN.
+
+> **CORRECTED (2026-08-12) — the guard's own description was over-wide.** This entry previously
+> said only "now fails if this sentence re-widens", which was itself wider than the code — treat
+> it as a partial re-introduction guard, not a ban. Widening the pattern is not the fix: it would
+> fire on the retraction quotes here and in
+> [`build/DESIGN-DIRECTION.md`](build/DESIGN-DIRECTION.md), which that check cannot
+> blockquote-strip away; closing it needs the use-vs-mention narrowing `C1b` uses.
+> `C8-scope-measured` re-measures the shipped pattern on every run, so this qualifier fails
+> loudly rather than going quietly stale. Settling experiment: drop the emphasis from the quoted
+> quantifier above and confirm that check goes red.
+
+**The palette count: DOUBLY REFUTED, both wordings kept.** The measurement stood until the
+contradiction was closed and is kept because the COUNT itself was twice mis-stated, which is the
+more useful lesson: **9** of the **16** palette values that doc stated contradicted `tokens.css`.
+
+1. The entry originally read *"9 of its 14"*.
+2. A re-verification pass then rewrote it to *"**8** of its 14 … **REFUTED: this cell said 9 of
+   14.** The `14` is right (6 surface + 4 text + 1 accent + 3 status); the `9` is not"* — **that
+   correction was inverted and is itself REFUTED: the `9` was right and the `14` was wrong.**
+
+Measured by TOKEN NAME at `81a04965` against the stored blobs, `## Palette (exact values)` names
+**15** tokens carrying an exact value, plus the accent written with no token name (`#f2a33c`,
+which `tokens.css` carries as `--accent`) = 16 values. Nine disagree: the six `--surface-*`,
+**`--edge`** (`rgba(255,255,255,0.07)` vs `rgba(255, 255, 255, 0.09)`), `--text-muted` and
+`--text-faint`. Six agree: `--edge-strong`, `--text-primary`, `--text-secondary`, the three
+`--status-*`. The "14" is reached only by dropping `--edge` and `--edge-strong`, which are named
+with exact values in the prose two lines under the surface table rather than in it — and
+`--edge` is the ninth disagreement, so dropping it is what turned 9 into 8. Enumeration basis,
+stated so the `16` can be checked rather than trusted: one value per named token plus the
+accent, the same basis the original `14` used. The section also prints three further accent
+shades and two washes, which no reading here counted; on the widest basis it states 21 colour
+values.
+
+**Detector note, because the first pass here was a detector failure and not a finding:** the
+initial pairer emitted a bogus `---` token from the table separator and silently dropped
+`--surface-deep`; the reading above comes from a line-oriented pairer that refuses to print a
+tally unless it first finds every hand-checked token.

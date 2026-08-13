@@ -33,7 +33,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+import pytest
 
 TOOL = Path(__file__).resolve().with_name("verify_ssot_claims.py")
 
@@ -75,9 +78,21 @@ def _run_verifier(home: Path) -> subprocess.CompletedProcess[str]:
 
 def _line(stdout: str, cid: str) -> str:
     for raw in stdout.splitlines():
-        if f" {cid} " in raw or raw.strip().split(" ")[1:2] == [cid]:
+        if f" {cid} " in raw:
             return raw
     raise AssertionError(f"{cid} never printed; stdout was:\n{stdout}")
+
+
+@pytest.fixture(scope="module")
+def hermetic_run() -> subprocess.CompletedProcess[str]:
+    """The verifier, run ONCE in an empty HOME. Module-scoped on purpose.
+
+    Every assertion below reads the same run. A per-test fixture re-ran the whole verifier
+    four times for no extra signal, and this suite has to stay cheap enough that people
+    actually run it.
+    """
+    with tempfile.TemporaryDirectory() as home:
+        return _run_verifier(Path(home))
 
 
 def test_home_redirection_control(tmp_path: Path) -> None:
@@ -93,25 +108,46 @@ def test_home_redirection_control(tmp_path: Path) -> None:
     assert not (tmp_path / ".reframe-review").exists()
 
 
-def test_verifier_is_green_without_the_authors_scratch_dir(tmp_path: Path) -> None:
+def test_verifier_is_green_without_the_authors_scratch_dir(
+    hermetic_run: subprocess.CompletedProcess[str],
+) -> None:
     """The documented command must reproduce for a reviewer, CI, or a later reader."""
-    done = _run_verifier(tmp_path)
-    assert done.returncode == 0, (
+    assert hermetic_run.returncode == 0, (
         "verify_ssot_claims.py is not reproducible off the author's machine.\n"
-        f"stdout:\n{done.stdout}\nstderr:\n{done.stderr}"
+        f"stdout:\n{hermetic_run.stdout}\nstderr:\n{hermetic_run.stderr}"
     )
-    assert "mismatched=0" in done.stdout, done.stdout
+    assert "mismatched=0" in hermetic_run.stdout, hermetic_run.stdout
 
 
-def test_p1_shell_asserts_a_tracked_property(tmp_path: Path) -> None:
+def test_p1_shell_asserts_a_tracked_property(
+    hermetic_run: subprocess.CompletedProcess[str],
+) -> None:
     """``P1-shell`` must measure the tree, not one machine's scratch directory."""
-    line = _line(_run_verifier(tmp_path).stdout, "P1-shell")
+    line = _line(hermetic_run.stdout, "P1-shell")
     assert "holds" in line, line
     assert "BROKEN" not in line, line
 
 
-def test_p1_corpus_does_not_claim_a_fix_it_did_not_measure(tmp_path: Path) -> None:
+def test_p1_corpus_does_not_claim_a_fix_it_did_not_measure(
+    hermetic_run: subprocess.CompletedProcess[str],
+) -> None:
     """An unmeasurable OPEN item must say so, not invite its own retirement."""
-    line = _line(_run_verifier(tmp_path).stdout, "P1-corpus")
+    line = _line(hermetic_run.stdout, "P1-corpus")
     assert "NOW-FIXED" not in line, line
     assert "NOT-MEASURED" in line, line
+
+
+def test_citation_form_and_pin_durability_are_enforced(
+    hermetic_run: subprocess.CompletedProcess[str],
+) -> None:
+    """The two anti-rot invariants must exist and hold, not merely be declared.
+
+    Deleting either check would otherwise be invisible: the run would still exit 0. Both
+    carry their own fail-closed floor (a row count, and an enumerated commit set), so this
+    asserts presence AND verdict rather than presence alone.
+    """
+    for cid in ("C13-cite-form", "C13-pin-durable"):
+        line = _line(hermetic_run.stdout, cid)
+        assert "holds" in line, line
+        assert "BROKEN" not in line, line
+    assert "rows=3" in _line(hermetic_run.stdout, "C13-cite-form")

@@ -69,8 +69,9 @@ changed — never the reverse.
   > tense, that the `## Still deferred` sentence in `docs/ROADMAP.md` *lists* B-roll
   > alongside emoji/SFX triggers and publishing. That was true at `1fa9a69f` and is now
   > **REFUTED**: the same branch that wrote this correction removed B-roll from that
-  > sentence (commit `cddc178a`), which now names only emoji / keyword SFX triggers, AI
-  > avatars and a publishing scheduler and carries its own retraction beneath it. So the
+  > sentence, which now names only emoji / keyword SFX triggers, AI avatars and a publishing
+  > scheduler and carries its own retraction beneath it — that retraction, not a commit hash,
+  > is the durable record here. So the
   > contradiction this bullet reported is closed at the source, and the *report* of it had
   > gone stale — a doc asserting something another doc in the same commit series
   > contradicts, which is the exact defect class this corpus exists to remove, created by

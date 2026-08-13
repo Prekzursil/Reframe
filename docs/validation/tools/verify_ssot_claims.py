@@ -372,7 +372,7 @@ for _rel in DESIGN_DOCS:
 # pushes the enumeration to be written out, and adding a third entry to `DESIGN_DOCS` forces the
 # prose to be re-read rather than silently outgrown.
 #
-# SCOPE, corrected 2026-08-12 at `1ad80ce8` — this comment used to say the quantifier is "banned",
+# SCOPE, corrected 2026-08-12 — this comment used to say the quantifier is "banned",
 # which overstated the pattern below by exactly the margin the docs it polices were corrected for.
 # MEASURED: the pattern needs literal whitespace between its tokens, so an emphasised (`**any**`,
 # `*any*`) or blockquote-wrapped quantifier is invisible to it. That is deliberate for now, not an
@@ -407,7 +407,8 @@ check(
 # INVARIANT (new): the two docs that announce `C8-scope-prose` may not promise more reach than
 # it has. Both said it "now fails if this sentence/paragraph re-widens" — and that is the same
 # over-wide-promise defect one level up again, committed by the correction itself, for the third
-# time in this file's history. MEASURED at `1ad80ce8`: `_C8_UNIVERSAL` requires literal
+# time in this file's history. MEASURED, and re-derived on every run by `C8-scope-measured`
+# rather than pinned to a commit a reader may not have: `_C8_UNIVERSAL` requires literal
 # whitespace between its tokens, so an EMPHASISED quantifier slips past it, and the flatten at
 # the loop above turns a blockquote continuation into `any design > doc`, which also slips past.
 # Both offending docs happen to write the quantifier emphasised, and this corpus emphasises
@@ -469,7 +470,7 @@ check(
 # :78-81), predate this branch, and are left for a sweep that can re-derive each true
 # anchor.
 #
-# SCOPE OF THE CITING SIDE, corrected 2026-08-12 at `1ad80ce8` — this check is
+# SCOPE OF THE CITING SIDE, corrected 2026-08-12 — this check is
 # ONE-DIRECTIONAL and the first wording of it did not say so. The citing-side scan is
 # `ROOT.glob("docs/**/*.md")`, so it covers docs->docs only. Citations FROM application source
 # INTO docs are covered by nothing: `.quality/docs_check.py`'s r2 validates that the cited PATH
@@ -574,7 +575,8 @@ check(
 # r2 fails on it — measured twice in one sitting, once here and once in the control note above.
 # The gate is right both times, and it is recorded rather than quietly fixed because that is the
 # same use-vs-mention shape this file has now been bitten by at C5b, C9b, P2.8 and C1b.)
-# MEASURED at `1ad80ce8`: exactly 2 such citations exist across `app/` + `sidecar/`, and BOTH are
+# MEASURED, and re-counted on every run by this check itself rather than pinned to a commit a
+# reader may not have: exactly 2 such citations exist across `app/` + `sidecar/`, and BOTH are
 # rotted — `app/renderer/src/views/Library.tsx` and `app/renderer/src/views/Library.test.tsx`
 # cite `docs/plans/v1.5/uiux-qol-audit-2026-08.md:299` while quoting "M6. Drag-and-drop works
 # only on Library", which lives at `:481`; `:299` is the unrelated `jobqueue.css` colour bullet.
@@ -633,6 +635,162 @@ check(
     bool(_quote_rot),
     f"quoted-excerpt code->docs citations still pointing at the wrong line={len(_quote_rot)}: "
     f"{_quote_rot or 'none'} (fix is in app source, outside the docs lane's scope)",
+)
+
+# INVARIANT (new 2026-08-13): the stale-anchor table must obey the rule it states. That table
+# exists to record three rotted code->docs anchors so the next reader inherits the correction —
+# and it closed with "a bare same-file line range is the form that has now rotted here
+# repeatedly" while writing its OWN citing-site column as bare line numbers into app source.
+# Two of the three had already rotted by the time anyone could read them: MEASURED at
+# origin/main = `78c415c9`, PR #423 grew `Library.tsx` from 684 to 773 lines and moved that
+# citation from :685 to :780 (where :685 is now an unrelated `</div>`), and `Library.test.tsx`
+# from 1495 to 1537, moving :1166 to :1209. So the locator column now names the SYMBOL, and this
+# check keeps it that way. Fail-closed on a walk that finds fewer than the three known rows —
+# a zero here means the table moved or the row shape changed, not that the form is clean. The
+# row detector keys on the leading `` `app/ `` / `` `sidecar/ `` cell, which the symbol form
+# still has, so this check does NOT go inert once the violation is fixed.
+_STALE_TABLE_DOC = "docs/plans/v1.5/uiux-qol-audit-2026-08.md"
+_BARE_CODE_ANCHOR = re.compile(r"[A-Za-z0-9_./-]+\.(?:tsx|ts|jsx|js|mjs|css|py):\d+")
+_cite_form_rows = [
+    _ln.split("|")[1]
+    for _ln in (read(_STALE_TABLE_DOC) or "").splitlines()
+    if _ln.startswith(("| `app/", "| `sidecar/"))
+]
+_cite_form_bad = [_c.strip() for _c in _cite_form_rows if _BARE_CODE_ANCHOR.search(_c)]
+check(
+    "C13-cite-form",
+    True,
+    len(_cite_form_rows) >= 3 and not _cite_form_bad,
+    f"stale-anchor table rows={len(_cite_form_rows)} (fewer than 3 means the walk broke, not a "
+    f"clean table), rows locating a citing site by a bare line number={len(_cite_form_bad)}: "
+    f"{_cite_form_bad or 'none'}",
+)
+
+# INVARIANT (new 2026-08-13): no doc may pin a measurement to a commit that exists only on the
+# branch that wrote it. This repo SQUASH-merges — MEASURED, the four commits below origin/main =
+# `78c415c9` each have exactly one parent and a `(#NNN)` title — so a pre-merge commit on a
+# feature branch is unreachable in a fresh clone once that branch is deleted, and every
+# "MEASURED at `<sha>`" pinned to one becomes a citation a reader cannot resolve. This branch
+# shipped ten such pins across five files before this check existed.
+#
+# WHY THE BASE IS A HARDCODED SHA and not `merge-base HEAD origin/main`: `1fa9a69f` is this
+# reconciliation's declared base and is on the default branch, so it is a FIXED commit per this
+# corpus's own citation rule, and it is the one anchor that cannot go stale underneath the check.
+#
+# The predicate is deliberately narrow: violation = the pin RESOLVES here AND is reachable from
+# HEAD but from NEITHER the base NOR `origin/main` — which is what `rev-list HEAD --not <base>
+# <main>` enumerates directly. Both exclusions earn their place:
+#   * `origin/main` is what stops a routine REBASE from turning this gate red on innocent pins.
+#     Rebasing onto a newer default branch makes every main commit since the base reachable from
+#     HEAD, so excluding the base alone would flag `78c415c9` — a legitimate, durable,
+#     already-merged pin. MEASURED with a both-states probe: a scratch doc naming BOTH hashes
+#     produced exactly one violation, the branch-local 1ad80ce8, and left `78c415c9` alone.
+#     (1ad80ce8 is written bare here on purpose — see the use-vs-mention note below. This check
+#     flagged its own comment when that hash was first written with backticks, which is the
+#     control proving the narrowing does work rather than being decorative.)
+#   * it is applied only when `refs/remotes/origin/main` exists locally, so a clone without it
+#     degrades to the base check rather than crashing.
+# A pin that does not resolve at all is counted and PRINTED but not gated, because a shallow or
+# partial clone cannot tell a dangling pin from an unfetched one. The `cat-file --batch-check`
+# call is what separates those two: a hex-looking English word the pattern over-matched reports
+# `missing` just as a genuinely dangling pin does, so the count is an upper bound, not a defect
+# tally — MEASURED here, 10 of 59 candidates, none of them a real commit reference.
+#
+# USE vs MENTION, the shape that has bitten this file at C5b, C9b, P2.8 and C1b: the pattern
+# requires BACKTICKS, and that is the whole narrowing. In this corpus a backticked hex string IS a
+# pin a reader is expected to resolve, so a retraction that discusses a now-dead hash writes it in
+# plain prose instead and is correctly ignored here. That is deliberate and load-bearing — the
+# retraction under the stale-anchor table in `docs/plans/v1.5/uiux-qol-audit-2026-08.md` names both
+# dead hashes and must not re-trip the check that retired them. Blockquote-stripping was the
+# obvious alternative and is NOT used: it would let a genuine new pin hide inside a `>` block, the
+# same hole `C8-scope-prose` already has.
+#
+# Two residuals, inline rather than left to be discovered. (1) Because unresolvable pins are not
+# gated, this check PREVENTS new dangling pins rather than catching ones already dangling on the
+# default branch; settling experiment: run it in a fresh full clone of the default branch and
+# read the unresolved list. (2) A STALE `refs/remotes/origin/main` can only mis-fire on a pin to
+# a main commit newer than that stale ref, and only in a tree rebased onto it; `git fetch origin
+# main` and re-run settles it.
+_PIN_BASE = "1fa9a69f"
+_PIN_MAIN = "refs/remotes/origin/main"
+_PIN_RE = re.compile(r"`([0-9a-f]{7,40})`")
+
+
+def _git_ok(*args: str) -> bool:
+    """True iff git exits 0. `git()` returns stdout and cannot express an exit code."""
+    try:
+        return (
+            subprocess.run(
+                ["git", "--no-optional-locks", *args],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _git_stdin(args: list[str], payload: str) -> str:
+    """`git` with stdin, for the one batch call below. `git()` cannot feed a process."""
+    try:
+        return subprocess.run(
+            ["git", "--no-optional-locks", *args],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=90,
+            input=payload,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+_pin_sites: dict[str, list[str]] = {}
+for _dp in sorted((ROOT / "docs").rglob("*")):
+    if _dp.suffix not in {".md", ".py"} or not _dp.is_file():
+        continue
+    try:
+        _dbody = _dp.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    for _pm in _PIN_RE.finditer(_dbody):
+        _pin_sites.setdefault(_pm.group(1), []).append(_dp.relative_to(ROOT).as_posix())
+# THREE git calls, not one per candidate. The first draft asked git four questions per pin and
+# took the whole run from ~10 s to ~144 s — a doc gate the README tells every reader to run after
+# any change cannot cost two and a half minutes, and a slow gate is a gate people stop running.
+# `rev-list HEAD --not <base> <main>` yields exactly the commits reachable from HEAD and from
+# neither, which IS the branch-local set, in one shot; pins are abbreviated, so they are matched
+# against it by prefix.
+_pin_have_main = _git_ok("rev-parse", "--verify", "--quiet", _PIN_MAIN)
+_pin_local_set = git("rev-list", "HEAD", "--not", _PIN_BASE, *([_PIN_MAIN] if _pin_have_main else [])).split()
+# Separates "not a commit at all" (a hex-looking English word the pattern over-matched) from "a
+# commit this clone does not have" (a pin that has already gone dangling). One batch call.
+_pin_missing = {
+    _ln.split()[0].removesuffix("^{commit}")
+    for _ln in _git_stdin(
+        ["cat-file", "--batch-check"], "".join(f"{_s}^{{commit}}\n" for _s in _pin_sites)
+    ).splitlines()
+    if " missing" in _ln or _ln.endswith("missing")
+}
+_pin_unresolved = len(_pin_missing)
+_pin_branch_local = [
+    f"{_sha} in {sorted(set(_where))}"
+    for _sha, _where in sorted(_pin_sites.items())
+    if _sha not in _pin_missing and any(_full.startswith(_sha) for _full in _pin_local_set)
+]
+check(
+    "C13-pin-durable",
+    True,
+    not _pin_branch_local,
+    f"commit pins in docs/ that exist only on this branch={len(_pin_branch_local)}: "
+    f"{_pin_branch_local or 'none'} (candidates={len(_pin_sites)}, "
+    f"unresolved-here={_pin_unresolved}, base={_PIN_BASE}, "
+    f"default-branch-ref={'present' if _pin_have_main else 'ABSENT — base check only'})",
 )
 
 # ---------------------------------------------------- C9 keystore / consent gate
@@ -705,7 +863,7 @@ check("C11a", True, not _broll_missing, f"B-roll engine+UI on disk (missing: {_b
 # taking the remainder of the matching paragraph closes that escape: a version literal, a file
 # name and an abbreviation are all interior to the paragraph.
 #
-# CORRECTED 2026-08-12 at `1ad80ce8`. This comment used to end "Strictly wider than the old
+# CORRECTED 2026-08-12. This comment used to end "Strictly wider than the old
 # window, so it cannot introduce a false negative the old one did not already have." That was
 # REFUTED by measurement and is the overclaim this file exists to catch, in the file itself. The
 # two windows differ in KIND, not in width — the old one ran over the ALREADY-FLATTENED roadmap,

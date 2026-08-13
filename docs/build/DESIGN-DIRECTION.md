@@ -48,7 +48,8 @@ No component sheet may introduce a color, radius, duration, or font that is not 
 > order to forbid them, so admitting it without a use-vs-mention narrowing would emit false
 > positives, and widening the tuple needs that narrowing first. `C8-scope-prose` catches a
 > re-widening of this paragraph **only in the UNEMPHASISED, unwrapped spelling**. MEASURED
-> 2026-08-12 at `1ad80ce8`: its pattern needs literal whitespace between the words, so the
+> 2026-08-12, and re-derived on every run by `C8-scope-measured` rather than pinned to a commit
+> a reader may not have: its pattern needs literal whitespace between the words, so the
 > `**any** design doc` quoted above, `*any* design doc`, and a re-widening that wraps across a
 > blockquote continuation all report GREEN — it is a partial re-introduction guard, not a ban.
 > (This sentence used to read "now fails if this paragraph re-widens to a universal", which was
