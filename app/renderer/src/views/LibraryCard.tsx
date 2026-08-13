@@ -66,6 +66,23 @@ function VideoThumb({ video }: { video: Video }): React.ReactElement {
   );
 }
 
+/**
+ * The source CONTAINER format for the card's quiet meta line — the extension of
+ * `video.path`, uppercased ("MP4", "MOV"). The frozen `library.list` payload has
+ * no resolution / codec / fps fields at all (`components/api.ts:65-78` — id,
+ * path, title, addedAt, durationSec, hasTranscript, thumbnailPath), so the
+ * container is the only technical fact the record actually supports; anything
+ * richer has to come from the sidecar, not from a guess here.
+ *
+ * Returns '' when the path carries no usable extension (an extensionless file,
+ * or a leading-dot name with no stem) so the caller drops the segment instead of
+ * rendering a stray separator.
+ */
+function sourceFormatLabel(path: string): string {
+  const match = /[^\\/.]\.([A-Za-z0-9]{1,5})$/.exec(path);
+  return match ? match[1].toUpperCase() : '';
+}
+
 export interface LibraryCardProps {
   video: LibraryVideo;
   /** Lineage view re-labels the open action + diverts it to the history drawer. */
@@ -94,6 +111,13 @@ export function LibraryCard({
 }: LibraryCardProps): React.ReactElement {
   const badges = cardBadges(video);
   const added = formatAdded(video.addedAt);
+  // One quiet caption carries both technical facts the record supports, dot-
+  // separated ("MP4 · Added 2026-06-11"). Either half may be missing, so the
+  // line is assembled from the present parts and omitted entirely when empty —
+  // never an orphan separator and never an empty <span>.
+  const meta = [sourceFormatLabel(video.path), added ? `Added ${added}` : '']
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <li className="library__item">
@@ -134,7 +158,7 @@ export function LibraryCard({
               {video.path}
             </span>
           )}
-          {added ? <span className="library__item-added">Added {added}</span> : null}
+          {meta ? <span className="library__item-added">{meta}</span> : null}
         </div>
       </button>
 

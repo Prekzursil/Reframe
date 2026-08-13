@@ -103,14 +103,28 @@ describe('LibraryCard', () => {
     const open = container.querySelector('.library__item-open') as HTMLButtonElement;
     expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript');
     expect(container.querySelector('.library__item-title')?.textContent).toBe('Talk');
-    expect(container.querySelector('.library__item-added')?.textContent).toBe('Added 2026-06-11');
+    expect(container.querySelector('.library__item-added')?.textContent).toBe(
+      'MP4 · Added 2026-06-11',
+    );
     const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/v1.jpg'));
     expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
   });
 
-  it('omits the added line when the timestamp is unparseable', async () => {
+  it('shows the container format alongside the added date in the quiet meta line', async () => {
+    await renderCard({ video: makeVideo({ path: 'C:\\Videos\\talk.MOV' }) });
+    expect(container.querySelector('.library__item-added')?.textContent).toBe(
+      'MOV · Added 2026-06-11',
+    );
+  });
+
+  it('keeps the format alone when the timestamp is unparseable', async () => {
     await renderCard({ video: makeVideo({ addedAt: 'nope' }) });
+    expect(container.querySelector('.library__item-added')?.textContent).toBe('MP4');
+  });
+
+  it('omits the meta line entirely when neither format nor date is derivable', async () => {
+    await renderCard({ video: makeVideo({ addedAt: 'nope', path: '/movies/talk' }) });
     expect(container.querySelector('.library__item-added')).toBeNull();
   });
 
