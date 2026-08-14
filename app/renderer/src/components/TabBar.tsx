@@ -184,28 +184,32 @@ function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
  * lines and their INTERSECTION 24 — so neither set contains the other, and the two
  * counts cannot be read as kinds of one 56.
  *
- * Of those 41: twenty-four also name a deleted class, so they cite a line for markup
- * that exists nowhere in this file any more; TWELVE are past EOF outright (n >= 247 —
- * this file is 289 lines, and of the eleven distinct cited values >= 200, which are
- * 215, 231, 236, 238, 239, 243, 244, 245, 246, 248 and 254, only :248 and :254 exceed
- * it); three are both. The remaining EIGHT are in range and name no deleted class, so
- * whether each still points at what it describes is NOT-CHECKED here — settling
- * experiment: read those eight ledger lines against this file. Others cite
- * `workspace.css:116` / `:148-152` / `:189-192` in a 302-line file that has had ZERO
- * `tabbar__` matches since #431. IMPOSSIBLE PRESCRIPTIONS: eight lines (:379, :417,
- * :766, :781, :798, :807, :814, :924) tell a reader to add a
- * `.tabbar__advanced-panel[hidden]` rule for a defect that can no longer occur.
+ * WHY they are stale, in the only terms that stay true: 24 of the 41 ALSO name a
+ * class this branch deleted, so they send a reader to a line for markup that exists
+ * nowhere in this file any more — a reason INDEPENDENT of how long this file happens
+ * to be. The other 17 are NOT-CHECKED here; settling experiment: read them against
+ * this file one by one. Others cite `workspace.css:116` / `:148-152` / `:189-192` in a
+ * 302-line file that has had ZERO `tabbar__` matches since #431. IMPOSSIBLE
+ * PRESCRIPTIONS: eight lines (:379, :417, :766, :781, :798, :807, :814, :924) tell a
+ * reader to add a `.tabbar__advanced-panel[hidden]` rule for a defect that can no
+ * longer occur.
  *
- * CORRECTS the wording pushed in 5614bdbc, which gave this file's length as 200 and
- * offered `:231` and `:239` as worked examples of citations past EOF. That was true
- * at the PARENT commit abae7b61, where the file WAS 200 lines — and the very commit
- * that wrote the sentence grew it +70/-24 to 246 without updating it. At 246 lines
- * `:231` is a blank line and `:239` is a `return (`: both IN RANGE, as nine of the
- * eleven distinct cited values >= 200 are. So that band is stale-but-in-range, not
- * past-EOF, and the past-EOF surface is 12 lines rather than 41. Recorded rather than
- * silently edited, for the reason the shell.css repair established — and since this
- * is the same defect class the branch exists to close (a citation falsified by a
- * sibling change), the length is now pinned by a test instead of by prose.
+ * PAST-EOF IS THE WRONG CRITERION — it has now produced two false sentences in a row,
+ * and BOTH died in the commit that wrote them. 5614bdbc wrote that the file was 200
+ * lines "so `:231` and `:239` are past EOF". True at the PARENT abae7b61, where it WAS
+ * 200; the same commit grew it +70/-24 to 246 and left the sentence standing (two
+ * probes: `git log -S` puts the sentence in 5614bdbc, `git diff --numstat abae7b61
+ * 5614bdbc` puts the +46 there too). At 246, `:231` is blank, `:239` is a `return (`,
+ * and 9 of the 11 distinct cited values >= 200 — 215, 231, 236, 238, 239, 243, 244,
+ * 245, 246, 248, 254 — are in range. Rescoping that to "12 are past EOF at 246"
+ * repeated the mistake ONE COMMIT LATER: 3c89ad59 asserted the 12 while its own added
+ * lines pushed this file past 254, so the count was already ZERO when it landed. The
+ * past-EOF count simply moves with this file's length, hitting zero at any length
+ * >= 254, the largest value the ledger cites. A criterion whose value changes when you
+ * edit the file it describes is not a criterion, so the stale-content reason above is
+ * the one recorded. Kept as a correction rather than a quiet edit, for the reason the
+ * shell.css repair established. The one claim here a machine CAN check is now checked,
+ * so the next author is told rather than trusted: this file is 293 lines.
  *
  * Neither surface ships a defect and neither is on the merge path: docs are not
  * executable, `docs/validation/tools/verify_ssot_claims.py` is wired into no
