@@ -150,6 +150,16 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  /* THE 0px TRAP. Every bar inside is `width: 100%`, which resolves against THIS
+     element. In a block context that is fine, but as a FLEX ITEM of a row the group
+     is shrink-to-fit: its width comes from its content, and its content is sized
+     from its width. The circular case settles at 0, so the bars computed 0.00 x 10px
+     and the skeleton was INVISIBLE while every test passed — jsdom performs no
+     layout, so nothing in the renderer suite can observe it.
+     The first flex-row adopter worked around it with an inline `width: 160px` at the
+     call site. That patches one caller and leaves the trap armed for the next; the
+     floor belongs here, once, for all of them. */
+  min-width: 8rem;
 }
 
 /* The wait, as text an assistive tech can actually read, clipped out of the

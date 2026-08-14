@@ -339,6 +339,18 @@ test('spoken words become a visible transcript and then a caption cue (real GUI 
   // F — CAPTIONS. `subtitles.generate` reads the transcript the run above just
   // persisted onto the project manifest, so this is the second half of the chain:
   // transcript → cues the user can see and edit.
+  // The inspector is SELECTION-DRIVEN (L5 G-5): it renders only the sections of the
+  // current context, `WORKSPACE_INSPECTOR_SECTIONS[context]`. `transcribe` (clicked
+  // at C above) is in the `project` context — the default when nothing is selected —
+  // but `subtitles` is in the `cue` context, so its tab does not exist until the
+  // caption-cue lane is selected. Clicking it directly waited 30 s for a locator that
+  // could never resolve; this spec predates the selection-driven rebuild and still
+  // assumed one flat strip carrying every panel.
+  //
+  // Selecting the dock lane IS the selection the inspector follows (the dock's lane
+  // heads are `WORKSPACE_DOCK_LANES`; ids are disjoint from the inspector section ids,
+  // so this `data-tab-id` cannot collide).
+  await win.locator('[role="tab"][data-tab-id="captions"]').click();
   await win.locator('[role="tab"][data-tab-id="subtitles"]').click();
   const subs = win.locator('section.subtitles-panel');
   await expect(subs).toBeVisible();

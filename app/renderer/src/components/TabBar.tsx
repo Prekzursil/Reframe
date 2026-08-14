@@ -15,45 +15,10 @@ export function tabPanelId(id: string): string {
   return `tabpanel-${id}`;
 }
 
-/**
- * A named cluster of tabs (WU-3a2 progressive disclosure). `tabIds` reference
- * TabDef ids in render order; a group flagged `advanced` sits behind the
- * "Advanced" disclosure toggle. This is a purely VISUAL grouping layer — every
- * referenced tab still renders as a real, reachable `role="tab"` button (nothing
- * is removed), so the tablist stays complete.
- */
-export interface TabGroup {
-  id: string;
-  label: string;
-  tabIds: string[];
-  advanced?: boolean;
-}
-
 export interface TabBarProps {
   tabs: TabDef[];
   active: string;
   onSelect: (id: string) => void;
-  /**
-   * ADDITIVE (WU-3a2): when provided, the tabs render in NAMED clusters with
-   * section labels + separators instead of one flat strip. Omitted → the
-   * original flat behaviour (unchanged). Every tab in `tabs` should be covered
-   * by exactly one group's `tabIds`, but the flat fallback remains authoritative
-   * for the full set.
-   */
-  groups?: TabGroup[];
-  /** Whether the advanced cluster(s) are expanded. Ignored without `groups`. */
-  advancedOpen?: boolean;
-  /** Toggle handler for the "Advanced" disclosure. Ignored without `groups`. */
-  onToggleAdvanced?: () => void;
-  /**
-   * ADDITIVE (design-review P1): a persistent Export/Deliver action rendered in
-   * the grouped strip. EXPORT is the user's terminal goal, so it gets a standing
-   * affordance even though the full Deliver cluster stays collapsed behind
-   * "Advanced". When provided (grouped mode only), a prominent "Export" button
-   * renders; omitted → nothing extra (unchanged). The host owns what Export does
-   * (jump to the deliver panel), keeping this component presentational.
-   */
-  onExport?: () => void;
   /**
    * ADDITIVE (F18): ids whose activation navigates AWAY from this tablist, so
    * arrow-stepping must MOVE FOCUS onto them WITHOUT activating them. This is the
@@ -75,13 +40,31 @@ export interface TabBarProps {
    *      above, but non-obvious — hence documented here, at the prop.
    */
   navIds?: string[];
+  /**
+   * Which way this strip is LAID OUT, which decides both the announced
+   * `aria-orientation` and which arrow keys walk it. Default `'horizontal'`.
+   *
+   * Not cosmetic. `views/workspace.css:260-263` renders
+   * `.workspace .workspace__inspector .tabbar` with `flex-direction: column`, so
+   * that strip is vertical on screen — while this component declared no
+   * `aria-orientation` (WAI-ARIA DEFAULTS it to horizontal) and moved focus only on
+   * ArrowLeft/ArrowRight. A keyboard user facing a visibly vertical list pressed
+   * Down and nothing happened; Right, which points ACROSS the list rather than
+   * along it, was the only key that worked, and a screen reader announced a
+   * horizontal list that is not one.
+   *
+   * The two key models are kept DISTINCT rather than accepting every arrow
+   * everywhere: the APG specifies Left/Right for horizontal and Up/Down for
+   * vertical, and answering both would violate it in the other direction.
+   */
+  orientation?: 'horizontal' | 'vertical';
 }
 
 /**
- * The keyboard/focus context threaded to every rendered tab so the flat strip and
- * the grouped clusters share ONE roving-tabindex + arrow-key model (mirrors
- * TopTabBar's tabs pattern). `onKeyDown` is bound per-tab by id; `registerRef`
- * records each button so `onKeyDown` can move focus to the newly-selected tab.
+ * The keyboard/focus context threaded to every rendered tab, carrying ONE
+ * roving-tabindex + arrow-key model (mirrors TopTabBar's tabs pattern).
+ * `onKeyDown` is bound per-tab by id; `registerRef` records each button so
+ * `onKeyDown` can move focus to the newly-selected tab.
  */
 interface TabNav {
   active: string;
@@ -90,9 +73,8 @@ interface TabNav {
   registerRef: (id: string) => (el: HTMLButtonElement | null) => void;
 }
 
-/** One tab button. Shared by the flat strip and the grouped clusters so the
- *  `role="tab"` / `aria-selected` / roving-tabindex / id-wiring / test-pinned class
- *  contract is identical. */
+/** One tab button, holding the `role="tab"` / `aria-selected` / roving-tabindex /
+ *  id-wiring / test-pinned class contract. */
 function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
   const isActive = tab.id === nav.active;
   return (
@@ -125,48 +107,144 @@ function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
   );
 }
 
-/** One labelled cluster of tab buttons. The `<section>` is a PURELY VISUAL
- *  wrapper, so it carries `role="presentation"` to flatten it out of the
- *  accessibility tree — this exposes its `role="tab"` children as DIRECT children
- *  of the enclosing `role="tablist"` (satisfying WCAG aria-required-parent /
- *  aria-required-children, which resolve ownership on the presentation-flattened
- *  tree). It deliberately has NO `aria-label`: a labelled section maps to
- *  `role="region"`, which would (a) revoke `role="presentation"` and (b) sit as a
- *  non-tab node between the tablist and its tabs. The visible cluster name stays
- *  as the decorative, `aria-hidden` caption below. */
-function renderGroup(
-  group: TabGroup,
-  byId: Record<string, TabDef>,
-  nav: TabNav,
-): React.ReactElement {
-  return (
-    <section className="tabbar__group" key={group.id} role="presentation">
-      <span className="tabbar__group-label" aria-hidden="true">
-        {group.label}
-      </span>
-      {group.tabIds.map((id) => renderTab(byId[id], nav))}
-    </section>
-  );
-}
-
 /**
- * A horizontal tab strip. Accessible: role=tablist + aria-selected.
+ * A horizontal tab strip: one row of tab buttons.
+ * Accessible: role=tablist + aria-selected.
  *
- * Two rendering modes, chosen by the presence of `groups`:
- *   - FLAT (default, unchanged): one row of tab buttons.
- *   - GROUPED (WU-3a2): NAMED clusters with section labels; clusters flagged
- *     `advanced` are collapsed behind an "Advanced" disclosure toggle. Purely a
- *     visual layer — the tab behaviour (select-on-click) is identical.
+ * HISTORY (do not re-add without its stylesheet). This component also carried a
+ * GROUPED mode — `groups` / `advancedOpen` / `onToggleAdvanced` / `onExport`,
+ * emitting `.tabbar--grouped`, `.tabbar__tablist`, `.tabbar__group`,
+ * `.tabbar__group-label`, `.tabbar__advanced-panel`, `.tabbar__advanced-toggle`
+ * and `.tabbar__export`. PR #431 rebuilt the Workspace IA and deleted that skin
+ * from views/workspace.css, but left the branch here, so the two halves only
+ * disagreed when read together: the code shipped, the CSS did not, and the next
+ * caller to pass `groups=` would have rendered a completely unstyled strip.
+ *
+ * NO PRODUCTION CALLER — two probes at the pre-deletion tree f8cfbd6c, one at
+ * HEAD. At f8cfbd6c: (1) `git grep "groups="` over app/renderer/src, restricted to
+ * non-test `.tsx`, returned no matches; and (2) enumerating call sites instead —
+ * the probe a prop spread would defeat — showed all seven production sites
+ * (App.tsx:678, Deliver.tsx:62, MakeShorts.tsx:314, Repurpose.tsx:28,
+ * Settings.tsx:308, Workspace.tsx:619 and :647) passing exactly `tabs` / `active`
+ * / `onSelect`. Those two query different FIELDS but are one instrument on one
+ * tree. The mechanically different probe is `npx tsc --noEmit` -> exit 0, and it
+ * belongs at HEAD: with `groups?` gone from TabBarProps, a surviving caller is an
+ * excess JSX attribute and a type error, so the compiler resolves the re-exports,
+ * aliases and spreads grep cannot see. CORRECTS commit abae7b61, which presented
+ * all three as mechanically independent probes run at f8cfbd6c — run THERE, tsc is
+ * INERT rather than circular: `groups?` was a legal optional prop, so exit 0 reads
+ * identically whether or not a caller passes it. Workspace.test.tsx:894-967
+ * independently asserts the grouped classes are ABSENT.
+ *
+ * WHAT THE SKIN CONTRACT GUARANTEES, exactly. TabBar.test.tsx fails on any class
+ * this file emits that no renderer stylesheet declares, and its reach is measured
+ * rather than asserted: the cases under
+ * TabBar.test.tsx > "TabBar skin contract (every emitted class has a rule)"
+ * pin one case per shape — a quoted attribute (the shape the deleted grouped code
+ * used, so re-adding that code in its original form IS caught), a single- OR
+ * double-quoted literal inside a brace expression (ternary or a clsx-style helper),
+ * and a template literal with or without interpolation. Comments are stripped first,
+ * so naming a class in this very block is a mention, not an emission. MEASURED LIMIT:
+ * a class held in a CONSTANT stays invisible — resolving it needs a parser and a
+ * scope model, which a source-text extractor is not. That hole has its own pinning
+ * test —
+ * TabBar.test.tsx > "does NOT see a class held in a constant (documented residual, not a bug)"
+ * — so widening the extractor forces this paragraph to be widened with it.
+ *
+ * SCOPE LIMIT on that guarantee, mechanical — and CORRECTING the wording pushed in
+ * 5614bdbc, which said a `git revert` of the deletion IS caught. It is not. A literal
+ * `git revert` of the deleting commit d5b37dbe removes the guard along with the code
+ * the guard watches: that ONE commit deleted grouped mode, ADDED this contract, and
+ * repaired the shell.css citation (`git show d5b37dbe --stat` — TabBar.tsx,
+ * TabBar.test.tsx and shell.css, 140 insertions / 297 deletions), so reverting it
+ * also restores the false citation that masked the 7th unstyled class on the first
+ * run. The contract protects a HAND re-add, not a revert of its own commit. Settling
+ * experiment: `git revert -n d5b37dbe` on a scratch branch, then run the renderer
+ * suite — it is green. Closing it properly needs the guard in a commit the deletion
+ * can be reverted without.
+ *
+ * TWO CLAIMS IN THIS BLOCK ARE MACHINE-CHECKED, because the extractor above strips
+ * comments by design and so can never read its own documentation: this file's line
+ * count, and every `TabBar.test.tsx > "…"` name cited here. Both are pinned by
+ * TabBar.test.tsx > "TabBar self-citation contract (claims about this file are machine-checked)"
+ * — added because round 1 of this branch shipped both errors at once.
+ *
+ * SECOND UNCALLED SURFACE, disclosed not fixed. `navIds` also has ZERO production
+ * callers: measured at this commit and at origin/main, every reference to it lives
+ * in TabBar.tsx or TabBar.test.tsx, and the same seven call sites above pass none.
+ * It is NOT deleted on grouped mode's grounds — that rationale was the code/skin
+ * SPLIT, and `navIds` emits no class, so it carries no unstyled-render defect. But
+ * it is the F18 manual-activation carve-out, so that a11y protection is wired into
+ * no screen today, and the three retargeted `navIds` tests cover a behaviour no
+ * shipped surface exercises. Whichever lane owns App.tsx / Workspace.tsx should
+ * either pass `navIds` on the tablists whose tabs navigate away and unmount them,
+ * or retire the prop.
+ *
+ * RESIDUAL, out of this file's scope — TWO stale surfaces, not one.
+ *
+ * (1) app/e2e/preview.spec.ts. Three tests would fail if run, their references
+ * unguarded: "Advanced disclosure actually COLLAPSES the Deliver cluster (F17)" at
+ * :190 (toggle/panel at :197-198, `toBeInViewport()` at :258), "Workspace tabs
+ * mount, including SemanticSearch" at :279 (click at :298), and "export action
+ * yields a real file" at :307 (click at :314). Of the 11 references only SIX are
+ * executable `locator()` calls (:77, :197, :198, :258, :298, :314); the other five
+ * are comments (:212, :244, :251, :295, :296). CORRECTS abae7b61, which counted all
+ * 11 alike and named the global `test.afterEach` at :74 beside the three failing
+ * tests: that hook returns early on `count() === 0` inside a try/catch (:79-85), so
+ * it degrades to a no-op and cannot fail anything. Widening the removing commit's
+ * "one stale test" to three was right; the hook is stale prose, not blast radius.
+ *
+ * (2) docs/validation/v15-audit-ledger.md — LARGER, and previously undisclosed.
+ * TWO PARTIALLY-OVERLAPPING rot surfaces, not one nested set. Measured over that
+ * file as it stands in this tree (3157 lines; re-measure before acting on it, the
+ * docs lane owns it): 56 lines mention a class this branch deleted, and of the 67
+ * lines carrying a `TabBar.tsx:<n>` citation, 41 cite n >= 200. Their UNION is 73
+ * lines and their INTERSECTION 24 — so neither set contains the other, and the two
+ * counts cannot be read as kinds of one 56.
+ *
+ * WHY they are stale, in the only terms that stay true: 24 of the 41 ALSO name a
+ * class this branch deleted, so they send a reader to a line for markup that exists
+ * nowhere in this file any more — a reason INDEPENDENT of how long this file happens
+ * to be. The other 17 are NOT-CHECKED here; settling experiment: read them against
+ * this file one by one. Others cite `workspace.css:116` / `:148-152` / `:189-192` in a
+ * 302-line file that has had ZERO `tabbar__` matches since #431. IMPOSSIBLE
+ * PRESCRIPTIONS: eight lines (:379, :417, :766, :781, :798, :807, :814, :924) tell a
+ * reader to add a `.tabbar__advanced-panel[hidden]` rule for a defect that can no
+ * longer occur.
+ *
+ * PAST-EOF IS THE WRONG CRITERION — it has now produced two false sentences in a row,
+ * and BOTH died in the commit that wrote them. 5614bdbc wrote that the file was 200
+ * lines "so `:231` and `:239` are past EOF". True at the PARENT abae7b61, where it WAS
+ * 200; the same commit grew it +70/-24 to 246 and left the sentence standing (two
+ * probes: `git log -S` puts the sentence in 5614bdbc, `git diff --numstat abae7b61
+ * 5614bdbc` puts the +46 there too). At 246, `:231` is blank, `:239` is a `return (`,
+ * and 9 of the 11 distinct cited values >= 200 — 215, 231, 236, 238, 239, 243, 244,
+ * 245, 246, 248, 254 — are in range. Rescoping that to "12 are past EOF at 246"
+ * repeated the mistake ONE COMMIT LATER: 3c89ad59 asserted the 12 while its own added
+ * lines pushed this file past 254, so the count was already ZERO when it landed. The
+ * past-EOF count simply moves with this file's length, hitting zero at any length
+ * >= 254, the largest value the ledger cites. A criterion whose value changes when you
+ * edit the file it describes is not a criterion, so the stale-content reason above is
+ * the one recorded. Kept as a correction rather than a quiet edit, for the reason the
+ * shell.css repair established. The one claim here a machine CAN check is now checked,
+ * so the next author is told rather than trusted: this file is 323 lines.
+ *
+ * Neither surface ships a defect and neither is on the merge path: docs are not
+ * executable, `docs/validation/tools/verify_ssot_claims.py` is wired into no
+ * workflow, and `.github/workflows/e2e.yml` triggers on `workflow_dispatch` plus a
+ * nightly `schedule` ONLY — no `pull_request`, no `push`. Deleting grouped mode did
+ * not break either; both were already dead, since those selectors can only match
+ * markup grouped mode renders and no production caller has passed `groups=` since
+ * #431. Recorded rather than fixed because both belong to other lanes, and recorded
+ * rather than dropped for the reason the shell.css repair already established:
+ * correct the sentence, never quietly delete it.
  */
 export function TabBar({
   tabs,
   active,
   onSelect,
-  groups,
-  advancedOpen = false,
-  onToggleAdvanced,
-  onExport,
   navIds,
+  orientation = 'horizontal',
 }: TabBarProps): React.ReactElement {
   // A plain ref map (NOT useRef) so this presentational component stays hook-free
   // and can still be invoked directly in unit tests. React populates it via each
@@ -174,18 +252,8 @@ export function TabBar({
   // keydown handler closes over, so focus targets the live buttons.
   const btnRefs: { current: Record<string, HTMLButtonElement | null> } = { current: {} };
 
-  // The flat, keyboard-REACHABLE tab order for roving-tabindex arrow nav. In flat
-  // mode that is every tab; in grouped mode it is the primary clusters' tabs plus
-  // the advanced clusters' tabs ONLY when the advanced disclosure is open, so arrow
-  // keys never land focus on a tab inside a `hidden` collapsed cluster.
-  const orderedIds = groups
-    ? [
-        ...groups.filter((group) => !group.advanced).flatMap((group) => group.tabIds),
-        ...(advancedOpen
-          ? groups.filter((group) => group.advanced).flatMap((group) => group.tabIds)
-          : []),
-      ]
-    : tabs.map((tab) => tab.id);
+  // The keyboard-REACHABLE tab order for roving-tabindex arrow nav: every tab.
+  const orderedIds = tabs.map((tab) => tab.id);
 
   const move = (toIndex: number): void => {
     const nextId = orderedIds[toIndex];
@@ -202,17 +270,25 @@ export function TabBar({
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, id: string): void => {
+    // Always found: `onKeyDown` is bound only from the `tabs.map` below, and
+    // `orderedIds` IS that same list, so every handler's id is a member. The
+    // former `index === -1` guard existed only for grouped mode's hidden
+    // collapsed-cluster tabs; with that branch gone it is unreachable, and an
+    // unreachable branch cannot be covered by the 100% gate.
     const index = orderedIds.indexOf(id);
-    // A tab outside the reachable order (a hidden collapsed-cluster tab) does not
-    // participate in arrow navigation.
-    if (index === -1) return;
     const last = orderedIds.length - 1;
-    if (event.key === 'ArrowRight') {
+    // The APG pairs the walking keys to the ORIENTATION: Left/Right along a
+    // horizontal strip, Up/Down along a vertical one. Answering both everywhere
+    // would satisfy each case while violating the spec in the other direction, so
+    // the off-axis key is deliberately ignored (pinned by test).
+    const forward = orientation === 'vertical' ? 'ArrowDown' : 'ArrowRight';
+    const backward = orientation === 'vertical' ? 'ArrowUp' : 'ArrowLeft';
+    if (event.key === forward) {
       event.preventDefault();
       move(index === last ? 0 : index + 1);
       return;
     }
-    if (event.key === 'ArrowLeft') {
+    if (event.key === backward) {
       event.preventDefault();
       move(index === 0 ? last : index - 1);
       return;
@@ -237,52 +313,9 @@ export function TabBar({
     };
   const nav: TabNav = { active, onSelect, onKeyDown, registerRef };
 
-  if (!groups) {
-    return (
-      <div className="tabbar" role="tablist">
-        {tabs.map((tab) => renderTab(tab, nav))}
-      </div>
-    );
-  }
-
-  const byId: Record<string, TabDef> = {};
-  for (const tab of tabs) {
-    byId[tab.id] = tab;
-  }
-  const primary = groups.filter((group) => !group.advanced);
-  const advanced = groups.filter((group) => group.advanced);
-
   return (
-    <div className="tabbar tabbar--grouped">
-      {/* The role="tablist" is an INNER wrapper holding ONLY the tab clusters, so
-          in the accessibility tree it owns EXCLUSIVELY role="tab" elements
-          (surfaced through the presentation group wrappers). The non-tab controls
-          — the Advanced disclosure toggle and Export — are rendered as SIBLINGS of
-          the tablist, never descendants, so the tablist never owns a non-tab
-          child (WCAG aria-required-children). */}
-      <div className="tabbar__tablist" role="tablist">
-        {primary.map((group) => renderGroup(group, byId, nav))}
-        {advanced.length > 0 ? (
-          <div className="tabbar__advanced-panel" hidden={!advancedOpen}>
-            {advanced.map((group) => renderGroup(group, byId, nav))}
-          </div>
-        ) : null}
-      </div>
-      {advanced.length > 0 ? (
-        <button
-          type="button"
-          className="tabbar__advanced-toggle"
-          aria-expanded={advancedOpen}
-          onClick={onToggleAdvanced}
-        >
-          Advanced
-        </button>
-      ) : null}
-      {onExport ? (
-        <button type="button" className="tabbar__export" onClick={onExport}>
-          Export
-        </button>
-      ) : null}
+    <div className="tabbar" role="tablist" aria-orientation={orientation}>
+      {tabs.map((tab) => renderTab(tab, nav))}
     </div>
   );
 }

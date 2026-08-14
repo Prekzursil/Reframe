@@ -19,6 +19,7 @@ import {
   prepareWindow,
   runAxe,
   openTopTab,
+  openDestinationMode,
   openVideo,
   openSettingsSection,
   type LaunchedApp,
@@ -60,7 +61,9 @@ test('Library — zero serious/critical axe violations', async () => {
 });
 
 test('Make Shorts — zero serious/critical axe violations', async () => {
-  await openTopTab(win, 'Make Shorts');
+  // #431 moved this off the rail: it is now the `shorts` MODE under Produce
+  // (App.tsx PRODUCE_MODES:155-158), not a top-level destination.
+  await openDestinationMode(win, 'Produce', 'Make Shorts');
   // `.make-shorts` is the always-present section root (MakeShorts.tsx:161); the old
   // `.shorts` class now only mounts inside the 'gallery' sub-tab (not the default).
   await expect(win.locator('.make-shorts')).toBeVisible();
@@ -68,16 +71,21 @@ test('Make Shorts — zero serious/critical axe violations', async () => {
 });
 
 test('Director — zero serious/critical axe violations', async () => {
-  await openTopTab(win, 'Director');
+  // #431: the `director` MODE under Produce (App.tsx PRODUCE_MODES:155-158).
+  await openDestinationMode(win, 'Produce', 'Director');
   await expect(win.locator('section.director-panel')).toBeVisible();
   await expectNoSeriousViolations(win, 'section.director-panel');
 });
 
-test('Edit — zero serious/critical axe violations', async () => {
-  // Formerly the 'Repurpose' tab (id `edit`; App.tsx:386).
-  await openTopTab(win, 'Edit');
+test('Editor — zero serious/critical axe violations', async () => {
+  // Formerly the 'Repurpose' then 'Edit' top tab. #431 made it the `editor` MODE
+  // under Refine (App.tsx REFINE_MODES:159-162) and RELABELLED it "Editor" — the
+  // label this drove ('Edit') is not rendered anywhere on the rail or the strip.
+  await openDestinationMode(win, 'Refine', 'Editor');
   await expect(
-    win.locator('.toptab[aria-selected="true"]', { hasText: 'Edit' }),
+    win.locator('.app__destination .tabbar [role="tab"][aria-selected="true"]', {
+      hasText: 'Editor',
+    }),
   ).toBeVisible();
   await expectNoSeriousViolations(win, '.app__main');
 });
