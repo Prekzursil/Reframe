@@ -19,7 +19,9 @@
 
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import {
   COLD_TIMEOUT_MS,
   SIDECAR_DIR,
@@ -29,6 +31,9 @@ import {
   type BuiltApp,
   type SeededEnv,
 } from './fixtures';
+
+/** Repo root, from this file: app/e2e/ -> app/ -> <root>. */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // The packaged artifact is ONLY produced on the Windows leg (electron-builder.yml
 // has a win: target; the embeddable CPython + ffmpeg staging is Windows-only —
@@ -59,6 +64,47 @@ test.describe('packaged (shipped binary) E2E', () => {
     // 20 passed / 1 failed / 4 did not run. `test.setTimeout()` inside beforeAll sets the HOOK
     // timeout; `electron.launch` needs its own, which is a separate budget again.
     test.setTimeout(COLD_TIMEOUT_MS + 120_000);
+
+    // FAIL FAST ON THE FUSE, before burning the 900 s launch budget.
+    //
+    // Playwright drives an Electron MAIN process over the NODE inspector: its
+    // launcher passes `--inspect=0` and waits for that inspector to come up.
+    // `electron-builder.yml` sets `enableNodeCliInspectArguments: false` (W66
+    // hardening, commit d4a7e3f1, 2026-08-11), which makes Electron IGNORE
+    // `--inspect` entirely — so the inspector never appears and `electron.launch`
+    // waits out its full timeout with no diagnosis.
+    //
+    // MEASURED: this leg has failed on every nightly since 2026-08-11, the day that
+    // fuse landed, and the CI call log shows the app itself starting normally —
+    // "DevTools listening on ws://…", then the renderer finishing load and the
+    // auto-updater reporting a result. The SHIPPED APP IS FINE; only Playwright's
+    // control channel is closed.
+    //
+    // Why the fuse's own comment says nothing depends on `--inspect`: it was
+    // measured by grepping the repo's tracked sources, and `--inspect` is injected
+    // at runtime by playwright-core's Electron launcher, not written in any file
+    // here. A source grep structurally cannot see that dependency.
+    //
+    // This throws rather than skipping: the coverage is genuinely lost while the
+    // fuse is off, and a skip would turn a real gap into a green tick. Throwing
+    // keeps the leg red — but red in seconds, naming the cause and the options.
+    const fuses = readFileSync(resolve(REPO_ROOT, 'electron-builder.yml'), 'utf8').replace(
+      /#[^\n]*/g,
+      '',
+    );
+    if (/enableNodeCliInspectArguments:\s*false/.test(fuses)) {
+      throw new Error(
+        'packaged.spec cannot drive the shipped binary: electron-builder.yml sets ' +
+          '`enableNodeCliInspectArguments: false`, so Electron ignores the `--inspect` ' +
+          'flag Playwright needs to attach to the main process. This is a HARDENING vs ' +
+          'TESTABILITY trade-off, not an app defect — the packaged app launches fine. ' +
+          'Resolve by one of: (a) flip the fuse true and accept the re-opened ' +
+          'Node-injection surface; (b) build a test-only package with the fuse on and ' +
+          'assert separately that the RELEASE artifact has it off; or (c) drop these ' +
+          'main-process assertions and cover the package another way. Until then this ' +
+          'leg is red BY CONSTRUCTION and its 900 s hang was measuring nothing.',
+      );
+    }
 
     // HARD requirement: a real package must exist (no dev fallback here). Set the
     // flag ONLY around our own resolution and restore it immediately, so it can
