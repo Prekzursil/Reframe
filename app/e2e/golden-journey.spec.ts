@@ -44,6 +44,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { findBuiltApp, probeVideo, provisionAssets, seedEnvironment, type SeededEnv } from './fixtures';
+import { openDestinationMode } from './visual/_visualSetup';
 
 // ── LOAD-BEARING ASSERTION VALUES (owner-signed done-signal) ─────────────────
 // These pin what "a genuinely playable vertical short" MEANS. They are probed
@@ -214,13 +215,11 @@ test('Make Shorts produces a real vertical short file on disk (golden journey)',
   await expect(win.locator('.app__brand')).toHaveText('Reframe');
   await expect(win.locator('.library__item-title').first()).toHaveText('sample');
 
-  // B — navigate to the top-level "Make Shorts" section (routes to makeshorts).
-  // NOTE: the tab's real label is "Make Shorts" (App.tsx → TopTabBar renders
-  // tab.label); preview.spec's `hasText: 'Create'` predates the relabel.
-  await win.locator('.toptab', { hasText: 'Make Shorts' }).click();
-  await expect(
-    win.locator('.toptab[aria-selected="true"]', { hasText: 'Make Shorts' }),
-  ).toBeVisible();
+  // B — navigate to Make Shorts. #431 rebuilt the rail to exactly five
+  // destinations (App.tsx tabs SSOT), so "Make Shorts" is no longer a `.toptab`
+  // at all — it is the `shorts` MODE under Produce (App.tsx PRODUCE_MODES:155-158).
+  // Driving the old top-level label matched nothing and surfaced as a 30 s timeout.
+  await openDestinationMode(win, 'Produce', 'Make Shorts');
   await expect(win.locator('.make-shorts__make')).toBeVisible();
 
   // Select 'sample' in the Make-Shorts front-door picker. This section owns its

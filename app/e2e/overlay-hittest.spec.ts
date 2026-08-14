@@ -33,6 +33,7 @@ import {
   launchSeededApp,
   prepareWindow,
   openTopTab,
+  openDestinationMode,
   openVideo,
   type LaunchedApp,
 } from './visual/_visualSetup';
@@ -172,7 +173,9 @@ async function probeControlBar(page: Page, videoSelector: string): Promise<HitIn
  * overlay) when `editVideo` is null, so the video must be opened first.
  */
 async function openCaptionStage(page: Page): Promise<void> {
-  await openTopTab(page, 'Caption');
+  // #431: captioning is no longer a rail destination — it is the `caption` MODE
+  // under Refine, labelled "Caption design" (App.tsx REFINE_MODES:159-162).
+  await openDestinationMode(page, 'Refine', 'Caption design');
   // Settle on ONE of Caption's two states before branching, so the count() below
   // cannot race the route's first render.
   await page
@@ -187,7 +190,7 @@ async function openCaptionStage(page: Page): Promise<void> {
     // the tab switch above instead of re-opening the video.
     await openTopTab(page, 'Library');
     await openVideo(page, 'sample');
-    await openTopTab(page, 'Caption');
+    await openDestinationMode(page, 'Refine', 'Caption design');
   }
   await expect(page.locator('.caption-stage__frame')).toBeVisible();
 }
@@ -269,7 +272,8 @@ test('the draggable caption box still receives its own pointer events', async ()
 // no play/pause/seek of its own. This case MEASURES the second surface rather
 // than inferring it from the shared stylesheet.
 test('the same fix reaches the MakeShorts caption designer', async () => {
-  await openTopTab(win, 'Make Shorts');
+  // #431: the `shorts` MODE under Produce.
+  await openDestinationMode(win, 'Produce', 'Make Shorts');
   await expect(win.locator('.make-shorts')).toBeVisible();
   // The designer only mounts once a source video is selected (MakeShorts.tsx).
   await win.locator('select[aria-label="Source video"]').selectOption({ label: 'sample' });

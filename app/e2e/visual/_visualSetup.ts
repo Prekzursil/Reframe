@@ -112,11 +112,64 @@ export function shotOptions(win: Page) {
   };
 }
 
-/** Click a top-level tab by its visible label and wait for it to be selected. */
+/**
+ * The five rail destinations, mirroring the SSOT: App.tsx's `const tabs: TopTab[]`
+ * (declared "the SSOT for the rail" at App.tsx:3, passed to <TopTabBar> at :730,
+ * rendered as `.toptab__label` by TopTabBar.tsx:131). `.toptab` can render NOTHING
+ * else, so a label outside this set is unreachable by construction.
+ */
+export const RAIL_LABELS = ['Library', 'Produce', 'Refine', 'Deliver', 'Settings'] as const;
+export type RailLabel = (typeof RAIL_LABELS)[number];
+
+/**
+ * Click a top-level rail tab by its visible label and wait for it to be selected.
+ *
+ * WHY THE GUARD: PR #431 rebuilt the rail to exactly five destinations, and the
+ * suite kept driving the pre-#431 labels ("Make Shorts", "Director", "Edit",
+ * "Caption"). Playwright reports an unmatchable locator as a 30 s `locator.click`
+ * TIMEOUT, which reads like flake and hid a whole-suite IA drift across all three
+ * GUI platforms. Failing fast with the offending label is the difference between
+ * "e2e is flaky" and "this label no longer exists" — so this must NOT be softened
+ * into a wait.
+ */
 export async function openTopTab(win: Page, label: string): Promise<void> {
+  if (!(RAIL_LABELS as readonly string[]).includes(label)) {
+    throw new Error(
+      `openTopTab(${JSON.stringify(label)}): not a rail destination. ` +
+        `The rail renders exactly [${RAIL_LABELS.join(', ')}] (App.tsx tabs SSOT). ` +
+        'Per-video surfaces live under a destination — use openDestinationMode().',
+    );
+  }
   await win.locator('.toptab', { hasText: label }).click();
   await win
     .locator('.toptab[aria-selected="true"]', { hasText: label })
+    .waitFor({ state: 'visible' });
+}
+
+/**
+ * Open a destination's MODE sub-navigation: rail tab first, then the mode tab.
+ *
+ * Three destinations own a two-entry mode list (App.tsx:155-165) rendered by
+ * <TabBar> inside `.app__destination` (App.tsx:678):
+ *
+ *   Produce -> "Make Shorts" | "Director"
+ *   Refine  -> "Editor"      | "Caption design"
+ *   Deliver -> "Finish"      | "Publish"
+ *
+ * Library and Settings have no mode strip (Settings sub-navigates internally --
+ * use `openSettingsSection`).
+ */
+export async function openDestinationMode(
+  win: Page,
+  rail: RailLabel,
+  modeLabel: string,
+): Promise<void> {
+  await openTopTab(win, rail);
+  await win.locator('.app__destination .tabbar [role="tab"]', { hasText: modeLabel }).click();
+  await win
+    .locator('.app__destination .tabbar [role="tab"][aria-selected="true"]', {
+      hasText: modeLabel,
+    })
     .waitFor({ state: 'visible' });
 }
 
