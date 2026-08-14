@@ -908,6 +908,41 @@ describe('Player custom transport (L8)', () => {
     expect(button('Play')).toBeTruthy();
   });
 
+  it('ends a REVERSE shuttle stopped at the out point, where NO pause event fires', () => {
+    // The reachable state where the window-end stop must clear `playing` ITSELF:
+    // a reverse shuttle keeps the element PAUSED while `playing` stays true, and
+    // a real element raises NO `pause` event for a pause() on an already-paused
+    // element — so `syncPaused` cannot be the one to clear it there. Seeking the
+    // head onto the out point mid-shuttle gets there: neither the scrubber's
+    // `handleSeek` nor the ref handle's `seek()` (keyboard review) touches the
+    // rate, so the stop path runs with a NEGATIVE rate armed. This is also the
+    // one case where the retired `!playing` guard's premise is exercised rather
+    // than argued: the rate must come back to 1 or the driver keeps walking.
+    vi.useFakeTimers();
+    try {
+      const video = render({ videoId: 'vid-1', transport: true, window: { start: 40, end: 44 } });
+      durations.set(video, 600);
+      fire(video, 'loadedmetadata');
+      video.currentTime = 42;
+      fire(video, 'timeupdate');
+      press('j'); // reverse shuttle: element paused, `playing` true, rate -1
+      expect(group().querySelector('.transport__rate')?.textContent).toBe('1x rev');
+
+      video.currentTime = 43.99; // seeked onto the out point mid-shuttle
+      fire(video, 'timeupdate'); // the seek's own timeupdate — and NO pause event
+
+      expect(video.currentTime).toBe(44);
+      expect(group().querySelector('.transport__rate')?.textContent).toBe('');
+      expect(button('Play')).toBeTruthy(); // not still claiming to play
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(video.currentTime).toBe(44); // the reverse driver is torn down
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('seeds duration and playhead from the ELEMENT when the transport mounts late', () => {
     // `loadedmetadata` and `durationchange` fire once per load, so a call site
     // that turns `transport` ON after metadata already landed never sees either
