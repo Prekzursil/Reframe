@@ -766,4 +766,36 @@ describe('Player custom transport (L8)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('stops the reverse shuttle the tick the head LANDS on the window start', () => {
+    // The floor test is `next <= floorSec`, NOT `< floorSec`. A head that lands
+    // EXACTLY on the in-point must stop THERE: under a strict `<` the shuttle
+    // survives that tick still flagged as playing (the toggle keeps reading
+    // "Pause" while the head is parked on the in-point) and only gives up one
+    // frame later. The test above straddles the floor (2.05 is not a whole
+    // number of frames above 2), so it cannot see the difference — this one
+    // lands on it exactly. fps 32 is deliberate: 1/32 = 0.03125 is exactly
+    // representable in binary, so `2.03125 - 1/32` is EXACTLY 2 and the
+    // boundary is hit rather than approached.
+    vi.useFakeTimers();
+    try {
+      const video = render({
+        videoId: 'vid-1',
+        transport: true,
+        fps: 32,
+        window: { start: 2, end: 20 },
+      });
+      fire(video, 'loadedmetadata');
+      video.currentTime = 2.03125; // exactly one frame above the in-point
+      press('j');
+      act(() => {
+        vi.advanceTimersByTime(32); // exactly ONE 31.25ms frame interval
+      });
+      expect(video.currentTime).toBe(2);
+      expect(button('Play')).toBeTruthy(); // stopped on arrival, not a tick later
+      expect(video.playbackRate).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
