@@ -24,6 +24,17 @@
   font-family: var(--font-ui);
   font-size: var(--type-body-size);
   animation: secure-keys-banner-rise var(--dur-slow) var(--ease-out);
+  /* Makes the "non-blocking" claim in this file's header TRUE. Without it a
+     `position: fixed`, `z-index: 1050` strip pinned to the bottom edge swallows
+     every click underneath it: e2e/overlay-hittest.spec.ts probed the MakeShorts
+     caption designer's control bar and hit `SPAN.secure-keys-banner__message`
+     instead of the <video> (run 31812888847). Same guard as captionOverlay.css:70
+     ("never steal the player's controls") and captionBox.css:15.
+     SAFE because SecureKeysBanner.tsx renders only <span> text — no focusable or
+     clickable node. If an interactive control is ever added it MUST carry
+     `pointer-events: auto` (the companion pattern at captionBox.css:22-26);
+     secureKeysBanner.overlay.test.ts fails if one appears without it. */
+  pointer-events: none;
 }
 
 @keyframes secure-keys-banner-rise {

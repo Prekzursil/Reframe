@@ -21,6 +21,7 @@ import {
   prepareWindow,
   shotOptions,
   openTopTab,
+  openDestinationMode,
   openVideo,
   openSettingsSection,
   type LaunchedApp,
@@ -39,7 +40,8 @@ test.afterAll(async () => {
 });
 
 test('Make Shorts tab — make front door + gallery/batch sections', async () => {
-  await openTopTab(win, 'Make Shorts');
+  // #431: now the `shorts` MODE under Produce, not a rail destination.
+  await openDestinationMode(win, 'Produce', 'Make Shorts');
   // The Make Shorts surface root (id `makeshorts`, formerly 'Create'). MakeShorts
   // renders `.make-shorts` unconditionally (renderer/src/views/MakeShorts.tsx:161);
   // the old `.shorts` class now only mounts inside its 'gallery' sub-tab (default
@@ -50,7 +52,8 @@ test('Make Shorts tab — make front door + gallery/batch sections', async () =>
 });
 
 test('Director tab — AI editing panel', async () => {
-  await openTopTab(win, 'Director');
+  // #431: now the `director` MODE under Produce.
+  await openDestinationMode(win, 'Produce', 'Director');
   // Lazy panel: wait for the real Director section (not the Suspense fallback).
   await expect(win.locator('section.director-panel')).toBeVisible();
   await expect(win).toHaveScreenshot('director.png', shotOptions(win));
@@ -61,9 +64,12 @@ test('Edit tab — selected state (batch/templates now live in Make Shorts → B
   // This asserts the tab's selected state; the batch/templates surface it once
   // captured moved into Make Shorts → Batch. Screenshot name kept as `repurpose.png`
   // to preserve the committed Windows baseline.
-  await openTopTab(win, 'Edit');
+  // #431 moved it to the `editor` MODE under Refine and relabelled it "Editor".
+  await openDestinationMode(win, 'Refine', 'Editor');
   await expect(
-    win.locator('.toptab[aria-selected="true"]', { hasText: 'Edit' }),
+    win.locator('.app__destination .tabbar [role="tab"][aria-selected="true"]', {
+      hasText: 'Editor',
+    }),
   ).toBeVisible();
   await expect(win).toHaveScreenshot('repurpose.png', shotOptions(win));
 });

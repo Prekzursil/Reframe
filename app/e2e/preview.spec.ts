@@ -20,7 +20,12 @@ import { resolve } from 'node:path';
 import { findBuiltApp, probePlayable, seedEnvironment, type SeededEnv } from './fixtures';
 // The window geometry the app actually creates (main/main.ts) — single source, shared
 // with the visual suite so the number is not restated per spec.
-import { WINDOW_HEIGHT, WINDOW_WIDTH } from './visual/_visualSetup';
+import {
+  WINDOW_HEIGHT,
+  WINDOW_WIDTH,
+  openTopTab,
+  openDestinationMode,
+} from './visual/_visualSetup';
 
 let seeded: SeededEnv;
 let app: ElectronApplication;
@@ -62,28 +67,21 @@ test.afterAll(async () => {
   await app?.close();
 });
 
-// STATE CONTAINMENT. `playwright.config.ts` runs `fullyParallel: false, workers: 1`
-// against the ONE app launched above, so every test shares live renderer state. The
-// Advanced-disclosure test restored `advancedOpen = false` at the END of its body —
-// which does not run when an assertion earlier in the body fails. Measured on CI run
-// 30677298418: one geometry failure at `preview.spec.ts:188` left the cluster OPEN and
-// took the next two tests down with it (3 failures, 1 cause).
+// STATE CONTAINMENT — the `afterEach` that lived here is RETIRED.
 //
-// Collapsing here instead makes the restore unconditional, so a red test reports one
-// defect rather than three. Idempotent: a no-op when the cluster is already collapsed.
-test.afterEach(async () => {
-  const win = await app?.firstWindow();
-  if (!win) return;
-  const toggle = win.locator('.tabbar__advanced-toggle');
-  try {
-    if ((await toggle.count()) === 0) return;
-    if ((await toggle.getAttribute('aria-expanded')) === 'true') {
-      await toggle.click({ timeout: 5_000 });
-    }
-  } catch {
-    // Best-effort cleanup: never mask the real failure with a teardown error.
-  }
-});
+// `playwright.config.ts` runs `fullyParallel: false, workers: 1` against the ONE app
+// launched above, so every test shares live renderer state. This teardown existed
+// because the Advanced-disclosure test restored `advancedOpen = false` only at the END
+// of its body, which does not run when an earlier assertion fails: measured on CI run
+// 30677298418, one geometry failure left the cluster OPEN and took the next two tests
+// down with it (3 failures, 1 cause). Collapsing unconditionally here made a red test
+// report one defect rather than three.
+//
+// It is gone because its subject is gone: `.tabbar__advanced-toggle` is emitted ONLY by
+// TabBar's grouped mode, and #431 stopped passing `groups=` at every call site, so no
+// cluster state can leak between tests. The PRINCIPLE still applies to this file —
+// shared app, serial workers — so any future test that mutates persistent renderer
+// state must restore it in an unconditional `afterEach`, not at the end of its body.
 
 test('renderer loads with no console errors', async () => {
   const win = await app.firstWindow();
@@ -114,17 +112,18 @@ test('Library panel mounts and shows the imported sample', async () => {
   await expect(win.locator('.library__item-title').first()).toHaveText('sample');
 });
 
-test('Make Shorts panel mounts via the top-level tabs', async () => {
+test('Make Shorts mounts as the shorts mode under Produce', async () => {
   const win = await app.firstWindow();
-  // v1.4 renamed the shorts-making top tab "Create" -> "Make Shorts" (App.tsx
-  // makeshorts nav label). Drive the current label so this stops timing out.
-  await win.locator('.toptab', { hasText: 'Make Shorts' }).click();
-  // The Make Shorts tab becomes the selected top-level tab.
-  await expect(
-    win.locator('.toptab[aria-selected="true"]', { hasText: 'Make Shorts' }),
-  ).toBeVisible();
+  // HISTORY WORTH KEEPING: this drove `.toptab` "Create", was repointed to
+  // "Make Shorts" by the v1.4 relabel, and broke a THIRD time when #431 rebuilt the
+  // rail to exactly five destinations — Make Shorts became the `shorts` MODE under
+  // Produce (App.tsx PRODUCE_MODES:155-158). Each break surfaced as a 30 s timeout,
+  // never as "no such tab", which is why it survived three IA changes. openTopTab
+  // now throws on a non-rail label so the fourth time is loud.
+  await openDestinationMode(win, 'Produce', 'Make Shorts');
+  await expect(win.locator('.make-shorts')).toBeVisible();
   // Return to Library for the Workspace test.
-  await win.locator('.toptab', { hasText: 'Library' }).click();
+  await openTopTab(win, 'Library');
   await expect(win.locator('.library__title')).toBeVisible();
 });
 
@@ -187,94 +186,27 @@ test('preview <video> PLAYS the imported sample (real playback)', async () => {
   expect(advanced, 'currentTime after play()').toBeGreaterThan(0.2);
 });
 
-test('Advanced disclosure actually COLLAPSES the Deliver cluster (F17)', async () => {
-  const win = await app.firstWindow();
-  // Workspace is already open from the playback test, in its DEFAULT view:
-  // Workspace.tsx seeds `advancedOpen = false`, and nothing on the route in
-  // (library card -> task-hub "Advanced / all tools") ever opens the cluster.
-  await expect(win.locator('.workspace')).toBeVisible();
-
-  const toggle = win.locator('.tabbar__advanced-toggle');
-  const panel = win.locator('.tabbar__advanced-panel');
-  const deliverTab = win.locator('.tab[data-tab-id="tracks"]');
-
-  // DETECTOR CONTROL (same element, mechanically independent of layout): the
-  // panel EXISTS and React really wrote the `hidden` attribute onto it. So a
-  // failure of the layout assertions below cannot come from a typo'd selector,
-  // an unmounted panel, or React skipping `hidden` — the only remaining cause
-  // is the CSS cascade. This is what makes the red below name the defect.
-  await expect(panel).toHaveCount(1);
-  await expect(panel).toHaveAttribute('hidden', '');
-
-  // The disclosure REPORTS collapsed...
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  // ...so the cluster it owns must not paint. It does today: the author-origin
-  // `display: flex` on `.tabbar--grouped .tabbar__advanced-panel` outranks the
-  // UA `[hidden] { display: none }`, and no `[hidden]` selector anywhere under
-  // app/ restores it — so all 21 tabs paint instead of 16 and `aria-expanded`
-  // lies about what is on screen.
-  await expect(panel).toBeHidden();
-  await expect(deliverTab).toBeHidden();
-  // The user-visible consequence: the default view paints the 16 primary tabs,
-  // not all 21. (`.tab` is exclusive to this strip.)
-  //
-  // These two numbers are DERIVED, not observed — they are `WORKSPACE_TABS.length`
-  // and that minus the `advanced: true` group's `tabIds.length`
-  // (`Workspace.tsx`): 21 tabs total; Deliver holds 5 (convert, nle, recipes,
-  // assets, tracks), so 16 paint while it is collapsed. They were 13/8 until the
-  // v1.5 wave added `transcriptEdit`, `timeline`, `speed` and `audiomix`; e2e is
-  // opt-in and nightly, so it never gated those PRs and the stale pair merged
-  // four times over. It went 17/12 -> 19/14 when W17/W18 mounted `reframeFix`
-  // and `videoTimeline` into the visible "Frame & Cut" cluster, updated here in
-  // the SAME commit as `Workspace.test.tsx`'s "pins the strip counts" test —
-  // that PR-gating test is the only reason this nightly pair is not stale again.
-  // W19 took it 19/14 -> 20/15 by mounting `gaze` into that same visible cluster,
-  // and W16-UI took it 20/15 -> 21/16 by mounting `broll` into it as well.
-  // Re-derive from the source when the tab list changes — do NOT read a number
-  // off a failing run and paste it back.
-  await expect(win.locator('.tab')).toHaveCount(21);
-  await expect(win.locator('.tab:visible')).toHaveCount(16);
-  // ...and the disclosure's own toggle is reachable WITHOUT horizontally
-  // scrolling `.workspace .tabbar` (workspace.css `overflow-x: auto`). With the
-  // cluster always painted the strip overflowed its 1064px track by 587px and
-  // pushed the toggle out of the window entirely, so the only control that could
-  // collapse the cluster was itself off-screen.
-  await expect(toggle).toBeInViewport();
-  // NOW ASSERTED (v1.5 W17/W18). This used to read "deliberately NOT asserted:
-  // `.tabbar__export` in-viewport", recording that at the default window
-  // (innerWidth 1264) collapsing the cluster cut the strip's overflow from 587px
-  // to 94px — restoring the toggle (x 1175..1268) but leaving Export starting at
-  // x=1268, 4px past the right edge. Sticky only ever pinned the toggle.
-  //
-  // W17/W18 added two painted tabs, which would have pushed Export further out,
-  // so the layout change that comment called for landed with them: the scrollport
-  // moved from `.tabbar--grouped` onto `.tabbar__tablist` (workspace.css), which
-  // puts BOTH right-hand controls outside the scrolling region at any tab count.
-  // This assertion is the pin for that. It is RED in the pre-fix state by the
-  // measurement quoted above (x=1268 > 1264).
-  //
-  // UNVERIFIED by the author of this change: e2e is nightly and needs a packaged
-  // Electron build, which was not run here. Settling experiment: this test.
-  await expect(win.locator('.tabbar__export')).toBeInViewport();
-
-  // The disclosure still REVEALS when asked — pins that the fix scopes the rule
-  // rather than deleting the cluster (passes before AND after the fix).
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(panel).toBeVisible();
-  await expect(deliverTab).toBeVisible();
-
-  // RESTORE the collapsed default. playwright.config.ts runs `fullyParallel:
-  // false, workers: 1` against ONE app launched in `beforeAll`, so leaving the
-  // cluster open would leak `advancedOpen === true` into the tests below and
-  // hide whether THEY reveal it themselves.
-  //
-  // NOT redundant with the `afterEach` above, despite the overlap — keep both. This
-  // pair ASSERTS that collapsing works; the afterEach only GUARANTEES the state is
-  // restored even when an assertion above fails. Deleting either loses something.
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-});
+// ── RETIRED: 'Advanced disclosure actually COLLAPSES the Deliver cluster (F17)' ──
+//
+// NOT deleted to make CI green — deleted because its SUBJECT was removed by a
+// product decision. TabBar emits `.tabbar--grouped`, `.tabbar__advanced-toggle`,
+// `.tabbar__advanced-panel`, `.tabbar__tablist` and `.tabbar__export` ONLY in
+// grouped mode, and PR #431 stopped passing `groups=` at every call site, so the
+// collapsible Deliver cluster cannot be rendered at all.
+//
+// The evidence it was already testing nothing: its own DETECTOR CONTROL,
+// `expect(panel).toHaveCount(1)`, failed on CI run 31774067161 — the panel did not
+// exist, rather than existing-and-wrongly-visible. A test whose control cannot pass
+// is measuring the absence of its own fixture.
+//
+// What it used to pin, recorded so the intent is not lost: the author-origin
+// `display: flex` on `.tabbar--grouped .tabbar__advanced-panel` outranked the UA
+// `[hidden] { display: none }`, so `aria-expanded="false"` lied and all 21 tabs
+// painted instead of 16; it also pinned that the toggle and Export stayed in the
+// viewport once the scrollport moved onto `.tabbar__tablist`.
+//
+// If a destination ever reintroduces a collapsible cluster, restore this test WITH
+// its detector control — the control is what made its red name the defect.
 
 test('Workspace tabs mount, including SemanticSearch', async () => {
   const win = await app.firstWindow();
@@ -290,12 +222,10 @@ test('Workspace tabs mount, including SemanticSearch', async () => {
   await expect(win.locator('input[aria-label="Search the transcript"]')).toBeVisible();
 
   // "NLE export" (tab id `nle`, relabelled from "Timeline export" by the v1.5
-  // timeline-naming lane) lives in the Deliver cluster, which is collapsed by
-  // default — so REVEAL it first or Playwright's actionability gate cannot click
-  // a `display:none` button. Use `.tabbar__export` (Workspace handleExport →
-  // `setAdvancedOpen(true)`), which is IDEMPOTENT; the `.tabbar__advanced-toggle`
-  // would flip the cluster shut on a second caller.
-  await win.locator('.tabbar__export').click();
+  // timeline-naming lane) used to sit inside the collapsed Deliver cluster, so this
+  // first clicked `.tabbar__export` to reveal it. #431 removed grouped mode, so every
+  // tab is painted and the reveal step is gone — not skipped, UNNECESSARY. If tabs
+  // are ever grouped again, the click must come back with it.
   // Switch to NLE export and assert the NleExport panel ITSELF mounted.
   await win.locator('button', { hasText: 'NLE export' }).first().click();
   await expect(win.locator('section.nle-panel')).toBeVisible();
@@ -309,9 +239,8 @@ test('export action yields a real file (NLE timeline export, real button)', asyn
   // Drive the REAL "Export timeline" button in the mounted NleExport panel (it
   // calls nle.export through the live preload bridge -> live sidecar). Then read
   // the saved path the panel renders and assert the file exists on disk.
-  // Reveal the Deliver cluster first (see the note above): this test must not
-  // depend on a sibling test having left it open.
-  await win.locator('.tabbar__export').click();
+  // No reveal step any more (see the note above): with grouped mode removed by #431
+  // every tab is painted, so this no longer depends on a sibling test's state.
   await win.locator('button', { hasText: 'NLE export' }).first().click();
   await expect(win.locator('section.nle-panel')).toBeVisible();
   await win.locator('section.nle-panel button', { hasText: 'Export timeline' }).click();
