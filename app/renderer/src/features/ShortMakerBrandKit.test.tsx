@@ -151,9 +151,32 @@ describe('<ShortMakerBrandKit />', () => {
     // Not `toBeTruthy()` on the raw string: "0px" is a truthy STRING and would
     // sail through while re-shipping the exact 0-width bug this pins.
     expect(Number.parseFloat(sized?.style.width ?? '0')).toBeGreaterThan(0);
-    // The width must sit INSIDE the flex row, on the box the skeleton actually
-    // sizes against — a width on some outer page container would not resolve it.
-    expect(sized?.closest('.sm-data-folder-row')).toBeTruthy();
+    // The width must sit STRICTLY INSIDE the flex row: a width on some outer page
+    // container would not resolve the bar, and neither would one on the ROW itself
+    // (the shrink-to-fit `.skeleton-group` between them would still contribute 0).
+    // `closest` includes SELF, so the row has to be excluded explicitly — without
+    // that, moving this style onto `.sm-data-folder-row` keeps every assertion here
+    // green while re-shipping the exact 0px bug. Mutation-proved, both states.
+    const row = region.closest('.sm-data-folder-row');
+    expect(row).toBeTruthy();
+    expect(sized).not.toBe(row);
+    expect(row?.contains(sized as Node)).toBe(true);
+  });
+
+  // The box carrying that width is a <div>, not a <span>. <Skeleton /> renders a
+  // <div> root, and `div` is flow content, which `span` — phrasing content only —
+  // may not contain. Nothing breaks at runtime (browsers do not reparent inside a
+  // span, and this app is client-rendered Electron with no hydration), but the
+  // invalid nesting was free to avoid; the `display: inline-block` that came with
+  // the span was inert too, since a flex item of `.sm-data-folder-row` is
+  // blockified per CSS Display 3 §2.7. Pinned so the span cannot come back.
+  it('carries the width on a flow-content wrapper, not an invalid span > div', () => {
+    mount({ dataFolderLoaded: false });
+    const region = container.querySelector('.sm-data-folder-loading') as HTMLElement;
+    const sized = region.closest('[style]') as HTMLElement;
+    expect(sized.tagName).toBe('DIV');
+    // No inert display declaration riding along with the width.
+    expect(sized.style.display).toBe('');
   });
 
   it('keeps the wait announceable: a busy status region that names the data folder', () => {

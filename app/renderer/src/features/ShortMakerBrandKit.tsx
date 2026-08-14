@@ -191,13 +191,13 @@ export function ShortMakerBrandKit({
                   `busy.kind === 'list' ? 'Loading…' : 'Refresh'` is a button's
                   own busy LABEL, a different shape from a placeholder surface. */}
               {!dataFolderLoaded ? (
-                <span style={{ display: 'inline-block', width: '160px' }}>
+                <div style={{ width: '160px' }}>
                   <Skeleton
                     variant="line"
                     className="sm-data-folder-loading"
                     label="Loading data folder"
                   />
-                </span>
+                </div>
               ) : dataFolder ? (
                 <span className="sm-data-folder-path" title={dataFolder}>
                   {dataFolder}
