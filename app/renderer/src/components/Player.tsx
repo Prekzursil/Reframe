@@ -295,6 +295,15 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       stoppedAtEndRef.current = true;
       video.pause();
       video.currentTime = w.end; // snap the playhead exactly onto the out point
+      // A stop ENDS A SHUTTLE — and this path is the one that could forget. It
+      // fires the `onEnded` PROP, not the DOM `ended` event, so `syncEnded`
+      // (the listener that resets the rate) never runs for it: without these two
+      // lines an L-shuttle survived the out point with `playbackRate` still 2x/4x
+      // on the element and "2x" still announced in the transport's live region,
+      // and the next Play resumed at that rate. Inert without the transport —
+      // both values are already at these defaults, so React bails out.
+      setPlaying(false);
+      setRate(1);
       callbacksRef.current.onEnded?.();
     };
     const handleEnded = (): void => {
@@ -349,14 +358,22 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       // event must not read as "stopped".
       if (rateRef.current >= 0) setPlaying(false);
     };
-    // `ended` is a STOP, so it must clear the shuttle exactly like the other two
-    // stop paths (the window floor below and an explicit pause) already do.
-    // Clearing only `playing` left a NEGATIVE rate armed, so the next Play
-    // re-entered the reverse driver and walked the head BACKWARD.
+    // `ended` is a STOP, so it must clear the shuttle exactly like the other
+    // three stop paths (the window floor below, an explicit pause, and the
+    // window-END stop in the listener effect above) already do. Clearing only
+    // `playing` left a NEGATIVE rate armed, so the next Play re-entered the
+    // reverse driver and walked the head BACKWARD.
     const syncEnded = (): void => {
       setPlaying(false);
       setRate(1);
     };
+    // Seed from the ELEMENT, not from future events alone: `loadedmetadata` and
+    // `durationchange` fire once per LOAD, so a call site that turns `transport`
+    // on AFTER metadata landed would never see either again and would sit at
+    // duration 0 forever — a dead scrubber with min === max. Seeding here makes
+    // the effect order-independent instead of mount-order-dependent.
+    syncTime();
+    syncDuration();
     video.addEventListener('timeupdate', syncTime);
     video.addEventListener('seeked', syncTime);
     video.addEventListener('loadedmetadata', syncDuration);
@@ -388,13 +405,27 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       return undefined;
     }
     // A NEGATIVE rate now IS an active reverse shuttle, so no separate `playing`
-    // test is needed: all THREE stop paths clear the rate back to 1 (explicit
-    // pause, the window floor, and `ended`), and the only producer of a negative
-    // rate — Transport's `shuttle()` — starts playback in the same batch. A
-    // `!playing` guard used to sit here; once `ended` started clearing the rate
-    // it became unreachable, and parking an unreachable branch behind a coverage
-    // ignore would be a dodge rather than a safeguard. The three stop-path tests
-    // in Player.test.tsx are what hold the invariant up.
+    // test is needed. This file has FOUR paths that stop playback, and all four
+    // clear the rate back to 1:
+    //   1. an explicit pause          — handlePlayPause(false) below;
+    //   2. the reverse-shuttle floor  — the interval below, at `floorSec`;
+    //   3. the DOM `ended` event      — syncEnded in the sync effect above;
+    //   4. the window-END stop        — in the listener effect above.
+    // (4) was the one that did not, and an earlier revision of this comment
+    // claimed only THREE existed — three reviewers measured that independently.
+    // It fires the `onEnded` PROP rather than the DOM `ended` event, so
+    // `syncEnded` never runs for it and a forward 2x/4x shuttle used to survive
+    // the out point. It could never strand a NEGATIVE rate (the reverse driver
+    // walks AWAY from `w.end` and `stoppedAtEndRef` latches), so retiring the
+    // `!playing` guard was safe even then — but the enumeration was not true,
+    // and a migrating call site would have read it as a total invariant.
+    // The only producer of a negative rate — Transport's `shuttle()` — sets the
+    // rate and starts playback in the same batch. A `!playing` guard used to sit
+    // here; once every stop path cleared the rate it became unreachable, and
+    // parking an unreachable branch behind a coverage ignore would be a dodge
+    // rather than a safeguard. The FOUR stop-path tests in Player.test.tsx —
+    // including 'clears the shuttle rate at the WINDOW-END stop' — are what hold
+    // the invariant up.
     video.pause();
     const stepSec = Math.abs(rate) * frameSec;
     const timer = setInterval(() => {

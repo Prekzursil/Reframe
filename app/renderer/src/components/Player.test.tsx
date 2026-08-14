@@ -846,6 +846,10 @@ describe('Player custom transport (L8)', () => {
   // walked the head BACKWARD. jsdom has no decoder, so "plays forward" is not
   // observable — the falsifiable half is that the head must not move backward,
   // which is precisely the defect.
+  //
+  // NOT the whole enumeration: there is a FOURTH stop path (the window-END
+  // stop), covered by the GRIND 2 test below. Closing `ended` here left that one
+  // open, which is exactly what three reviewers caught.
   // -------------------------------------------------------------------------
   it('clears the shuttle rate when the media ends so the next Play is not a reverse walk', () => {
     vi.useFakeTimers();
@@ -866,5 +870,54 @@ describe('Player custom transport (L8)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // GRIND 2 — the FOURTH stop path.
+  //
+  // Three independent reviewers measured the same overclaim: the comment above
+  // the shuttle driver enumerated THREE stop paths when the file has FOUR. The
+  // window-END stop (Player.tsx, inside handleTimeUpdate) calls `video.pause()`
+  // and the `onEnded` PROP — never the DOM `ended` event — so `syncEnded`, the
+  // only listener that resets the rate, does not run there. A forward L-shuttle
+  // therefore SURVIVED the out point: `playbackRate` stayed 2x/4x on the
+  // element and the `role="status"` region kept announcing "2x" while playback
+  // was stopped, so the next Play resumed at that rate. That is precisely the
+  // defect the DOM-`ended` fix closed, one stop path over — and it lives in
+  // window mode, the mode four of the seven production mounts use.
+  // -------------------------------------------------------------------------
+  it('clears the shuttle rate at the WINDOW-END stop (the fourth stop path)', () => {
+    const video = render({ videoId: 'vid-1', transport: true, window: { start: 40, end: 44 } });
+    durations.set(video, 600);
+    fire(video, 'loadedmetadata');
+    video.currentTime = 42;
+    fire(video, 'timeupdate');
+    press('l'); // 1x forward, playing
+    press('l'); // -> 2x
+    expect(video.playbackRate).toBe(2);
+    expect(group().querySelector('.transport__rate')?.textContent).toBe('2x');
+
+    // ...and playback rolls on to the out point.
+    video.currentTime = 43.99;
+    fire(video, 'timeupdate'); // the window-end stop: pause + snap + onEnded PROP
+    fire(video, 'pause'); // the DOM event a real element raises for that pause
+
+    expect(video.currentTime).toBe(44); // snapped onto the out point
+    expect(video.playbackRate).toBe(1); // the shuttle is OVER, on the element too
+    expect(group().querySelector('.transport__rate')?.textContent).toBe('');
+    expect(button('Play')).toBeTruthy();
+  });
+
+  it('seeds duration and playhead from the ELEMENT when the transport mounts late', () => {
+    // `loadedmetadata` and `durationchange` fire once per load, so a call site
+    // that turns `transport` ON after metadata already landed never sees either
+    // event again. Syncing from events ALONE left such a mount with a dead
+    // scrubber at min === max === 0; the effect must seed off the element too.
+    const video = render({ videoId: 'vid-1' }); // native bar first
+    durations.set(video, 120);
+    video.currentTime = 30;
+    render({ videoId: 'vid-1', transport: true }); // ...transport toggled on later
+    expect(scrubber().max).toBe('120');
+    expect(scrubber().value).toBe('30');
   });
 });
