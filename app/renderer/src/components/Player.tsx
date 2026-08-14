@@ -5,7 +5,8 @@
 // caller already has (e.g. a converted file or an explicit proxy URL).
 //
 // Two modes:
-//   * full playback — plain <video> with native controls (Workspace player);
+//   * full playback — a <video> with either Chromium's native control bar
+//     (the default, unchanged) or the custom Transport (`transport`, L8);
 //   * window mode — `window={{start, end}}` (source-absolute seconds, i.e.
 //     a Candidate's `sourceStart` .. `sourceStart + durationSec`): the player
 //     seeks to `start` once metadata is available and stops (or loops) at
@@ -17,7 +18,8 @@
 // The window math (`clampToWindow` / `windowEndReached`) and the URL builder
 // (`mediaUrl` / `resolveSrc`) are exported pure functions, unit-tested in
 // Player.test.tsx.
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { TRANSPORT_DEFAULT_FPS, Transport, frameDuration } from './Transport';
 import './player.css';
 
 // CONTRACT-NOTE: scheme + host mirror app/main/mediaProtocol.ts (MEDIA_SCHEME /
@@ -70,8 +72,26 @@ export interface PlayerProps {
   loop?: boolean;
   /** Start playing as soon as possible (window mode: after the initial seek). */
   autoPlay?: boolean;
-  /** Show native controls (default true). */
+  /**
+   * Show Chromium's NATIVE control bar. Defaults to `true` without `transport`
+   * (every existing mount keeps exactly what it had) and to `false` with it.
+   * Pass it explicitly to override either way — including `transport` + native
+   * bar together, so enabling the custom transport never silently REMOVES a
+   * control surface a caller was relying on.
+   */
   controls?: boolean;
+  /**
+   * Render the custom {@link Transport} (play/pause, scrubbable position,
+   * current/total time, frame-step, J/K/L shuttle) instead of the native bar.
+   * Opt-in: the default is unchanged so no existing call site shifts under it.
+   */
+  transport?: boolean;
+  /**
+   * Frame rate used for frame-stepping and the reverse shuttle cadence
+   * (default {@link TRANSPORT_DEFAULT_FPS}). Pass the probed rate when known —
+   * the fallback steps by 1/30s, which is not one frame on a 24/25/50fps source.
+   */
+  fps?: number;
   muted?: boolean;
   className?: string;
   /**
@@ -161,7 +181,9 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     window: win = null,
     loop = false,
     autoPlay = false,
-    controls = true,
+    controls,
+    transport = false,
+    fps = TRANSPORT_DEFAULT_FPS,
     muted = false,
     className,
     reloadToken,
@@ -172,6 +194,63 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const resolvedSrc = resolveSrc(videoId, src);
+  // The native bar is the default ONLY while the custom transport is off; an
+  // explicit `controls` always wins so nothing is silently taken away.
+  //
+  // MIGRATION TRAP — read before adding `transport` to a call site. Because an
+  // explicit `controls` wins, `<Player controls transport />` renders BOTH bars
+  // and leaves the L8 defect unfixed at that surface, silently. Five of the
+  // seven production mounts pass a bare `controls` today (CaptionDesigner,
+  // ProducedShorts, CaptionStage, ExportStage, Shorts), so migrating one means
+  // DELETING its `controls` as well as adding `transport` — keep `controls`
+  // only where the native bar is deliberately wanted alongside.
+  //
+  // RESIDUAL R12 — THE HIGHEST-PRIORITY MIGRATION BLOCKER, AND THE ONE THIS
+  // LANE SHIPPED WITHOUT: the transport has NO STYLESHEET. Transport.tsx emits
+  // `transport`, `transport__button`, `transport__button--play`,
+  // `transport__scrubber`, `transport__time` and `transport__rate`, and none of
+  // them matches a single rule in any of the 67 renderer stylesheets
+  // (MEASURED: `git grep -il transport -- "*.css" "*.scss" "*.less"` returns
+  // nothing; the same probe finds `player__video` in four sheets, so the
+  // detector works). Transport.tsx imports no CSS while this file imports
+  // `./player.css`. Consequences, in this codebase's own already-named W05
+  // defect class (shell.css, the `.batch-queue`/`.vtl__*` comment): the raised
+  // button voice needs a `.feature-panel`/`.shortmaker` ancestor or an entry in
+  // the explicit host list, and `.transport` is neither, so its buttons paint as
+  // raw dark Chromium chrome; the only `input[type="range"]` rule in the tree is
+  // scoped to `.caption-customizer__field`, so the scrubber paints as a raw
+  // platform slider; and `.transport` has no flex, gap or sizing, so the row has
+  // no layout at all. Meanwhile player.css already styles the NATIVE bar this
+  // replaces with design tokens (a `--surface-deep` scrim, a `--font-mono`
+  // timecode, `--focus-ring`). So migrating a mount TODAY would swap a
+  // token-styled bar for unstyled platform chrome — inverting this lane's whole
+  // premise. CSS was outside this lane's file scope; the gap is disclosed here
+  // rather than half-fixed. WITHDRAWN with it: the previous round's claim that
+  // CandidateReview is "the clean first target". It was judged on ONE axis (does
+  // the mount pass `controls`?) and asserted on all of them — its Player is the
+  // child of a 248px `.sm-phone` bezel with an absolutely-positioned home
+  // indicator, so a block-flow control row lands inside the phone-frame
+  // illusion. No mount may migrate until a co-located transport.css exists (and
+  // `.transport button` joins shell.css's raised-voice host list).
+  //
+  // The migration recipe is therefore THREE steps, not one: settle R11, then
+  // land the stylesheet, then per mount add `transport` AND delete `controls`.
+  const nativeControls = controls ?? !transport;
+
+  // Transport-facing playback state. Kept here (not in Transport) so the
+  // transport stays a pure controlled view and the same state can later feed
+  // the multi-lane timeline playhead.
+  const [playhead, setPlayhead] = useState(0);
+  const [mediaDuration, setMediaDuration] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [rate, setRate] = useState(1);
+  // The reverse shuttle PAUSES the element on purpose; the `pause` listener has
+  // to tell that apart from the user stopping playback, and it is bound once,
+  // so it reads the rate off a ref instead of a stale closure.
+  const rateRef = useRef(rate);
+  rateRef.current = rate;
+  const frameSec = frameDuration(fps);
+  const floorSec = win ? win.start : 0;
 
   // Latest-value refs so the once-bound listeners never go stale and the
   // listener effect doesn't re-bind on every parent render.
@@ -187,6 +266,22 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   // and a redundant same-value seek. The flag fires the stop exactly once per
   // arrival at the out point and re-arms when the head returns inside the window
   // (or the player loops).
+  //
+  // RESIDUAL R11 — PRE-EXISTING on origin/main (this block is byte-identical
+  // there), disclosed here because the transport makes it HARDER to see, not
+  // because this lane caused it: the flag re-arms ONLY when the head comes back
+  // INSIDE the window, so pressing Play while parked exactly ON `w.end` never
+  // re-arms, every later `timeupdate` takes the early-return below, and playback
+  // runs past the out point unbounded. The native bar at least showed that — it
+  // reads the element's real time. The transport's span clamp
+  // (Transport.clampToSpan) pins the thumb AND the readout at the out point, so
+  // it would show a frozen `0:04 / 0:04` while playback continued. Not reachable
+  // by a user today (no production mount passes `transport`), and deliberately
+  // NOT fixed in this lane: the repair is a UX decision — replay from
+  // `w.start`, refuse the Play, or render an explicit out-of-span state — on a
+  // surface no call site uses yet, and it would change behaviour four live
+  // window mounts share today. It MUST be settled before the first mount
+  // migrates, and it is the reason `transport` is still opt-in.
   const stoppedAtEndRef = useRef(false);
 
   // Window mode: position the playhead at the window start once metadata is
@@ -247,6 +342,15 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       stoppedAtEndRef.current = true;
       video.pause();
       video.currentTime = w.end; // snap the playhead exactly onto the out point
+      // A stop ENDS A SHUTTLE — and this path is the one that could forget. It
+      // fires the `onEnded` PROP, not the DOM `ended` event, so `syncEnded`
+      // (the listener that resets the rate) never runs for it: without these two
+      // lines an L-shuttle survived the out point with `playbackRate` still 2x/4x
+      // on the element and "2x" still announced in the transport's live region,
+      // and the next Play resumed at that rate. Inert without the transport —
+      // both values are already at these defaults, so React bails out.
+      setPlaying(false);
+      setRate(1);
       callbacksRef.current.onEnded?.();
     };
     const handleEnded = (): void => {
@@ -284,6 +388,161 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     video.load();
   }, [reloadToken]);
 
+  // L8: mirror the element's own state into React so the custom transport can
+  // render it. Bound ONLY when the transport is mounted — a caller on the
+  // native bar pays nothing (no extra listeners, no re-render per timeupdate).
+  useEffect(() => {
+    if (!transport) return undefined;
+    const video = videoRef.current;
+    /* v8 ignore next -- React attaches refs before effects run; unreachable */
+    if (!video) return undefined;
+    const syncTime = (): void => setPlayhead(video.currentTime);
+    const syncDuration = (): void =>
+      setMediaDuration(Number.isFinite(video.duration) ? video.duration : 0);
+    const syncPlaying = (): void => setPlaying(true);
+    const syncPaused = (): void => {
+      // A reverse shuttle drives playback by pausing + stepping; its own pause
+      // event must not read as "stopped".
+      if (rateRef.current >= 0) setPlaying(false);
+    };
+    // `ended` is a STOP, so it must clear the shuttle exactly like the other
+    // three stop paths (the window floor below, an explicit pause, and the
+    // window-END stop in the listener effect above) already do. Clearing only
+    // `playing` left a NEGATIVE rate armed, so the next Play re-entered the
+    // reverse driver and walked the head BACKWARD.
+    const syncEnded = (): void => {
+      setPlaying(false);
+      setRate(1);
+    };
+    // Seed from the ELEMENT, not from future events alone: `loadedmetadata` and
+    // `durationchange` fire once per LOAD, so a call site that turns `transport`
+    // on AFTER metadata landed would never see either again and would sit at
+    // duration 0 forever — a dead scrubber with min === max. Seeding here makes
+    // the effect order-independent instead of mount-order-dependent.
+    syncTime();
+    syncDuration();
+    video.addEventListener('timeupdate', syncTime);
+    video.addEventListener('seeked', syncTime);
+    video.addEventListener('loadedmetadata', syncDuration);
+    video.addEventListener('durationchange', syncDuration);
+    video.addEventListener('play', syncPlaying);
+    video.addEventListener('pause', syncPaused);
+    video.addEventListener('ended', syncEnded);
+    return () => {
+      video.removeEventListener('timeupdate', syncTime);
+      video.removeEventListener('seeked', syncTime);
+      video.removeEventListener('loadedmetadata', syncDuration);
+      video.removeEventListener('durationchange', syncDuration);
+      video.removeEventListener('play', syncPlaying);
+      video.removeEventListener('pause', syncPaused);
+      video.removeEventListener('ended', syncEnded);
+    };
+  }, [transport]);
+
+  // L8 shuttle driver. Forward rates ride the element's own playbackRate;
+  // REVERSE cannot — HTMLMediaElement rejects a negative rate — so the head is
+  // walked back one frame per frame-interval while the element stays paused.
+  useEffect(() => {
+    if (!transport) return undefined;
+    const video = videoRef.current;
+    /* v8 ignore next -- React attaches refs before effects run; unreachable */
+    if (!video) return undefined;
+    if (rate > 0) {
+      video.playbackRate = rate;
+      return undefined;
+    }
+    // A NEGATIVE rate now IS an active reverse shuttle, so no separate `playing`
+    // test is needed. This file has FIVE paths that stop playback, and all five
+    // clear the rate back to 1:
+    //   1. an explicit pause          — handlePlayPause(false) below;
+    //   2. the reverse-shuttle floor  — the interval below, at `floorSec`;
+    //   3. the DOM `ended` event      — syncEnded in the sync effect above;
+    //   4. the window-END stop        — in the listener effect above;
+    //   5. the imperative handle      — PlayerHandle.pause() below, whose live
+    //      caller is ShortMaker's Space key through CandidateReview.
+    // This enumeration has now been REFUTED TWICE and is recorded rather than
+    // rewritten: it first said THREE (three reviewers measured that), then FOUR
+    // (a fourth measured the handle). Both earlier numbers were wrong at the
+    // time they were written, and each wrong number was load-bearing — a
+    // migrating call site would have read it as a total invariant. Treat the
+    // count as a claim to re-derive, not a fact to inherit: grep this file for
+    // `video.pause()` and for anything that stops the reverse interval, and if
+    // you add a sixth, it clears the rate or this comment is a lie again.
+    // (4) fires the `onEnded` PROP rather than the DOM `ended` event, so
+    // `syncEnded` never ran for it and a forward 2x/4x shuttle survived the out
+    // point. (5) reached nothing at all. Neither could strand a NEGATIVE rate
+    // via THIS effect's old `!playing` guard — in the handle-pause-during-
+    // reverse state `playing` is true, so the guard would not have fired either
+    // — so retiring the guard remains safe and is NOT implicated in either miss.
+    //
+    // UNVERIFIED (uncertain 30-55%, INFERRED from the HTML media-load algorithm,
+    // not observed): `video.load()` in the proxy-swap effect above may be a
+    // SIXTH — load() pauses a playing element and resets `playbackRate` to
+    // `defaultPlaybackRate` while React `rate` stays armed, desyncing the
+    // element from the transport's "2x" readout. jsdom stubs load(), so this
+    // suite structurally cannot observe it. SETTLING EXPERIMENT: bump
+    // `reloadToken` mid-shuttle in real Chromium and compare `video.playbackRate`
+    // against the `.transport__rate` text.
+    //
+    // The only producer of a negative rate — Transport's `shuttle()` — sets the
+    // rate and starts playback in the same batch. A `!playing` guard used to sit
+    // here; once every stop path cleared the rate it became unreachable, and
+    // parking a BEHAVIOURAL branch behind a coverage ignore would be a dodge
+    // rather than a safeguard. The rule is "no ignore on a behavioural branch",
+    // NOT "no ignores": this file carries seven `v8 ignore` pragmas (three
+    // inherited from main, four added with the transport) and every one is an
+    // `if (!video)` / `?? 0` null-narrowing guard that React's ref timing makes
+    // structurally unreachable — a different animal from a branch encoding a
+    // playback rule. The stop-path tests in Player.test.tsx — one per numbered
+    // path above, each red first on its own load-bearing assertion — are what
+    // hold the invariant up. They are named, not counted: a bare count in a
+    // comment is precisely what was wrong twice here, and nothing re-checks it.
+    video.pause();
+    const stepSec = Math.abs(rate) * frameSec;
+    const timer = setInterval(() => {
+      const next = video.currentTime - stepSec;
+      if (next <= floorSec) {
+        video.currentTime = floorSec;
+        setPlayhead(floorSec);
+        setPlaying(false);
+        setRate(1);
+        return;
+      }
+      video.currentTime = next;
+      setPlayhead(next);
+    }, frameSec * 1000);
+    return () => clearInterval(timer);
+    // `playing` is deliberately NOT a dep: the effect no longer reads it, and a
+    // rate change is what starts and stops the reverse arm.
+  }, [transport, rate, frameSec, floorSec]);
+
+  /** Transport intent: play or pause. Stopping always ends a shuttle. */
+  const handlePlayPause = (play: boolean): void => {
+    const video = videoRef.current;
+    /* v8 ignore next -- the transport only renders while the element is mounted */
+    if (!video) return;
+    if (play) {
+      safePlay(video);
+      setPlaying(true);
+      return;
+    }
+    video.pause();
+    setPlaying(false);
+    setRate(1);
+  };
+
+  /** Transport intent: seek (through the same window clamp as the ref handle). */
+  const handleSeek = (timeSec: number): void => {
+    const video = videoRef.current;
+    /* v8 ignore next -- the transport only renders while the element is mounted */
+    if (!video) return;
+    const target = clampToWindow(timeSec, winRef.current);
+    video.currentTime = target;
+    // Chromium raises `seeked` for this, but updating now keeps the scrubber
+    // pinned to the pointer instead of trailing the event.
+    setPlayhead(target);
+  };
+
   useImperativeHandle(
     ref,
     (): PlayerHandle => ({
@@ -291,7 +550,21 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
         const video = videoRef.current;
         if (video) safePlay(video);
       },
-      pause: () => videoRef.current?.pause(),
+      // A stop ENDS A SHUTTLE — the FIFTH stop path, and the one that reached
+      // nothing. Its live caller is ShortMaker's Space key (`if
+      // (player.isPlaying()) player.pause()`), so a forward shuttle stopped that
+      // way kept `playbackRate` at 2x/4x with "2x" still announced, and a
+      // REVERSE shuttle was worse: the element is already paused, so no `pause`
+      // event fires, `syncPaused` never runs, and the interval kept walking the
+      // head backward while `isPlaying()` (which reads the ELEMENT) reported
+      // false — so the caller's next Space started FORWARD playback on top of an
+      // still-running reverse driver. Inert without the transport: both values
+      // are already at these defaults, so React bails out.
+      pause: () => {
+        videoRef.current?.pause();
+        setPlaying(false);
+        setRate(1);
+      },
       seek: (timeSec: number) => {
         const video = videoRef.current;
         if (video) video.currentTime = clampToWindow(timeSec, winRef.current);
@@ -314,18 +587,41 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   );
 
   return (
-    <video
-      ref={videoRef}
-      className={className ?? 'player__video'}
-      src={resolvedSrc || undefined}
-      controls={controls}
-      muted={muted}
-      // Window mode must not autoplay from t=0 — playback starts after the
-      // initial seek (handled in the window effect above).
-      autoPlay={autoPlay && !win}
-      preload="metadata"
-      playsInline
-    />
+    // A fragment, not a wrapper: without `transport` the rendered DOM is byte
+    // for byte what it was, so no existing mount's layout or CSS shifts.
+    <>
+      <video
+        ref={videoRef}
+        className={className ?? 'player__video'}
+        src={resolvedSrc || undefined}
+        controls={nativeControls}
+        muted={muted}
+        // Window mode must not autoplay from t=0 — playback starts after the
+        // initial seek (handled in the window effect above).
+        autoPlay={autoPlay && !win}
+        preload="metadata"
+        playsInline
+      />
+      {transport ? (
+        <Transport
+          currentTime={playhead}
+          duration={mediaDuration}
+          // Window mode narrows the transport to the CANDIDATE, not the source:
+          // the reverse shuttle already floors at `win.start` (floorSec), and
+          // handleSeek already clamps every seek into the window, so leaving the
+          // scrubber spanning the whole source was the one place the window was
+          // dropped — and the one the user actually looks at.
+          startTime={floorSec}
+          endTime={win?.end}
+          isPlaying={playing}
+          rate={rate}
+          fps={fps}
+          onPlayPause={handlePlayPause}
+          onSeek={handleSeek}
+          onRateChange={setRate}
+        />
+      ) : null}
+    </>
   );
 });
 

@@ -5,9 +5,55 @@
 // the BrandSettings) and persistence live in the ShortMaker container; this
 // component only renders + forwards events. The DOM is byte-identical to the
 // inline JSX it replaced (same aria-labels/classes), so component tests stay green.
+//
+// LOADING PLACEHOLDERS STILL UNCONVERTED — a FLOOR, not a total, and EVERY count
+// this file has shipped has been one. Measured from its own history: three, then
+// seven, then fourteen — and fourteen was wrong too, so it now reads SIXTEEN. Read
+// the buckets below as LOWER BOUNDS, never as closed sets. CRITERION: a region
+// standing in for content that has NOT arrived, rendering the wait as VISIBLE text.
+// Cited by selector, not by line: these files belong to other lanes and line
+// anchors drift.
+//   * at least EIGHT carry NO live semantics: App.tsx + Workspace.tsx x2 (the
+//     `panel panel--loading` Suspense fallbacks), components/PathsPanel.tsx,
+//     LineagePanel.tsx, TranscriptEditor.tsx, KeepCopyControl.tsx, and
+//     features/ReframeCorrect.tsx ("Looking for reframed clips…").
+//   * at least TWO already have an explicit `aria-live` and need only the shape:
+//     Transcribe.tsx and panels/ModelsSystemPanel.tsx ("Analysing your machine…").
+//     They are structurally IDENTICAL — `<p className="status" … aria-live="polite">`
+//     around a single-line bare-text wait — which is why missing one while counting
+//     the other was a probe defect, not a judgement call.
+//   * at least SIX already carry `aria-busy`, so they are lower priority but the
+//     same bare text: components/ManagedStoreMeter.tsx, SetupStatusPanel.tsx,
+//     ReadinessRollup.tsx, features/BatchQueue.tsx, ProvidersKeys.tsx, SpendCap.tsx.
+// PROBE — corrected, because the earlier note blamed the leak on the wrong thing.
+// It named multi-line JSX text nodes as the residual hole; both sites added above
+// are SINGLE-LINE. Of the three probes — a `__loading`/`--loading` class grep
+// (blind to ReadinessRollup, which reuses `jobqueue__empty`, and to
+// TranscriptEditor, which has no class), a single-line visible-text grep, and an
+// indented bare-text-line grep — only the FIRST is verb-agnostic. The other two are
+// BOTH gated on a verb list, so the union's real hole is any wait whose copy starts
+// outside that list, and "Analysing" / "Looking" is exactly how these two escaped.
+// A fourth probe carrying NO verb list finds both in one pass: grep the renderer
+// .tsx for an ellipsis and read the hits. An AST pass over JSX text nodes remains
+// the right tool for the genuinely multi-line class that no grep here can see, but
+// it was not needed for either of these.
+// EXCLUDED WITH REASON — and this list does NOT yet earn the property it used to
+// claim, that the next lane can argue with the criterion instead of rediscovering
+// the site: two revisions running shipped sites present in NEITHER list. Claim it
+// again only once the AST pass has closed the union. Library.tsx, Shorts.tsx and
+// Settings.tsx already ship a shaped skeleton; Tracks.tsx, DirectorPanel.tsx and
+// SystemHealth.tsx are button busy LABELS (SystemHealth's `Checking…` arm is
+// reachable only from a test — its one render site, :149, sits inside
+// `{report && …}`); SavePresetsControls.tsx is a mutation-progress live region,
+// LibraryProvenance.tsx a per-row phase badge, and SemanticSearch.tsx a
+// search-phase live region — none stands in for absent content; AddKeyRow.tsx's
+// "Working…" is a `title` tooltip, not visible text. Whoever converts any of them:
+// a <Skeleton /> dropped into a flex row hits this file's 0px trap unless something
+// carries a definite width.
 
 import React from 'react';
 
+import { Skeleton } from '../components/Skeleton';
 import { CAPTION_STYLES } from './shortMakerLogic';
 import { type BrandSettings } from './shortMakerPresets';
 
@@ -122,10 +168,65 @@ export function ShortMakerBrandKit({
               <button type="button" aria-label="Change data folder" onClick={onChangeDataFolder}>
                 Change…
               </button>
+              {/* THE FOURTH BARE "Loading…", now the shared <Skeleton />: named
+                  nowhere on the EmptyState/Skeleton lane, so it kept the
+                  hand-rolled `<span aria-live="polite">Loading…</span>` that
+                  Library.tsx's own comment writes down as forbidden. What is
+                  still unconverted house-wide is counted in the file header.
+
+                  THE 0px TRAP — FIXED AT THE COMPONENT, NOT HERE. Shipped bare,
+                  this adoption MEASURED 0.00 x 10 px in real Chromium and was
+                  invisible, where the span it replaced measured 47.14 x 16.50.
+                  Cause: `.skeleton-group` is a shrink-to-fit flex item of
+                  `.sm-data-folder-row` whose only in-flow child is an EMPTY span
+                  at `width: 100%`, and a percentage against an indefinite width
+                  contributes 0 to intrinsic sizing (the label that would have
+                  given it content is `position: absolute`).
+                  This first shipped as an inline `width: 160px` wrapper HERE.
+                  That patched one caller and left the trap armed for the next —
+                  and Skeleton.tsx's own header invites sixteen more adopters into
+                  it. The floor now lives once in the component's own stylesheet
+                  (`.skeleton-group { min-width: 8rem }`, emptyState.css), so the
+                  wrapper is gone and every future adopter is safe by default.
+
+                  REACHABILITY, so the impact is not overstated: this branch sits
+                  behind TWO gates. `brandOpen` starts false in ShortMaker.tsx and
+                  this whole body is inside `{open && …}`, while `dataFolderLoaded`
+                  is flipped true by a mount effect after ONE main-process call. So
+                  the wait renders only if the user expands Brand kit while
+                  `getDataFolder()` is still pending — on a healthy machine, a race
+                  they cannot win. NOT dead code: a slow or hung main process holds
+                  it indefinitely. Inherited from the bare span, not introduced
+                  here, but it bounds the 0px damage far more tightly than IPC
+                  latency alone would.
+
+                  A11Y — one axis preserved, one CHANGED. `role="status"` carries
+                  an implicit `aria-live="polite"` + `aria-atomic` per WAI-ARIA, so
+                  dropping the explicit attribute preserves the polite semantics
+                  and gains a specific string over the old "Loading…". But this
+                  also ADDS `aria-busy="true"`, which this site never carried: it
+                  mounts true and unmounts without ever clearing, which Skeleton.tsx
+                  names as the STRONGEST of three reasons an AT may stay silent. So
+                  the fix introduces a suppression mechanism here rather than
+                  inheriting one. Whether it changes what is spoken is NOT-CHECKED;
+                  settle it with the both-states NVDA probe Skeleton.tsx specifies.
+                  (`sm-data-folder-loading` is kept as a SELECTOR only — its one
+                  rule is font-size + colour over a subtree with no visible text.)
+
+                  OUT OF SCOPE, REPORTED NOT FIXED: this is the SECOND production
+                  call site of <Skeleton /> and the first to ship `variant="line"`,
+                  which falsifies two sentences in components/Skeleton.tsx — its
+                  "exactly ONE non-test call site (Settings.tsx)" and its "`line`,
+                  `title` … shipped-but-unused API, exercised only by
+                  Skeleton.test.tsx". Both were TRUE at origin/main and are false at
+                  this tip. That file is another lane's, so this branch must not
+                  edit it; it needs a scope grant or a follow-up. */}
               {!dataFolderLoaded ? (
-                <span className="sm-data-folder-loading" aria-live="polite">
-                  Loading…
-                </span>
+                <Skeleton
+                  variant="line"
+                  className="sm-data-folder-loading"
+                  label="Loading data folder"
+                />
               ) : dataFolder ? (
                 <span className="sm-data-folder-path" title={dataFolder}>
                   {dataFolder}

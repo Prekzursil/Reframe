@@ -34,17 +34,20 @@ export function parseTimecode(input: string): number | null {
   return nums.reduce((acc, n) => acc * 60 + n, 0);
 }
 
-/** Format SOURCE-absolute seconds as "m:ss" (or "h:mm:ss" past an hour). */
-export function formatTimecode(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return '0:00';
-  const total = Math.round(sec);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const ss = String(s).padStart(2, '0');
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${ss}`;
-  return `${m}:${ss}`;
-}
+/**
+ * Format SOURCE-absolute seconds as "m:ss" (or "h:mm:ss" past an hour).
+ *
+ * RE-EXPORTED from `lib/timecode.ts`, which is now the single definition. This file
+ * used to carry its own copy that rounded (`Math.round`) while components/Transport.tsx
+ * carried an identically-named copy that floored — the same seconds rendered as two
+ * different timecodes depending on which module a caller imported.
+ *
+ * BEHAVIOUR CHANGE, stated rather than buried: this call site now FLOORS. It is
+ * observable only for fractional seconds at a boundary (599.9 was "10:00", is now
+ * "9:59"); every case this module's tests pin is an integer, so none of them change.
+ * Floor is correct for a playhead — see lib/timecode.ts.
+ */
+export { formatTimecode } from '../lib/timecode';
 
 /**
  * Build one export Candidate for a manual range (source-anchored, given rank).
