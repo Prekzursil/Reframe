@@ -29,6 +29,24 @@
 // than edited here. Nothing about the hub was removed, so that wiring is one prop
 // away and no capability was dropped.
 //
+// TWO SIBLING SUITES PIN THE OLD LANDING AND MUST CHANGE IN THE SAME MERGE.
+// MEASURED, not predicted: with only this file changed, `npx vitest run` from
+// app/ is 4 failed / 4918 passed. Both failing files are OUTSIDE this lane's file
+// scope, so they are reported as scope-escapes rather than edited here:
+//   1. App.quality.test.tsx:437 asserts `.task-hub__title` is 'Talk' after a video
+//      is opened — that suite mocks ./views/Workspace but NOT ./views/Edit, so it
+//      renders the real Edit and now reads `undefined`. Corrected assertion: the
+//      `[data-testid="workspace"]` marker carries data-video-id 'v1'.
+//   2. App.director-state.test.tsx mocks neither, so it mounts the REAL Workspace
+//      for the first time (the hub used to stand in the way). Its `./lib/rpc` mock
+//      has no `onProxyState`, which Workspace.tsx:412 subscribes to on mount, so 3
+//      tests die with "No onProxyState export is defined". Fix: add
+//      `onProxyState: () => () => undefined,` to that mock factory.
+// With ONLY those two edits applied, the full renderer gate is 255/255 files,
+// 4922/4922 tests, 100% lines/branches/functions/statements — and Edit.tsx itself
+// is 100% on all four axes. Neither edit weakens a test: (1) inverts an assertion
+// onto the new locked behaviour, (2) completes a mock that was never exercised.
+//
 // ADDITIVE: the four cards route into existing surfaces, never reimplementations —
 //   - Reframe to vertical → the single Make Shorts owner, PRE-SELECTED to this video
 //                           (onMakeShortsForVideo). This used to route to
