@@ -103,15 +103,29 @@ describe('LibraryCard', () => {
     const open = container.querySelector('.library__item-open') as HTMLButtonElement;
     expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript');
     expect(container.querySelector('.library__item-title')?.textContent).toBe('Talk');
-    expect(container.querySelector('.library__item-added')?.textContent).toBe('Added 2026-06-11');
+    expect(container.querySelector('.library__item-facts')?.textContent).toBe(
+      'MP4 · Added 2026-06-11',
+    );
     const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/v1.jpg'));
     expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
   });
 
-  it('omits the added line when the timestamp is unparseable', async () => {
+  it('shows the container format alongside the added date in the quiet meta line', async () => {
+    await renderCard({ video: makeVideo({ path: 'C:\\Videos\\talk.MOV' }) });
+    expect(container.querySelector('.library__item-facts')?.textContent).toBe(
+      'MOV · Added 2026-06-11',
+    );
+  });
+
+  it('keeps the format alone when the timestamp is unparseable', async () => {
     await renderCard({ video: makeVideo({ addedAt: 'nope' }) });
-    expect(container.querySelector('.library__item-added')).toBeNull();
+    expect(container.querySelector('.library__item-facts')?.textContent).toBe('MP4');
+  });
+
+  it('omits the meta line entirely when neither format nor date is derivable', async () => {
+    await renderCard({ video: makeVideo({ addedAt: 'nope', path: '/movies/talk' }) });
+    expect(container.querySelector('.library__item-facts')).toBeNull();
   });
 
   it('shows the FAILED attention badge before the Transcript chip', async () => {
@@ -137,6 +151,35 @@ describe('LibraryCard', () => {
     });
     expect(onOpen).toHaveBeenCalledTimes(1);
     expect(onOpen.mock.calls[0][0].id).toBe('v1');
+  });
+
+  it('keeps the whole-card open action free of NESTED interactive controls', async () => {
+    // The card's primary action is the card BODY itself — a <button> wrapping the
+    // poster and title — so every other control (select / shorts / provenance /
+    // remove) must be its SIBLING. A control nested inside it is invalid HTML and
+    // breaks keyboard + AT traversal.
+    //
+    // This guard exists because the card's one real residual is that nothing on it
+    // reads "Open" in VISIBLE text, and the obvious fix — dropping an
+    // <button>Open</button> into the card body — lands inside this button. A
+    // non-interactive label (a <span>) is the shape that passes here; a nested
+    // control is not. The rule is enforced, not merely commented.
+    const INTERACTIVE = 'button, a[href], input, select, textarea, [tabindex], [role="button"]';
+    await renderCard({ shortsCount: 3, provenance: provenanceHandlers() });
+
+    const item = container.querySelector('li.library__item') as HTMLLIElement;
+    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
+    expect(open.tagName).toBe('BUTTON');
+    // The primary action really is the whole body: poster + title live inside it.
+    expect(open.querySelector('.library__thumb')).not.toBeNull();
+    expect(open.querySelector('.library__item-title')).not.toBeNull();
+    // DETECTOR CONTROL: the same selector must MATCH on this card, or the zero
+    // below would only prove the selector is broken. Deliberately a lower BOUND,
+    // not an exact count — an exact count would redden for any legitimately added
+    // sibling control and would shadow the assertion this test actually exists
+    // for (measured: it did, on the first run of this guard).
+    expect(item.querySelectorAll(INTERACTIVE).length).toBeGreaterThanOrEqual(4);
+    expect(open.querySelectorAll(INTERACTIVE)).toHaveLength(0);
   });
 
   it('re-labels the open action in lineage view', async () => {
@@ -227,6 +270,44 @@ describe('LibraryCard', () => {
     act(() => {
       img.dispatchEvent(new Event('error'));
     });
+    expect(container.querySelector('img.library__thumb-img')).toBeNull();
+    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+  });
+
+  it('recovers the poster when a NEW url arrives after a load error (no glyph latch)', async () => {
+    // A poster that failed to load, then a DIFFERENT poster url for the same
+    // card — the <img> MUST come back. A boolean "this card failed" flag latches
+    // forever and strands the card on the glyph until it unmounts.
+    //
+    // The second url is an ARBITRARY different one and is deliberately NOT a
+    // claim about the wire: production has no known path that hands a mounted
+    // card a second non-empty poster url (see the VideoThumb JSDoc — the stored
+    // path is what feeds the url, and nothing rewrites it once set). What this
+    // pins is the guard's SHAPE — keyed on the failed URL, not on a boolean —
+    // so a future writer that DOES diverge the path cannot strand the card.
+    await renderCard();
+    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    act(() => {
+      img.dispatchEvent(new Event('error'));
+    });
+    expect(container.querySelector('img.library__thumb-img')).toBeNull();
+
+    await renderCard({ video: makeVideo({ thumbnailPath: '/data2/thumbnails/v1.jpg' }) });
+    const back = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    expect(back).not.toBeNull();
+    expect(back.getAttribute('src')).toBe(videoThumbnailSrc('/data2/thumbnails/v1.jpg'));
+  });
+
+  it('keeps the glyph while the SAME failed url is still being served', async () => {
+    // The complement of the recovery case: a re-render that does not change the
+    // poster url must NOT optimistically re-show an <img> known to be broken.
+    await renderCard();
+    act(() => {
+      (container.querySelector('img.library__thumb-img') as HTMLImageElement).dispatchEvent(
+        new Event('error'),
+      );
+    });
+    await renderCard({ selected: true });
     expect(container.querySelector('img.library__thumb-img')).toBeNull();
     expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
   });
