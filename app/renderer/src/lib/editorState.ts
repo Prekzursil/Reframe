@@ -74,6 +74,29 @@ export interface CropViewport {
  * `framing` is the rect the plan resolves to — the field a crop preview reads.
  * `engine` and `keyframes` stay loose on purpose: the per-engine keyframe shape
  * is still the producer's business, and nothing in the app reads it yet.
+ *
+ * NOT LIVE YET — read this before assuming a crop can reach a screen. BOTH doors
+ * into `cropPlan` are dead in production: nothing dispatches `setCropPlan`, and
+ * all three production `EditorSeed` literals pass only `video`
+ * (`views/Caption.tsx:110`, `views/Director.tsx:112`, `views/Export.tsx:287`).
+ * `state.cropPlan` is therefore permanently `null` in the shipped app, so
+ * `cropViewport` never returns a rect, `exportModel.framingSummary` can only
+ * render "Original framing", and `directorHandoff`'s `hasCrop` can only be
+ * false. That is PRE-EXISTING and is not something this container broke.
+ *
+ * Adopting it is NOT a one-line dispatch. `panels/ReframeOverridePanel` already
+ * holds the exact `(crop, sourceWidth, sourceHeight)` triple `cropFraming`
+ * consumes, but it does not call `useEditor`, its host `features/ReframeCorrect`
+ * does not either, and neither sits under an `EditorProvider`: the provider is
+ * mounted at exactly three sibling destinations (`views/Caption.tsx:119`,
+ * `views/Director.tsx:121`, `views/Export.tsx:296`) while that panel reaches the
+ * tree through `views/Edit.tsx:156` -> `views/Workspace.tsx:483`, and
+ * `useEditor()` throws outside a provider (`features/EditorContext.tsx:46`).
+ * Wrapping the Workspace in its own provider does not fix it either — the
+ * provider is UNCONTROLLED and seeds once, and those destinations render
+ * exclusively, so it would be a fourth instance that unmounts on a destination
+ * switch and could never be read by Export or the Director handoff. Deciding who
+ * OWNS the crop plan across destinations is the real prerequisite.
  */
 export interface CropPlan {
   readonly engine?: string;
@@ -142,9 +165,11 @@ export function cropFraming(
 }
 
 /**
- * Normalise a plan on its way INTO state — the single funnel both doors (seed
- * and `setCropPlan`) run through, so an invariant holds for every consumer: a
- * stored `framing` is always previewable. An unusable rect is DROPPED while the
+ * Normalise a plan on its way INTO state — the single funnel both CODE paths in
+ * (seed and `setCropPlan`) run through, so an invariant holds for every
+ * consumer: a stored `framing` is always previewable. That is a correctness
+ * property of this module, NOT evidence that either path is live — both are
+ * currently dead in production (see `CropPlan`). An unusable rect is DROPPED while the
  * plan itself survives (the "is there a crop plan" consumers keep working); an
  * off-frame rect is pulled inside; an already-valid plan is returned BY
  * REFERENCE so merely carrying a plan stays allocation-free.
