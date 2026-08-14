@@ -231,11 +231,10 @@ test('spoken words become a visible transcript and then a caption cue (real GUI 
   await expect(win.locator('.app__brand')).toHaveText('Reframe');
   await expect(win.locator('.library__item-title').first()).toHaveText('sample');
 
-  // B — open it and take the "Advanced / all tools" escape into the full
-  // Workspace (opening a video lands on the per-video Task Hub first; the same
-  // route preview.spec.ts:142-144 drives).
+  // B — open it. That lands directly on the Workspace (owner-locked G-7
+  // invariant 2), so there is no Task Hub escape to take any more; the same route
+  // preview.spec.ts drives.
   await win.locator('.library__item-title', { hasText: 'sample' }).click();
-  await win.locator('button.task-hub__advanced').click();
   await expect(win.locator('.workspace__title')).toHaveText('sample');
 
   // C — Transcribe tab. The Workspace lands on Subtitles by default

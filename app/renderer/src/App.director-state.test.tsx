@@ -103,6 +103,12 @@ vi.mock('./lib/rpc', () => ({
     doneCbs.add(cb);
     return () => doneCbs.delete(cb);
   },
+  // REQUIRED since Refine lands on the Workspace (owner-locked G-7 invariant 2):
+  // this file mocks neither ./views/Edit nor ./views/Workspace, so it now mounts the
+  // REAL Workspace, which subscribes to `proxy.state` on mount. Without this export
+  // every test here dies with "No onProxyState export is defined on the ./lib/rpc
+  // mock" — a mock gap exposed by the routing change, not a defect in either.
+  onProxyState: () => () => undefined,
   client: {
     library: { list: (...a: unknown[]) => libraryListMock(...a) },
     batch: { list: (...a: unknown[]) => batchListMock(...a) },

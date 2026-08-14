@@ -153,13 +153,33 @@ describe('<Edit />', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it('lands on the Task Hub (not the Workspace) when a video is opened', async () => {
+  // SPEC CHANGE, not a weakened test. This case used to read "lands on the Task
+  // Hub (not the Workspace) when a video is opened" and asserted the hub. That
+  // pinned the behaviour L5 G-7 invariant 2 forbids — "the timeline is VISIBLE in
+  // Refine with ZERO navigation actions" — which the owner locked and which was
+  // the last of the five still failing. The assertions are inverted, not dropped:
+  // the same three facts (which surface mounted, for which video, and that the
+  // remembered-choice read still runs) are still pinned, now against the editor.
+  // The invariant itself — a real DOCK, not this stubbed marker — is proven in
+  // Edit.invariant.test.tsx against the REAL Workspace.
+  it('lands on the Workspace (not the Task Hub) when a video is opened', async () => {
     act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+    await flush();
+    expect(workspace()).toBeTruthy();
+    expect(workspace()!.getAttribute('data-video-id')).toBe('v1');
+    expect(hub()).toBeNull();
+    expect(rpcMock).toHaveBeenCalledWith('settings.get');
+  });
+
+  // ...and the Task Hub is NOT deleted by that landing change. It is a designed
+  // surface; a caller that wants the job chooser asks for it, and every card and
+  // the advanced escape below still route from it.
+  it('opens the Task Hub when a caller asks for it', async () => {
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeTruthy();
     expect(hub().getAttribute('data-video-id')).toBe('v1');
     expect(workspace()).toBeNull();
-    expect(rpcMock).toHaveBeenCalledWith('settings.get');
   });
 
   it('routes the reframe card STRAIGHT to the Make Shorts owner (never via Workspace) + persists', async () => {
@@ -176,6 +196,7 @@ describe('<Edit />', () => {
           video={makeVideo()}
           onBack={() => undefined}
           onMakeShortsForVideo={onMakeShortsForVideo}
+          initialMode="hub"
         />,
       ),
     );
@@ -210,6 +231,7 @@ describe('<Edit />', () => {
             onMakeShorts={() => undefined}
             onMakeShortsForVideo={() => undefined}
             onDirector={() => undefined}
+            initialMode="hub"
           />,
         ),
       );
@@ -227,14 +249,14 @@ describe('<Edit />', () => {
   });
 
   it('routes the subtitles card into the Workspace at the Subtitles tab', async () => {
-    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     pick('subtitles');
     expect(workspace()!.getAttribute('data-initial-tab')).toBe('subtitles');
   });
 
   it('routes the advanced escape into the Workspace default tab (no initial tab)', async () => {
-    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     pick('advanced');
     expect(workspace()!.getAttribute('data-initial-tab')).toBe('');
@@ -250,6 +272,7 @@ describe('<Edit />', () => {
           onBack={() => undefined}
           onMakeShorts={onMakeShorts}
           onDirector={onDirector}
+          initialMode="hub"
         />,
       ),
     );
@@ -263,17 +286,20 @@ describe('<Edit />', () => {
   });
 
   it('tolerates section cards when no App callbacks are wired', async () => {
-    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     pick('shorts');
     pick('director');
     expect(hub()).toBeTruthy();
   });
 
+  // STRENGTHENED: the seed is 'hub' here, so this now proves the remembered
+  // workspace-scoped choice OVERRIDES an explicit hub request, not merely that it
+  // agrees with a hub default.
   it('resumes a workspace-scoped remembered choice in place (skips the hub)', async () => {
     rpcMock.mockReset();
     rpcMock.mockResolvedValue({ [HUB_CHOICE_KEY]: { v1: 'subtitles' } });
-    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeNull();
     expect(workspace()!.getAttribute('data-initial-tab')).toBe('subtitles');
@@ -282,7 +308,7 @@ describe('<Edit />', () => {
   it('marks a remembered section choice but stays on the hub', async () => {
     rpcMock.mockReset();
     rpcMock.mockResolvedValue({ [HUB_CHOICE_KEY]: { v1: 'shorts' } });
-    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeTruthy();
     expect(hub().getAttribute('data-last')).toBe('shorts');
@@ -291,7 +317,7 @@ describe('<Edit />', () => {
   it('tolerates a null settings payload (stays on the hub)', async () => {
     rpcMock.mockReset();
     rpcMock.mockResolvedValue(null);
-    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeTruthy();
     expect(hub().getAttribute('data-last')).toBe('');
@@ -300,14 +326,14 @@ describe('<Edit />', () => {
   it('tolerates a settings.get rejection (stays on the hub)', async () => {
     rpcMock.mockReset();
     rpcMock.mockRejectedValue(new Error('read failed'));
-    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeTruthy();
   });
 
   it('does not touch settings when the preload bridge is absent', async () => {
     hasApiReturn = false;
-    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(rpcMock).not.toHaveBeenCalled();
     // a choice still routes (in-memory), just without a settings.set. Use the
@@ -333,6 +359,7 @@ describe('<Edit />', () => {
           video={makeVideo({ id: 'v1' })}
           onBack={() => undefined}
           onMakeShortsForVideo={onMakeShortsForVideo}
+          initialMode="hub"
         />,
       ),
     );
@@ -343,7 +370,11 @@ describe('<Edit />', () => {
     expect(workspace()).toBeNull();
     expect(onMakeShortsForVideo).not.toHaveBeenCalled();
     // switch to a different video: the effect re-runs and resumes v2's choice.
-    act(() => root.render(<Edit video={makeVideo({ id: 'v2' })} onBack={() => undefined} />));
+    act(() =>
+      root.render(
+        <Edit video={makeVideo({ id: 'v2' })} onBack={() => undefined} initialMode="hub" />,
+      ),
+    );
     await flush();
     expect(workspace()!.getAttribute('data-video-id')).toBe('v2');
     expect(workspace()!.getAttribute('data-initial-tab')).toBe('subtitles');
@@ -357,7 +388,11 @@ describe('<Edit />', () => {
       }
       return Promise.resolve({});
     });
-    act(() => root.render(<Edit video={makeVideo({ id: 'v1' })} onBack={() => undefined} />));
+    act(() =>
+      root.render(
+        <Edit video={makeVideo({ id: 'v1' })} onBack={() => undefined} initialMode="hub" />,
+      ),
+    );
     await flush();
     pick('reframe');
     expect(rpcMock).toHaveBeenCalledWith('settings.set', {
@@ -387,11 +422,13 @@ describe('<Edit />', () => {
     root = createRoot(container);
   });
 
+  // No `pick` here any more: the Workspace is what the destination lands on, so
+  // this measures the back control on the PRODUCTION path rather than behind a
+  // hub click.
   it('forwards the Workspace back control', async () => {
     const onBack = vi.fn();
     act(() => root.render(<Edit video={makeVideo()} onBack={onBack} />));
     await flush();
-    pick('advanced');
     act(() =>
       (container.querySelector('[data-testid="workspace"] button') as HTMLButtonElement).click(),
     );

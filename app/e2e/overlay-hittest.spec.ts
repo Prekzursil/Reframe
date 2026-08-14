@@ -183,11 +183,14 @@ async function openCaptionStage(page: Page): Promise<void> {
     .first()
     .waitFor({ state: 'visible' });
   if ((await page.locator('.caption-stage__frame').count()) === 0) {
-    // Empty state => no video open yet. Open one, then come back. This branch is
-    // taken exactly once per launched app: `openVideo` is NOT idempotent (the
-    // Task Hub's "Advanced" escape is a one-time step, so a second call would
-    // hang on `button.task-hub__advanced`), which is why re-entry must go through
-    // the tab switch above instead of re-opening the video.
+    // Empty state => no video open yet. Open one, then come back.
+    //
+    // CORRECTED, not deleted: this used to say `openVideo` is NOT idempotent,
+    // because the Task Hub's "Advanced" escape was a one-time step and a second
+    // call would hang on `button.task-hub__advanced`. That escape is gone — opening
+    // a video now lands directly on the Workspace (owner-locked G-7 invariant 2) —
+    // so `openVideo` IS idempotent and this branch is no longer load-bearing. It is
+    // kept because re-entering through the tab switch is still the cheaper path.
     await openTopTab(page, 'Library');
     await openVideo(page, 'sample');
     await openDestinationMode(page, 'Refine', 'Caption design');
