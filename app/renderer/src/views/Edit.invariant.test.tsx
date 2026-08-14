@@ -21,28 +21,50 @@
 // first open of the destination. Opening a video from the Library therefore cost
 // one extra click before any timeline existed.
 //
-// BOTH-STATES CONTROL — RUN, not reasoned. Checking the pre-branch Edit.tsx over
-// this branch's (`git checkout f8cfbd6c -- app/renderer/src/views/Edit.tsx`;
-// byte-identical to main 4c24700b for this file, `git diff f8cfbd6c 4c24700b --`
-// on that path is empty) and re-running THIS file gives, verbatim:
-//   × shows the docked timeline on a first open …
-//       → expected <div class="task-hub" …(1)>…(3)</div> to be null   [:166]
+// BOTH-STATES CONTROL — RUN against THIS file as it now stands, all five cases.
+// Checking the pre-branch Edit.tsx over this branch's (`git checkout 4c24700b --
+// app/renderer/src/views/Edit.tsx`; byte-identical to f8cfbd6c for this path,
+// `git diff f8cfbd6c 4c24700b --` on it is empty) and re-running THIS file gives,
+// verbatim:
+//   × shows the docked timeline on a first open, with no interstitial and no clicks
+//       → expected <div class="task-hub" …(1)>…(3)</div> to be null   [:220]
 //   × still lands on the docked timeline when a NAVIGATE-AWAY choice is remembered
-//       → expected <div class="task-hub" …(1)>…(3)</div> to be null   [:197]
-//   ✓ resumes a remembered workspace-scoped choice at its own tab …
-//   Tests  2 failed | 1 passed (3)
-// So the two cases that pin invariant 2 DO fire in the known-broken state, which
-// is the property that makes their green here mean anything.
+//       → expected <div class="task-hub" …(1)>…(3)</div> to be null   [:256]
+//   ✓ resumes a remembered workspace-scoped choice at its own tab, from the production seed
+//   × mounts the editor ONCE on the invariant path — the player survives the settings read
+//       → expected +0 to be 1 // Object.is equality                   [:364]
+//   ✓ bounds the remembered-tab resume at ONE remount, and keeps the invariant
+//   Tests  3 failed | 2 passed (5)
+// Restoring this branch's Edit.tsx gives `Tests  5 passed (5)`. So three of the
+// five DO fire in the known-broken state, which is the property that makes their
+// green here mean anything.
 //
-// READ THE THIRD LINE OF THAT RUN CAREFULLY — it is load-bearing and cuts against
-// this branch. The resume case PASSES at the hub-first baseline: under that seed
-// the remembered `{kind:'workspace', tab}` arrived as a FIRST-MOUNT prop and
-// worked. Landing on the editor is what turned it into a post-mount prop the
-// Workspace cannot read, so the `key` in Edit.tsx repairs a regression this
-// branch itself created — it does not add new surface. That also means dropping
-// the resume instead of keying it would REGRESS a shipped destination (v1.4.1
-// carries the hub and the `taskHubChoiceByVideo` writer), not merely decline to
-// invent one.
+// AN EARLIER REVISION OF THIS PARAGRAPH QUOTED A DIFFERENT RUN — "2 failed | 1
+// passed (3)", anchored at :166 and :197. That run was real, but it was taken at
+// commit 64a0ee52 when this file held THREE cases, and the two seam cases below
+// were added in the SAME commit as the note without re-recording it. A transcript
+// that describes a file which no longer exists is an evidence-integrity failure
+// even when the underlying code is right, so it is replaced here rather than
+// deleted quietly. If you change this file, RE-RUN the control and paste the new
+// transcript; do not carry this one forward.
+//
+// EXACTLY WHICH CASES THE CONTROL COVERS, since "3 of 5" is not "all of them":
+//   * the two `.task-hub` cases and the seam's control half discriminate — they
+//     assert something the hub-first landing cannot satisfy.
+//   * the two that PASS at the baseline do not, and neither is weakened by that:
+//     the resume case passes because under the hub seed the remembered
+//     `{kind:'workspace', tab}` arrived as a FIRST-MOUNT prop and worked, and the
+//     remount-bound case passes because that same first-mount path costs exactly
+//     one mount. They are guards on the regression this branch itself created,
+//     not proofs of the landing.
+//
+// READ THE TWO PASSING LINES CAREFULLY — they are load-bearing and cut against
+// this branch. Landing on the editor is what turned the remembered tab into a
+// post-mount prop the Workspace cannot read, so the `key` in Edit.tsx repairs a
+// regression this branch introduced — it does not add new surface. That also
+// means dropping the resume instead of keying it would REGRESS a shipped
+// destination (v1.4.1 carries the hub and the `taskHubChoiceByVideo` writer), not
+// merely decline to invent one.
 //
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';

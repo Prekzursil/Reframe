@@ -17,12 +17,15 @@
 // (App.tsx carries that retraction). This lane owns and closes it.
 //
 // PROVEN BOTH-STATES, not asserted: checking the pre-branch Edit.tsx over this one
-// (`git checkout f8cfbd6c -- app/renderer/src/views/Edit.tsx`) and re-running
-// Edit.invariant.test.tsx turns its two invariant cases RED — "2 failed | 1
-// passed", each on `expect(container.querySelector('.task-hub')).toBeNull()` —
-// and restoring turns them green. The verbatim run is recorded at the head of
-// that file, together with the third line of it, which cuts against this branch
-// and is the reason the `key` below exists.
+// (`git checkout 4c24700b -- app/renderer/src/views/Edit.tsx`) and re-running
+// Edit.invariant.test.tsx gives `Tests  3 failed | 2 passed (5)`; restoring gives
+// `Tests  5 passed (5)`. The verbatim per-case transcript, the two lines of it
+// that PASS at the baseline and therefore do NOT discriminate, and the reason the
+// `key` below exists are all recorded at the head of that file. An earlier
+// revision of this paragraph quoted a "2 failed | 1 passed" run: that transcript
+// was real but was taken when the file held three cases, and it was left standing
+// when two more were added — cite a run you produced against the file as it
+// stands, never one inherited from an earlier shape of it.
 //
 // TWO CLAIMS ELSEWHERE ARE NOW FALSE BECAUSE OF THIS FIX. Both are SCOPE-ESCAPES,
 // reported to the orchestrator rather than edited here: App.tsx:21 and :43-48
@@ -31,28 +34,58 @@
 // Refine DESTINATION still lands on views/Edit.tsx's Task Hub on a first open").
 // Every line number those two cite is gone from this file.
 //
-// THE TASK HUB IS NOT DELETED. It is a designed surface (views/TaskHub.tsx) and
-// every card, the "Advanced / all tools" escape, the per-video choice
-// persistence and `lib/taskHub.ts resumeFor` keep working exactly as before —
-// what changed is only which mode Edit SEEDS. A caller that wants the job
-// chooser asks for it with `initialMode='hub'`; the default, and therefore the
-// Library → Refine path, lands on the editor.
-// DISCLOSED INLINE, not buried: no production caller passes `initialMode` today,
-// so on this branch the hub renders in tests only. Wiring a caller (e.g. a
-// first-import "what do you want to do with it?" moment) is App.tsx's, and
-// App.tsx is outside this lane's file scope — reported as a scope-escape rather
-// than edited here. Nothing about the hub was removed, so that wiring is one prop
-// away and no capability was dropped.
+// THE TASK HUB SURVIVES IN THE CODE AND IS UNREACHABLE IN THE SHIPPED APP ON THIS
+// BRANCH. Stated plainly, because an earlier revision of this paragraph said the
+// cards, the "Advanced / all tools" escape and the per-video choice persistence
+// "keep working exactly as before", and that is false in the product. Trace it:
+// `<TaskHub>` renders at exactly ONE place (:381) behind `mode !== 'workspace'`;
+// `mode` is seeded `initialMode ?? 'workspace'` (:213-214), re-seeded at :236, and
+// never set to 'hub' anywhere (:251 and :284 both set 'workspace'); the sole
+// production mount, App.tsx:604, passes no `initialMode`. So no user reaches the
+// four cards or the advanced escape, and `initialMode='hub'` is exercised by tests
+// only. `lib/taskHub.ts resumeFor` genuinely does keep working — it is read on
+// every open at :248 — but it is the only half of the hub that does.
 //
-// TWO SIBLING SUITES PIN THE OLD LANDING AND MUST CHANGE IN THE SAME MERGE.
-// The counts below describe the BRANCH BEFORE THAT MERGE, and the merge that
-// carries the two edits is what makes them stale — read them as a record of why
-// those two files are named, never as this repo's present state. Re-measured on
-// this branch at round 2 (the earlier "4918" here was itself stale by one test):
-// `npx vitest run` from app/ is 2 files / 4 tests failed, 4921 passed (4925), and
-// the 4 are exactly the 3 + 1 named below — this lane's own suites are green.
-// Both failing files are OUTSIDE this lane's file scope,
-// so they are reported as scope-escapes rather than edited here:
+// THE CONSEQUENCE NOTHING ELSE HERE DRAWS: `persist()` (:265) is the only writer of
+// `taskHubChoiceByVideo`, and it is reachable only from `handleChoose` (:278),
+// which only TaskHub's `onChoose` calls (:381). Hub unreachable ⇒ writer
+// unreachable ⇒ NO FRESH INSTALL ON THIS BRANCH CAN EVER CREATE a remembered
+// choice. Two things follow that are easy to miss. (1) The `key` at :373, whose
+// price the comment there enumerates in full (a whole Workspace subtree remount, a
+// duplicate `project.open`, a replaced `<video>` node, a dropped `onProxyState`
+// window), can now fire ONLY for profiles that wrote a choice under v1.4.1 or
+// earlier — a real but FROZEN population. It STAYS, because dropping it regresses
+// exactly those installs; but from this commit it is a legacy-compatibility path,
+// not a living one, and the Workspace-side fix named there retires it for good.
+// (2) An upgraded user whose stored choice is 'subtitles' now lands on the caption
+// lane on every open of that video with no surface anywhere in the app to change
+// or clear it — the hub was the only writer, and this file already records that
+// the choice is restart-durable with no clearing UI.
+//
+// SCOPE-ESCAPE, one line, App.tsx's to take: wire ONE production entry point that
+// passes `initialMode='hub'` (a first-import "what do you want to do with it?"
+// moment, or a per-video overflow action), or a designed v1.4.1 surface and its
+// preference writer ship dead. Nothing was removed from the CODE, so that wiring
+// is one prop away; but until it lands, every hub case in Edit.test.tsx and all of
+// TaskHub.test.tsx covers a production-unreachable path. No user CAPABILITY is
+// lost meanwhile — all four card destinations are top-level surfaces and the
+// advanced escape's target is now the default — which is why this is a dead
+// surface to re-wire, not a dropped feature.
+//
+// NINE TEST SITES PIN THE OLD LANDING AND MUST CHANGE IN THE SAME MERGE — not the
+// TWO an earlier revision of this paragraph named. That undercount was not a
+// judgement call, it was a blind instrument: the count came from `npx vitest run`,
+// and app/vitest.config.ts `test.include` is `main/**`, `renderer/src/**`,
+// `render-cli/src/**` — `app/e2e/**` is not in it, and app/package.json routes e2e
+// to a different runner (`"test:e2e": "playwright test"`). So vitest structurally
+// CANNOT see the layer this change breaks, and its "2 files / 4 tests" was a
+// complete answer to the wrong question. All nine sites are OUTSIDE this lane's
+// file scope and are reported as scope-escapes rather than edited here.
+//
+// VITEST — 2 files / 4 tests. `npx vitest run` from app/ is 2 files / 4 tests
+// failed, 4921 passed (4925); the 4 are exactly the 3 + 1 below and this lane's own
+// suites are green. (That count describes the branch BEFORE the merge that carries
+// these edits; read it as the record of why these two files are named.)
 //   1. App.quality.test.tsx:437 asserts `.task-hub__title` is 'Talk' after a video
 //      is opened — that suite mocks ./views/Workspace but NOT ./views/Edit, so it
 //      renders the real Edit and now reads `undefined`. Corrected assertion: the
@@ -62,6 +95,35 @@
 //      has no `onProxyState`, which Workspace.tsx:412 subscribes to on mount, so 3
 //      tests die with "No onProxyState export is defined". Fix: add
 //      `onProxyState: () => () => undefined,` to that mock factory.
+//
+// PLAYWRIGHT — 7 specs, NOT run by this lane and NOT previously named. The hub
+// never renders, so `button.task-hub__advanced` never exists and every site below
+// waits on an unresolvable locator until the Playwright timeout:
+//   3-6. FOUR literal call sites, ONE LINE TO DELETE at each — the
+//      `.workspace__title` wait that follows then satisfies itself, because the
+//      Workspace IS the landing: e2e/preview.spec.ts:143,
+//      e2e/transcribe-journey.spec.ts:238, e2e/installed-app.spec.ts:397,
+//      e2e/visual/_visualSetup.ts:128.
+//   7-9. THREE specs that inherit the break through `_visualSetup.ts`'s shared
+//      `openVideo()` helper and need NO edit of their own once it is fixed:
+//      e2e/overlay-hittest.spec.ts:189, e2e/visual/a11y.a11y.spec.ts:100,
+//      e2e/visual/surfaces.visual.spec.ts:96.
+//   Plus TWO comments that this change inverts and that should be retired with it:
+//      e2e/overlay-hittest.spec.ts:185-188 says `openVideo` is non-idempotent
+//      because the Advanced escape is "a one-time step, so a second call would
+//      hang" — after this change the FIRST call hangs; and e2e/preview.spec.ts:194
+//      describes the open path as "library card -> task-hub Advanced / all tools".
+// Both e2e legs of .github/workflows/e2e.yml collect them: playwright.config.ts
+// (testDir './e2e', testIgnore visual/**, audit/**) takes preview,
+// transcribe-journey, overlay-hittest and installed-app; playwright.visual.config.ts
+// (testDir './e2e/visual', testMatch '**/*.{visual,a11y}.spec.ts') takes a11y.a11y
+// and surfaces.visual. installed-app.spec.ts self-skips when RF_E2E_APP_EXE is
+// unset (:118, :208), so it is inert in the ordinary legs and DOES run in the
+// dedicated packaged-artifact job that sets it (e2e.yml:706) — the golden journey
+// against the shipped .exe, which is the one leg that proves the built product.
+// THE HONEST STATUS OF THIS BRANCH, therefore: green on the renderer unit suite
+// apart from the two vitest files above, and RED on the e2e and visual gates until
+// the four one-line deletions land. It is NOT independently mergeable.
 // Neither edit weakens a test: (1) inverts an assertion onto the new locked
 // behaviour, (2) completes a mock that was never exercised. A third suite,
 // App.quality.test.tsx, is ALSO the only place the Library → open-video hop is
