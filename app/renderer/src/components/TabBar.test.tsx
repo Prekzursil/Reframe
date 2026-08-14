@@ -199,6 +199,64 @@ describe('TabBar keyboard model (roving tabindex + arrow nav)', () => {
     });
     expect(onSelect).toHaveBeenCalledWith('b');
   });
+
+  // ── VERTICAL ORIENTATION (the inspector tablist) ─────────────────────────
+  //
+  // THE DEFECT: views/workspace.css:260-263 renders
+  // `.workspace .workspace__inspector .tabbar` with `flex-direction: column`, so that
+  // tab list is VERTICAL on screen. TabBar declared no `aria-orientation` (which
+  // DEFAULTS to horizontal per WAI-ARIA) and moved focus only on ArrowLeft/ArrowRight.
+  //
+  // So a keyboard user facing a visibly vertical list pressed Down and nothing
+  // happened, while Right — which points across the list rather than along it — was
+  // the only key that worked; a screen reader announced a horizontal list that is not.
+  // WAI-ARIA APG: a vertical tablist declares aria-orientation="vertical" and moves
+  // with Up/Down. The strip is mounted twice inside `.workspace`, so this is the most
+  // exposed tab list in the app, not an edge case.
+  it('declares aria-orientation="vertical" when asked for a vertical strip', () => {
+    renderBar({ tabs: TABS, active: 'a', onSelect: () => {}, orientation: 'vertical' });
+    expect(container.querySelector('[role="tablist"]')?.getAttribute('aria-orientation')).toBe(
+      'vertical',
+    );
+  });
+
+  it('still declares horizontal by DEFAULT, so no existing call site changes', () => {
+    // DETECTOR CONTROL for the case above: a hardcoded attribute would pass that test
+    // while telling us nothing. Every other call site relies on this default.
+    renderBar({ tabs: TABS, active: 'a', onSelect: () => {} });
+    expect(container.querySelector('[role="tablist"]')?.getAttribute('aria-orientation')).toBe(
+      'horizontal',
+    );
+  });
+
+  it('ArrowDown / ArrowUp move selection and focus when vertical, wrapping', () => {
+    const onSelect = vi.fn();
+    renderBar({ tabs: TABS, active: 'a', onSelect, orientation: 'vertical' });
+    key(btn('a'), 'ArrowDown');
+    expect(onSelect).toHaveBeenLastCalledWith('b');
+    expect(document.activeElement).toBe(btn('b'));
+    // wraps forward off the end...
+    key(btn('b'), 'ArrowDown');
+    expect(onSelect).toHaveBeenLastCalledWith('a');
+    // ...and backward off the start.
+    key(btn('a'), 'ArrowUp');
+    expect(onSelect).toHaveBeenLastCalledWith('b');
+  });
+
+  it('a vertical strip ignores ArrowRight, and a horizontal one ignores ArrowDown', () => {
+    // Keeps the two models DISTINCT. Handling every arrow everywhere would satisfy the
+    // cases above while violating the APG in the other direction, so both halves are
+    // pinned here rather than assumed.
+    const onSelect = vi.fn();
+    renderBar({ tabs: TABS, active: 'a', onSelect, orientation: 'vertical' });
+    key(btn('a'), 'ArrowRight');
+    expect(onSelect).not.toHaveBeenCalled();
+
+    const onSelectH = vi.fn();
+    renderBar({ tabs: TABS, active: 'a', onSelect: onSelectH });
+    key(btn('a'), 'ArrowDown');
+    expect(onSelectH).not.toHaveBeenCalled();
+  });
 });
 
 // SKIN CONTRACT. A component may not ship a class name that no stylesheet styles.

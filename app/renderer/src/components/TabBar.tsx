@@ -40,6 +40,24 @@ export interface TabBarProps {
    *      above, but non-obvious — hence documented here, at the prop.
    */
   navIds?: string[];
+  /**
+   * Which way this strip is LAID OUT, which decides both the announced
+   * `aria-orientation` and which arrow keys walk it. Default `'horizontal'`.
+   *
+   * Not cosmetic. `views/workspace.css:260-263` renders
+   * `.workspace .workspace__inspector .tabbar` with `flex-direction: column`, so
+   * that strip is vertical on screen — while this component declared no
+   * `aria-orientation` (WAI-ARIA DEFAULTS it to horizontal) and moved focus only on
+   * ArrowLeft/ArrowRight. A keyboard user facing a visibly vertical list pressed
+   * Down and nothing happened; Right, which points ACROSS the list rather than
+   * along it, was the only key that worked, and a screen reader announced a
+   * horizontal list that is not one.
+   *
+   * The two key models are kept DISTINCT rather than accepting every arrow
+   * everywhere: the APG specifies Left/Right for horizontal and Up/Down for
+   * vertical, and answering both would violate it in the other direction.
+   */
+  orientation?: 'horizontal' | 'vertical';
 }
 
 /**
@@ -209,7 +227,7 @@ function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
  * edit the file it describes is not a criterion, so the stale-content reason above is
  * the one recorded. Kept as a correction rather than a quiet edit, for the reason the
  * shell.css repair established. The one claim here a machine CAN check is now checked,
- * so the next author is told rather than trusted: this file is 293 lines.
+ * so the next author is told rather than trusted: this file is 323 lines.
  *
  * Neither surface ships a defect and neither is on the merge path: docs are not
  * executable, `docs/validation/tools/verify_ssot_claims.py` is wired into no
@@ -221,7 +239,13 @@ function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
  * rather than dropped for the reason the shell.css repair already established:
  * correct the sentence, never quietly delete it.
  */
-export function TabBar({ tabs, active, onSelect, navIds }: TabBarProps): React.ReactElement {
+export function TabBar({
+  tabs,
+  active,
+  onSelect,
+  navIds,
+  orientation = 'horizontal',
+}: TabBarProps): React.ReactElement {
   // A plain ref map (NOT useRef) so this presentational component stays hook-free
   // and can still be invoked directly in unit tests. React populates it via each
   // tab's ref callback after commit; the last committed render's map is the one the
@@ -253,12 +277,18 @@ export function TabBar({ tabs, active, onSelect, navIds }: TabBarProps): React.R
     // unreachable branch cannot be covered by the 100% gate.
     const index = orderedIds.indexOf(id);
     const last = orderedIds.length - 1;
-    if (event.key === 'ArrowRight') {
+    // The APG pairs the walking keys to the ORIENTATION: Left/Right along a
+    // horizontal strip, Up/Down along a vertical one. Answering both everywhere
+    // would satisfy each case while violating the spec in the other direction, so
+    // the off-axis key is deliberately ignored (pinned by test).
+    const forward = orientation === 'vertical' ? 'ArrowDown' : 'ArrowRight';
+    const backward = orientation === 'vertical' ? 'ArrowUp' : 'ArrowLeft';
+    if (event.key === forward) {
       event.preventDefault();
       move(index === last ? 0 : index + 1);
       return;
     }
-    if (event.key === 'ArrowLeft') {
+    if (event.key === backward) {
       event.preventDefault();
       move(index === 0 ? last : index - 1);
       return;
@@ -284,7 +314,7 @@ export function TabBar({ tabs, active, onSelect, navIds }: TabBarProps): React.R
   const nav: TabNav = { active, onSelect, onKeyDown, registerRef };
 
   return (
-    <div className="tabbar" role="tablist">
+    <div className="tabbar" role="tablist" aria-orientation={orientation}>
       {tabs.map((tab) => renderTab(tab, nav))}
     </div>
   );
