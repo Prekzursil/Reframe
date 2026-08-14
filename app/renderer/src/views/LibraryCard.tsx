@@ -23,10 +23,17 @@
 //     "nothing paints as Open at rest" is a whole-component verdict drawn from a
 //     single selector — the parent rule three declarations above refutes it.
 //   * DEMOTE REMOVE — ALREADY DONE; doing it again would be a regression.
-//     `.library__remove-btn` carries the GHOST voice (shell.css:520-527 — no
+//     `.library__remove-btn` carries the GHOST voice (shell.css:535-543 — no
 //     fill, no edge, no shadow at rest, `--text-muted`) with a never-filled
-//     quiet-red hover (:588-593). It is the QUIETEST control here, not the
+//     quiet-red hover (:603-608). It is the QUIETEST control here, not the
 //     loudest.
+//     CORRECTED, not silently rewritten: these read `:520-527` and `:588-593`,
+//     which were accurate when written and were falsified by a SIBLING lane in
+//     the same wave — PR #438 inserted a 15-line comment block higher in
+//     shell.css, shifting every anchor below it by +15. Nothing in this file
+//     changed. A per-lane reviewer structurally cannot catch that: the
+//     falsifying edit lives in another branch. Verified by locating the anchors
+//     by CONTENT in the merged tree, not by adding 15.
 //   * METADATA — DELIVERED to the limit of the record. `library.list` returns
 //     id, path, title, addedAt, durationSec, hasTranscript, thumbnailPath and
 //     nothing else (components/api.ts:65-78) — no resolution, codec or fps — so
@@ -246,7 +253,7 @@ export function LibraryCard({
               {video.path}
             </span>
           )}
-          {meta ? <span className="library__item-added">{meta}</span> : null}
+          {meta ? <span className="library__item-facts">{meta}</span> : null}
         </div>
       </button>
 
