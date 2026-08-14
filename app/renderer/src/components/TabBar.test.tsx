@@ -15,6 +15,19 @@ const TABS: TabDef[] = [
   { id: 'b', label: 'Beta' },
 ];
 
+/** Source text with every comment blanked out.
+ *
+ *  USE, NOT MENTION — shared deliberately by BOTH contracts below, so they cannot
+ *  drift apart. The skin contract strips comments so a class merely NAMED in
+ *  TabBar.tsx's history block is not read as an emission; the self-citation
+ *  contract strips them so a test name merely NAMED in a comment is not read as a
+ *  live test. Round 3 shipped the second guard WITHOUT the strip and the two DID
+ *  drift: a cited test renamed with its old name left behind in a comment stayed
+ *  green. One definition is the fix for that class, not a second copy of the regex.
+ */
+const stripComments = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
 describe('TabBar', () => {
   it('renders all tab labels with role=tab', () => {
     const html = renderToStaticMarkup(<TabBar tabs={TABS} active="a" onSelect={() => {}} />);
@@ -253,7 +266,7 @@ describe('TabBar skin contract (every emitted class has a rule)', () => {
    *  that file's own history comment would otherwise read as an emission and
    *  demand a stylesheet rule for markup nothing renders. */
   const emittedClasses = (source: string): string[] => {
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+    const code = stripComments(source);
     const found = new Set<string>();
     // Only tokens SHAPED like a CSS class are kept. Blanking an interpolation can
     // leave debris (`?`, a bare `:`), and asserting a stylesheet rule for debris
@@ -371,6 +384,25 @@ describe('TabBar skin contract (every emitted class has a rule)', () => {
 // same shape as the defect this branch exists to close — #424 cited
 // `.tabbar__advanced-toggle`, #431 deleted the rule, nobody updated the sentence — so
 // it is closed mechanically here instead of by promising to remember.
+//
+// HOW THESE TWO FAIL ON THE PRE-FIX TEXT — recorded here because commit 3c89ad59's
+// message got it wrong and a commit message cannot be corrected in place. That
+// message pasted `expected 200 to be 247` and a `toEqual([])` diff as "RED, verbatim,
+// against the shipped text". Neither can come from the guards as shipped. Against
+// TabBar.tsx@e72d483b both fail at their DETECTOR CONTROLS, before any value is
+// compared: `/this file is (\d+) lines/` matches ZERO times there, because the phrase
+// wraps a comment line (`this file is 200\n * lines, so …`), so the first failure is
+// `expect(claimed).toHaveLength(1)` with received 0; and the `file > "name"` citation
+// form did not exist before the commit that added these tests, so the second is
+// `expect(cited.length).toBeGreaterThan(0)` with received 0. The operand is wrong
+// too — the shipped formula yields 246 at e72d483b, not 247. The transcript came
+// from a pre-commit DRAFT of these guards and was never re-run after the assertions
+// were rewritten. The substance survives (both DO go red on the pre-fix text, via
+// those controls) but the evidence was misattributed, which is this lane's own
+// subject one level up: a pasted failure message is a function of the instrument
+// that produced it, so it MUST be re-run after any change to the assertion, the
+// regex or the formula. Corrected, not quietly dropped, for the reason the shell.css
+// repair established.
 describe('TabBar self-citation contract (claims about this file are machine-checked)', () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
   const readSource = (name: string): string => readFileSync(join(HERE, name), 'utf8');
@@ -387,18 +419,82 @@ describe('TabBar self-citation contract (claims about this file are machine-chec
     expect(Number(claimed[0][1])).toBe(actual);
   });
 
+  /** Test names TabBar.tsx cites in vitest's own `file > name` form.
+   *
+   *  `TabBar.test.tsx > "…"` is that path, adopted as the citation form precisely so
+   *  a machine can check it. Bare quoted prose is NOT scanned: the same comment
+   *  quotes three preview.spec.ts names, which belong to another file and another
+   *  lane, and demanding those here would be a false failure the moment that lane
+   *  renames one.
+   *
+   *  USE, NOT MENTION, one level up — and this is the round-3 defect. The sentence
+   *  that DESCRIBES the citation form has to write the form out, and it writes it
+   *  with a metasyntactic `…` (TabBar.tsx:150). The bare regex captured that
+   *  placeholder as a fourth "citation", which then resolved for free because `…`
+   *  occurs incidentally in this file's own comment prose — so the detector control
+   *  below passed identically whether the citation form was in use or every real
+   *  citation had been deleted. Excluding the placeholder is what makes that control
+   *  able to fail at all.
+   */
+  const citedTestNames = (source: string): string[] =>
+    [...source.matchAll(/TabBar\.test\.tsx > "([^"]+)"/g)]
+      .map((m) => m[1])
+      .filter((name) => !name.includes('…'));
+
+  /** Cited names this file does not declare. Comments are stripped first, for the
+   *  same use-vs-mention reason the skin contract strips them: a cited test renamed
+   *  with its old name left behind in a comment is exactly the drift this guard
+   *  exists to catch, and a raw substring test over the whole file cannot see it.
+   *
+   *  RESIDUAL, disclosed rather than implied away: containment over comment-free
+   *  text is not a parse of the suite's DECLARED names, so a cited name surviving in
+   *  some unrelated non-comment string literal would still resolve. Settling
+   *  experiment: extract `describe(`/`it(` string literals instead and re-run this
+   *  file — if the three citations still resolve, that check is strictly stronger
+   *  and should replace this one. */
+  const unresolvedCitations = (cited: readonly string[], self: string): string[] => {
+    const code = stripComments(self);
+    return cited.filter((name) => !code.includes(name));
+  };
+
   it('pins every TabBar.test.tsx name TabBar.tsx cites to a name that exists here', () => {
     const source = readSource('TabBar.tsx');
     const self = readSource('TabBar.test.tsx');
-    // `TabBar.test.tsx > "…"` is vitest's own `file > name` path, adopted as the
-    // citation form precisely so a machine can check it. Bare quoted prose is NOT
-    // scanned: the same comment quotes three preview.spec.ts names, which belong to
-    // another file and another lane, and demanding those here would be a false
-    // failure the moment that lane renames one.
-    const cited = [...source.matchAll(/TabBar\.test\.tsx > "([^"]+)"/g)].map((m) => m[1]);
-    // Detector control: the citation form must actually be in use, or the filter
-    // below is vacuously empty.
+    const cited = citedTestNames(source);
+    // Detector control. It now DISTINGUISHES its two hypotheses: with the
+    // placeholder excluded, deleting every real citation while keeping the sentence
+    // that describes the form leaves this at zero and fails HERE. What it proves is
+    // exactly that — at least one real citation is in use, so the filter below is
+    // not vacuously empty — and not that the three specific ones are still cited.
     expect(cited.length).toBeGreaterThan(0);
-    expect(cited.filter((name) => !self.includes(name))).toEqual([]);
+    expect(unresolvedCitations(cited, self)).toEqual([]);
+  });
+
+  // GUARD ON THE GUARD. The two cases above are only as good as the two helpers
+  // they call, and round 3 shipped a detector control that could not fail. These
+  // pin the helpers directly, against inputs chosen to separate the hypotheses.
+  it('does NOT count the sentence that DESCRIBES the citation form as a citation', () => {
+    const source = readSource('TabBar.tsx');
+    // The settling experiment, executed rather than promised: keep ONLY the sentence
+    // that describes the citation form and delete every real citation. If the
+    // control above means anything, nothing is cited in this state.
+    const describing = source.split(/\r?\n/).filter((line) => line.includes('> "…"'));
+    // Detector control for THIS case: the placeholder sentence must be present and
+    // unique, or the assertion below is about a string that no longer exists.
+    expect(describing).toHaveLength(1);
+    expect(citedTestNames(describing[0])).toEqual([]);
+  });
+
+  it('does NOT resolve a cited name that survives only in a COMMENT (use, not mention)', () => {
+    const mentionOnly = "// CORRECTED: this case used to be called 'renamed away'.";
+    expect(unresolvedCitations(['renamed away'], mentionOnly)).toEqual(['renamed away']);
+  });
+
+  it('DOES resolve a cited name that is really declared here', () => {
+    // The other half of the pair: stripping comments must not blind the check to a
+    // name that a live `it(...)` declares. Without this, deleting every citation
+    // would also read as success.
+    const declared = "it('renamed away', () => {});";
+    expect(unresolvedCitations(['renamed away'], declared)).toEqual([]);
   });
 });
