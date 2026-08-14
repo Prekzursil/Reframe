@@ -40,11 +40,20 @@ const thumbnailRpc: VideoThumbnailRpc = {
  * generating it on demand (idempotent server-side). A missing / failed poster
  * (empty URL or an <img> load error) falls back to the ▶ glyph and NEVER blocks
  * the gallery. The duration badge always renders (mm:ss).
+ *
+ * The failure is remembered as the URL THAT FAILED, not as a boolean. `posterUrl`
+ * changes after mount — `useVideoThumbnail` re-serves it whenever `thumbnailPath`
+ * changes and swaps in the on-demand result when generation resolves
+ * (components/useVideoThumbnail.ts:53-71) — so a boolean flag latches: a card
+ * whose stored poster had been deleted from disk stayed on the ▶ glyph even after
+ * the sidecar regenerated it, until the card unmounted (view switch / restart).
+ * Comparing against the failed URL self-resets on a NEW poster and still refuses
+ * to optimistically re-show the same broken one.
  */
 function VideoThumb({ video }: { video: Video }): React.ReactElement {
   const posterUrl = useVideoThumbnail(thumbnailRpc, video.id, video.thumbnailPath ?? '');
-  const [imgFailed, setImgFailed] = useState(false);
-  const showImg = posterUrl !== '' && !imgFailed;
+  const [failedUrl, setFailedUrl] = useState('');
+  const showImg = posterUrl !== '' && failedUrl !== posterUrl;
 
   return (
     <div className="library__thumb">
@@ -54,7 +63,7 @@ function VideoThumb({ video }: { video: Video }): React.ReactElement {
           src={posterUrl}
           alt=""
           aria-hidden="true"
-          onError={() => setImgFailed(true)}
+          onError={() => setFailedUrl(posterUrl)}
         />
       ) : (
         <div className="library__thumb-fallback" aria-hidden="true">

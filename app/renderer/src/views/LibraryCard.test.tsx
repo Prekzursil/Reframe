@@ -245,6 +245,39 @@ describe('LibraryCard', () => {
     expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
   });
 
+  it('recovers the poster when a NEW url arrives after a load error (no glyph latch)', async () => {
+    // A stored poster that has since been deleted from disk: the <img> errors and
+    // the card falls back to the glyph. The sidecar then regenerates it and
+    // `library.list` re-renders the SAME card with a fresh path — the poster MUST
+    // come back. A boolean "this card failed" flag latches forever and strands the
+    // card on the glyph until it unmounts (view switch / app restart).
+    await renderCard();
+    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    act(() => {
+      img.dispatchEvent(new Event('error'));
+    });
+    expect(container.querySelector('img.library__thumb-img')).toBeNull();
+
+    await renderCard({ video: makeVideo({ thumbnailPath: '/data/thumbnails/v1-regen.jpg' }) });
+    const back = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    expect(back).not.toBeNull();
+    expect(back.getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/v1-regen.jpg'));
+  });
+
+  it('keeps the glyph while the SAME failed url is still being served', async () => {
+    // The complement of the recovery case: a re-render that does not change the
+    // poster url must NOT optimistically re-show an <img> known to be broken.
+    await renderCard();
+    act(() => {
+      (container.querySelector('img.library__thumb-img') as HTMLImageElement).dispatchEvent(
+        new Event('error'),
+      );
+    });
+    await renderCard({ selected: true });
+    expect(container.querySelector('img.library__thumb-img')).toBeNull();
+    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+  });
+
   it('falls back to the glyph when on-demand poster generation yields nothing', async () => {
     // thumbnailPath omitted entirely -> the `video.thumbnailPath ?? ''` fallback,
     // then on-demand generation via library.thumbnail (which fails here).
