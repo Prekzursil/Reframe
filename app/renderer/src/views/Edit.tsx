@@ -30,9 +30,12 @@
 // away and no capability was dropped.
 //
 // TWO SIBLING SUITES PIN THE OLD LANDING AND MUST CHANGE IN THE SAME MERGE.
-// MEASURED, not predicted: with only this file changed, `npx vitest run` from
-// app/ is 4 failed / 4918 passed. Both failing files are OUTSIDE this lane's file
-// scope, so they are reported as scope-escapes rather than edited here:
+// The counts below describe the BRANCH BEFORE THAT MERGE, and the merge that
+// carries the two edits is what makes them stale — read them as a record of why
+// those two files are named, never as this repo's present state. As measured on
+// this branch with only this file changed, `npx vitest run` from app/ was 4
+// failed / 4918 passed. Both failing files are OUTSIDE this lane's file scope,
+// so they are reported as scope-escapes rather than edited here:
 //   1. App.quality.test.tsx:437 asserts `.task-hub__title` is 'Talk' after a video
 //      is opened — that suite mocks ./views/Workspace but NOT ./views/Edit, so it
 //      renders the real Edit and now reads `undefined`. Corrected assertion: the
@@ -42,10 +45,14 @@
 //      has no `onProxyState`, which Workspace.tsx:412 subscribes to on mount, so 3
 //      tests die with "No onProxyState export is defined". Fix: add
 //      `onProxyState: () => () => undefined,` to that mock factory.
-// With ONLY those two edits applied, the full renderer gate is 255/255 files,
-// 4922/4922 tests, 100% lines/branches/functions/statements — and Edit.tsx itself
-// is 100% on all four axes. Neither edit weakens a test: (1) inverts an assertion
-// onto the new locked behaviour, (2) completes a mock that was never exercised.
+// Neither edit weakens a test: (1) inverts an assertion onto the new locked
+// behaviour, (2) completes a mock that was never exercised. A third suite,
+// App.quality.test.tsx, is ALSO the only place the Library → open-video hop is
+// driven, and it mocks Workspace — so "Library → open video → the dock is on
+// screen" is still covered by two disjoint tests whose composition nothing pins.
+// Edit.invariant.test.tsx proves the destination half against the real Workspace
+// and does not reach the routing half; closing that needs one App-level case in
+// a suite with no Edit mock, which is a scope-escape from here.
 //
 // ADDITIVE: the four cards route into existing surfaces, never reimplementations —
 //   - Reframe to vertical → the single Make Shorts owner, PRE-SELECTED to this video
@@ -85,9 +92,12 @@ export interface EditProps {
    * Which mode to SEED for an open video. Defaults to `'workspace'` so the
    * destination opens on the docked timeline with zero navigation actions
    * (L5 G-7 invariant 2). Pass `'hub'` to open the per-video Task Hub instead.
-   * A remembered workspace-scoped choice still overrides the seed (it resumes at
-   * its tab); a remembered NAVIGATE-AWAY choice is still only marked last-used
-   * and never auto-navigated to.
+   * A remembered workspace-scoped choice still overrides the seed and resumes at
+   * its own tab — which under this seed costs one keyed remount, because the
+   * Workspace is already mounted by the time that choice is read (see the `key`
+   * at the render below; removing it silently drops the resumed tab). A
+   * remembered NAVIGATE-AWAY choice is still only marked last-used and never
+   * auto-navigated to.
    */
   initialMode?: EditMode;
   /** Return to the Library home. */
@@ -135,6 +145,12 @@ function EditVideo({
   // bounces the user out of the video they just opened, restart-durably, with no
   // UI to clear it). Neither branch can now put an interstitial in front of the
   // timeline: the seed is already the editor.
+  //
+  // ORDERING, because it is load-bearing and not obvious: under the 'workspace'
+  // seed this `setTab` lands AFTER the Workspace has mounted, so "resumes at its
+  // tab" is true only because the render below keys on `tab`. `setMode` is then a
+  // no-op on that path — it still matters under an explicit 'hub' seed, where the
+  // Workspace has not mounted yet and receives the tab as a first-mount prop.
   useEffect(() => {
     setMode(seed);
     setTab(null);
