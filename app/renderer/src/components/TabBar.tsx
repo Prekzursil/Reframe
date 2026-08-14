@@ -108,6 +108,25 @@ function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
  * Workspace.test.tsx:894-967 independently asserts the grouped classes are
  * ABSENT. The skin contract in TabBar.test.tsx now fails on any emitted class
  * that no stylesheet declares, so this cannot silently recur.
+ *
+ * RESIDUAL, out of this file's scope — and WIDER than the removing commit said.
+ * That commit disclosed a single stale caller, `app/e2e/preview.spec.ts:190`. The
+ * real surface is 11 selector references there, spanning THREE tests plus a global
+ * `test.afterEach` hook that runs after every test in the file: the afterEach at
+ * :74-77, "Advanced disclosure actually COLLAPSES the Deliver cluster (F17)" at
+ * :190, "Workspace tabs mount, including SemanticSearch" at :279, and "export
+ * action yields a real file" at :307 (which CLICKS `.tabbar__export`). Recorded
+ * here because the narrower sentence is already in a pushed commit message and
+ * cannot be corrected in place.
+ *
+ * Deleting grouped mode did NOT break them; they were already dead. Those
+ * selectors can only match markup that grouped mode renders, and rendering it
+ * requires a caller to pass `groups=` — which no production caller has done since
+ * #431 (verified at the pre-deletion tree: all seven call sites pass exactly
+ * tabs/active/onSelect). Nothing went red because `.github/workflows/e2e.yml`
+ * triggers on `workflow_dispatch` + a nightly `schedule` ONLY — it has no
+ * `pull_request` or `push` trigger, so this suite is not on the merge path. Fixing
+ * that file belongs to whichever lane owns app/e2e.
  */
 export function TabBar({ tabs, active, onSelect, navIds }: TabBarProps): React.ReactElement {
   // A plain ref map (NOT useRef) so this presentational component stays hook-free
