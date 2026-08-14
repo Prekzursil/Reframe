@@ -644,7 +644,15 @@ export function Workspace({
           <p className="workspace__inspector-context" data-role="selection">
             {INSPECTOR_CONTEXT_LABEL[context]}
           </p>
-          <TabBar tabs={sectionTabs} active={active} onSelect={selectSection} />
+          {/* VERTICAL: workspace.css:260-263 lays this strip out `flex-direction:
+              column`, so it must announce that and walk with Up/Down. Without the
+              prop it announced (and keyed as) horizontal while rendering vertical. */}
+          <TabBar
+            tabs={sectionTabs}
+            active={active}
+            onSelect={selectSection}
+            orientation="vertical"
+          />
           <div
             className="workspace__body"
             role="tabpanel"
