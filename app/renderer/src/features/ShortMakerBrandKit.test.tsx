@@ -131,6 +131,29 @@ describe('<ShortMakerBrandKit />', () => {
     expect(region.textContent).not.toBe('Loading…');
   });
 
+  // MEASURED IN REAL CHROMIUM, not inferred: the adoption above, shipped alone,
+  // computed to 0.00 x 10 px and was INVISIBLE. `.skeleton-group` is a
+  // shrink-to-fit flex item of `.sm-data-folder-row` and its only in-flow child
+  // is an EMPTY span with `width: 100%` (emptyState.css), so the percentage
+  // resolves against an indefinite width and contributes 0 to intrinsic sizing;
+  // the label that would have given it content is `position: absolute`. The bare
+  // span it replaced measured 54.72 x 14 px, so the adoption traded a visible
+  // affordance for nothing at all until something carries a DEFINITE width.
+  // jsdom has no layout engine, so this test pins the MECHANISM — a definite
+  // width exists on the box that establishes the bar's containing block — not
+  // the pixel count. Deleting the width makes the skeleton invisible again and
+  // no other test in this repo would notice.
+  it('gives the wait skeleton a definite width, so the 100%-wide bar is not 0px', () => {
+    mount({ dataFolderLoaded: false });
+    const region = container.querySelector('.sm-data-folder-loading') as HTMLElement;
+    const sized = region.closest('[style]') as HTMLElement | null;
+    expect(sized).toBeTruthy();
+    expect(sized?.style.width).toBeTruthy();
+    // The width must sit INSIDE the flex row, on the box the skeleton actually
+    // sizes against — a width on some outer page container would not resolve it.
+    expect(sized?.closest('.sm-data-folder-row')).toBeTruthy();
+  });
+
   it('keeps the wait announceable: a busy status region that names the data folder', () => {
     mount({ dataFolderLoaded: false });
     const region = container.querySelector('.sm-data-folder-loading') as HTMLElement;

@@ -123,70 +123,75 @@ export function ShortMakerBrandKit({
               <button type="button" aria-label="Change data folder" onClick={onChangeDataFolder}>
                 Change…
               </button>
-              {/* THE FOURTH BARE "Loading…". The EmptyState/Skeleton lane
-                  enumerated three (Settings.tsx, Workspace.tsx, App.tsx) and
-                  shipped components/Skeleton.tsx; this site was named nowhere on
-                  that branch, so it kept the hand-rolled
+              {/* THE FOURTH BARE "Loading…", now the shared <Skeleton />. The
+                  EmptyState/Skeleton lane enumerated three surfaces and shipped
+                  components/Skeleton.tsx; this site was named nowhere on that
+                  branch, so it kept the hand-rolled
                   `<span aria-live="polite">Loading…</span>` that Library.tsx's
-                  own comment writes down as forbidden. It is the shared
-                  <Skeleton /> now.
+                  own comment writes down as forbidden.
 
-                  ENUMERATED ≠ CONVERTED, and an earlier revision of this comment
-                  invited exactly that misreading. MEASURED at this branch's base
-                  (f8cfbd6c) by grepping the literal "Loading…" over the .tsx
-                  files under renderer/src:
-                  of the three the lane enumerated, only Settings.tsx:183 actually
-                  adopted <Skeleton />. App.tsx:582, Workspace.tsx:626 and
-                  Workspace.tsx:654 STILL render the bare
-                  `<div className="panel panel--loading">Loading…</div>` — no role,
-                  no live region, no skeleton — because Skeleton.tsx's own scope
-                  note defers them to the workspace-ia lane. So this file is the
-                  SECOND site converted, not the fourth fixed, and three bare
-                  placeholder surfaces remain live outside this lane's file scope.
-                  A further one, Tracks.tsx:231
-                  (`busy.kind === 'list' ? 'Loading…' : 'Refresh'`), is a button's
-                  own busy LABEL — a different shape from a placeholder surface,
-                  and deliberately not counted with them.
+                  WHY THE INLINE WIDTH — this is a correction, not decoration.
+                  Shipped without it, the adoption MEASURED 0.00 x 10 px in real
+                  Chromium (the engine Electron renders with) and was invisible,
+                  where the bare span it replaced measured 54.72 x 14 px. Cause:
+                  `.skeleton-group` is a shrink-to-fit flex item of
+                  `.sm-data-folder-row`, its only in-flow child is an EMPTY span
+                  with `width: 100%`, and a percentage against an indefinite
+                  width contributes 0 to intrinsic sizing (the label that would
+                  have given it content is `position: absolute`). So the ghost
+                  needs a definite width from somewhere. A rule in
+                  shortmaker-p3.css would be the tidier home but that file is
+                  another lane's; the width lives here instead, which is also
+                  where the sibling `max-width: 240px` idiom already puts a
+                  hard px value, and where the house already accepts static
+                  inline styles (ErrorBoundary, Timeline). 160px ≈ the caption
+                  width of a typical path. Pinned by ShortMakerBrandKit.test.tsx
+                  so a future edit cannot silently make it invisible again.
 
-                  Three things about this specific adoption:
+                  Two more things about this adoption:
 
                   * `variant="line"` — the real thing that lands here is ONE
                     inline value (a path), not a panel, so the ghost is one bar.
-                  * the `sm-data-folder-loading` class is KEPT, not replaced: it
-                    still carries the caption-size/faint treatment in
-                    shortmaker-p3.css and it is the selector the existing test
-                    and any future CSS pin on.
                   * `aria-live="polite"` is not lost, it MOVES: a labelled
                     Skeleton is `role="status"`, whose implicit live semantics
                     are exactly `aria-live="polite"` + `aria-atomic="true"` per
-                    WAI-ARIA — so the wait stays announceable and gains a
-                    specific string ("Loading data folder") where it used to say
-                    only "Loading…". Whether an AT SPEAKS a freshly-inserted
-                    status region is NOT-CHECKED here for the same three reasons
-                    Skeleton.tsx already documents; this is a semantics claim,
-                    not an announcement promise.
+                    WAI-ARIA, so the wait stays announceable and gains a specific
+                    string where it used to say only "Loading…". Whether an AT
+                    SPEAKS a freshly-inserted status region is NOT-CHECKED, for
+                    the three reasons Skeleton.tsx already documents; this is a
+                    semantics claim, not an announcement promise.
+                  The `sm-data-folder-loading` class is kept for the SELECTOR
+                  (the existing test, and any future CSS hook) — not for its
+                  paint: the only rule on it is font-size + colour, and this
+                  subtree has no visible text, so that treatment is now a no-op.
 
-                  DISCLOSED, and it is the one thing this lane could NOT close:
-                  `.skeleton-group .skeleton--line` is `width: 100%`, and this
-                  group is a shrink-to-fit flex ITEM of `.sm-data-folder-row`
-                  (shortmaker-p3.css), so the percentage resolves against an
-                  indefinite width and the bar is INFERRED to compute to 0px —
-                  i.e. visually invisible — until the group is given a definite
-                  width. That fix is one rule in shortmaker-p3.css, which is
-                  OUTSIDE this lane's file scope and is therefore reported, not
-                  written: `.shortmaker .sm-data-folder-loading { width: 160px; }`
-                  (160px ≈ the caption-width of a typical path). UNVERIFIED at
-                  pixel level in either direction — jsdom has no layout engine so
-                  no test in this repo can settle it. SETTLING EXPERIMENT: run
-                  the built app, open Brand kit before the data folder resolves,
-                  and read `getBoundingClientRect().width` on
-                  `.sm-data-folder-loading` — 0 confirms the inference. */}
+                  ENUMERATED ≠ CONVERTED. Re-measured at this commit with a
+                  controlled grep over renderer/src (the control finds known hits
+                  in 9 files; an earlier run of mine missed App.tsx because a
+                  doubled-star glob under src does not match a top-level
+                  file, and PathsPanel lives in components, not features). Cited by
+                  selector, not by line — these files belong to other lanes and
+                  line anchors drift. SEVEN bare-text loading placeholders remain
+                  live outside this lane's scope, not three: the three
+                  `panel panel--loading` Suspense fallbacks (App.tsx, Workspace.tsx
+                  x2), plus `.paths-panel__loading` in components/PathsPanel.tsx,
+                  `.lineage-panel__loading` in LineagePanel.tsx, the
+                  `[data-state="loading"]` paragraph in TranscriptEditor.tsx, and
+                  the one in Transcribe.tsx. Six of the seven carry no live
+                  semantics at all; Transcribe's already has an explicit
+                  `aria-live="polite"` and needs only the visual shape. Two
+                  further sites are deliberately NOT counted: Settings.tsx has
+                  already adopted <Skeleton />, and Tracks.tsx's
+                  `busy.kind === 'list' ? 'Loading…' : 'Refresh'` is a button's
+                  own busy LABEL, a different shape from a placeholder surface. */}
               {!dataFolderLoaded ? (
-                <Skeleton
-                  variant="line"
-                  className="sm-data-folder-loading"
-                  label="Loading data folder"
-                />
+                <span style={{ display: 'inline-block', width: '160px' }}>
+                  <Skeleton
+                    variant="line"
+                    className="sm-data-folder-loading"
+                    label="Loading data folder"
+                  />
+                </span>
               ) : dataFolder ? (
                 <span className="sm-data-folder-path" title={dataFolder}>
                   {dataFolder}
