@@ -51,7 +51,7 @@ espeakng-loader==0.2.4
     # via kokoro-onnx
 faster-whisper==1.2.1
     # via media-studio-sidecar (sidecar/pyproject.toml)
-filelock==3.32.2
+filelock==3.32.3
     # via huggingface-hub
 flatbuffers==25.12.19
     # via onnxruntime
@@ -71,7 +71,7 @@ httpx==0.28.1
     # via
     #   media-studio-sidecar (sidecar/pyproject.toml)
     #   huggingface-hub
-huggingface-hub==1.26.0
+huggingface-hub==1.27.0
     # via
     #   faster-whisper
     #   tokenizers
@@ -104,7 +104,7 @@ multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
-numpy==2.5.1
+numpy==2.5.2
     # via
     #   ctranslate2
     #   kokoro-onnx
@@ -124,7 +124,7 @@ packaging==26.3
     #   onnxruntime
 phonemizer-fork==3.3.2
     # via kokoro-onnx
-platformdirs==4.11.0
+platformdirs==4.11.2
     # via scenedetect
 propcache==0.5.2
     # via
