@@ -6,32 +6,50 @@
 // component only renders + forwards events. The DOM is byte-identical to the
 // inline JSX it replaced (same aria-labels/classes), so component tests stay green.
 //
-// LOADING PLACEHOLDERS STILL UNCONVERTED — a FLOOR, not a total. Two successive
-// revisions of this count were undercounts (three, then seven), so it ships with
-// its criterion, its probe and its blind spot instead of a bare number. CRITERION:
-// a region standing in for content that has NOT arrived, rendering the wait as
-// VISIBLE text. FOURTEEN remain outside this lane, found by the UNION of three
-// probes, because each one alone undercounts: a `__loading`/`--loading` class grep
-// (blind to ReadinessRollup, which reuses `jobqueue__empty`, and to
-// TranscriptEditor, which has no class), a single-line visible-text grep (blind to
-// every multi-line JSX text node), and an indented bare-text-line grep (blind to
-// single-line nodes, and to any copy outside its verb list — the residual hole;
-// settle it with an AST pass over JSX text nodes). Cited by selector, not by line:
-// these files belong to other lanes and line anchors drift.
-//   * SEVEN carry NO live semantics: App.tsx + Workspace.tsx x2 (the
+// LOADING PLACEHOLDERS STILL UNCONVERTED — a FLOOR, not a total, and EVERY count
+// this file has shipped has been one. Measured from its own history: three, then
+// seven, then fourteen — and fourteen was wrong too, so it now reads SIXTEEN. Read
+// the buckets below as LOWER BOUNDS, never as closed sets. CRITERION: a region
+// standing in for content that has NOT arrived, rendering the wait as VISIBLE text.
+// Cited by selector, not by line: these files belong to other lanes and line
+// anchors drift.
+//   * at least EIGHT carry NO live semantics: App.tsx + Workspace.tsx x2 (the
 //     `panel panel--loading` Suspense fallbacks), components/PathsPanel.tsx,
-//     LineagePanel.tsx, TranscriptEditor.tsx, KeepCopyControl.tsx.
-//   * ONE already has an explicit `aria-live`: Transcribe.tsx — needs only the shape.
-//   * SIX already carry `aria-busy`, so they are lower priority but the same bare
-//     text: components/ManagedStoreMeter.tsx, SetupStatusPanel.tsx,
+//     LineagePanel.tsx, TranscriptEditor.tsx, KeepCopyControl.tsx, and
+//     features/ReframeCorrect.tsx ("Looking for reframed clips…").
+//   * at least TWO already have an explicit `aria-live` and need only the shape:
+//     Transcribe.tsx and panels/ModelsSystemPanel.tsx ("Analysing your machine…").
+//     They are structurally IDENTICAL — `<p className="status" … aria-live="polite">`
+//     around a single-line bare-text wait — which is why missing one while counting
+//     the other was a probe defect, not a judgement call.
+//   * at least SIX already carry `aria-busy`, so they are lower priority but the
+//     same bare text: components/ManagedStoreMeter.tsx, SetupStatusPanel.tsx,
 //     ReadinessRollup.tsx, features/BatchQueue.tsx, ProvidersKeys.tsx, SpendCap.tsx.
-// EXCLUDED WITH REASON, so the next lane can argue with the criterion instead of
-// rediscovering the site: Library.tsx, Shorts.tsx and Settings.tsx already ship a
-// shaped skeleton; Tracks.tsx, DirectorPanel.tsx and SystemHealth.tsx are button
-// busy LABELS; SavePresetsControls.tsx is a mutation-progress live region and
-// LibraryProvenance.tsx a per-row phase badge — neither stands in for absent
-// content. Whoever converts them: a <Skeleton /> dropped into a flex row hits this
-// file's 0px trap unless something carries a definite width.
+// PROBE — corrected, because the earlier note blamed the leak on the wrong thing.
+// It named multi-line JSX text nodes as the residual hole; both sites added above
+// are SINGLE-LINE. Of the three probes — a `__loading`/`--loading` class grep
+// (blind to ReadinessRollup, which reuses `jobqueue__empty`, and to
+// TranscriptEditor, which has no class), a single-line visible-text grep, and an
+// indented bare-text-line grep — only the FIRST is verb-agnostic. The other two are
+// BOTH gated on a verb list, so the union's real hole is any wait whose copy starts
+// outside that list, and "Analysing" / "Looking" is exactly how these two escaped.
+// A fourth probe carrying NO verb list finds both in one pass: grep the renderer
+// .tsx for an ellipsis and read the hits. An AST pass over JSX text nodes remains
+// the right tool for the genuinely multi-line class that no grep here can see, but
+// it was not needed for either of these.
+// EXCLUDED WITH REASON — and this list does NOT yet earn the property it used to
+// claim, that the next lane can argue with the criterion instead of rediscovering
+// the site: two revisions running shipped sites present in NEITHER list. Claim it
+// again only once the AST pass has closed the union. Library.tsx, Shorts.tsx and
+// Settings.tsx already ship a shaped skeleton; Tracks.tsx, DirectorPanel.tsx and
+// SystemHealth.tsx are button busy LABELS (SystemHealth's `Checking…` arm is
+// reachable only from a test — its one render site, :149, sits inside
+// `{report && …}`); SavePresetsControls.tsx is a mutation-progress live region,
+// LibraryProvenance.tsx a per-row phase badge, and SemanticSearch.tsx a
+// search-phase live region — none stands in for absent content; AddKeyRow.tsx's
+// "Working…" is a `title` tooltip, not visible text. Whoever converts any of them:
+// a <Skeleton /> dropped into a flex row hits this file's 0px trap unless something
+// carries a definite width.
 
 import React from 'react';
 

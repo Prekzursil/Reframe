@@ -183,7 +183,7 @@ describe('<ShortMakerBrandKit />', () => {
     expect(sized.style.display).toBe('');
   });
 
-  it('keeps the wait announceable: a busy status region that names the data folder', () => {
+  it('pins a busy status region whose clipped text names the data folder', () => {
     mount({ dataFolderLoaded: false });
     const region = container.querySelector('.sm-data-folder-loading') as HTMLElement;
     // `role="status"` carries an IMPLICIT `aria-live="polite"` (+ aria-atomic)
@@ -191,6 +191,11 @@ describe('<ShortMakerBrandKit />', () => {
     // semantics rather than losing them. jsdom computes no implicit ARIA, so the
     // role is the thing a test can pin — pinned here precisely so a future edit
     // cannot delete the role and leave the wait with no live semantics at all.
+    // The title deliberately does NOT say "announceable": that is a property this
+    // test cannot reach, and ShortMakerBrandKit.tsx records that the `aria-busy`
+    // asserted below — mounted true, never cleared — makes announcement LESS
+    // likely, not more. Announceability stays NOT-CHECKED until the both-states
+    // NVDA probe runs; what is pinned here is the role, the busy flag, and the text.
     expect(region.getAttribute('role')).toBe('status');
     expect(region.getAttribute('aria-busy')).toBe('true');
     // Content, not a name: Skeleton renders the wait as a clipped text node and
