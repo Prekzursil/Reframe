@@ -120,15 +120,36 @@ function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
  *
  * WHAT THE SKIN CONTRACT GUARANTEES, exactly. TabBar.test.tsx fails on any class
  * this file emits that no renderer stylesheet declares, and its reach is measured
- * rather than asserted: "sees a re-added class in every shape a caller can write
- * it" pins one case per shape — a quoted attribute (the shape the deleted code
- * used, so a `git revert` of that deletion IS caught), a single- OR double-quoted
- * literal inside a brace expression (ternary or a clsx-style helper), and a
- * template literal with or without interpolation. Comments are stripped first, so
- * naming a class in this very block is a mention, not an emission. MEASURED LIMIT:
+ * rather than asserted: the cases under
+ * TabBar.test.tsx > "TabBar skin contract (every emitted class has a rule)"
+ * pin one case per shape — a quoted attribute (the shape the deleted grouped code
+ * used, so re-adding that code in its original form IS caught), a single- OR
+ * double-quoted literal inside a brace expression (ternary or a clsx-style helper),
+ * and a template literal with or without interpolation. Comments are stripped first,
+ * so naming a class in this very block is a mention, not an emission. MEASURED LIMIT:
  * a class held in a CONSTANT stays invisible — resolving it needs a parser and a
  * scope model, which a source-text extractor is not. That hole has its own pinning
- * test, so widening the extractor forces this paragraph to be widened with it.
+ * test —
+ * TabBar.test.tsx > "does NOT see a class held in a constant (documented residual, not a bug)"
+ * — so widening the extractor forces this paragraph to be widened with it.
+ *
+ * SCOPE LIMIT on that guarantee, mechanical — and CORRECTING the wording pushed in
+ * 5614bdbc, which said a `git revert` of the deletion IS caught. It is not. A literal
+ * `git revert` of the deleting commit d5b37dbe removes the guard along with the code
+ * the guard watches: that ONE commit deleted grouped mode, ADDED this contract, and
+ * repaired the shell.css citation (`git show d5b37dbe --stat` — TabBar.tsx,
+ * TabBar.test.tsx and shell.css, 140 insertions / 297 deletions), so reverting it
+ * also restores the false citation that masked the 7th unstyled class on the first
+ * run. The contract protects a HAND re-add, not a revert of its own commit. Settling
+ * experiment: `git revert -n d5b37dbe` on a scratch branch, then run the renderer
+ * suite — it is green. Closing it properly needs the guard in a commit the deletion
+ * can be reverted without.
+ *
+ * TWO CLAIMS IN THIS BLOCK ARE MACHINE-CHECKED, because the extractor above strips
+ * comments by design and so can never read its own documentation: this file's line
+ * count, and every `TabBar.test.tsx > "…"` name cited here. Both are pinned by
+ * TabBar.test.tsx > "TabBar self-citation contract (claims about this file are machine-checked)"
+ * — added because round 1 of this branch shipped both errors at once.
  *
  * SECOND UNCALLED SURFACE, disclosed not fixed. `navIds` also has ZERO production
  * callers: measured at this commit and at origin/main, every reference to it lives
@@ -156,13 +177,35 @@ function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
  * "one stale test" to three was right; the hook is stale prose, not blast radius.
  *
  * (2) docs/validation/v15-audit-ledger.md — LARGER, and previously undisclosed.
- * 56 lines there cite the deleted classes, in two kinds of rot. DANGLING LINE
- * NUMBERS: 41 lines cite a `TabBar.tsx:` line at 200 or beyond (this file is 200
- * lines, so `:231` and `:239` are past EOF), and others cite `workspace.css:116` /
- * `:148-152` / `:189-192` in a 302-line file that has had ZERO `tabbar__` matches
- * since #431. IMPOSSIBLE PRESCRIPTIONS: eight lines (:379, :417, :766, :781, :798,
- * :807, :814, :924) tell a reader to add a `.tabbar__advanced-panel[hidden]` rule
- * for a defect that can no longer occur.
+ * TWO PARTIALLY-OVERLAPPING rot surfaces, not one nested set. Measured over that
+ * file as it stands in this tree (3157 lines; re-measure before acting on it, the
+ * docs lane owns it): 56 lines mention a class this branch deleted, and of the 67
+ * lines carrying a `TabBar.tsx:<n>` citation, 41 cite n >= 200. Their UNION is 73
+ * lines and their INTERSECTION 24 — so neither set contains the other, and the two
+ * counts cannot be read as kinds of one 56.
+ *
+ * Of those 41: twenty-four also name a deleted class, so they cite a line for markup
+ * that exists nowhere in this file any more; TWELVE are past EOF outright (n >= 247 —
+ * this file is 289 lines, and of the eleven distinct cited values >= 200, which are
+ * 215, 231, 236, 238, 239, 243, 244, 245, 246, 248 and 254, only :248 and :254 exceed
+ * it); three are both. The remaining EIGHT are in range and name no deleted class, so
+ * whether each still points at what it describes is NOT-CHECKED here — settling
+ * experiment: read those eight ledger lines against this file. Others cite
+ * `workspace.css:116` / `:148-152` / `:189-192` in a 302-line file that has had ZERO
+ * `tabbar__` matches since #431. IMPOSSIBLE PRESCRIPTIONS: eight lines (:379, :417,
+ * :766, :781, :798, :807, :814, :924) tell a reader to add a
+ * `.tabbar__advanced-panel[hidden]` rule for a defect that can no longer occur.
+ *
+ * CORRECTS the wording pushed in 5614bdbc, which gave this file's length as 200 and
+ * offered `:231` and `:239` as worked examples of citations past EOF. That was true
+ * at the PARENT commit abae7b61, where the file WAS 200 lines — and the very commit
+ * that wrote the sentence grew it +70/-24 to 246 without updating it. At 246 lines
+ * `:231` is a blank line and `:239` is a `return (`: both IN RANGE, as nine of the
+ * eleven distinct cited values >= 200 are. So that band is stale-but-in-range, not
+ * past-EOF, and the past-EOF surface is 12 lines rather than 41. Recorded rather than
+ * silently edited, for the reason the shell.css repair established — and since this
+ * is the same defect class the branch exists to close (a citation falsified by a
+ * sibling change), the length is now pinned by a test instead of by prose.
  *
  * Neither surface ships a defect and neither is on the merge path: docs are not
  * executable, `docs/validation/tools/verify_ssot_claims.py` is wired into no

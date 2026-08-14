@@ -324,8 +324,11 @@ describe('TabBar skin contract (every emitted class has a rule)', () => {
   });
 
   it('still sees the two shapes that already worked (no trade-off)', () => {
-    // The quoted attribute is the shape the DELETED grouped code used, so a
-    // `git revert` of that deletion is caught. Kept so a later rewrite cannot
+    // The quoted attribute is the shape the DELETED grouped code used, so a HAND
+    // re-add of that code in its original form is caught. CORRECTED: this comment
+    // used to claim a `git revert` of the deletion is caught. It is not — d5b37dbe
+    // ADDED this contract in the same commit that deleted the code, so reverting it
+    // takes the guard away with the code it guards. Kept so a later rewrite cannot
     // swap the new shapes in at the old ones' expense.
     expect(emittedClasses('<div className="tabbar__export">')).toContain('tabbar__export');
     expect(emittedClasses("<div className={on ? 'tabbar__group-label' : 'tab'}>")).toContain(
@@ -354,5 +357,48 @@ describe('TabBar skin contract (every emitted class has a rule)', () => {
   it('does NOT see a class held in a constant (documented residual, not a bug)', () => {
     const src = "const CLS = 'tabbar__advanced-panel';\n<div className={CLS}>";
     expect(emittedClasses(src)).not.toContain('tabbar__advanced-panel');
+  });
+});
+
+// SELF-CITATION CONTRACT. TabBar.tsx's history comment makes two claims about
+// ITSELF — its own length, and the names of tests in THIS file — and both are
+// falsified by any later commit that grows the file or renames a test. Nothing in
+// the suite could evaluate them, and that is structural, not luck: the skin-contract
+// extractor above STRIPS comments by design (the use-vs-mention fix), so no test can
+// read prose in that block. Round 1 of this branch shipped both defects. It gave a
+// length measured on the PARENT tree in the very commit that grew the file by 46
+// lines, and it quoted a test name that the NEXT commit split into four. That is the
+// same shape as the defect this branch exists to close — #424 cited
+// `.tabbar__advanced-toggle`, #431 deleted the rule, nobody updated the sentence — so
+// it is closed mechanically here instead of by promising to remember.
+describe('TabBar self-citation contract (claims about this file are machine-checked)', () => {
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const readSource = (name: string): string => readFileSync(join(HERE, name), 'utf8');
+
+  it('pins the line count TabBar.tsx claims about itself to its real length', () => {
+    const source = readSource('TabBar.tsx');
+    const claimed = [...source.matchAll(/this file is (\d+) lines/g)];
+    // Detector control, in BOTH directions. Zero matches would make the assertion
+    // below vacuously true (the sentence quietly deleted); two would mean a later
+    // author quoted the refuted wording verbatim and this measured the wrong one.
+    expect(claimed).toHaveLength(1);
+    const lines = source.split(/\r?\n/);
+    const actual = lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
+    expect(Number(claimed[0][1])).toBe(actual);
+  });
+
+  it('pins every TabBar.test.tsx name TabBar.tsx cites to a name that exists here', () => {
+    const source = readSource('TabBar.tsx');
+    const self = readSource('TabBar.test.tsx');
+    // `TabBar.test.tsx > "…"` is vitest's own `file > name` path, adopted as the
+    // citation form precisely so a machine can check it. Bare quoted prose is NOT
+    // scanned: the same comment quotes three preview.spec.ts names, which belong to
+    // another file and another lane, and demanding those here would be a false
+    // failure the moment that lane renames one.
+    const cited = [...source.matchAll(/TabBar\.test\.tsx > "([^"]+)"/g)].map((m) => m[1]);
+    // Detector control: the citation form must actually be in use, or the filter
+    // below is vacuously empty.
+    expect(cited.length).toBeGreaterThan(0);
+    expect(cited.filter((name) => !self.includes(name))).toEqual([]);
   });
 });
