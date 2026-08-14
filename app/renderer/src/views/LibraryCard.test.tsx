@@ -73,6 +73,7 @@ interface Over {
   onRemove?: (id: string, e: React.MouseEvent) => void;
   shortsCount?: number;
   onOpenShorts?: (v: LibraryVideo) => void;
+  onOpenHub?: (v: LibraryVideo) => void;
   provenance?: ReturnType<typeof provenanceHandlers>;
 }
 
@@ -89,6 +90,11 @@ async function renderCard(over: Over = {}): Promise<void> {
           onRemove={over.onRemove ?? (() => {})}
           shortsCount={over.shortsCount ?? 0}
           onOpenShorts={over.onOpenShorts ?? (() => {})}
+          // KEY PRESENCE, not `??`: the hub control renders only when a caller
+          // wires it, so a test must be able to pass an EXPLICIT undefined to
+          // assert the unwired case. `?? (() => {})` would silently re-wire it and
+          // make that assertion unfalsifiable.
+          onOpenHub={'onOpenHub' in over ? over.onOpenHub : () => {}}
           provenance={over.provenance}
         />
       </ul>,
@@ -320,5 +326,57 @@ describe('LibraryCard', () => {
     expect(rpcMock).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
     expect(container.querySelector('img.library__thumb-img')).toBeNull();
     expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+  });
+});
+
+describe('Task hub entry point (the hub is reachable, not orphaned)', () => {
+  // WHY THIS EXISTS. Refine lands DIRECTLY on the Workspace (owner-locked G-7
+  // invariant 2), which is correct — but <TaskHub> renders at exactly one site,
+  // behind `mode !== 'workspace'`. Without a caller seeding `initialMode='hub'` the
+  // entire surface (view + stylesheet + tests + its preference writer `persist()`)
+  // is production-unreachable, and TypeScript cannot flag that: an unused optional
+  // prop is legal.
+  //
+  // Two user-visible consequences, both prevented by this control existing:
+  //   * no fresh install could ever create a remembered hub choice, and
+  //   * an upgraded user whose stored choice is 'subtitles' would land on the
+  //     caption lane on every open of that video with NO surface anywhere in the
+  //     app to change or clear it — the hub is that preference's only writer.
+  it('renders a Task hub action that opens THIS video onto its hub', async () => {
+    const onOpenHub = vi.fn();
+    await renderCard({ onOpenHub });
+    const btn = container.querySelector('.library__hub-btn') as HTMLButtonElement;
+    expect(btn, 'the hub entry point must exist when a caller wires it').not.toBeNull();
+    act(() => btn.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(onOpenHub).toHaveBeenCalledTimes(1);
+    expect(onOpenHub.mock.calls[0]?.[0]?.id).toBe('v1');
+  });
+
+  it('names the video, so the control is distinguishable per card to a screen reader', async () => {
+    // Every card renders one; an unlabelled "Task hub" repeated down the list is a
+    // list of identical accessible names.
+    await renderCard({ onOpenHub: () => {} });
+    expect(container.querySelector('.library__hub-btn')?.getAttribute('aria-label')).toBe(
+      'Task hub for Talk',
+    );
+  });
+
+  it('renders NO control when no caller wires it, so it cannot ship dead', async () => {
+    // DETECTOR CONTROL for the case above: without this, a hardcoded button would
+    // satisfy the first test while being a dead control on every unwired mount.
+    await renderCard({ onOpenHub: undefined });
+    expect(container.querySelector('.library__hub-btn')).toBeNull();
+  });
+
+  it('does NOT disturb the primary open action', async () => {
+    // The hub is SECONDARY. If wiring it changed what the card body does, the
+    // zero-navigation landing invariant would be broken by this very fix.
+    const onOpen = vi.fn();
+    const onOpenHub = vi.fn();
+    await renderCard({ onOpen, onOpenHub });
+    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
+    act(() => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onOpenHub).not.toHaveBeenCalled();
   });
 });

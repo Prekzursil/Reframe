@@ -16,37 +16,32 @@
 //                interrupted-batch badge) and "Director" (prompt-driven,
 //                views/Director.tsx, lazy). Same job — AI proposes, you review,
 //   * Refine   — the editor: "Editor" (views/Edit.tsx) and "Caption design" (the
-//                v1.5 Caption phase pilot). SCOPE, because the obvious reading is
-//                wrong: "Editor" is not the Workspace directly. views/Edit.tsx
-//                still opens on its Task Hub (Edit.tsx:69 `useState('hub')`, :163)
-//                and mounts the Workspace — preview + docked timeline +
-//                selection-driven inspector — only after a card is picked, or
-//                immediately when a remembered hub choice resumes there, which is
-//                exactly the two choices `resumeFor` maps to `{kind:'workspace'}`
-//                (lib/taskHub.ts:109 'subtitles', :111 'advanced'). So the L5
-//                "timeline with zero navigation actions" invariant holds from the
-//                Workspace mount, NOT from a first open of this destination.
+//                v1.5 Caption phase pilot). Opening a video lands DIRECTLY on the
+//                Workspace — preview + docked timeline + selection-driven inspector
+//                — so owner-locked G-7 invariant 2, "the timeline is VISIBLE in
+//                Refine with ZERO navigation actions", holds from a first open.
 //
-//                THAT GAP IS REAL AND UNOWNED — and the reason previously given for
-//                deferring it is now FALSE. This block used to close with "Edit.tsx
-//                is outside its file scope and byte-unchanged on this branch",
-//                which was true when the L5 lane wrote it and was invalidated two
-//                commits later: #427 (a4dbec7c) adopted the shared EmptyState in
-//                views/Edit.tsx, so `git diff --name-status 1fa9a69f a4dbec7c --
-//                app` lists `M app/renderer/src/views/Edit.tsx`. The deferral was
-//                therefore resting on a premise that no longer holds, with no lane
-//                owning the fix — which is how a locked acceptance invariant stays
-//                broken indefinitely while every individual PR looks reasonable.
-//                (#427 changed only the no-video empty state, so it did NOT make
-//                the invariant worse. The defect is the orphaned ownership.)
+//                RESOLVED HERE; the history is kept because it is the clearest
+//                example of a defect class this codebase keeps hitting. This block
+//                previously deferred the fix on the premise that "Edit.tsx is
+//                outside its file scope and byte-unchanged on this branch". That was
+//                true when the L5 lane wrote it and was falsified two commits later
+//                by #427 (a4dbec7c), which adopted the shared EmptyState in
+//                views/Edit.tsx. A deferral resting on a false premise, owned by no
+//                lane, is how a locked acceptance invariant stays broken while every
+//                individual PR looks reasonable. Only a CROSS-BRANCH audit sees it.
 //
-//                OWNER DECISION REQUIRED, deliberately not taken here: closing it
-//                means flipping Edit.tsx:70 `useState<'hub'|'workspace'>('hub')` to
-//                land on 'workspace' when a video is already open. That is a
-//                PRODUCT change — it demotes the Task Hub from the default landing
-//                surface — not a mechanical repair, so it is surfaced rather than
-//                applied. Until it is taken, G-7 invariant 2 does not hold and no
-//                doc, comment or PR body may claim otherwise.
+//                THE TASK HUB IS NOT DEMOTED TO DEAD CODE. `<TaskHub>` renders only
+//                when Edit is seeded `initialMode='hub'`, so landing on the
+//                Workspace would have left the whole surface — view, stylesheet,
+//                tests, and its preference writer — production-unreachable, with two
+//                real consequences: no fresh install could create a remembered
+//                choice, and an upgraded user whose stored choice is 'subtitles'
+//                would land on the caption lane on every open of that video with NO
+//                surface anywhere to change it. So `openVideoHub` below wires a
+//                deliberate, secondary entry point (the Library card's overflow
+//                row). The hub keeps its job — "what do you want to do with this
+//                video?" — without being the landing.
 //   * Deliver  — getting files out: "Finish" (Phase-5 guarded commit for ONE
 //                video, views/Export.tsx) and "Publish" (cross-video / batch
 //                publish + platform presets + the pro EDL/CSV handoff),
@@ -67,7 +62,7 @@
 // and the global Jobs slide-over (components/JobQueue.tsx).
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { Library } from './views/Library';
-import { Edit } from './views/Edit';
+import { Edit, type EditMode } from './views/Edit';
 import { Caption } from './views/Caption';
 import { Export } from './views/Export';
 import { Deliver } from './views/Deliver';
@@ -425,8 +420,27 @@ function AppShell(): React.ReactElement {
     };
   }, []);
 
+  /**
+   * Which surface Refine seeds for the video being opened.
+   *
+   * `'workspace'` is the default and satisfies owner-locked G-7 invariant 2 — "the
+   * timeline is VISIBLE in Refine with ZERO navigation actions". `'hub'` is the
+   * per-video Task Hub, reached DELIBERATELY from the Library card's secondary
+   * action; it is never the landing.
+   *
+   * THIS PROP IS WHAT KEEPS THE TASK HUB ALIVE. `<TaskHub>` renders at exactly one
+   * site, behind `mode !== 'workspace'`, so without a caller passing `'hub'` the
+   * whole surface — view, stylesheet, tests, and its preference writer `persist()`
+   * — would be production-unreachable. Two consequences of that, both avoided here:
+   * no fresh install could ever create a remembered choice, and an upgraded user
+   * whose stored choice is 'subtitles' would land on the caption lane on every open
+   * of that video with NO surface anywhere to change or clear it.
+   */
+  const [editInitialMode, setEditInitialMode] = useState<EditMode>('workspace');
+
   // Opening a video from the Library routes into Refine (the editor) for it.
   const openVideo = useCallback((video: Video) => {
+    setEditInitialMode('workspace');
     setEditVideo(video);
     setRoute({ name: 'refine', mode: 'editor' });
     // WU-13: persist the last-opened video so launch can restore it. Best-effort.
@@ -434,6 +448,17 @@ function AppShell(): React.ReactElement {
     void rpc('settings.set', { lastOpenedVideoId: video.id }).catch(() => {
       // Persisting is best-effort; navigation already happened in-memory.
     });
+  }, []);
+
+  /**
+   * Open a video onto its Task Hub — the "what do you want to do with this video?"
+   * launcher. Deliberate and secondary (the Library card's overflow row), so the
+   * zero-navigation landing invariant is untouched.
+   */
+  const openVideoHub = useCallback((video: Video) => {
+    setEditInitialMode('hub');
+    setEditVideo(video);
+    setRoute({ name: 'refine', mode: 'editor' });
   }, []);
 
   const backToLibrary = useCallback(() => {
@@ -603,6 +628,7 @@ function AppShell(): React.ReactElement {
         return (
           <Edit
             video={editVideo}
+            initialMode={editInitialMode}
             onBack={backToLibrary}
             onMakeShorts={openMakeShorts}
             onMakeShortsForVideo={openMakeShortsForVideo}
@@ -631,6 +657,7 @@ function AppShell(): React.ReactElement {
         return (
           <Library
             onOpen={openVideo}
+            onOpenHub={openVideoHub}
             onReadinessAction={handleReadinessAction}
             provenance={lineageActions}
             shorts={libraryShortsClient}

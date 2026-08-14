@@ -189,6 +189,12 @@ export interface LibraryCardProps {
   /** How many produced shorts this video has (the done-signal + gallery count). */
   shortsCount: number;
   onOpenShorts: (video: LibraryVideo) => void;
+  /**
+   * Open this video onto its per-video Task Hub. Optional: when omitted the control
+   * is not rendered at all, so a caller that does not wire it cannot ship a dead
+   * button. See the render site for why this entry point exists.
+   */
+  onOpenHub?: (video: LibraryVideo) => void;
   /** L5 provenance handlers; when present the card shows its source-file row. */
   provenance?: ProvenanceHandlers;
 }
@@ -202,6 +208,7 @@ export function LibraryCard({
   onRemove,
   shortsCount,
   onOpenShorts,
+  onOpenHub,
   provenance,
 }: LibraryCardProps): React.ReactElement {
   const badges = cardBadges(video);
@@ -273,6 +280,29 @@ export function LibraryCard({
             onClick={() => onOpenShorts(video)}
           >
             {shortsCountLabel(shortsCount)}
+          </button>
+        ) : null}
+        {/* THE TASK HUB'S ONE PRODUCTION ENTRY POINT.
+            Opening a video (the card body) lands straight on the Workspace, which is
+            owner-locked G-7 invariant 2 — "the timeline is VISIBLE in Refine with
+            ZERO navigation actions". That would leave the per-video Task Hub, its
+            stylesheet, its tests AND its preference writer production-unreachable,
+            so this deliberate secondary action keeps it live without touching the
+            landing. It also restores the ONLY way to change a remembered hub choice:
+            the hub is that preference's sole writer, so without this an upgraded
+            user stuck on 'subtitles' could never clear it.
+            It sits in the EXISTING secondary row beside "N shorts" and "Remove" —
+            the slot that already holds per-video secondary actions — rather than
+            introducing a new surface. Rendered only when a caller wires it, so the
+            optional prop cannot produce a dead control. */}
+        {onOpenHub ? (
+          <button
+            type="button"
+            className="library__hub-btn"
+            aria-label={`Task hub for ${video.title}`}
+            onClick={() => onOpenHub(video)}
+          >
+            Task hub
           </button>
         ) : null}
         <button
