@@ -44,11 +44,26 @@ const thumbnailRpc: VideoThumbnailRpc = {
  * The failure is remembered as the URL THAT FAILED, not as a boolean. `posterUrl`
  * changes after mount — `useVideoThumbnail` re-serves it whenever `thumbnailPath`
  * changes and swaps in the on-demand result when generation resolves
- * (components/useVideoThumbnail.ts:53-71) — so a boolean flag latches: a card
- * whose stored poster had been deleted from disk stayed on the ▶ glyph even after
- * the sidecar regenerated it, until the card unmounted (view switch / restart).
- * Comparing against the failed URL self-resets on a NEW poster and still refuses
- * to optimistically re-show the same broken one.
+ * (components/useVideoThumbnail.ts:53-71) — so comparing against the failed URL
+ * self-resets on a genuinely NEW poster URL while still refusing to
+ * optimistically re-show the same broken one.
+ *
+ * SCOPE OF THAT BENEFIT, measured: this is HARDENING, not a fix for "the poster
+ * never comes back after the sidecar regenerates it". Regeneration reuses the
+ * deterministic path `data_dir/thumbnails/<id>.jpg` (handlers/library_ops.py:181;
+ * its writers at :183/:194 are the only `UPDATE entity SET thumbnail_path`,
+ * library.py:484-485) and `thumbMediaUrl` adds no cache-buster
+ * (components/Player.tsx:121-123), so a regenerated poster is a BYTE-IDENTICAL
+ * URL and the card stays on the ▶ glyph exactly as it did under a boolean flag.
+ * For a fixed data directory the non-empty URLs one mounted card can ever see are
+ * a singleton, which makes the two forms equivalent. The reachable transition is
+ * a data-DIRECTORY change, which re-roots the same `<id>.jpg` — NOT relink
+ * (relink.py never touches thumbnailPath) and NOT keepCopy (library.py:929-930
+ * rewrites the project manifest, not the entity row `library.list` reads).
+ * UNVERIFIED whether a data-dir change preserves the mounted card (views/
+ * Library.tsx keys by `video.id`) or remounts it; if it remounts this branch has
+ * no reachable production path. Settle it by changing the data directory with the
+ * Library view open and watching whether LibraryCard instances are torn down.
  */
 function VideoThumb({ video }: { video: Video }): React.ReactElement {
   const posterUrl = useVideoThumbnail(thumbnailRpc, video.id, video.thumbnailPath ?? '');
