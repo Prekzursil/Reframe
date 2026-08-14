@@ -7,6 +7,52 @@
 // A11Y: the open action and the select/remove/shorts controls are SIBLINGS, never
 // nested inside one another (no nested-interactive); resting depth is the surface
 // ladder + --elev-* (library-cards.css), not a border-everywhere box.
+//
+// SCOPE of the "finish the card" work, MEASURED at this tip. Three of the four
+// asks were already satisfied by the shipped card; only the fourth is open, and
+// two of them would be REGRESSIONS if done again:
+//   * PRIMARY ACTION — EXISTS, and is the visually dominant control. The card
+//     BODY is the button (`.library__item-open` below) and its accessible name
+//     already begins with "Open" (cardAriaLabel -> "Open Talk, 10:05, no
+//     transcript"). It is `background: transparent` ON PURPOSE
+//     (library-cards.css:40-53) because the PARENT paints for it: `li.library__
+//     item` is `--surface-raised` + `--elev-1` at rest (:29/:31), lifts with
+//     `--shadow-raise` + `translateY(-3px)` on hover (:55-61), presses on active
+//     (:69-72), takes `--focus-ring` on `:focus-visible` (:63-67) and shows
+//     `cursor: pointer` (:52). Reading that one CHILD rule alone and concluding
+//     "nothing paints as Open at rest" is a whole-component verdict drawn from a
+//     single selector — the parent rule three declarations above refutes it.
+//   * DEMOTE REMOVE — ALREADY DONE; doing it again would be a regression.
+//     `.library__remove-btn` carries the GHOST voice (shell.css:520-527 — no
+//     fill, no edge, no shadow at rest, `--text-muted`) with a never-filled
+//     quiet-red hover (:588-593). It is the QUIETEST control here, not the
+//     loudest.
+//   * METADATA — DELIVERED to the limit of the record. `library.list` returns
+//     id, path, title, addedAt, durationSec, hasTranscript, thumbnailPath and
+//     nothing else (components/api.ts:65-78) — no resolution, codec or fps — so
+//     duration (the poster badge) + container format (`sourceFormatLabel`) is
+//     the entire available surface. Anything richer needs a sidecar field first.
+//   * THE ONE RESIDUAL — no VISIBLE text on the card reads "Open"; the
+//     affordance rides entirely on depth, cursor and the accessible name. On a
+//     card with shorts the painted "N shorts" pill is a second text-labelled
+//     control, so "the only labelled control is the destructive one" holds only
+//     when shortsCount is 0. Closing the residual needs
+//     `components/library-cards.css`, OUTSIDE this lane's file scope, so it is
+//     reported rather than reached for.
+//
+// Two constraints for whoever closes that residual, both measured here:
+//   1. Do NOT nest a control inside `.library__item-open` — it IS a <button>, so
+//      a nested <button>Open</button> is invalid HTML and breaks keyboard/AT. A
+//      non-interactive <span> is the shape that works. This is now enforced by a
+//      TEST, not a comment (LibraryCard.test.tsx, "free of NESTED interactive").
+//   2. Do NOT give the label fill or elevation — its parent already carries
+//      `--surface-raised` + `--elev-1`, and a raised box inside a raised box
+//      fights the documented depth-not-outline decision (library-cards.css:17-21).
+// And not a shortcut: reusing `.library__shorts-label` to get a painted pill with
+// zero CSS is reachable from this file, but that class is an INTERACTIVE voice —
+// `cursor: pointer` (library-cards.css:208) plus a hover fill (:214-217) — so a
+// non-interactive cue wearing it renders a phantom button. Being reachable inside
+// file scope is not the same as being coherent.
 import React, { useState } from 'react';
 
 import { rpc } from '../components/api';
@@ -47,11 +93,15 @@ const thumbnailRpc: VideoThumbnailRpc = {
  *
  * SCOPE, measured: NO transition currently reaches that benefit. This is PURE
  * DEFENSIVE HARDENING, not a fix for an observed bug. An <img> renders only
- * while `posterUrl` is non-empty, and `posterUrl` is '' until a poster resolves
- * and then holds ONE value for the rest of the component's lifetime — so
- * `failedUrl !== posterUrl` is equivalent to a boolean `!failed`,
- * UNCONDITIONALLY (not merely "for a fixed data directory"). Two independent
- * reasons, either alone sufficient:
+ * while `posterUrl` is non-empty, and `posterUrl` holds ONE value for the rest
+ * of the component's lifetime — so `failedUrl !== posterUrl` is equivalent to a
+ * boolean `!failed`, UNCONDITIONALLY (not merely "for a fixed data directory").
+ * (It is NOT necessarily '' on the first render, as an earlier draft of this
+ * note said: `useVideoThumbnail` seeds its state SYNCHRONOUSLY from
+ * `thumbnailPath` (components/useVideoThumbnail.ts:51), so a row that already
+ * carries a poster path is non-empty immediately. That does not disturb the
+ * one-value-per-lifetime invariant, which is what the equivalence rests on.)
+ * Three independent reasons, any ONE alone sufficient:
  *   1. The URL is a pure function of the STORED PATH STRING: `thumbMediaUrl`
  *      embeds the whole path and adds no cache-buster (Player.tsx:121-123), so
  *      the data ROOT is not an input to it.
@@ -61,6 +111,11 @@ const thumbnailRpc: VideoThumbnailRpc = {
  *      (handlers/library_ops.py:183/:194) — and the renderer calls that RPC
  *      ONLY while `thumbnailPath` is empty, because the hook short-circuits
  *      first (components/useVideoThumbnail.ts:53-58).
+ *   3. The list is IDENTITY-KEYED: Library.tsx renders `<LibraryCard
+ *      key={video.id}>` (views/Library.tsx:797-798), so a sort / filter / search
+ *      re-order cannot hand a SURVIVING mounted card a DIFFERENT video. That
+ *      closes the last route by which one mounted card could ever observe a
+ *      second non-empty poster URL.
  * So a data-DIRECTORY change re-roots the FILES but not the row `library.list`
  * returns; relink (relink.py never touches thumbnailPath) and keepCopy
  * (library.py:929-930 rewrites the project manifest, not the entity row) emit

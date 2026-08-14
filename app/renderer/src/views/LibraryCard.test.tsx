@@ -153,6 +153,35 @@ describe('LibraryCard', () => {
     expect(onOpen.mock.calls[0][0].id).toBe('v1');
   });
 
+  it('keeps the whole-card open action free of NESTED interactive controls', async () => {
+    // The card's primary action is the card BODY itself — a <button> wrapping the
+    // poster and title — so every other control (select / shorts / provenance /
+    // remove) must be its SIBLING. A control nested inside it is invalid HTML and
+    // breaks keyboard + AT traversal.
+    //
+    // This guard exists because the card's one real residual is that nothing on it
+    // reads "Open" in VISIBLE text, and the obvious fix — dropping an
+    // <button>Open</button> into the card body — lands inside this button. A
+    // non-interactive label (a <span>) is the shape that passes here; a nested
+    // control is not. The rule is enforced, not merely commented.
+    const INTERACTIVE = 'button, a[href], input, select, textarea, [tabindex], [role="button"]';
+    await renderCard({ shortsCount: 3, provenance: provenanceHandlers() });
+
+    const item = container.querySelector('li.library__item') as HTMLLIElement;
+    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
+    expect(open.tagName).toBe('BUTTON');
+    // The primary action really is the whole body: poster + title live inside it.
+    expect(open.querySelector('.library__thumb')).not.toBeNull();
+    expect(open.querySelector('.library__item-title')).not.toBeNull();
+    // DETECTOR CONTROL: the same selector must MATCH on this card, or the zero
+    // below would only prove the selector is broken. Deliberately a lower BOUND,
+    // not an exact count — an exact count would redden for any legitimately added
+    // sibling control and would shadow the assertion this test actually exists
+    // for (measured: it did, on the first run of this guard).
+    expect(item.querySelectorAll(INTERACTIVE).length).toBeGreaterThanOrEqual(4);
+    expect(open.querySelectorAll(INTERACTIVE)).toHaveLength(0);
+  });
+
   it('re-labels the open action in lineage view', async () => {
     await renderCard({ lineageView: true });
     expect(
