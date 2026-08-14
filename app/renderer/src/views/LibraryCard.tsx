@@ -41,29 +41,38 @@ const thumbnailRpc: VideoThumbnailRpc = {
  * (empty URL or an <img> load error) falls back to the ▶ glyph and NEVER blocks
  * the gallery. The duration badge always renders (mm:ss).
  *
- * The failure is remembered as the URL THAT FAILED, not as a boolean. `posterUrl`
- * changes after mount — `useVideoThumbnail` re-serves it whenever `thumbnailPath`
- * changes and swaps in the on-demand result when generation resolves
- * (components/useVideoThumbnail.ts:53-71) — so comparing against the failed URL
- * self-resets on a genuinely NEW poster URL while still refusing to
- * optimistically re-show the same broken one.
+ * The failure is remembered as the URL THAT FAILED, not as a boolean, so the
+ * guard self-resets on a genuinely NEW poster URL instead of stranding the card
+ * on the ▶ glyph until it unmounts.
  *
- * SCOPE OF THAT BENEFIT, measured: this is HARDENING, not a fix for "the poster
- * never comes back after the sidecar regenerates it". Regeneration reuses the
- * deterministic path `data_dir/thumbnails/<id>.jpg` (handlers/library_ops.py:181;
- * its writers at :183/:194 are the only `UPDATE entity SET thumbnail_path`,
- * library.py:484-485) and `thumbMediaUrl` adds no cache-buster
- * (components/Player.tsx:121-123), so a regenerated poster is a BYTE-IDENTICAL
- * URL and the card stays on the ▶ glyph exactly as it did under a boolean flag.
- * For a fixed data directory the non-empty URLs one mounted card can ever see are
- * a singleton, which makes the two forms equivalent. The reachable transition is
- * a data-DIRECTORY change, which re-roots the same `<id>.jpg` — NOT relink
- * (relink.py never touches thumbnailPath) and NOT keepCopy (library.py:929-930
- * rewrites the project manifest, not the entity row `library.list` reads).
- * UNVERIFIED whether a data-dir change preserves the mounted card (views/
- * Library.tsx keys by `video.id`) or remounts it; if it remounts this branch has
- * no reachable production path. Settle it by changing the data directory with the
- * Library view open and watching whether LibraryCard instances are torn down.
+ * SCOPE, measured: NO transition currently reaches that benefit. This is PURE
+ * DEFENSIVE HARDENING, not a fix for an observed bug. An <img> renders only
+ * while `posterUrl` is non-empty, and `posterUrl` is '' until a poster resolves
+ * and then holds ONE value for the rest of the component's lifetime — so
+ * `failedUrl !== posterUrl` is equivalent to a boolean `!failed`,
+ * UNCONDITIONALLY (not merely "for a fixed data directory"). Two independent
+ * reasons, either alone sufficient:
+ *   1. The URL is a pure function of the STORED PATH STRING: `thumbMediaUrl`
+ *      embeds the whole path and adds no cache-buster (Player.tsx:121-123), so
+ *      the data ROOT is not an input to it.
+ *   2. Nothing rewrites that string once non-empty. Its only writer is
+ *      `set_thumbnail` (library.py:484-485, the sole `UPDATE entity SET
+ *      thumbnail_path`), reached only by the on-demand generator
+ *      (handlers/library_ops.py:183/:194) — and the renderer calls that RPC
+ *      ONLY while `thumbnailPath` is empty, because the hook short-circuits
+ *      first (components/useVideoThumbnail.ts:53-58).
+ * So a data-DIRECTORY change re-roots the FILES but not the row `library.list`
+ * returns; relink (relink.py never touches thumbnailPath) and keepCopy
+ * (library.py:929-930 rewrites the project manifest, not the entity row) emit
+ * none either; and a refreshed `thumbnailPath` prop on this mounted card —
+ * which the hook DOES re-serve (useVideoThumbnail.ts:75) — resolves to the same
+ * deterministic `data_dir/thumbnails/<id>.jpg`, hence the same URL. The
+ * URL-keyed form is kept because it is strictly no-worse than the boolean and
+ * self-heals if a future writer ever diverges the path, NOT because anything
+ * reaches it today. UNVERIFIED that no OUT-OF-BAND writer exists (a hand-edited
+ * DB, a future migration); settle it by changing the data directory with the
+ * Library view open and logging whether `library.thumbnail` is ever dispatched
+ * for a video whose row already holds a poster path — prediction: zero.
  */
 function VideoThumb({ video }: { video: Video }): React.ReactElement {
   const posterUrl = useVideoThumbnail(thumbnailRpc, video.id, video.thumbnailPath ?? '');

@@ -250,11 +250,12 @@ describe('LibraryCard', () => {
     // card — the <img> MUST come back. A boolean "this card failed" flag latches
     // forever and strands the card on the glyph until it unmounts.
     //
-    // The fixture is a data-DIRECTORY change (same `<id>.jpg`, new root) because
-    // that is the only such transition the wire can actually produce. The sidecar
-    // regenerates a poster to the SAME `data_dir/thumbnails/<id>.jpg`
-    // (handlers/library_ops.py:181), so regeneration is deliberately NOT recovered
-    // and a `v1-regen.jpg` fixture would pin a path production never emits.
+    // The second url is an ARBITRARY different one and is deliberately NOT a
+    // claim about the wire: production has no known path that hands a mounted
+    // card a second non-empty poster url (see the VideoThumb JSDoc — the stored
+    // path is what feeds the url, and nothing rewrites it once set). What this
+    // pins is the guard's SHAPE — keyed on the failed URL, not on a boolean —
+    // so a future writer that DOES diverge the path cannot strand the card.
     await renderCard();
     const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
     act(() => {
