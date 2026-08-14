@@ -223,6 +223,27 @@ export function Transport({
     // The keydown handler is a BUBBLE layer over real focusable controls
     // (buttons + range), not a fake widget: every action it exposes is also
     // reachable by activating a control, so no keyboard trap is introduced.
+    //
+    // SCOPE OF THE KEYBOARD CLAIM (rescoped after a reviewer measured the wider
+    // wording): Space / J / K / L / arrows work only while focus is ALREADY
+    // INSIDE this group. Keydown BUBBLES up from a focused child, this div has
+    // no `tabIndex`, and nothing autofocuses — so on a freshly mounted player
+    // with focus on <body> the shortcuts do nothing until the user Tabs to or
+    // clicks a control. That is deliberate, not an oversight: `tabIndex={0}` on
+    // a role="group" wrapper adds a tab stop that does nothing when reached, and
+    // autofocusing on mount would steal focus from whatever the user was doing.
+    // A global "press Space anywhere on the page" layer is the CALL SITE's to
+    // own, and this is a migration decision, not a component one.
+    //
+    // NAMED OWNER + KNOWN COLLISION: ShortMaker already has such a layer, and
+    // its Space branch calls `player.pause()` / `player.play()` through the
+    // ref handle. On the CandidateReview mount both would be live at once, so
+    // whoever migrates that surface must decide which owns Space rather than
+    // letting a focused transport and a document-level handler both fire.
+    // The tests here dispatch KeyboardEvents directly on this element, so they
+    // pin the handler's behaviour and CANNOT observe the focus precondition —
+    // settling experiment: drive it with userEvent (real Tab/click focus) or in
+    // a real browser from a cold mount.
     <div
       className={className ?? 'transport'}
       role="group"

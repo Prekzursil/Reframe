@@ -204,6 +204,37 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   // ProducedShorts, CaptionStage, ExportStage, Shorts), so migrating one means
   // DELETING its `controls` as well as adding `transport` — keep `controls`
   // only where the native bar is deliberately wanted alongside.
+  //
+  // RESIDUAL R12 — THE HIGHEST-PRIORITY MIGRATION BLOCKER, AND THE ONE THIS
+  // LANE SHIPPED WITHOUT: the transport has NO STYLESHEET. Transport.tsx emits
+  // `transport`, `transport__button`, `transport__button--play`,
+  // `transport__scrubber`, `transport__time` and `transport__rate`, and none of
+  // them matches a single rule in any of the 67 renderer stylesheets
+  // (MEASURED: `git grep -il transport -- "*.css" "*.scss" "*.less"` returns
+  // nothing; the same probe finds `player__video` in four sheets, so the
+  // detector works). Transport.tsx imports no CSS while this file imports
+  // `./player.css`. Consequences, in this codebase's own already-named W05
+  // defect class (shell.css, the `.batch-queue`/`.vtl__*` comment): the raised
+  // button voice needs a `.feature-panel`/`.shortmaker` ancestor or an entry in
+  // the explicit host list, and `.transport` is neither, so its buttons paint as
+  // raw dark Chromium chrome; the only `input[type="range"]` rule in the tree is
+  // scoped to `.caption-customizer__field`, so the scrubber paints as a raw
+  // platform slider; and `.transport` has no flex, gap or sizing, so the row has
+  // no layout at all. Meanwhile player.css already styles the NATIVE bar this
+  // replaces with design tokens (a `--surface-deep` scrim, a `--font-mono`
+  // timecode, `--focus-ring`). So migrating a mount TODAY would swap a
+  // token-styled bar for unstyled platform chrome — inverting this lane's whole
+  // premise. CSS was outside this lane's file scope; the gap is disclosed here
+  // rather than half-fixed. WITHDRAWN with it: the previous round's claim that
+  // CandidateReview is "the clean first target". It was judged on ONE axis (does
+  // the mount pass `controls`?) and asserted on all of them — its Player is the
+  // child of a 248px `.sm-phone` bezel with an absolutely-positioned home
+  // indicator, so a block-flow control row lands inside the phone-frame
+  // illusion. No mount may migrate until a co-located transport.css exists (and
+  // `.transport button` joins shell.css's raised-voice host list).
+  //
+  // The migration recipe is therefore THREE steps, not one: settle R11, then
+  // land the stylesheet, then per mount add `transport` AND delete `controls`.
   const nativeControls = controls ?? !transport;
 
   // Transport-facing playback state. Kept here (not in Transport) so the
@@ -421,20 +452,38 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       return undefined;
     }
     // A NEGATIVE rate now IS an active reverse shuttle, so no separate `playing`
-    // test is needed. This file has FOUR paths that stop playback, and all four
+    // test is needed. This file has FIVE paths that stop playback, and all five
     // clear the rate back to 1:
     //   1. an explicit pause          — handlePlayPause(false) below;
     //   2. the reverse-shuttle floor  — the interval below, at `floorSec`;
     //   3. the DOM `ended` event      — syncEnded in the sync effect above;
-    //   4. the window-END stop        — in the listener effect above.
-    // (4) was the one that did not, and an earlier revision of this comment
-    // claimed only THREE existed — three reviewers measured that independently.
-    // It fires the `onEnded` PROP rather than the DOM `ended` event, so
-    // `syncEnded` never runs for it and a forward 2x/4x shuttle used to survive
-    // the out point. It could never strand a NEGATIVE rate (the reverse driver
-    // walks AWAY from `w.end` and `stoppedAtEndRef` latches), so retiring the
-    // `!playing` guard was safe even then — but the enumeration was not true,
-    // and a migrating call site would have read it as a total invariant.
+    //   4. the window-END stop        — in the listener effect above;
+    //   5. the imperative handle      — PlayerHandle.pause() below, whose live
+    //      caller is ShortMaker's Space key through CandidateReview.
+    // This enumeration has now been REFUTED TWICE and is recorded rather than
+    // rewritten: it first said THREE (three reviewers measured that), then FOUR
+    // (a fourth measured the handle). Both earlier numbers were wrong at the
+    // time they were written, and each wrong number was load-bearing — a
+    // migrating call site would have read it as a total invariant. Treat the
+    // count as a claim to re-derive, not a fact to inherit: grep this file for
+    // `video.pause()` and for anything that stops the reverse interval, and if
+    // you add a sixth, it clears the rate or this comment is a lie again.
+    // (4) fires the `onEnded` PROP rather than the DOM `ended` event, so
+    // `syncEnded` never ran for it and a forward 2x/4x shuttle survived the out
+    // point. (5) reached nothing at all. Neither could strand a NEGATIVE rate
+    // via THIS effect's old `!playing` guard — in the handle-pause-during-
+    // reverse state `playing` is true, so the guard would not have fired either
+    // — so retiring the guard remains safe and is NOT implicated in either miss.
+    //
+    // UNVERIFIED (uncertain 30-55%, INFERRED from the HTML media-load algorithm,
+    // not observed): `video.load()` in the proxy-swap effect above may be a
+    // SIXTH — load() pauses a playing element and resets `playbackRate` to
+    // `defaultPlaybackRate` while React `rate` stays armed, desyncing the
+    // element from the transport's "2x" readout. jsdom stubs load(), so this
+    // suite structurally cannot observe it. SETTLING EXPERIMENT: bump
+    // `reloadToken` mid-shuttle in real Chromium and compare `video.playbackRate`
+    // against the `.transport__rate` text.
+    //
     // The only producer of a negative rate — Transport's `shuttle()` — sets the
     // rate and starts playback in the same batch. A `!playing` guard used to sit
     // here; once every stop path cleared the rate it became unreachable, and
@@ -444,9 +493,10 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     // inherited from main, four added with the transport) and every one is an
     // `if (!video)` / `?? 0` null-narrowing guard that React's ref timing makes
     // structurally unreachable — a different animal from a branch encoding a
-    // playback rule. The FOUR stop-path tests in Player.test.tsx — including
-    // 'clears the shuttle rate at the WINDOW-END stop' and 'ends a REVERSE
-    // shuttle stopped at the out point' — are what hold the invariant up.
+    // playback rule. The stop-path tests in Player.test.tsx — one per numbered
+    // path above, each red first on its own load-bearing assertion — are what
+    // hold the invariant up. They are named, not counted: a bare count in a
+    // comment is precisely what was wrong twice here, and nothing re-checks it.
     video.pause();
     const stepSec = Math.abs(rate) * frameSec;
     const timer = setInterval(() => {
