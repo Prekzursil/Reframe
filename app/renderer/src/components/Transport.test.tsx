@@ -439,3 +439,43 @@ describe('Transport playable span', () => {
     expect(range.max).toBe('44');
   });
 });
+
+describe('shuttle without a rate consumer', () => {
+  // THE DEFECT: `onRateChange` is documented optional ("a simple player can ignore
+  // shuttle"), but `shuttle()` called `onRateChange?.(...)` — a no-op when omitted —
+  // and then `onPlayPause(true)` UNCONDITIONALLY. So on a player that ignores
+  // shuttle, pressing J (reverse) started FORWARD playback: the opposite of the
+  // requested direction, which is worse than doing nothing.
+  //
+  // The existing suite could not see it — every J case supplies onRateChange, so the
+  // ignore-shuttle mode was certified by tests that never press J.
+  it('does NOT start forward playback when J is pressed with no onRateChange', () => {
+    const onPlayPause = vi.fn();
+    const group = render({ onPlayPause, onRateChange: undefined, isPlaying: false });
+    press(group, 'j');
+    expect(
+      onPlayPause,
+      'J means play in REVERSE; with no rate consumer the reverse cannot be honoured, ' +
+        'so the transport must not start forward playback instead',
+    ).not.toHaveBeenCalled();
+  });
+
+  it('still plays forward on L with no onRateChange (forward IS what L means)', () => {
+    // The counterpart control. L without shuttle degrades honestly to plain play, so
+    // the fix above must not be over-applied and disable L too.
+    const onPlayPause = vi.fn();
+    const group = render({ onPlayPause, onRateChange: undefined, isPlaying: false });
+    press(group, 'l');
+    expect(onPlayPause).toHaveBeenCalledWith(true);
+  });
+
+  it('still shuttles in reverse on J when a rate consumer IS supplied', () => {
+    // Guards against "fix" by simply deleting the J branch.
+    const onPlayPause = vi.fn();
+    const onRateChange = vi.fn();
+    const group = render({ onPlayPause, onRateChange, isPlaying: false });
+    press(group, 'j');
+    expect(onRateChange).toHaveBeenCalledWith(-1);
+    expect(onPlayPause).toHaveBeenCalledWith(true);
+  });
+});

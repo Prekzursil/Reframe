@@ -1,0 +1,128 @@
+/* transport.css — the skin for the custom video transport (Transport.tsx).
+   Tokens only; no hardcoded palette, spacing or type values.
+
+   WHY THIS FILE EXISTS. Transport.tsx shipped emitting five classes
+   (`transport`, `transport__button`, `transport__button--play`,
+   `transport__scrubber`, `transport__time`, `transport__rate`) with NO rule for
+   any of them anywhere in the renderer. The component's whole purpose is to
+   replace Chromium's native control bar because that bar is the most recognisable
+   tell that a desktop app is a web page in a frame — so shipping it as unstyled
+   default buttons plus a default <input type="range"> would have been a
+   REGRESSION against the thing it replaces, not an improvement.
+
+   The sibling lane in the same wave shipped a "skin contract" guard for exactly
+   this defect class (TabBar.test.tsx), but hard-pinned to TabBar.tsx.
+   transport.skin.test.ts now applies the same guard here. */
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+/* Icon buttons: quiet at rest (the video is the subject, not the chrome), with a
+   real hover/active/focus ladder so they never read as dead pixels. */
+.transport__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  /* No `--control-*` SIZE token exists (the family is padding-only:
+     --control-pad-btn / -input / -mini / -tab / -toggle / -toptab), so this is a
+     literal square sized to the 16px icon plus breathing room. Deliberate, not an
+     oversight — verified against tokens.css rather than assumed. */
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.transport__button:hover {
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+}
+
+.transport__button:active {
+  background: var(--surface-deep);
+}
+
+/* Keyboard operability is not optional here — an icon-only control with no
+   visible focus is a regression against the native bar this replaces. */
+.transport__button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-color: var(--accent);
+}
+
+.transport__button svg {
+  display: block;
+  fill: currentColor;
+}
+
+/* Play/pause is the ONE accented control — the single most-used action. The rest
+   of the strip stays neutral so the accent keeps meaning something. */
+.transport__button--play {
+  color: var(--text-primary);
+  background: var(--surface-overlay);
+}
+
+.transport__button--play:hover {
+  color: var(--accent);
+}
+
+/* The scrubber is the widest element: it should read as the timeline it is. */
+.transport__scrubber {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--space-3);
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.transport__scrubber:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-pill);
+}
+
+/* Tabular numerals so the readout does not jitter as the digits change — the
+   same reason a broadcast timecode display is monospaced. */
+.transport__time {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Always mounted (it is a live region), so it must occupy no space when empty —
+   otherwise the strip visibly reflows the moment a shuttle rate is announced. */
+.transport__rate {
+  flex: 0 0 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transport__button {
+    transition: none;
+  }
+}

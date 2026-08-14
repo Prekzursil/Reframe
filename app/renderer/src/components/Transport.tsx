@@ -35,11 +35,34 @@
 // unit-tested in Transport.test.tsx.
 import React from 'react';
 
+// The component's own skin. Imported HERE (not by a parent) so the styles cannot
+// be separated from the markup by a call site that forgets them — the failure that
+// left every class below unstyled when this component first shipped.
+import './transport.css';
+
+// THE timecode formatter (one definition, repo-wide). Used below and re-exported
+// so this module's existing public surface is unchanged.
+import { formatTimecode } from '../lib/timecode';
+
 /**
  * Frame rate used for frame-stepping when the caller does not know the media's
- * real rate. 30 is a fallback, NOT a measurement: pass `fps` from the probed
- * metadata whenever it is available or a 24/25/50/60fps source will step by a
- * fraction of a frame.
+ * real rate. 30 is a fallback, NOT a measurement — a 24/25/50/60fps source steps
+ * by a fraction of a frame.
+ *
+ * NO PRODUCER EXISTS YET, so this is currently the rate for EVERY source. Measured
+ * across all three layers rather than assumed:
+ *   * sidecar — nothing reads `r_frame_rate` or `avg_frame_rate` anywhere under
+ *     `sidecar/`, so the source rate is never probed;
+ *   * wire — the only `fps` in `lib/rpc/schemas.ts` is a field of `ConvertOptions`,
+ *     an OUTPUT encoding setting, not a property of the opened media;
+ *   * renderer — no call site has a source rate to pass.
+ *
+ * An earlier version of this note told the caller to "pass `fps` from the probed
+ * metadata whenever it is available". That was unactionable: there is no probed
+ * metadata to pass. Closing the gap means adding a real source-rate field —
+ * ffprobe `r_frame_rate` in the sidecar, a field on the media payload, then the
+ * prop — which is a feature, not a rename. Until then frame-step is EXACT only on
+ * 30fps sources; treat it as approximate elsewhere and do not claim otherwise.
  */
 export const TRANSPORT_DEFAULT_FPS = 30;
 
@@ -79,15 +102,16 @@ export interface TransportProps {
   className?: string;
 }
 
-/** Format seconds as `M:SS`, or `H:MM:SS` once past an hour. Non-finite/negative -> `0:00`. */
-export function formatTimecode(seconds: number): string {
-  const total = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const secs = String(total % 60).padStart(2, '0');
-  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${secs}`;
-  return `${minutes}:${secs}`;
-}
+/**
+ * Format seconds as `M:SS`, or `H:MM:SS` once past an hour.
+ *
+ * MOVED to `lib/timecode.ts` and re-exported here so existing importers (and this
+ * file's own tests) are unaffected. It was defined here AND in
+ * features/manualIntervalLogic.ts with divergent rounding — floor here, round there
+ * — so the same seconds rendered as two different timecodes depending on the import.
+ * There is now exactly one definition; see that module for why floor wins.
+ */
+export { formatTimecode };
 
 /** Clamp a time into `[0, duration]`; a non-finite time or duration collapses to 0. */
 export function clampTime(timeSec: number, duration: number): number {
@@ -177,8 +201,18 @@ export function Transport({
     onSeek(clampToSpan(position + frames * frameSec, spanStart, spanEnd));
   };
 
-  /** Enter (or accelerate) a shuttle in `direction`. */
+  /**
+   * Enter (or accelerate) a shuttle in `direction`.
+   *
+   * `onRateChange` is OPTIONAL ("a simple player can ignore shuttle"), and a player
+   * that ignores it cannot play backwards at all. Forward degrades honestly — L
+   * without a rate consumer is just "play", which is what L means. REVERSE does not:
+   * calling `onPlayPause(true)` with no rate consumer starts FORWARD playback, the
+   * opposite of what J asked for, which is worse than doing nothing. So a reverse
+   * shuttle with no consumer is a no-op rather than a wrong-direction play.
+   */
   const shuttle = (direction: 1 | -1): void => {
+    if (direction === -1 && !onRateChange) return;
     onRateChange?.(nextShuttleRate(isPlaying ? rate : 0, direction));
     onPlayPause(true);
   };
