@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import {
+  type CropFraming,
   type EditorAction,
   type EditorState,
   clampSelection,
+  cropFraming,
+  cropViewport,
   editorReducer,
   initialEditorState,
   transcriptReady,
@@ -159,5 +165,166 @@ describe('editorReducer', () => {
     const prev = base();
     const next = editorReducer(prev, { type: 'bogus' } as unknown as EditorAction);
     expect(next).toBe(prev);
+  });
+});
+
+// The crop rect the REFRAME phase computes, expressed in the SAME shape the
+// per-shot override layer and the sidecar already use (`Crop = [x, y, w, h]` in
+// source pixels, reframeOverride.ts). These tests pin the two doors into state
+// (seed + `setCropPlan`) and the one read a preview needs (`cropViewport`), so a
+// removed normalisation or a removed selector goes red here.
+const FRAMING: CropFraming = { crop: [100, 0, 600, 1080], sourceWidth: 1920, sourceHeight: 1080 };
+
+describe('cropFraming', () => {
+  it('rejects a source frame that is not a positive finite size', () => {
+    expect(cropFraming([0, 0, 10, 10], 0, 100)).toBeNull();
+    expect(cropFraming([0, 0, 10, 10], 100, 0)).toBeNull();
+    expect(cropFraming([0, 0, 10, 10], Number.NaN, 100)).toBeNull();
+    expect(cropFraming([0, 0, 10, 10], 100, Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it('rejects a rect that is degenerate or not finite', () => {
+    expect(cropFraming([Number.NaN, 0, 10, 10], 100, 100)).toBeNull();
+    expect(cropFraming([0, Number.NaN, 10, 10], 100, 100)).toBeNull();
+    expect(cropFraming([0, 0, 0, 10], 100, 100)).toBeNull();
+    expect(cropFraming([0, 0, 10, 0], 100, 100)).toBeNull();
+  });
+
+  it('keeps an in-frame rect and records the frame it is measured against', () => {
+    expect(cropFraming([100, 0, 600, 1080], 1920, 1080)).toEqual(FRAMING);
+  });
+
+  it('pulls an off-frame rect fully inside the source frame', () => {
+    expect(cropFraming([-50, -50, 4000, 4000], 1920, 1080)?.crop).toEqual([0, 0, 1920, 1080]);
+  });
+});
+
+describe('crop framing carried by the editor state', () => {
+  it('seeds a usable framing through initialEditorState', () => {
+    const state = initialEditorState({
+      video: { videoId: 'v1', window: WINDOW },
+      cropPlan: { engine: 'reframe_multispeaker', framing: FRAMING },
+    });
+    expect(state.cropPlan?.framing).toEqual(FRAMING);
+    expect(cropViewport(state)).toEqual({ x: 100 / 1920, y: 0, width: 600 / 1920, height: 1 });
+  });
+
+  it('seeds a plan whose framing is unusable WITHOUT the framing', () => {
+    const state = initialEditorState({
+      video: { videoId: 'v1', window: WINDOW },
+      cropPlan: { engine: 'verthor', framing: { ...FRAMING, sourceWidth: 0 } },
+    });
+    expect(state.cropPlan?.engine).toBe('verthor');
+    expect(state.cropPlan?.framing).toBeUndefined();
+    expect(cropViewport(state)).toBeNull();
+  });
+
+  it('setCropPlan stores a framing a preview can read back as fractions', () => {
+    const next = editorReducer(base(), {
+      type: 'setCropPlan',
+      cropPlan: { engine: 'reframe_multispeaker', framing: FRAMING },
+    });
+    expect(cropViewport(next)).toEqual({ x: 100 / 1920, y: 0, width: 600 / 1920, height: 1 });
+  });
+
+  it('setCropPlan clamps an off-frame rect instead of storing it raw', () => {
+    const next = editorReducer(base(), {
+      type: 'setCropPlan',
+      cropPlan: {
+        framing: { crop: [-400, -400, 600, 1080], sourceWidth: 1920, sourceHeight: 1080 },
+      },
+    });
+    expect(next.cropPlan?.framing?.crop).toEqual([0, 0, 600, 1080]);
+  });
+
+  it('setCropPlan drops an unusable framing rather than storing a NaN preview', () => {
+    const next = editorReducer(base(), {
+      type: 'setCropPlan',
+      cropPlan: { engine: 'verthor', framing: { ...FRAMING, crop: [0, 0, 0, 1080] } },
+    });
+    expect(next.cropPlan?.engine).toBe('verthor');
+    expect(next.cropPlan?.framing).toBeUndefined();
+    expect(cropViewport(next)).toBeNull();
+  });
+
+  it('setCropPlan keeps the very same plan object when nothing needs normalising', () => {
+    const plan = { engine: 'verthor', framing: FRAMING };
+    expect(editorReducer(base(), { type: 'setCropPlan', cropPlan: plan }).cropPlan).toBe(plan);
+  });
+
+  it('setCropPlan clears the plan back to null', () => {
+    const seeded = base({ cropPlan: { engine: 'verthor', framing: FRAMING } });
+    expect(editorReducer(seeded, { type: 'setCropPlan', cropPlan: null }).cropPlan).toBeNull();
+  });
+
+  it('cropViewport is null with no plan at all and with a plan that has no rect', () => {
+    expect(cropViewport(base())).toBeNull();
+    expect(cropViewport(base({ cropPlan: { engine: 'verthor' } }))).toBeNull();
+  });
+});
+
+// The THIRD door. `initialEditorState` and the `setCropPlan` reducer case both
+// normalise, but an `EditorState` assembled directly does not pass through
+// either — and that is not a hypothetical shape: it is the shape `base()` uses
+// on every line above. `cropViewport` therefore validates the numbers it is
+// about to divide by instead of trusting an invariant it cannot enforce, so a
+// state built outside this module can never push Infinity or NaN into a preview.
+describe('cropViewport on a hand-built state', () => {
+  it('returns null for a framing whose source frame is not positive and finite', () => {
+    expect(
+      cropViewport(base({ cropPlan: { framing: { ...FRAMING, sourceWidth: 0 } } })),
+    ).toBeNull();
+    expect(
+      cropViewport(base({ cropPlan: { framing: { ...FRAMING, sourceHeight: Number.NaN } } })),
+    ).toBeNull();
+  });
+
+  it('returns null for a framing whose rect is degenerate or not finite', () => {
+    expect(
+      cropViewport(base({ cropPlan: { framing: { ...FRAMING, crop: [0, 0, 0, 1080] } } })),
+    ).toBeNull();
+    expect(
+      cropViewport(
+        base({ cropPlan: { framing: { ...FRAMING, crop: [0, Number.NaN, 600, 1080] } } }),
+      ),
+    ).toBeNull();
+  });
+
+  it('pulls an off-frame hand-built rect inside the frame instead of reporting it out of bounds', () => {
+    const framing: CropFraming = {
+      crop: [-400, -400, 600, 1080],
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+    };
+    expect(cropViewport(base({ cropPlan: { framing } }))).toEqual({
+      x: 0,
+      y: 0,
+      width: 600 / 1920,
+      height: 1,
+    });
+  });
+});
+
+// ANCHOR-ROT GUARD. This module's docstrings are its actual deliverable: the
+// crop container is dead in production, so what ships is the map telling the
+// next author where the adoption blockers live. A cross-file `path:line` pin is
+// the one citation form this repo has watched rot repeatedly, and NOTHING
+// validates these: `C13-code-anchor` in `docs/validation/tools/`
+// only matches citations whose TARGET is a `docs/**.md` file, and its own
+// comment says the scan covers "docs->docs only" while citations from
+// application source into other source are "covered by nothing". Six of the
+// files this module cites are surfaces concurrent lanes are editing right now,
+// so a line pin here is stale on someone else's next commit and no gate says so.
+// Symbols move with their code; line numbers do not. This test is that gate.
+describe('editorState docstrings (anchor-rot guard)', () => {
+  it('cites symbols, never a bare cross-file source line number', () => {
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), 'editorState.ts'),
+      'utf8',
+    );
+    // e.g. `views/Caption.tsx:110` or `lib/directorHandoff.ts:109` — a pin that
+    // silently retargets the moment the cited file gains or loses a line above.
+    const linePins = source.match(/[A-Za-z0-9_/.-]+\.tsx?:\d+/g) ?? [];
+    expect(linePins).toEqual([]);
   });
 });
