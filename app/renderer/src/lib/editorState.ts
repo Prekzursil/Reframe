@@ -165,14 +165,26 @@ export function cropFraming(
 }
 
 /**
- * Normalise a plan on its way INTO state — the single funnel both CODE paths in
- * (seed and `setCropPlan`) run through, so an invariant holds for every
- * consumer: a stored `framing` is always previewable. That is a correctness
- * property of this module, NOT evidence that either path is live — both are
- * currently dead in production (see `CropPlan`). An unusable rect is DROPPED while the
- * plan itself survives (the "is there a crop plan" consumers keep working); an
- * off-frame rect is pulled inside; an already-valid plan is returned BY
+ * Normalise a plan on its way INTO state — the funnel both of this module's CODE
+ * paths in (seed and `setCropPlan`) run through, so a stored `framing` is always
+ * previewable. That is a correctness property of this module, NOT evidence that
+ * either path is live — both are currently dead in production (see `CropPlan`) —
+ * and it is not a whole-program guarantee either, because a hand-built
+ * `EditorState` reaches no funnel at all (which is why `cropViewport` re-checks).
+ * An off-frame rect is pulled inside; an already-valid plan is returned BY
  * REFERENCE so merely carrying a plan stays allocation-free.
+ *
+ * An unusable rect is DROPPED while the plan itself SURVIVES, which deliberately
+ * DECOUPLES "has a crop plan" from "has something to preview". Whoever adopts
+ * this container owns that decision, because BOTH of today's consumers key on
+ * presence alone and neither looks at the rect: `directorHandoff.landingZones`
+ * (`lib/directorHandoff.ts:109,125-128`) reports the Reframe zone `ready` with
+ * "Crop plan in place — framing nudges land on it.", and
+ * `exportModel.framingSummary` (`features/export/exportModel.ts:383`) renders
+ * "Reframed". For a plan whose rect was dropped, both would say yes while
+ * `cropViewport` returns null — the status text promising nudges land on a rect
+ * that does not exist. Switching those reads to `cropViewport(state) !== null`
+ * is the open decision; it is not this module's to make unilaterally.
  */
 function normalizeCropPlan(plan: CropPlan | null): CropPlan | null {
   if (plan === null) return null;
@@ -220,19 +232,30 @@ export function transcriptReady(state: EditorState): boolean {
 /**
  * The stored crop as 0..1 fractions of the source frame, or null when this
  * state holds no rect to show. This is the read a crop PREVIEW makes: multiply
- * by the rendered stage size to get the overlay box. Division is safe by
- * construction — every door into `cropPlan` runs `normalizeCropPlan`, so a
- * stored framing always carries a positive finite source frame.
+ * by the rendered stage size to get the overlay box.
+ *
+ * It re-validates through `cropFraming` instead of trusting `normalizeCropPlan`,
+ * because normalisation owns only TWO of the three ways an `EditorState` comes
+ * to exist: `initialEditorState` and the `setCropPlan` case both funnel through
+ * it, but a state object assembled DIRECTLY does not — and that is not a
+ * hypothetical, it is the shape this module's own tests build. TypeScript cannot
+ * express "positive and finite", so the compiler cannot stop one either, and
+ * marking a field `readonly` would NOT help: `readonly` forbids a later
+ * mutation, not an object literal that carries a degenerate frame from birth.
+ * So this selector validates its own denominator and resolves an unusable rect
+ * to null exactly as `cropFraming` does — it can never emit Infinity or NaN.
  */
 export function cropViewport(state: EditorState): CropViewport | null {
   const framing = state.cropPlan?.framing;
   if (framing === undefined) return null;
-  const [x, y, w, h] = framing.crop;
+  const usable = cropFraming(framing.crop, framing.sourceWidth, framing.sourceHeight);
+  if (usable === null) return null;
+  const [x, y, w, h] = usable.crop;
   return {
-    x: x / framing.sourceWidth,
-    y: y / framing.sourceHeight,
-    width: w / framing.sourceWidth,
-    height: h / framing.sourceHeight,
+    x: x / usable.sourceWidth,
+    y: y / usable.sourceHeight,
+    width: w / usable.sourceWidth,
+    height: h / usable.sourceHeight,
   };
 }
 

@@ -259,3 +259,45 @@ describe('crop framing carried by the editor state', () => {
     expect(cropViewport(base({ cropPlan: { engine: 'verthor' } }))).toBeNull();
   });
 });
+
+// The THIRD door. `initialEditorState` and the `setCropPlan` reducer case both
+// normalise, but an `EditorState` assembled directly does not pass through
+// either — and that is not a hypothetical shape: it is the shape `base()` uses
+// on every line above. `cropViewport` therefore validates the numbers it is
+// about to divide by instead of trusting an invariant it cannot enforce, so a
+// state built outside this module can never push Infinity or NaN into a preview.
+describe('cropViewport on a hand-built state', () => {
+  it('returns null for a framing whose source frame is not positive and finite', () => {
+    expect(
+      cropViewport(base({ cropPlan: { framing: { ...FRAMING, sourceWidth: 0 } } })),
+    ).toBeNull();
+    expect(
+      cropViewport(base({ cropPlan: { framing: { ...FRAMING, sourceHeight: Number.NaN } } })),
+    ).toBeNull();
+  });
+
+  it('returns null for a framing whose rect is degenerate or not finite', () => {
+    expect(
+      cropViewport(base({ cropPlan: { framing: { ...FRAMING, crop: [0, 0, 0, 1080] } } })),
+    ).toBeNull();
+    expect(
+      cropViewport(
+        base({ cropPlan: { framing: { ...FRAMING, crop: [0, Number.NaN, 600, 1080] } } }),
+      ),
+    ).toBeNull();
+  });
+
+  it('pulls an off-frame hand-built rect inside the frame instead of reporting it out of bounds', () => {
+    const framing: CropFraming = {
+      crop: [-400, -400, 600, 1080],
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+    };
+    expect(cropViewport(base({ cropPlan: { framing } }))).toEqual({
+      x: 0,
+      y: 0,
+      width: 600 / 1920,
+      height: 1,
+    });
+  });
+});
