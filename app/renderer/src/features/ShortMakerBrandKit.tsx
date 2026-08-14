@@ -129,7 +129,26 @@ export function ShortMakerBrandKit({
                   that branch, so it kept the hand-rolled
                   `<span aria-live="polite">Loading…</span>` that Library.tsx's
                   own comment writes down as forbidden. It is the shared
-                  <Skeleton /> now. Three things about this specific adoption:
+                  <Skeleton /> now.
+
+                  ENUMERATED ≠ CONVERTED, and an earlier revision of this comment
+                  invited exactly that misreading. MEASURED at this branch's base
+                  (f8cfbd6c) by grepping the literal "Loading…" over the .tsx
+                  files under renderer/src:
+                  of the three the lane enumerated, only Settings.tsx:183 actually
+                  adopted <Skeleton />. App.tsx:582, Workspace.tsx:626 and
+                  Workspace.tsx:654 STILL render the bare
+                  `<div className="panel panel--loading">Loading…</div>` — no role,
+                  no live region, no skeleton — because Skeleton.tsx's own scope
+                  note defers them to the workspace-ia lane. So this file is the
+                  SECOND site converted, not the fourth fixed, and three bare
+                  placeholder surfaces remain live outside this lane's file scope.
+                  A further one, Tracks.tsx:231
+                  (`busy.kind === 'list' ? 'Loading…' : 'Refresh'`), is a button's
+                  own busy LABEL — a different shape from a placeholder surface,
+                  and deliberately not counted with them.
+
+                  Three things about this specific adoption:
 
                   * `variant="line"` — the real thing that lands here is ONE
                     inline value (a path), not a panel, so the ghost is one bar.
