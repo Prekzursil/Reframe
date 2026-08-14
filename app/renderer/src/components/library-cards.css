@@ -184,8 +184,14 @@ li.library__item:focus-within .library__select,
   background: var(--status-error);
 }
 
-/* Quiet "Added <date>" meta line — additive, never a duplicate of a badge. */
-.library__item-added {
+/* Quiet source-facts line — additive, never a duplicate of a badge.
+   RENAMED from `.library__item-added`: this lane made the line carry the container
+   format as well as the date ("MP4 · Added 2026-06-11"), so a class called
+   `item-added` no longer described what it holds. The name is the documentation,
+   and a stale one is the same defect class as a stale line citation.
+   NOT `.library__item-meta` — that is a different, already-occupied element (the
+   flex row of card actions, LibraryCard.tsx:267). */
+.library__item-facts {
   color: var(--text-faint);
   font-size: var(--type-caption-size);
 }
