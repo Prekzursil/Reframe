@@ -77,8 +77,9 @@ export interface CropViewport {
  *
  * NOT LIVE YET — read this before assuming a crop can reach a screen. BOTH doors
  * into `cropPlan` are dead in production: nothing dispatches `setCropPlan`, and
- * all three production `EditorSeed` literals pass only `video`
- * (`views/Caption.tsx:110`, `views/Director.tsx:112`, `views/Export.tsx:287`).
+ * all three production `EditorSeed` literals pass only `video` — the `EditorSeed`
+ * that each of `views/Caption.tsx`, `views/Director.tsx` and `views/Export.tsx`
+ * builds for its provider.
  * `state.cropPlan` is therefore permanently `null` in the shipped app, so
  * `cropViewport` never returns a rect, `exportModel.framingSummary` can only
  * render "Original framing", and `directorHandoff`'s `hasCrop` can only be
@@ -88,10 +89,12 @@ export interface CropViewport {
  * holds the exact `(crop, sourceWidth, sourceHeight)` triple `cropFraming`
  * consumes, but it does not call `useEditor`, its host `features/ReframeCorrect`
  * does not either, and neither sits under an `EditorProvider`: the provider is
- * mounted at exactly three sibling destinations (`views/Caption.tsx:119`,
- * `views/Director.tsx:121`, `views/Export.tsx:296`) while that panel reaches the
- * tree through `views/Edit.tsx:156` -> `views/Workspace.tsx:483`, and
- * `useEditor()` throws outside a provider (`features/EditorContext.tsx:46`).
+ * mounted at exactly three sibling destinations (the `<EditorProvider>` in each
+ * of `views/Caption.tsx`, `views/Director.tsx` and `views/Export.tsx`) while that
+ * panel reaches the tree down a different spine — the `<Workspace>` element in
+ * `views/Edit.tsx`, then the `reframeFix` arm of that view's panel switch, which
+ * renders `<ReframeCorrect>` — and `useEditor` (`features/EditorContext.tsx`)
+ * throws outside a provider.
  * Wrapping the Workspace in its own provider does not fix it either — the
  * provider is UNCONTROLLED and seeds once, and those destinations render
  * exclusively, so it would be a fourth instance that unmounts on a destination
@@ -177,10 +180,10 @@ export function cropFraming(
  * An unusable rect is DROPPED while the plan itself SURVIVES, which deliberately
  * DECOUPLES "has a crop plan" from "has something to preview". Whoever adopts
  * this container owns that decision, because BOTH of today's consumers key on
- * presence alone and neither looks at the rect: `directorHandoff.landingZones`
- * (`lib/directorHandoff.ts:109,125-128`) reports the Reframe zone `ready` with
- * "Crop plan in place — framing nudges land on it.", and
- * `exportModel.framingSummary` (`features/export/exportModel.ts:383`) renders
+ * presence alone and neither looks at the rect: `landingZones`
+ * (`lib/directorHandoff.ts`) reports the Reframe zone `ready` with "Crop plan in
+ * place — framing nudges land on it.", and `framingSummary`
+ * (`features/export/exportModel.ts`) renders
  * "Reframed". For a plan whose rect was dropped, both would say yes while
  * `cropViewport` returns null — the status text promising nudges land on a rect
  * that does not exist. Switching those reads to `cropViewport(state) !== null`

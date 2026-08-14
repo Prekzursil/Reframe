@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import {
   type CropFraming,
   type EditorAction,
@@ -299,5 +302,29 @@ describe('cropViewport on a hand-built state', () => {
       width: 600 / 1920,
       height: 1,
     });
+  });
+});
+
+// ANCHOR-ROT GUARD. This module's docstrings are its actual deliverable: the
+// crop container is dead in production, so what ships is the map telling the
+// next author where the adoption blockers live. A cross-file `path:line` pin is
+// the one citation form this repo has watched rot repeatedly, and NOTHING
+// validates these: `C13-code-anchor` in `docs/validation/tools/`
+// only matches citations whose TARGET is a `docs/**.md` file, and its own
+// comment says the scan covers "docs->docs only" while citations from
+// application source into other source are "covered by nothing". Six of the
+// files this module cites are surfaces concurrent lanes are editing right now,
+// so a line pin here is stale on someone else's next commit and no gate says so.
+// Symbols move with their code; line numbers do not. This test is that gate.
+describe('editorState docstrings (anchor-rot guard)', () => {
+  it('cites symbols, never a bare cross-file source line number', () => {
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), 'editorState.ts'),
+      'utf8',
+    );
+    // e.g. `views/Caption.tsx:110` or `lib/directorHandoff.ts:109` — a pin that
+    // silently retargets the moment the cited file gains or loses a line above.
+    const linePins = source.match(/[A-Za-z0-9_/.-]+\.tsx?:\d+/g) ?? [];
+    expect(linePins).toEqual([]);
   });
 });
