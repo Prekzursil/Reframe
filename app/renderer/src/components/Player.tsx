@@ -500,7 +500,21 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
         const video = videoRef.current;
         if (video) safePlay(video);
       },
-      pause: () => videoRef.current?.pause(),
+      // A stop ENDS A SHUTTLE — the FIFTH stop path, and the one that reached
+      // nothing. Its live caller is ShortMaker's Space key (`if
+      // (player.isPlaying()) player.pause()`), so a forward shuttle stopped that
+      // way kept `playbackRate` at 2x/4x with "2x" still announced, and a
+      // REVERSE shuttle was worse: the element is already paused, so no `pause`
+      // event fires, `syncPaused` never runs, and the interval kept walking the
+      // head backward while `isPlaying()` (which reads the ELEMENT) reported
+      // false — so the caller's next Space started FORWARD playback on top of an
+      // still-running reverse driver. Inert without the transport: both values
+      // are already at these defaults, so React bails out.
+      pause: () => {
+        videoRef.current?.pause();
+        setPlaying(false);
+        setRate(1);
+      },
       seek: (timeSec: number) => {
         const video = videoRef.current;
         if (video) video.currentTime = clampToWindow(timeSec, winRef.current);

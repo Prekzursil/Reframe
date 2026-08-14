@@ -943,6 +943,77 @@ describe('Player custom transport (L8)', () => {
     }
   });
 
+  // -------------------------------------------------------------------------
+  // GRIND 3 — the FIFTH stop path: the imperative handle's `pause()`.
+  //
+  // The GRIND-2 comment claimed the file has FOUR stop paths and that all four
+  // clear the rate. A fourth reviewer measured a fifth: `PlayerHandle.pause()`
+  // stopped the element and cleared NOTHING. It is not dormant plumbing — its
+  // live caller is ShortMaker's Space key (ShortMaker.tsx, `if
+  // (player.isPlaying()) player.pause()`), wired through CandidateReview to the
+  // very mount the previous round nominated as the first migration target.
+  //
+  // FORWARD: L,L -> 2x. Space -> handle.pause() -> the element raises `pause`,
+  // so `syncPaused` clears `playing` — but nothing cleared `rate`, so
+  // `playbackRate` stayed 2x, the role="status" region kept announcing "2x"
+  // while stopped, and the next Play resumed at that rate. That is verbatim the
+  // defect GRIND 1 and GRIND 2 each closed one stop path over.
+  // -------------------------------------------------------------------------
+  it('clears the shuttle rate when the REF HANDLE pauses (the fifth stop path)', () => {
+    const ref = React.createRef<PlayerHandle>();
+    const video = render({ videoId: 'vid-1', transport: true }, ref);
+    durations.set(video, 60);
+    fire(video, 'loadedmetadata');
+    press('l'); // 1x forward, playing
+    press('l'); // -> 2x
+    expect(video.playbackRate).toBe(2);
+    expect(group().querySelector('.transport__rate')?.textContent).toBe('2x');
+
+    act(() => ref.current!.pause()); // the ShortMaker Space path
+    fire(video, 'pause'); // the DOM event a real element raises for that pause
+
+    expect(video.playbackRate).toBe(1); // the shuttle is OVER, on the element too
+    expect(group().querySelector('.transport__rate')?.textContent).toBe('');
+    expect(button('Play')).toBeTruthy();
+  });
+
+  it('tears down a REVERSE shuttle when the REF HANDLE pauses (no pause event fires)', () => {
+    // The worse half, and the one `syncPaused` structurally cannot cover: a
+    // reverse shuttle keeps the element PAUSED while `playing` stays true, and a
+    // real element raises NO `pause` event for a pause() on an already-paused
+    // element (the premise GRIND 2 already relies on). So a handle pause() there
+    // reached NOTHING: `rate` stayed negative, the interval kept walking the head
+    // backward, and `isPlaying()` — which reads the ELEMENT — reported false, so
+    // the caller's next Space called play() and started FORWARD playback while
+    // the reverse driver was still stepping backward every frame.
+    vi.useFakeTimers();
+    try {
+      const ref = React.createRef<PlayerHandle>();
+      const video = render(
+        { videoId: 'vid-1', transport: true, window: { start: 40, end: 44 } },
+        ref,
+      );
+      durations.set(video, 600);
+      fire(video, 'loadedmetadata');
+      video.currentTime = 42;
+      fire(video, 'timeupdate');
+      press('j'); // reverse shuttle: element paused, `playing` true, rate -1
+      expect(group().querySelector('.transport__rate')?.textContent).toBe('1x rev');
+
+      act(() => ref.current!.pause()); // pause() on an ALREADY-paused element
+
+      expect(group().querySelector('.transport__rate')?.textContent).toBe('');
+      expect(button('Play')).toBeTruthy(); // not still claiming to play
+      const parked = video.currentTime;
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(video.currentTime).toBe(parked); // the reverse driver is torn down
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('seeds duration and playhead from the ELEMENT when the transport mounts late', () => {
     // `loadedmetadata` and `durationchange` fire once per load, so a call site
     // that turns `transport` ON after metadata already landed never sees either
