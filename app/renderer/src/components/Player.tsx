@@ -196,6 +196,14 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   const resolvedSrc = resolveSrc(videoId, src);
   // The native bar is the default ONLY while the custom transport is off; an
   // explicit `controls` always wins so nothing is silently taken away.
+  //
+  // MIGRATION TRAP — read before adding `transport` to a call site. Because an
+  // explicit `controls` wins, `<Player controls transport />` renders BOTH bars
+  // and leaves the L8 defect unfixed at that surface, silently. Five of the
+  // seven production mounts pass a bare `controls` today (CaptionDesigner,
+  // ProducedShorts, CaptionStage, ExportStage, Shorts), so migrating one means
+  // DELETING its `controls` as well as adding `transport` — keep `controls`
+  // only where the native bar is deliberately wanted alongside.
   const nativeControls = controls ?? !transport;
 
   // Transport-facing playback state. Kept here (not in Transport) so the
@@ -341,7 +349,14 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       // event must not read as "stopped".
       if (rateRef.current >= 0) setPlaying(false);
     };
-    const syncEnded = (): void => setPlaying(false);
+    // `ended` is a STOP, so it must clear the shuttle exactly like the other two
+    // stop paths (the window floor below and an explicit pause) already do.
+    // Clearing only `playing` left a NEGATIVE rate armed, so the next Play
+    // re-entered the reverse driver and walked the head BACKWARD.
+    const syncEnded = (): void => {
+      setPlaying(false);
+      setRate(1);
+    };
     video.addEventListener('timeupdate', syncTime);
     video.addEventListener('seeked', syncTime);
     video.addEventListener('loadedmetadata', syncDuration);
@@ -466,6 +481,13 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
         <Transport
           currentTime={playhead}
           duration={mediaDuration}
+          // Window mode narrows the transport to the CANDIDATE, not the source:
+          // the reverse shuttle already floors at `win.start` (floorSec), and
+          // handleSeek already clamps every seek into the window, so leaving the
+          // scrubber spanning the whole source was the one place the window was
+          // dropped — and the one the user actually looks at.
+          startTime={floorSec}
+          endTime={win?.end}
           isPlaying={playing}
           rate={rate}
           fps={fps}

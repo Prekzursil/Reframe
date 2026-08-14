@@ -798,4 +798,73 @@ describe('Player custom transport (L8)', () => {
       vi.useRealTimers();
     }
   });
+
+  // -------------------------------------------------------------------------
+  // GRIND 1 — the transport must be scoped to the WINDOW.
+  //
+  // Four production mounts (CaptionDesigner, CaptionStage, ExportStage,
+  // CandidateReview) preview a few-second candidate inside a long source. The
+  // reverse shuttle already floors at `win.start` (see the two tests above), so
+  // the window was honoured in ONE place and missed in the two the user looks
+  // at: the scrubber's range and the total-time readout.
+  // -------------------------------------------------------------------------
+  it('scopes the transport scrubber to the window, not to the whole source', () => {
+    const video = render({ videoId: 'vid-1', transport: true, window: { start: 40, end: 44 } });
+    durations.set(video, 600); // a 10-minute source holding a 4-second candidate
+    fire(video, 'loadedmetadata');
+    video.currentTime = 42;
+    fire(video, 'timeupdate');
+    expect(scrubber().min).toBe('40');
+    expect(scrubber().max).toBe('44');
+    expect(scrubber().value).toBe('42');
+  });
+
+  it('reads out the CLIP length in window mode, not the source length', () => {
+    const video = render({ videoId: 'vid-1', transport: true, window: { start: 40, end: 44 } });
+    durations.set(video, 600);
+    fire(video, 'loadedmetadata');
+    video.currentTime = 42;
+    fire(video, 'timeupdate');
+    expect(group().querySelector('.transport__time')?.textContent).toBe('0:02 / 0:04');
+  });
+
+  it('spans the whole source when there is no window', () => {
+    // The other side of the same branch: without a window nothing narrows.
+    const video = render({ videoId: 'vid-1', transport: true });
+    durations.set(video, 600);
+    fire(video, 'loadedmetadata');
+    expect(scrubber().min).toBe('0');
+    expect(scrubber().max).toBe('600');
+  });
+
+  // -------------------------------------------------------------------------
+  // GRIND 1 — stop-path symmetry.
+  //
+  // The window floor (`setPlaying(false); setRate(1)`) and an explicit pause
+  // (same pair) both clear the shuttle; `ended` cleared only `playing` and left
+  // a NEGATIVE rate armed, so the next Play re-entered the reverse driver and
+  // walked the head BACKWARD. jsdom has no decoder, so "plays forward" is not
+  // observable — the falsifiable half is that the head must not move backward,
+  // which is precisely the defect.
+  // -------------------------------------------------------------------------
+  it('clears the shuttle rate when the media ends so the next Play is not a reverse walk', () => {
+    vi.useFakeTimers();
+    try {
+      const video = render({ videoId: 'vid-1', transport: true });
+      durations.set(video, 60);
+      fire(video, 'loadedmetadata');
+      video.currentTime = 5;
+      press('j'); // reverse shuttle armed
+      fire(video, 'ended'); // the element reports the end while rate is negative
+      click(button('Play')); // ...and the user starts playback again
+      const resumed = video.currentTime;
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(video.currentTime).toBe(resumed);
+      expect(button('Pause')).toBeTruthy(); // playing forward, not parked
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

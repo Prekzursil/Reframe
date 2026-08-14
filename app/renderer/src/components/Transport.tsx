@@ -45,6 +45,19 @@ export interface TransportProps {
   currentTime: number;
   /** Media duration in seconds; 0 while unknown. */
   duration: number;
+  /**
+   * Source-absolute IN point of the playable span (window mode). Default 0.
+   *
+   * The scrubber spans `[startTime, endTime]`, not `[0, duration]`: a candidate
+   * preview is a few seconds inside a multi-minute source, and a track scaled to
+   * the source would move its thumb across a sliver before the owner's window
+   * clamp snapped it back. Times crossing this boundary stay SOURCE-ABSOLUTE so
+   * `onSeek` still lines up with the owner's clamp and with a shared timeline
+   * playhead; only the bounds and the human-facing readout live in the span.
+   */
+  startTime?: number;
+  /** Source-absolute OUT point of the playable span. Default: the full duration. */
+  endTime?: number;
   /** True while the media is actually advancing. */
   isPlaying: boolean;
   /** Frame rate used for single-frame steps (default {@link TRANSPORT_DEFAULT_FPS}). */
@@ -75,6 +88,17 @@ export function clampTime(timeSec: number, duration: number): number {
   const max = Number.isFinite(duration) && duration > 0 ? duration : 0;
   if (!Number.isFinite(timeSec)) return 0;
   return Math.min(Math.max(timeSec, 0), max);
+}
+
+/**
+ * Clamp a SOURCE-ABSOLUTE time into the playable span `[start, end]`; a
+ * non-finite time (or an inverted span) collapses onto `start`.
+ *
+ * This is `clampTime` shifted off zero: the span is the window, so the floor is
+ * the in-point rather than the start of the source.
+ */
+export function clampToSpan(timeSec: number, start: number, end: number): number {
+  return start + clampTime(timeSec - start, Math.max(end - start, 0));
 }
 
 /** Seconds per frame at `fps`, falling back to the default rate for a non-positive rate. */
@@ -111,6 +135,8 @@ const ICON_PROPS = {
 export function Transport({
   currentTime,
   duration,
+  startTime = 0,
+  endTime,
   isPlaying,
   fps = TRANSPORT_DEFAULT_FPS,
   rate = 1,
@@ -122,12 +148,21 @@ export function Transport({
   const frameSec = frameDuration(fps);
   // `clampTime(d, d)` IS the sanitized duration: non-finite/negative collapse to 0.
   const total = clampTime(duration, duration);
-  const position = clampTime(currentTime, total);
+  // The playable span. Both ends are clamped into the media so a window that
+  // outruns the source (or arrives before `loadedmetadata`, while `total` is
+  // still 0) cannot bound the scrubber outside the material that exists.
+  const spanStart = clampTime(startTime, total);
+  const spanEnd = Math.max(clampTime(endTime ?? total, total), spanStart);
+  const spanLength = spanEnd - spanStart;
+  const position = clampToSpan(currentTime, spanStart, spanEnd);
+  // Elapsed WITHIN the span: a 4s candidate reads `0:02 / 0:04`, never the
+  // source's `0:42 / 10:00`.
+  const elapsed = position - spanStart;
 
   /** Step `frames` frames, stopping playback first — stepping while rolling is never the intent. */
   const step = (frames: number): void => {
     onPlayPause(false);
-    onSeek(clampTime(position + frames * frameSec, total));
+    onSeek(clampToSpan(position + frames * frameSec, spanStart, spanEnd));
   };
 
   /** Enter (or accelerate) a shuttle in `direction`. */
@@ -225,17 +260,17 @@ export function Transport({
         type="range"
         className="transport__scrubber"
         aria-label="Seek"
-        aria-valuetext={`${formatTimecode(position)} of ${formatTimecode(total)}`}
-        min={0}
-        max={total}
+        aria-valuetext={`${formatTimecode(elapsed)} of ${formatTimecode(spanLength)}`}
+        min={spanStart}
+        max={spanEnd}
         step={frameSec}
         value={position}
-        onChange={(event) => onSeek(clampTime(Number(event.target.value), total))}
+        onChange={(event) => onSeek(clampToSpan(Number(event.target.value), spanStart, spanEnd))}
       />
       {/* The scrubber's aria-valuetext already speaks the position; a second
           announcement of the same numbers is noise, so the readout is visual. */}
       <span className="transport__time" aria-hidden="true">
-        {`${formatTimecode(position)} / ${formatTimecode(total)}`}
+        {`${formatTimecode(elapsed)} / ${formatTimecode(spanLength)}`}
       </span>
       {/* Always mounted so a live region exists BEFORE the rate changes. */}
       <span className="transport__rate" role="status">

@@ -7,6 +7,7 @@ import {
   TRANSPORT_MAX_SHUTTLE_RATE,
   Transport,
   clampTime,
+  clampToSpan,
   formatTimecode,
   frameDuration,
   nextShuttleRate,
@@ -349,5 +350,83 @@ describe('Transport keyboard', () => {
     expect(onSeek).not.toHaveBeenCalled();
     expect(onRateChange).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GRIND 1 — the playable SPAN.
+//
+// `duration` alone can only ever describe a transport that spans the WHOLE
+// source. FOUR of the seven production mounts run the Player in window mode
+// (CaptionDesigner, CaptionStage, ExportStage, CandidateReview) where the
+// playable range is a few seconds inside a multi-minute source — exactly the
+// candidate-preview surfaces L8 exists for. Scoping the scrubber to the source
+// there produces a track whose thumb only crosses a sliver before the owner's
+// window clamp snaps it back, and a total-time readout of the SOURCE length
+// instead of the clip length.
+//
+// The fix keeps every emitted time SOURCE-ABSOLUTE (so `onSeek` still lines up
+// with the owner's window clamp and with a future timeline playhead) and moves
+// only the BOUNDS and the human-facing readout into the span.
+// ---------------------------------------------------------------------------
+describe('clampToSpan', () => {
+  it('passes through a time inside the span, endpoints included', () => {
+    expect(clampToSpan(42, 40, 44)).toBe(42);
+    expect(clampToSpan(40, 40, 44)).toBe(40);
+    expect(clampToSpan(44, 40, 44)).toBe(44);
+  });
+
+  it('clamps below the in-point and past the out-point', () => {
+    expect(clampToSpan(0, 40, 44)).toBe(40);
+    expect(clampToSpan(600, 40, 44)).toBe(44);
+  });
+
+  it('collapses a non-finite time onto the in-point', () => {
+    expect(clampToSpan(Number.NaN, 40, 44)).toBe(40);
+  });
+
+  it('collapses an inverted span onto its in-point', () => {
+    // A malformed window must not widen the range it is supposed to narrow.
+    expect(clampToSpan(42, 44, 40)).toBe(44);
+  });
+});
+
+describe('Transport playable span', () => {
+  const windowed: Partial<TransportProps> = {
+    currentTime: 42,
+    duration: 600,
+    startTime: 40,
+    endTime: 44,
+  };
+
+  it('bounds the scrubber to the window, not to the whole source', () => {
+    const range = scrubber(render(windowed));
+    expect(range.min).toBe('40');
+    expect(range.max).toBe('44');
+    expect(range.value).toBe('42');
+  });
+
+  it('reads out time relative to the window, not to the source', () => {
+    const group = render(windowed);
+    expect(group.querySelector('.transport__time')?.textContent).toBe('0:02 / 0:04');
+    expect(scrubber(group).getAttribute('aria-valuetext')).toBe('0:02 of 0:04');
+  });
+
+  it('holds the thumb inside the window when the owner reports a time outside it', () => {
+    const range = scrubber(render({ ...windowed, currentTime: 0 }));
+    expect(range.value).toBe('40');
+  });
+
+  it('frame-steps inside the window and stops at the in-point', () => {
+    const group = render({ ...windowed, currentTime: 40, fps: 25 });
+    click(button(group, 'Previous frame'));
+    expect(onSeek).toHaveBeenLastCalledWith(40); // already parked on the in-point
+    click(button(group, 'Next frame'));
+    expect(onSeek.mock.lastCall?.[0]).toBeCloseTo(40 + 1 / 25, 10);
+  });
+
+  it('clamps a scrub to the out-point instead of the source duration', () => {
+    setRangeValue(scrubber(render(windowed)), '600');
+    expect(onSeek).toHaveBeenLastCalledWith(44);
   });
 });
