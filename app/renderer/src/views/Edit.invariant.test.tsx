@@ -124,7 +124,9 @@ describe('L5 G-7 invariant 2 — the timeline is visible in Refine with zero nav
 
   beforeEach(() => {
     apiRpcMock.mockReset();
-    apiRpcMock.mockResolvedValue({ project: { id: 'v1', video, tracks: [], clips: [], settings: {} } });
+    apiRpcMock.mockResolvedValue({
+      project: { id: 'v1', video, tracks: [], clips: [], settings: {} },
+    });
     rpcMock.mockReset();
     rpcMock.mockResolvedValue({}); // settings.get → no remembered choice
     clicks = 0;

@@ -175,9 +175,7 @@ describe('<Edit />', () => {
   // surface; a caller that wants the job chooser asks for it, and every card and
   // the advanced escape below still route from it.
   it('opens the Task Hub when a caller asks for it', async () => {
-    act(() =>
-      root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />),
-    );
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeTruthy();
     expect(hub().getAttribute('data-video-id')).toBe('v1');
@@ -251,18 +249,14 @@ describe('<Edit />', () => {
   });
 
   it('routes the subtitles card into the Workspace at the Subtitles tab', async () => {
-    act(() =>
-      root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />),
-    );
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     pick('subtitles');
     expect(workspace()!.getAttribute('data-initial-tab')).toBe('subtitles');
   });
 
   it('routes the advanced escape into the Workspace default tab (no initial tab)', async () => {
-    act(() =>
-      root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />),
-    );
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     pick('advanced');
     expect(workspace()!.getAttribute('data-initial-tab')).toBe('');
@@ -292,9 +286,7 @@ describe('<Edit />', () => {
   });
 
   it('tolerates section cards when no App callbacks are wired', async () => {
-    act(() =>
-      root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />),
-    );
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     pick('shorts');
     pick('director');
@@ -307,9 +299,7 @@ describe('<Edit />', () => {
   it('resumes a workspace-scoped remembered choice in place (skips the hub)', async () => {
     rpcMock.mockReset();
     rpcMock.mockResolvedValue({ [HUB_CHOICE_KEY]: { v1: 'subtitles' } });
-    act(() =>
-      root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />),
-    );
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeNull();
     expect(workspace()!.getAttribute('data-initial-tab')).toBe('subtitles');
@@ -318,9 +308,7 @@ describe('<Edit />', () => {
   it('marks a remembered section choice but stays on the hub', async () => {
     rpcMock.mockReset();
     rpcMock.mockResolvedValue({ [HUB_CHOICE_KEY]: { v1: 'shorts' } });
-    act(() =>
-      root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />),
-    );
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeTruthy();
     expect(hub().getAttribute('data-last')).toBe('shorts');
@@ -329,9 +317,7 @@ describe('<Edit />', () => {
   it('tolerates a null settings payload (stays on the hub)', async () => {
     rpcMock.mockReset();
     rpcMock.mockResolvedValue(null);
-    act(() =>
-      root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />),
-    );
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeTruthy();
     expect(hub().getAttribute('data-last')).toBe('');
@@ -340,18 +326,14 @@ describe('<Edit />', () => {
   it('tolerates a settings.get rejection (stays on the hub)', async () => {
     rpcMock.mockReset();
     rpcMock.mockRejectedValue(new Error('read failed'));
-    act(() =>
-      root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />),
-    );
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(hub()).toBeTruthy();
   });
 
   it('does not touch settings when the preload bridge is absent', async () => {
     hasApiReturn = false;
-    act(() =>
-      root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />),
-    );
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
     await flush();
     expect(rpcMock).not.toHaveBeenCalled();
     // a choice still routes (in-memory), just without a settings.set. Use the
