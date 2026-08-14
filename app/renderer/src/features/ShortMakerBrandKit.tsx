@@ -5,6 +5,33 @@
 // the BrandSettings) and persistence live in the ShortMaker container; this
 // component only renders + forwards events. The DOM is byte-identical to the
 // inline JSX it replaced (same aria-labels/classes), so component tests stay green.
+//
+// LOADING PLACEHOLDERS STILL UNCONVERTED — a FLOOR, not a total. Two successive
+// revisions of this count were undercounts (three, then seven), so it ships with
+// its criterion, its probe and its blind spot instead of a bare number. CRITERION:
+// a region standing in for content that has NOT arrived, rendering the wait as
+// VISIBLE text. FOURTEEN remain outside this lane, found by the UNION of three
+// probes, because each one alone undercounts: a `__loading`/`--loading` class grep
+// (blind to ReadinessRollup, which reuses `jobqueue__empty`, and to
+// TranscriptEditor, which has no class), a single-line visible-text grep (blind to
+// every multi-line JSX text node), and an indented bare-text-line grep (blind to
+// single-line nodes, and to any copy outside its verb list — the residual hole;
+// settle it with an AST pass over JSX text nodes). Cited by selector, not by line:
+// these files belong to other lanes and line anchors drift.
+//   * SEVEN carry NO live semantics: App.tsx + Workspace.tsx x2 (the
+//     `panel panel--loading` Suspense fallbacks), components/PathsPanel.tsx,
+//     LineagePanel.tsx, TranscriptEditor.tsx, KeepCopyControl.tsx.
+//   * ONE already has an explicit `aria-live`: Transcribe.tsx — needs only the shape.
+//   * SIX already carry `aria-busy`, so they are lower priority but the same bare
+//     text: components/ManagedStoreMeter.tsx, SetupStatusPanel.tsx,
+//     ReadinessRollup.tsx, features/BatchQueue.tsx, ProvidersKeys.tsx, SpendCap.tsx.
+// EXCLUDED WITH REASON, so the next lane can argue with the criterion instead of
+// rediscovering the site: Library.tsx, Shorts.tsx and Settings.tsx already ship a
+// shaped skeleton; Tracks.tsx, DirectorPanel.tsx and SystemHealth.tsx are button
+// busy LABELS; SavePresetsControls.tsx is a mutation-progress live region and
+// LibraryProvenance.tsx a per-row phase badge — neither stands in for absent
+// content. Whoever converts them: a <Skeleton /> dropped into a flex row hits this
+// file's 0px trap unless something carries a definite width.
 
 import React from 'react';
 
@@ -123,73 +150,59 @@ export function ShortMakerBrandKit({
               <button type="button" aria-label="Change data folder" onClick={onChangeDataFolder}>
                 Change…
               </button>
-              {/* THE FOURTH BARE "Loading…", now the shared <Skeleton />. The
-                  EmptyState/Skeleton lane enumerated three surfaces and shipped
-                  components/Skeleton.tsx; this site was named nowhere on that
-                  branch, so it kept the hand-rolled
-                  `<span aria-live="polite">Loading…</span>` that Library.tsx's
-                  own comment writes down as forbidden.
+              {/* THE FOURTH BARE "Loading…", now the shared <Skeleton />: named
+                  nowhere on the EmptyState/Skeleton lane, so it kept the
+                  hand-rolled `<span aria-live="polite">Loading…</span>` that
+                  Library.tsx's own comment writes down as forbidden. What is
+                  still unconverted house-wide is counted in the file header.
 
-                  WHY THE INLINE WIDTH — this is a correction, not decoration.
-                  Shipped without it, the adoption MEASURED 0.00 x 10 px in real
-                  Chromium (the engine Electron renders with) and was invisible,
-                  where the bare span it replaced measured 47.14 x 16.50 px and
-                  this fix measures 160 x 10 px. (A reviewer's independent probe
-                  read the same 0 but 54.72 x 14 for the span; that replica
-                  hand-copied the rules and so missed tokens.css, leaving the
-                  caption font-size and family at browser defaults. The verdict
-                  is identical either way — the disagreement is only in the
-                  non-zero baseline.) Cause:
+                  WHY THE INLINE WIDTH — a correction, not decoration. Shipped
+                  without it the adoption MEASURED 0.00 x 10 px in real Chromium
+                  and was invisible, where the span it replaced measured
+                  47.14 x 16.50 and this measures 160 x 10. Cause:
                   `.skeleton-group` is a shrink-to-fit flex item of
-                  `.sm-data-folder-row`, its only in-flow child is an EMPTY span
-                  with `width: 100%`, and a percentage against an indefinite
-                  width contributes 0 to intrinsic sizing (the label that would
-                  have given it content is `position: absolute`). So the ghost
-                  needs a definite width from somewhere. A rule in
-                  shortmaker-p3.css would be the tidier home but that file is
-                  another lane's; the width lives here instead, which is also
-                  where the sibling `max-width: 240px` idiom already puts a
-                  hard px value, and where the house already accepts static
-                  inline styles (ErrorBoundary, Timeline). 160px ≈ the caption
-                  width of a typical path. Pinned by ShortMakerBrandKit.test.tsx
-                  so a future edit cannot silently make it invisible again.
+                  `.sm-data-folder-row` whose only in-flow child is an EMPTY span
+                  at `width: 100%`, and a percentage against an indefinite width
+                  contributes 0 to intrinsic sizing (the label that would have
+                  given it content is `position: absolute`). A rule in
+                  shortmaker-p3.css is the tidier home but that file is another
+                  lane's, and its sibling `max-width: 240px` puts a hard px value
+                  there anyway, so the idiom is the house's either way. The
+                  wrapper is a <div> because <Skeleton /> renders a <div> root,
+                  which a <span> may not contain. Both pinned by the test file.
 
-                  Two more things about this adoption:
+                  REACHABILITY, so the impact is not overstated: this branch sits
+                  behind TWO gates. `brandOpen` starts false in ShortMaker.tsx and
+                  this whole body is inside `{open && …}`, while `dataFolderLoaded`
+                  is flipped true by a mount effect after ONE main-process call. So
+                  the wait renders only if the user expands Brand kit while
+                  `getDataFolder()` is still pending — on a healthy machine, a race
+                  they cannot win. NOT dead code: a slow or hung main process holds
+                  it indefinitely. Inherited from the bare span, not introduced
+                  here, but it bounds the 0px damage far more tightly than IPC
+                  latency alone would.
 
-                  * `variant="line"` — the real thing that lands here is ONE
-                    inline value (a path), not a panel, so the ghost is one bar.
-                  * `aria-live="polite"` is not lost, it MOVES: a labelled
-                    Skeleton is `role="status"`, whose implicit live semantics
-                    are exactly `aria-live="polite"` + `aria-atomic="true"` per
-                    WAI-ARIA, so the wait stays announceable and gains a specific
-                    string where it used to say only "Loading…". Whether an AT
-                    SPEAKS a freshly-inserted status region is NOT-CHECKED, for
-                    the three reasons Skeleton.tsx already documents; this is a
-                    semantics claim, not an announcement promise.
-                  The `sm-data-folder-loading` class is kept for the SELECTOR
-                  (the existing test, and any future CSS hook) — not for its
-                  paint: the only rule on it is font-size + colour, and this
-                  subtree has no visible text, so that treatment is now a no-op.
+                  A11Y — one axis preserved, one CHANGED. `role="status"` carries
+                  an implicit `aria-live="polite"` + `aria-atomic` per WAI-ARIA, so
+                  dropping the explicit attribute preserves the polite semantics
+                  and gains a specific string over the old "Loading…". But this
+                  also ADDS `aria-busy="true"`, which this site never carried: it
+                  mounts true and unmounts without ever clearing, which Skeleton.tsx
+                  names as the STRONGEST of three reasons an AT may stay silent. So
+                  the fix introduces a suppression mechanism here rather than
+                  inheriting one. Whether it changes what is spoken is NOT-CHECKED;
+                  settle it with the both-states NVDA probe Skeleton.tsx specifies.
+                  (`sm-data-folder-loading` is kept as a SELECTOR only — its one
+                  rule is font-size + colour over a subtree with no visible text.)
 
-                  ENUMERATED ≠ CONVERTED. Re-measured at this commit with a
-                  controlled grep over renderer/src (the control finds known hits
-                  in 9 files; an earlier run of mine missed App.tsx because a
-                  doubled-star glob under src does not match a top-level
-                  file, and PathsPanel lives in components, not features). Cited by
-                  selector, not by line — these files belong to other lanes and
-                  line anchors drift. SEVEN bare-text loading placeholders remain
-                  live outside this lane's scope, not three: the three
-                  `panel panel--loading` Suspense fallbacks (App.tsx, Workspace.tsx
-                  x2), plus `.paths-panel__loading` in components/PathsPanel.tsx,
-                  `.lineage-panel__loading` in LineagePanel.tsx, the
-                  `[data-state="loading"]` paragraph in TranscriptEditor.tsx, and
-                  the one in Transcribe.tsx. Six of the seven carry no live
-                  semantics at all; Transcribe's already has an explicit
-                  `aria-live="polite"` and needs only the visual shape. Two
-                  further sites are deliberately NOT counted: Settings.tsx has
-                  already adopted <Skeleton />, and Tracks.tsx's
-                  `busy.kind === 'list' ? 'Loading…' : 'Refresh'` is a button's
-                  own busy LABEL, a different shape from a placeholder surface. */}
+                  OUT OF SCOPE, REPORTED NOT FIXED: this is the SECOND production
+                  call site of <Skeleton /> and the first to ship `variant="line"`,
+                  which falsifies two sentences in components/Skeleton.tsx — its
+                  "exactly ONE non-test call site (Settings.tsx)" and its "`line`,
+                  `title` … shipped-but-unused API, exercised only by
+                  Skeleton.test.tsx". Both were TRUE at origin/main and are false at
+                  this tip. That file is another lane's, so this branch must not
+                  edit it; it needs a scope grant or a follow-up. */}
               {!dataFolderLoaded ? (
                 <div style={{ width: '160px' }}>
                   <Skeleton

@@ -137,8 +137,12 @@ describe('<ShortMakerBrandKit />', () => {
   // is an EMPTY span with `width: 100%` (emptyState.css), so the percentage
   // resolves against an indefinite width and contributes 0 to intrinsic sizing;
   // the label that would have given it content is `position: absolute`. The bare
-  // span it replaced measured 54.72 x 14 px, so the adoption traded a visible
+  // span it replaced measured 47.14 x 16.50 px, so the adoption traded a visible
   // affordance for nothing at all until something carries a DEFINITE width.
+  // (An earlier revision of THIS comment said 54.72 x 14 — a reviewer replica's
+  // number, not a measurement of this tree — and the commit that corrected it in
+  // ShortMakerBrandKit.tsx missed this second occurrence three lines above the
+  // hunk it edited. Corrected here; the verdict never depended on the baseline.)
   // jsdom has no layout engine, so this test pins the MECHANISM — a definite
   // width exists on the box that establishes the bar's containing block — not
   // the pixel count. Deleting the width makes the skeleton invisible again and
