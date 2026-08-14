@@ -209,7 +209,27 @@ function EditVideo({
 
   if (mode === 'workspace') {
     return (
+      // `key` IS THE RESUME PATH — do not remove it as noise. Workspace consumes
+      // `initialTab` ONLY in two `useState` lazy initializers (Workspace.tsx:254-260
+      // `lane`, :270-274 `sectionPref`); no effect there depends on it. React runs an
+      // initializer once per component INSTANCE, so a prop that arrives after mount
+      // cannot reach them. Seeding 'workspace' means this element mounts on render 1,
+      // BEFORE the async `settings.get` above resolves — so without a key change the
+      // remembered `{kind:'workspace', tab}` would be read, set, and silently dropped,
+      // and the user who picked "Add subtitles" would land on the video lane with
+      // project tools instead of the caption lane with Subtitles.
+      //
+      // Keying on the tab remounts EXACTLY ONCE and ONLY in that case: `tab` is null
+      // on first render and is only ever set from `resumeFor` / `handleChoose`, and a
+      // resume that yields a null tab ('advanced', or any section choice) leaves the
+      // key at 'default' and does not remount. The cost is one extra `project.get`
+      // in the remembered-tab case; the alternative — withholding the first mount
+      // until the settings read settles — buys that back by putting a blank frame
+      // where the invariant demands a timeline.
+      // Pinned by Edit.invariant.test.tsx ("resumes a remembered workspace-scoped
+      // choice at its own tab, from the production seed") against the REAL Workspace.
       <Workspace
+        key={tab ?? 'default'}
         video={video}
         onBack={onBack}
         initialTab={tab ?? undefined}

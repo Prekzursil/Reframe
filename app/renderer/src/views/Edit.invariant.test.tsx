@@ -171,9 +171,13 @@ describe('L5 G-7 invariant 2 — the timeline is visible in Refine with zero nav
     expect(el!.getAttribute('aria-label')).toBe('Timeline');
 
     // (3) It is a real timeline lane, not an empty shell: the video-clips lane
-    //     mounted inside the dock body.
-    expect(el!.querySelector('[data-panel="VideoTimeline"]')).not.toBeNull();
-    expect(el!.querySelector('.workspace__dock-body[role="tabpanel"]')).not.toBeNull();
+    //     mounted INSIDE the dock body. Asserted as ONE nested selector, not two
+    //     independent `querySelector` calls — two calls prove only that both
+    //     elements exist somewhere under the dock, which is satisfied by a body
+    //     and a panel that are siblings. The nesting is the claim.
+    expect(
+      el!.querySelector('.workspace__dock-body[role="tabpanel"] [data-panel="VideoTimeline"]'),
+    ).not.toBeNull();
 
     // (4) ZERO navigation actions — asserted, not asserted-by-inspection.
     expect(clicks).toBe(0);
@@ -193,5 +197,49 @@ describe('L5 G-7 invariant 2 — the timeline is visible in Refine with zero nav
     expect(container.querySelector('.task-hub')).toBeNull();
     expect(dock()).not.toBeNull();
     expect(clicks).toBe(0);
+  });
+
+  // THE SEAM THE LANDING FIX OPENS, PINNED. Seeding 'workspace' means the real
+  // Workspace MOUNTS on render 1, BEFORE the async `settings.get` that carries the
+  // remembered choice resolves — and the real Workspace reads `initialTab` only in
+  // two `useState` lazy initializers (Workspace.tsx:254-260, :270-274), which React
+  // runs once per component INSTANCE. Without a remount the resumed tab lands on an
+  // already-mounted child and is silently discarded.
+  //
+  // Neither sibling case above can see that: `{}` never calls setTab, and 'shorts'
+  // resumes as `{ kind: 'section' }` which never calls setTab either. Nor can
+  // Edit.test.tsx: it stubs Workspace with a component that re-reads `initialTab` on
+  // EVERY render, so the stub reports success for a prop the real component ignores.
+  // This case is the only place the production seed and a workspace-scoped
+  // remembered choice are composed against the REAL Workspace.
+  it('resumes a remembered workspace-scoped choice at its own tab, from the production seed', async () => {
+    // `resumeFor('subtitles')` → `{ kind: 'workspace', tab: 'subtitles' }`
+    // (lib/taskHub.ts:108-109). NOTE the absent `initialMode`: this is the seed a
+    // production caller gets, which is the only seed a user can reach.
+    rpcMock.mockReset();
+    rpcMock.mockResolvedValue({ [HUB_CHOICE_KEY]: { v1: 'subtitles' } });
+
+    await open();
+
+    // (1) The invariant is NOT traded away to get the resume back: still no hub,
+    //     still a timeline dock, still zero navigation actions.
+    expect(container.querySelector('.task-hub')).toBeNull();
+    const el = dock();
+    expect(el).not.toBeNull();
+    expect(clicks).toBe(0);
+
+    // (2) The remembered tab actually reached the Workspace. `subtitles` lives in
+    //     the 'cue' context (WORKSPACE_INSPECTOR_SECTIONS.cue), so the inspector
+    //     opens on Subtitles and names its selection…
+    expect(container.querySelector('[data-panel="Subtitles"]')).not.toBeNull();
+    expect(container.querySelector('[data-role="selection"]')?.textContent).toBe('Caption cues');
+    // …and the dock opens on the matching lane (captions → features/Timeline), not
+    //     the default video lane. Both halves must move together: a lane that did
+    //     not follow the context is the deep-link landing on a timeline that hides
+    //     its own target.
+    expect(
+      el!.querySelector('.workspace__dock-body[role="tabpanel"] [data-panel="Timeline"]'),
+    ).not.toBeNull();
+    expect(el!.querySelector('[data-panel="VideoTimeline"]')).toBeNull();
   });
 });
