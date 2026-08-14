@@ -135,11 +135,12 @@ test('preview <video> PLAYS the imported sample (real playback)', async () => {
   const verdict = probePlayable(seeded.python, seeded.dataRoot, seeded.videoId);
   expect(verdict.playable, 'media.playable should report the H.264 source playable').toBe(true);
 
-  // Open the sample into the Workspace. Opening a video now lands on the
-  // per-video Task Hub (WU-3a1); take the "Advanced / all tools" escape button
-  // into the full Workspace, where <h1 class="workspace__title"> lives.
+  // Open the sample into the Workspace. Opening a video lands DIRECTLY on the
+  // Workspace, where <h1 class="workspace__title"> lives — that is owner-locked
+  // G-7 invariant 2, "the timeline is VISIBLE in Refine with ZERO navigation
+  // actions". This used to click the Task Hub's "Advanced / all tools" escape
+  // first; that step is gone because the hub is no longer the landing.
   await win.locator('.library__item-title', { hasText: 'sample' }).click();
-  await win.locator('button.task-hub__advanced').click();
   await expect(win.locator('.workspace__title')).toHaveText('sample');
 
   const video = win.locator('.workspace__player video');

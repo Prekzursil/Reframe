@@ -200,6 +200,38 @@ li.library__item:focus-within .library__select,
    navigation affordance, not a status/progress signal) so amber stays reserved;
    the count text itself is the done-signal. Seats to the leading edge; Remove
    trails. */
+/* "Task hub" — the per-video launcher's one production entry point. A QUIET
+   secondary action: it must not compete with the card body (the primary Open) and
+   must not read louder than Remove sitting beside it, so it takes the same GHOST
+   voice as `.library__remove-btn` (shell.css) rather than the shorts pill's raised
+   treatment. `margin-left: auto` pushes it and Remove to the trailing edge when no
+   shorts pill is present to claim the leading one. */
+.library__hub-btn {
+  appearance: none;
+  margin-left: auto;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--type-caption-size);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.library__hub-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.library__hub-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .library__shorts-label {
   appearance: none;
   margin-right: auto;

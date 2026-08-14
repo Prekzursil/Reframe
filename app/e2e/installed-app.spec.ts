@@ -393,8 +393,9 @@ test.describe('INSTALLED build — first run to working pipeline (W-A + W41)', (
     const verdict = probePlayable(seeded.python, seeded.dataRoot, seeded.videoId);
     expect(verdict.playable, 'media.playable should report the H.264 source playable').toBe(true);
 
+    // Opening a video lands directly on the Workspace (owner-locked G-7 invariant
+    // 2); the Task Hub "Advanced / all tools" escape this used to click is gone.
     await win.locator('.library__item-title', { hasText: 'sample' }).click();
-    await win.locator('button.task-hub__advanced').click();
     await expect(win.locator('.workspace__title')).toHaveText('sample');
 
     const video = win.locator('.workspace__player video');

@@ -37,9 +37,11 @@ vi.mock('./views/Repurpose', () => ({
 vi.mock('./views/Library', () => ({
   Library: ({
     onOpen,
+    onOpenHub,
     onReadinessAction,
   }: {
     onOpen: (v: Video) => void;
+    onOpenHub?: (v: Video) => void;
     onReadinessAction?: (action: unknown) => void;
   }) => (
     <div data-testid="library">
@@ -58,6 +60,26 @@ vi.mock('./views/Library', () => ({
         }
       >
         open-video
+      </button>
+      {/* The Library card's secondary "Task hub" action, stubbed. Kept in the mock
+          so App's `openVideoHub` — the ONLY production caller that seeds
+          `initialMode='hub'`, and therefore the only thing keeping the Task Hub
+          reachable — has a test that drives it end to end. */}
+      <button
+        type="button"
+        data-testid="open-video-hub"
+        onClick={() =>
+          onOpenHub?.({
+            id: 'v1',
+            path: '/movies/talk.mp4',
+            title: 'Talk',
+            addedAt: '2026-06-11T00:00:00Z',
+            durationSec: 600,
+            hasTranscript: false,
+          })
+        }
+      >
+        open-video-hub
       </button>
       <button
         type="button"
@@ -432,8 +454,54 @@ describe('App lastOpenedVideoId — bridge-absent branches (WU-13)', () => {
     });
     await flush();
     expect(rpcMock).not.toHaveBeenCalledWith('settings.set', { lastOpenedVideoId: 'v1' });
-    // WU-3a1: opening a video now lands on the per-video Task Hub (not straight
-    // into the Workspace). With no bridge, it stays on the hub for the video.
+    // Opening a video lands DIRECTLY on the Workspace for that video — owner-locked
+    // G-7 invariant 2, "the timeline is VISIBLE in Refine with ZERO navigation
+    // actions". This previously asserted `.task-hub__title` was 'Talk', which was
+    // correct while the per-video Task Hub was the landing (WU-3a1).
+    //
+    // The assertion moved to the WORKSPACE marker rather than being deleted: the
+    // point being pinned is unchanged — with no preload bridge the app still routes
+    // to the right video and does not persist anything. This file mocks
+    // ./views/Workspace (not ./views/Edit), so the real Edit renders that mock, and
+    // its `data-video-id` is what identifies the video now that no hub title exists.
+    const ws = container.querySelector('[data-testid="workspace"]');
+    expect(ws).not.toBeNull();
+    expect(ws?.getAttribute('data-video-id')).toBe('v1');
+  });
+});
+
+describe('App — the Task Hub entry point (G-7 invariant 2 without orphaning the hub)', () => {
+  // Refine lands DIRECTLY on the Workspace, which is owner-locked G-7 invariant 2.
+  // <TaskHub> therefore renders ONLY when something seeds `initialMode='hub'`, and
+  // `openVideoHub` is the one production caller that does. Without a test driving
+  // it, the whole surface — view, stylesheet, tests, and the `persist()` writer that
+  // is the ONLY way to change a remembered hub choice — could silently become
+  // unreachable again, and TypeScript cannot see that: an unused optional prop is
+  // legal. This file mocks ./views/Workspace but NOT ./views/Edit or ./views/TaskHub,
+  // so the assertions below run against the real routing and the real hub.
+  it('opens a video straight onto the WORKSPACE by default (the invariant)', async () => {
+    await mount();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="open-video"]')!.click();
+    });
+    await flush();
+    expect(
+      container.querySelector('[data-testid="workspace"]')?.getAttribute('data-video-id'),
+    ).toBe('v1');
+    // ...and NOT via the hub. This half is what makes the case above a real
+    // invariant check rather than a "something rendered" check.
+    expect(container.querySelector('.task-hub__title')).toBeNull();
+  });
+
+  it('opens the same video onto its TASK HUB from the secondary action', async () => {
+    await mount();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="open-video-hub"]')!.click();
+    });
+    await flush();
     expect(container.querySelector('.task-hub__title')?.textContent).toBe('Talk');
+    // The hub replaces the workspace for this open, so the surface is genuinely
+    // reachable rather than merely mounted somewhere off-screen.
+    expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
   });
 });

@@ -58,6 +58,16 @@ export interface LibraryProps {
   /** Called when the user opens a video into the Workspace. */
   onOpen: (video: Video) => void;
   /**
+   * Called when the user opens a video onto its per-video Task Hub — the
+   * "what do you want to do with this video?" launcher — from the card's
+   * secondary action row. Optional so existing mounts (and tests) need no change.
+   *
+   * Deliberately SECONDARY: the primary open lands straight on the Workspace, which
+   * is owner-locked G-7 invariant 2. This is the entry point that keeps the hub a
+   * live surface rather than unreachable code.
+   */
+  onOpenHub?: (video: Video) => void;
+  /**
    * Optional external toast sink (the U3 useToast adapter, injected by the
    * wiring agent). When provided, ALL toasts route here and the local
    * fallback strip is not rendered.
@@ -179,6 +189,7 @@ function loadLineage(id: string): Promise<LineageResult> {
  */
 export function Library({
   onOpen,
+  onOpenHub,
   toast: externalToast,
   // `onReadinessAction` is intentionally NOT destructured — see LibraryProps.
   provenance,
@@ -804,6 +815,7 @@ export function Library({
               onRemove={handleRemove}
               shortsCount={shortsCountFor(video.id)}
               onOpenShorts={openShorts}
+              onOpenHub={onOpenHub}
               provenance={provenance}
             />
           ))}

@@ -175,10 +175,14 @@ export async function openDestinationMode(
 
 /** Open the Library video named `title` into its Workspace. */
 export async function openVideo(win: Page, title: string): Promise<void> {
+  // Opening a video lands DIRECTLY on the Workspace — owner-locked G-7 invariant 2,
+  // "the timeline is VISIBLE in Refine with ZERO navigation actions". This helper
+  // used to take the Task Hub's "Advanced / all tools" escape; that step is gone.
+  //
+  // IDEMPOTENT NOW. It previously was not: the escape button existed only on the
+  // first open, so a second call hung on it. Callers that worked around that (see
+  // overlay-hittest.spec.ts) no longer need to.
   await win.locator('.library__item-title', { hasText: title }).click();
-  // WU-3a1: opening a video lands on the per-video Task Hub; take the
-  // "Advanced / all tools" escape into the full Workspace.
-  await win.locator('button.task-hub__advanced').click();
   await win.locator('.workspace__title').waitFor({ state: 'visible' });
 }
 
