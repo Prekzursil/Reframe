@@ -24,9 +24,15 @@
 //   * the shortcut layer never steals a key the focused control already owns
 //     (Space on a button, arrows on the scrubber), so nothing double-fires.
 //
-// The pure helpers (`formatTimecode` / `clampTime` / `frameDuration` /
-// `nextShuttleRate` / `rateLabel`) are exported and unit-tested in
-// Transport.test.tsx.
+// The transport is scoped to the PLAYABLE SPAN, not to the whole source: in
+// window mode (a candidate preview) the scrubber bounds and the time readout
+// cover `[startTime, endTime]` only. Times crossing the props boundary stay
+// SOURCE-ABSOLUTE so they line up with the owner's window clamp and with the
+// shared timeline playhead.
+//
+// The pure helpers (`formatTimecode` / `clampTime` / `clampToSpan` /
+// `frameDuration` / `nextShuttleRate` / `rateLabel`) are exported and
+// unit-tested in Transport.test.tsx.
 import React from 'react';
 
 /**
@@ -66,7 +72,7 @@ export interface TransportProps {
   rate?: number;
   /** Playback intent: `true` = play, `false` = pause. */
   onPlayPause: (play: boolean) => void;
-  /** Seek intent, in seconds, already clamped into `[0, duration]`. */
+  /** Seek intent, source-absolute seconds, already clamped into the playable span. */
   onSeek: (timeSec: number) => void;
   /** Shuttle-rate intent (negative = reverse). Optional: a simple player can ignore shuttle. */
   onRateChange?: (rate: number) => void;

@@ -429,4 +429,13 @@ describe('Transport playable span', () => {
     setRangeValue(scrubber(render(windowed)), '600');
     expect(onSeek).toHaveBeenLastCalledWith(44);
   });
+
+  it('collapses an inverted window instead of emitting a backwards range', () => {
+    // 100% branch coverage cannot see this: the guard is a `Math.max`, not a
+    // branch. Without it the element would get min=44 / max=40 — a range input
+    // whose maximum is below its minimum.
+    const range = scrubber(render({ ...windowed, startTime: 44, endTime: 40 }));
+    expect(range.min).toBe('44');
+    expect(range.max).toBe('44');
+  });
 });

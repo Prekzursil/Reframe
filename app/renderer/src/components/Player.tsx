@@ -387,7 +387,14 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       video.playbackRate = rate;
       return undefined;
     }
-    if (!playing) return undefined;
+    // A NEGATIVE rate now IS an active reverse shuttle, so no separate `playing`
+    // test is needed: all THREE stop paths clear the rate back to 1 (explicit
+    // pause, the window floor, and `ended`), and the only producer of a negative
+    // rate — Transport's `shuttle()` — starts playback in the same batch. A
+    // `!playing` guard used to sit here; once `ended` started clearing the rate
+    // it became unreachable, and parking an unreachable branch behind a coverage
+    // ignore would be a dodge rather than a safeguard. The three stop-path tests
+    // in Player.test.tsx are what hold the invariant up.
     video.pause();
     const stepSec = Math.abs(rate) * frameSec;
     const timer = setInterval(() => {
@@ -403,7 +410,9 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       setPlayhead(next);
     }, frameSec * 1000);
     return () => clearInterval(timer);
-  }, [transport, playing, rate, frameSec, floorSec]);
+    // `playing` is deliberately NOT a dep: the effect no longer reads it, and a
+    // rate change is what starts and stops the reverse arm.
+  }, [transport, rate, frameSec, floorSec]);
 
   /** Transport intent: play or pause. Stopping always ends a shuttle. */
   const handlePlayPause = (play: boolean): void => {
