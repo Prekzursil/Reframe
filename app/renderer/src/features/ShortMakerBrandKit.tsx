@@ -133,7 +133,13 @@ export function ShortMakerBrandKit({
                   WHY THE INLINE WIDTH — this is a correction, not decoration.
                   Shipped without it, the adoption MEASURED 0.00 x 10 px in real
                   Chromium (the engine Electron renders with) and was invisible,
-                  where the bare span it replaced measured 54.72 x 14 px. Cause:
+                  where the bare span it replaced measured 47.14 x 16.50 px and
+                  this fix measures 160 x 10 px. (A reviewer's independent probe
+                  read the same 0 but 54.72 x 14 for the span; that replica
+                  hand-copied the rules and so missed tokens.css, leaving the
+                  caption font-size and family at browser defaults. The verdict
+                  is identical either way — the disagreement is only in the
+                  non-zero baseline.) Cause:
                   `.skeleton-group` is a shrink-to-fit flex item of
                   `.sm-data-folder-row`, its only in-flow child is an EMPTY span
                   with `width: 100%`, and a percentage against an indefinite

@@ -148,7 +148,9 @@ describe('<ShortMakerBrandKit />', () => {
     const region = container.querySelector('.sm-data-folder-loading') as HTMLElement;
     const sized = region.closest('[style]') as HTMLElement | null;
     expect(sized).toBeTruthy();
-    expect(sized?.style.width).toBeTruthy();
+    // Not `toBeTruthy()` on the raw string: "0px" is a truthy STRING and would
+    // sail through while re-shipping the exact 0-width bug this pins.
+    expect(Number.parseFloat(sized?.style.width ?? '0')).toBeGreaterThan(0);
     // The width must sit INSIDE the flex row, on the box the skeleton actually
     // sizes against — a width on some outer page container would not resolve it.
     expect(sized?.closest('.sm-data-folder-row')).toBeTruthy();
