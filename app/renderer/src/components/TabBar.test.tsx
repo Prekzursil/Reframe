@@ -297,23 +297,36 @@ describe('TabBar skin contract (every emitted class has a rule)', () => {
   // `emittedClasses`. These are the SHAPES a re-add can take; each is measured
   // here rather than assumed, so the sentence in TabBar.tsx cannot drift wider
   // than the mechanism that backs it.
-  it('sees a re-added class in every shape a caller can write it', () => {
-    // Template literal WITH interpolation. A `className=\{([^}]*)\}` capture
-    // truncates at the interpolation's own `}`, so the class before it vanishes.
+  // ONE SHAPE PER CASE, deliberately. Collapsing these into a single `it` hides
+  // evidence: vitest aborts a test at its FIRST failed assertion, so a bundled
+  // version proves only that the first shape was ever broken and leaves the rest
+  // inferred. Split, each shape is independently falsifiable — and each was
+  // observed RED against the pre-widening extractor.
+  it('SEES a class re-added via a template literal with interpolation', () => {
+    // A `className=\{([^}]*)\}` capture truncates at the interpolation's own `}`,
+    // so every class written before it vanished.
     expect(emittedClasses('<div className={`tabbar__tablist ${mode}`}>')).toContain(
       'tabbar__tablist',
     );
-    // Bare template literal (no interpolation).
+  });
+
+  it('SEES a class re-added via a bare template literal', () => {
     expect(emittedClasses('<div className={`tabbar--grouped`}>')).toContain('tabbar--grouped');
-    // Helper call with DOUBLE-quoted arguments (the clsx/classnames idiom). Only
-    // single-quoted literals used to be scanned inside a brace expression, so this
-    // was invisible even though the identical single-quoted call was seen.
+  });
+
+  it('SEES a class re-added as a DOUBLE-quoted argument in a brace expression', () => {
+    // The clsx/classnames idiom. Only single-quoted literals used to be scanned
+    // inside `className={…}`, so this was invisible while the identical
+    // single-quoted call was seen — the least obvious of the four holes.
     expect(emittedClasses('<div className={clsx("tabbar__group", open)}>')).toContain(
       'tabbar__group',
     );
-    // The two shapes that already worked, kept so a rewrite cannot trade the new
-    // ones for the old. The first is the shape the DELETED grouped code used, so a
-    // `git revert` of that deletion is caught.
+  });
+
+  it('still sees the two shapes that already worked (no trade-off)', () => {
+    // The quoted attribute is the shape the DELETED grouped code used, so a
+    // `git revert` of that deletion is caught. Kept so a later rewrite cannot
+    // swap the new shapes in at the old ones' expense.
     expect(emittedClasses('<div className="tabbar__export">')).toContain('tabbar__export');
     expect(emittedClasses("<div className={on ? 'tabbar__group-label' : 'tab'}>")).toContain(
       'tabbar__group-label',
