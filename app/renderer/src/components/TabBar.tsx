@@ -101,32 +101,78 @@ function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
  * from views/workspace.css, but left the branch here, so the two halves only
  * disagreed when read together: the code shipped, the CSS did not, and the next
  * caller to pass `groups=` would have rendered a completely unstyled strip.
- * Measured before removal — zero production callers: `git grep "groups="`
- * matched test files only, and all seven `<TabBar` call sites (App.tsx:678,
- * Deliver.tsx:62, MakeShorts.tsx:314, Repurpose.tsx:28, Settings.tsx:308,
- * Workspace.tsx:619 and :647) pass exactly `tabs` / `active` / `onSelect`.
- * Workspace.test.tsx:894-967 independently asserts the grouped classes are
- * ABSENT. The skin contract in TabBar.test.tsx now fails on any emitted class
- * that no stylesheet declares, so this cannot silently recur.
  *
- * RESIDUAL, out of this file's scope — and WIDER than the removing commit said.
- * That commit disclosed a single stale caller, `app/e2e/preview.spec.ts:190`. The
- * real surface is 11 selector references there, spanning THREE tests plus a global
- * `test.afterEach` hook that runs after every test in the file: the afterEach at
- * :74-77, "Advanced disclosure actually COLLAPSES the Deliver cluster (F17)" at
- * :190, "Workspace tabs mount, including SemanticSearch" at :279, and "export
- * action yields a real file" at :307 (which CLICKS `.tabbar__export`). Recorded
- * here because the narrower sentence is already in a pushed commit message and
- * cannot be corrected in place.
+ * NO PRODUCTION CALLER — two probes at the pre-deletion tree f8cfbd6c, one at
+ * HEAD. At f8cfbd6c: (1) `git grep "groups="` over app/renderer/src, restricted to
+ * non-test `.tsx`, returned no matches; and (2) enumerating call sites instead —
+ * the probe a prop spread would defeat — showed all seven production sites
+ * (App.tsx:678, Deliver.tsx:62, MakeShorts.tsx:314, Repurpose.tsx:28,
+ * Settings.tsx:308, Workspace.tsx:619 and :647) passing exactly `tabs` / `active`
+ * / `onSelect`. Those two query different FIELDS but are one instrument on one
+ * tree. The mechanically different probe is `npx tsc --noEmit` -> exit 0, and it
+ * belongs at HEAD: with `groups?` gone from TabBarProps, a surviving caller is an
+ * excess JSX attribute and a type error, so the compiler resolves the re-exports,
+ * aliases and spreads grep cannot see. CORRECTS commit abae7b61, which presented
+ * all three as mechanically independent probes run at f8cfbd6c — run THERE, tsc is
+ * INERT rather than circular: `groups?` was a legal optional prop, so exit 0 reads
+ * identically whether or not a caller passes it. Workspace.test.tsx:894-967
+ * independently asserts the grouped classes are ABSENT.
  *
- * Deleting grouped mode did NOT break them; they were already dead. Those
- * selectors can only match markup that grouped mode renders, and rendering it
- * requires a caller to pass `groups=` — which no production caller has done since
- * #431 (verified at the pre-deletion tree: all seven call sites pass exactly
- * tabs/active/onSelect). Nothing went red because `.github/workflows/e2e.yml`
- * triggers on `workflow_dispatch` + a nightly `schedule` ONLY — it has no
- * `pull_request` or `push` trigger, so this suite is not on the merge path. Fixing
- * that file belongs to whichever lane owns app/e2e.
+ * WHAT THE SKIN CONTRACT GUARANTEES, exactly. TabBar.test.tsx fails on any class
+ * this file emits that no renderer stylesheet declares, and its reach is measured
+ * rather than asserted: "sees a re-added class in every shape a caller can write
+ * it" pins one case per shape — a quoted attribute (the shape the deleted code
+ * used, so a `git revert` of that deletion IS caught), a single- OR double-quoted
+ * literal inside a brace expression (ternary or a clsx-style helper), and a
+ * template literal with or without interpolation. Comments are stripped first, so
+ * naming a class in this very block is a mention, not an emission. MEASURED LIMIT:
+ * a class held in a CONSTANT stays invisible — resolving it needs a parser and a
+ * scope model, which a source-text extractor is not. That hole has its own pinning
+ * test, so widening the extractor forces this paragraph to be widened with it.
+ *
+ * SECOND UNCALLED SURFACE, disclosed not fixed. `navIds` also has ZERO production
+ * callers: measured at this commit and at origin/main, every reference to it lives
+ * in TabBar.tsx or TabBar.test.tsx, and the same seven call sites above pass none.
+ * It is NOT deleted on grouped mode's grounds — that rationale was the code/skin
+ * SPLIT, and `navIds` emits no class, so it carries no unstyled-render defect. But
+ * it is the F18 manual-activation carve-out, so that a11y protection is wired into
+ * no screen today, and the three retargeted `navIds` tests cover a behaviour no
+ * shipped surface exercises. Whichever lane owns App.tsx / Workspace.tsx should
+ * either pass `navIds` on the tablists whose tabs navigate away and unmount them,
+ * or retire the prop.
+ *
+ * RESIDUAL, out of this file's scope — TWO stale surfaces, not one.
+ *
+ * (1) app/e2e/preview.spec.ts. Three tests would fail if run, their references
+ * unguarded: "Advanced disclosure actually COLLAPSES the Deliver cluster (F17)" at
+ * :190 (toggle/panel at :197-198, `toBeInViewport()` at :258), "Workspace tabs
+ * mount, including SemanticSearch" at :279 (click at :298), and "export action
+ * yields a real file" at :307 (click at :314). Of the 11 references only SIX are
+ * executable `locator()` calls (:77, :197, :198, :258, :298, :314); the other five
+ * are comments (:212, :244, :251, :295, :296). CORRECTS abae7b61, which counted all
+ * 11 alike and named the global `test.afterEach` at :74 beside the three failing
+ * tests: that hook returns early on `count() === 0` inside a try/catch (:79-85), so
+ * it degrades to a no-op and cannot fail anything. Widening the removing commit's
+ * "one stale test" to three was right; the hook is stale prose, not blast radius.
+ *
+ * (2) docs/validation/v15-audit-ledger.md — LARGER, and previously undisclosed.
+ * 56 lines there cite the deleted classes, in two kinds of rot. DANGLING LINE
+ * NUMBERS: 41 lines cite a `TabBar.tsx:` line at 200 or beyond (this file is 200
+ * lines, so `:231` and `:239` are past EOF), and others cite `workspace.css:116` /
+ * `:148-152` / `:189-192` in a 302-line file that has had ZERO `tabbar__` matches
+ * since #431. IMPOSSIBLE PRESCRIPTIONS: eight lines (:379, :417, :766, :781, :798,
+ * :807, :814, :924) tell a reader to add a `.tabbar__advanced-panel[hidden]` rule
+ * for a defect that can no longer occur.
+ *
+ * Neither surface ships a defect and neither is on the merge path: docs are not
+ * executable, `docs/validation/tools/verify_ssot_claims.py` is wired into no
+ * workflow, and `.github/workflows/e2e.yml` triggers on `workflow_dispatch` plus a
+ * nightly `schedule` ONLY — no `pull_request`, no `push`. Deleting grouped mode did
+ * not break either; both were already dead, since those selectors can only match
+ * markup grouped mode renders and no production caller has passed `groups=` since
+ * #431. Recorded rather than fixed because both belong to other lanes, and recorded
+ * rather than dropped for the reason the shell.css repair already established:
+ * correct the sentence, never quietly delete it.
  */
 export function TabBar({ tabs, active, onSelect, navIds }: TabBarProps): React.ReactElement {
   // A plain ref map (NOT useRef) so this presentational component stays hook-free

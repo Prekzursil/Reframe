@@ -212,16 +212,59 @@ describe('TabBar skin contract (every emitted class has a rule)', () => {
       return entry.name.endsWith('.css') ? [full] : [];
     });
 
-  /** Class names a component emits: plain `className="a b"` plus the string
-   *  literals inside a `className={cond ? 'a b' : 'a'}` expression. */
+  /** The text inside each `className={…}`, read with a BRACE-BALANCING scan
+   *  rather than a `[^}]*` capture. A capture stops at the FIRST `}`, which is
+   *  the one closing a template literal's own `${…}` — so every class written as
+   *  an interpolated template was silently invisible. */
+  const braceExpressions = (source: string): string[] => {
+    const out: string[] = [];
+    const marker = 'className={';
+    for (let at = source.indexOf(marker); at !== -1; at = source.indexOf(marker, at + 1)) {
+      let depth = 0;
+      let end = at + marker.length - 1; // the opening `{`
+      while (end < source.length) {
+        if (source[end] === '{') depth += 1;
+        if (source[end] === '}') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+        end += 1;
+      }
+      out.push(source.slice(at + marker.length, end));
+    }
+    return out;
+  };
+
+  /** Every string literal inside one `className` brace expression: single-quoted,
+   *  DOUBLE-quoted (the clsx/classnames idiom — previously unscanned, so
+   *  `clsx("a")` was invisible while `clsx('a')` was seen), and the STATIC chunks
+   *  of a template literal with its interpolations blanked out. */
+  const literalsIn = (expr: string): string[] => [
+    ...[...expr.matchAll(/'([^']*)'/g)].map((m) => m[1]),
+    ...[...expr.matchAll(/"([^"]*)"/g)].map((m) => m[1]),
+    ...[...expr.matchAll(/`([^`]*)`/g)].map((m) => m[1].replace(/\$\{[^}]*\}/g, ' ')),
+  ];
+
+  /** Class names a component emits: a plain quoted `className` attribute plus
+   *  every string literal inside a `className={…}` expression.
+   *
+   *  Comments are stripped FIRST, for the same use-vs-mention reason the CSS side
+   *  strips them: this reads TabBar.tsx's raw source, so a class merely named in
+   *  that file's own history comment would otherwise read as an emission and
+   *  demand a stylesheet rule for markup nothing renders. */
   const emittedClasses = (source: string): string[] => {
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
     const found = new Set<string>();
+    // Only tokens SHAPED like a CSS class are kept. Blanking an interpolation can
+    // leave debris (`?`, a bare `:`), and asserting a stylesheet rule for debris
+    // would be a false failure.
     const add = (list: string): void => {
-      for (const cls of list.split(/\s+/)) if (cls) found.add(cls);
+      for (const cls of list.split(/\s+/)) if (/^[A-Za-z_-][\w-]*$/.test(cls)) found.add(cls);
     };
-    for (const m of source.matchAll(/className="([^"]*)"/g)) add(m[1]);
-    for (const m of source.matchAll(/className=\{([^}]*)\}/g))
-      for (const literal of m[1].matchAll(/'([^']*)'/g)) add(literal[1]);
+    for (const m of code.matchAll(/className="([^"]*)"/g)) add(m[1]);
+    for (const expr of braceExpressions(code)) {
+      for (const literal of literalsIn(expr)) add(literal);
+    }
     return [...found].sort();
   };
 
@@ -247,5 +290,56 @@ describe('TabBar skin contract (every emitted class has a rule)', () => {
     // genuinely unstyled class could report as styled by a longer neighbour.
     const unstyled = classes.filter((cls) => !new RegExp(`\\.${cls}(?![\\w-])`).test(css));
     expect(unstyled).toEqual([]);
+  });
+
+  // EXTRACTOR CONTRACT. The guarantee TabBar.tsx's comment makes — a re-added
+  // grouped class cannot silently ship unstyled — is only ever as wide as
+  // `emittedClasses`. These are the SHAPES a re-add can take; each is measured
+  // here rather than assumed, so the sentence in TabBar.tsx cannot drift wider
+  // than the mechanism that backs it.
+  it('sees a re-added class in every shape a caller can write it', () => {
+    // Template literal WITH interpolation. A `className=\{([^}]*)\}` capture
+    // truncates at the interpolation's own `}`, so the class before it vanishes.
+    expect(emittedClasses('<div className={`tabbar__tablist ${mode}`}>')).toContain(
+      'tabbar__tablist',
+    );
+    // Bare template literal (no interpolation).
+    expect(emittedClasses('<div className={`tabbar--grouped`}>')).toContain('tabbar--grouped');
+    // Helper call with DOUBLE-quoted arguments (the clsx/classnames idiom). Only
+    // single-quoted literals used to be scanned inside a brace expression, so this
+    // was invisible even though the identical single-quoted call was seen.
+    expect(emittedClasses('<div className={clsx("tabbar__group", open)}>')).toContain(
+      'tabbar__group',
+    );
+    // The two shapes that already worked, kept so a rewrite cannot trade the new
+    // ones for the old. The first is the shape the DELETED grouped code used, so a
+    // `git revert` of that deletion is caught.
+    expect(emittedClasses('<div className="tabbar__export">')).toContain('tabbar__export');
+    expect(emittedClasses("<div className={on ? 'tabbar__group-label' : 'tab'}>")).toContain(
+      'tabbar__group-label',
+    );
+  });
+
+  // USE, NOT MENTION — the TS side of the hole already closed on the CSS side.
+  // Stylesheet comments are stripped before matching, but this extractor reads
+  // TabBar.tsx's RAW source, so a class merely NAMED in a doc comment there read
+  // as an emission and the contract would demand a rule for a class nothing
+  // renders. That is a false failure, and it silently forbids the file from
+  // documenting its own history in the shapes it documents.
+  it('ignores a class merely NAMED in a comment (use, not mention)', () => {
+    const block = '/* HISTORY: className="tabbar__ghost" shipped without a skin. */';
+    const line = '// see also className={`tabbar__relic ${x}`}';
+    expect(emittedClasses(`${block}\n${line}\n<div className="tab">`)).toEqual(['tab']);
+  });
+
+  // MEASURED LIMIT, pinned deliberately. This case is GREEN before and after the
+  // widening — it is a characterization pin, not a red-first test. A class held in
+  // a constant is invisible to a source-text extractor: resolving it needs a
+  // parser and a scope model, which this is not. If a later change makes this
+  // assertion fail, the extractor got wider and the "MEASURED LIMIT" sentence in
+  // TabBar.tsx must be widened in the same commit.
+  it('does NOT see a class held in a constant (documented residual, not a bug)', () => {
+    const src = "const CLS = 'tabbar__advanced-panel';\n<div className={CLS}>";
+    expect(emittedClasses(src)).not.toContain('tabbar__advanced-panel');
   });
 });
