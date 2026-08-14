@@ -16,6 +16,21 @@
 // branch", a premise PR #427 falsified when it adopted the shared EmptyState here
 // (App.tsx carries that retraction). This lane owns and closes it.
 //
+// PROVEN BOTH-STATES, not asserted: checking the pre-branch Edit.tsx over this one
+// (`git checkout f8cfbd6c -- app/renderer/src/views/Edit.tsx`) and re-running
+// Edit.invariant.test.tsx turns its two invariant cases RED — "2 failed | 1
+// passed", each on `expect(container.querySelector('.task-hub')).toBeNull()` —
+// and restoring turns them green. The verbatim run is recorded at the head of
+// that file, together with the third line of it, which cuts against this branch
+// and is the reason the `key` below exists.
+//
+// TWO CLAIMS ELSEWHERE ARE NOW FALSE BECAUSE OF THIS FIX. Both are SCOPE-ESCAPES,
+// reported to the orchestrator rather than edited here: App.tsx:21 and :43-48
+// ("still opens on its Task Hub (Edit.tsx:69 `useState('hub')`, :163)" and "Until
+// it is taken, G-7 invariant 2 does not hold"), and Workspace.tsx:610-615 ("the
+// Refine DESTINATION still lands on views/Edit.tsx's Task Hub on a first open").
+// Every line number those two cite is gone from this file.
+//
 // THE TASK HUB IS NOT DELETED. It is a designed surface (views/TaskHub.tsx) and
 // every card, the "Advanced / all tools" escape, the per-video choice
 // persistence and `lib/taskHub.ts resumeFor` keep working exactly as before —
@@ -32,9 +47,11 @@
 // TWO SIBLING SUITES PIN THE OLD LANDING AND MUST CHANGE IN THE SAME MERGE.
 // The counts below describe the BRANCH BEFORE THAT MERGE, and the merge that
 // carries the two edits is what makes them stale — read them as a record of why
-// those two files are named, never as this repo's present state. As measured on
-// this branch with only this file changed, `npx vitest run` from app/ was 4
-// failed / 4918 passed. Both failing files are OUTSIDE this lane's file scope,
+// those two files are named, never as this repo's present state. Re-measured on
+// this branch at round 2 (the earlier "4918" here was itself stale by one test):
+// `npx vitest run` from app/ is 2 files / 4 tests failed, 4921 passed (4925), and
+// the 4 are exactly the 3 + 1 named below — this lane's own suites are green.
+// Both failing files are OUTSIDE this lane's file scope,
 // so they are reported as scope-escapes rather than edited here:
 //   1. App.quality.test.tsx:437 asserts `.task-hub__title` is 'Talk' after a video
 //      is opened — that suite mocks ./views/Workspace but NOT ./views/Edit, so it
@@ -93,9 +110,11 @@ export interface EditProps {
    * destination opens on the docked timeline with zero navigation actions
    * (L5 G-7 invariant 2). Pass `'hub'` to open the per-video Task Hub instead.
    * A remembered workspace-scoped choice still overrides the seed and resumes at
-   * its own tab — which under this seed costs one keyed remount, because the
-   * Workspace is already mounted by the time that choice is read (see the `key`
-   * at the render below; removing it silently drops the resumed tab). A
+   * its own tab — which under this seed costs one keyed remount of the whole
+   * Workspace subtree, `<Player>` included, because the Workspace is already
+   * mounted by the time that choice is read. The `key` at the render below is
+   * that remount; removing it silently drops the resumed tab, and its comment
+   * enumerates the full cost and names the Workspace-side fix that retires it. A
    * remembered NAVIGATE-AWAY choice is still only marked last-used and never
    * auto-navigated to.
    */
@@ -235,15 +254,59 @@ function EditVideo({
       // and the user who picked "Add subtitles" would land on the video lane with
       // project tools instead of the caption lane with Subtitles.
       //
-      // Keying on the tab remounts EXACTLY ONCE and ONLY in that case: `tab` is null
+      // Keying on the tab remounts ONCE PER OPEN and ONLY in that case: `tab` is null
       // on first render and is only ever set from `resumeFor` / `handleChoose`, and a
       // resume that yields a null tab ('advanced', or any section choice) leaves the
-      // key at 'default' and does not remount. The cost is one extra `project.get`
-      // in the remembered-tab case; the alternative — withholding the first mount
-      // until the settings read settles — buys that back by putting a blank frame
-      // where the invariant demands a timeline.
+      // key at 'default' and does not remount. "Per open" is the honest scope — the
+      // effect above also `setTab(null)` on a [videoId, seed] change, so an Edit
+      // instance that survived a video SWITCH would flip the key again. Unreachable
+      // today: App's `openVideo` (App.tsx:429) has exactly one caller, `<Library
+      // onOpen>` (:633), which changes route and unmounts Edit.
+      //
+      // THE COST, ENUMERATED. It is a full subtree REMOUNT, not one cheap RPC — an
+      // earlier revision of this comment priced it as "one extra `project.get`", an
+      // RPC that exists nowhere in this app. Measured by the seam probe in
+      // Edit.invariant.test.tsx (hold the settings read pending → snapshot → release),
+      // resume against the no-resume control:
+      //   * `project.open` — Workspace's ONLY rpc call (Workspace.tsx:380) — fires
+      //     1 → 2. The handler resolves the id to the per-video manifest and creates
+      //     one on first open (sidecar/media_studio/handlers/library_ops.py:527-533),
+      //     so the duplicate is wasted work, not a second project record.
+      //   * the <video> element afterwards is a DIFFERENT NODE (control: the same
+      //     node). `<Player key={video.id} reloadToken={playerEpoch}>` lives inside
+      //     this subtree (Workspace.tsx:591-597) and its own key cannot save it: a
+      //     parent key change unmounts every descendant. That reintroduces one level
+      //     up the restart `reloadToken` exists to avoid — Workspace.tsx:360-363,
+      //     "NOT a key-remount, which would visibly restart the element mid-load (the
+      //     'shakiness' bug)", and :588-590 "key is the videoId ONLY". It fires about
+      //     one IPC round trip after mount, so the element being restarted is
+      //     milliseconds old; whether that is PERCEPTIBLE in the packaged app is
+      //     UNVERIFIED — settle it by opening a profile whose settings hold
+      //     `taskHubChoiceByVideo: {<id>: 'subtitles'}` and recording the first 500 ms.
+      //   * `onProxyState` is re-subscribed with `proxyPhaseRef` reset to 'initial'
+      //     (Workspace.tsx:407-412), so a 'ready'/'error' push landing in that
+      //     one-commit window reaches the doomed instance and is dropped.
+      //
+      // WHY IT IS STILL THE RIGHT TRADE, and what retires it:
+      //   * NOT paying it means silently ignoring the remembered lane, which is a
+      //     REGRESSION and not a declined new feature. Measured: with the pre-branch
+      //     Edit.tsx checked out, Edit.invariant.test.tsx's resume case PASSES — under
+      //     the hub seed the choice arrived as a first-mount prop — and the hub plus
+      //     its `taskHubChoiceByVideo` writer shipped in v1.4.1 (`git show
+      //     v1.4.1:app/renderer/src/lib/taskHub.ts`), so upgraded installs already
+      //     hold choices that land on the caption lane with zero clicks today.
+      //   * withholding the first mount until the settings read settles swaps a
+      //     bounded restart for an unbounded one: the timeline's appearance would
+      //     depend on an unrelated RPC's latency, and on a hang it never appears.
+      //   * the durable fix is Workspace consuming `initialTab` AFTER mount — its two
+      //     lazy `useState` initializers are the whole reason a post-mount prop cannot
+      //     land. That is a Workspace.tsx edit, outside this lane's file scope, so it
+      //     is reported as a scope-escape rather than taken here. When it lands,
+      //     delete this key: the invariant suite bounds the resume at `<= 2` mounts
+      //     precisely so that fix makes it greener, never red.
       // Pinned by Edit.invariant.test.tsx ("resumes a remembered workspace-scoped
-      // choice at its own tab, from the production seed") against the REAL Workspace.
+      // choice at its own tab, from the production seed", plus the two seam cases)
+      // against the REAL Workspace.
       <Workspace
         key={tab ?? 'default'}
         video={video}

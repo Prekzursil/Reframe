@@ -15,11 +15,34 @@
 // click counter is asserted to be 0 so that a future edit cannot quietly "fix" a
 // red run here by adding one — clicking to reach the timeline IS the defect.
 //
-// THE DEFECT THIS PINS (measured on origin/main f8cfbd6c, before this branch):
-// Edit opened on its Task Hub — `useState<'hub'|'workspace'>('hub')` — and mounted
-// the Workspace only after a card was picked, so the invariant held from the
-// Workspace mount, NOT from a first open of the destination. Opening a video from
-// the Library therefore cost one extra click before any timeline existed.
+// THE DEFECT THIS PINS: Edit opened on its Task Hub —
+// `useState<'hub'|'workspace'>('hub')` — and mounted the Workspace only after a
+// card was picked, so the invariant held from the Workspace MOUNT, not from a
+// first open of the destination. Opening a video from the Library therefore cost
+// one extra click before any timeline existed.
+//
+// BOTH-STATES CONTROL — RUN, not reasoned. Checking the pre-branch Edit.tsx over
+// this branch's (`git checkout f8cfbd6c -- app/renderer/src/views/Edit.tsx`;
+// byte-identical to main 4c24700b for this file, `git diff f8cfbd6c 4c24700b --`
+// on that path is empty) and re-running THIS file gives, verbatim:
+//   × shows the docked timeline on a first open …
+//       → expected <div class="task-hub" …(1)>…(3)</div> to be null   [:166]
+//   × still lands on the docked timeline when a NAVIGATE-AWAY choice is remembered
+//       → expected <div class="task-hub" …(1)>…(3)</div> to be null   [:197]
+//   ✓ resumes a remembered workspace-scoped choice at its own tab …
+//   Tests  2 failed | 1 passed (3)
+// So the two cases that pin invariant 2 DO fire in the known-broken state, which
+// is the property that makes their green here mean anything.
+//
+// READ THE THIRD LINE OF THAT RUN CAREFULLY — it is load-bearing and cuts against
+// this branch. The resume case PASSES at the hub-first baseline: under that seed
+// the remembered `{kind:'workspace', tab}` arrived as a FIRST-MOUNT prop and
+// worked. Landing on the editor is what turned it into a post-mount prop the
+// Workspace cannot read, so the `key` in Edit.tsx repairs a regression this
+// branch itself created — it does not add new surface. That also means dropping
+// the resume instead of keying it would REGRESS a shipped destination (v1.4.1
+// carries the hub and the `taskHubChoiceByVideo` writer), not merely decline to
+// invent one.
 //
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -159,6 +182,15 @@ describe('L5 G-7 invariant 2 — the timeline is visible in Refine with zero nav
     return container.querySelector('.workspace__dock');
   }
 
+  /**
+   * How many Workspace INSTANCES have existed: `project.open` is issued once per
+   * mount (Workspace.tsx:380 via the `[reloadProject]` effect at :387-389), so
+   * this counts mounts. 1 = the editor was built once.
+   */
+  function openCount(): number {
+    return apiRpcMock.mock.calls.filter((call) => call[0] === 'project.open').length;
+  }
+
   it('shows the docked timeline on a first open, with no interstitial and no clicks', async () => {
     await open();
 
@@ -181,6 +213,11 @@ describe('L5 G-7 invariant 2 — the timeline is visible in Refine with zero nav
 
     // (4) ZERO navigation actions — asserted, not asserted-by-inspection.
     expect(clicks).toBe(0);
+
+    // (5) And it was built ONCE: the editor the user sees is the one that
+    //     mounted, not a rebuild. See the dedicated seam case below for the
+    //     player-identity half of this property.
+    expect(openCount()).toBe(1);
   });
 
   it('still lands on the docked timeline when a NAVIGATE-AWAY choice is remembered', async () => {
@@ -197,6 +234,7 @@ describe('L5 G-7 invariant 2 — the timeline is visible in Refine with zero nav
     expect(container.querySelector('.task-hub')).toBeNull();
     expect(dock()).not.toBeNull();
     expect(clicks).toBe(0);
+    expect(openCount()).toBe(1);
   });
 
   // THE SEAM THE LANDING FIX OPENS, PINNED. Seeding 'workspace' means the real
@@ -241,5 +279,93 @@ describe('L5 G-7 invariant 2 — the timeline is visible in Refine with zero nav
       el!.querySelector('.workspace__dock-body[role="tabpanel"] [data-panel="Timeline"]'),
     ).not.toBeNull();
     expect(el!.querySelector('[data-panel="VideoTimeline"]')).toBeNull();
+  });
+
+  /**
+   * Open with the `settings.get` read still PENDING, snapshot the seam, then
+   * release it — the only way to SEE the remount the resume costs.
+   *
+   * A simpler probe does not work and must not be reused: with an
+   * already-resolved `mockResolvedValue`, BOTH mounts land inside the first
+   * `act`, so a snapshot taken after it reports `sameNode: true` for the resume
+   * case too. Measured: that shape returned `{opens: 2, sameNode: true}` — a
+   * detector that reports "the element survived" while the element was in fact
+   * replaced, i.e. one that cannot tell the two hypotheses apart. Splitting the
+   * settle is what makes it discriminate, and the pair of cases below is its
+   * both-states control: same probe, no-choice → preserved, choice → replaced.
+   */
+  async function openAcrossSettle(choice: string | null): Promise<{
+    opensBeforeSettle: number;
+    opensAfterSettle: number;
+    playerBefore: HTMLVideoElement | null;
+    playerAfter: HTMLVideoElement | null;
+  }> {
+    let release: (settings: unknown) => void = () => undefined;
+    rpcMock.mockReset();
+    rpcMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await act(async () => {
+      root.render(<Edit video={video} onBack={() => undefined} />);
+    });
+    const playerBefore = container.querySelector('video');
+    const opensBeforeSettle = openCount();
+    await act(async () => {
+      release(choice === null ? {} : { [HUB_CHOICE_KEY]: { v1: choice } });
+      for (let i = 0; i < 8; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.resolve();
+      }
+    });
+    return {
+      opensBeforeSettle,
+      opensAfterSettle: openCount(),
+      playerBefore,
+      playerAfter: container.querySelector('video'),
+    };
+  }
+
+  it('mounts the editor ONCE on the invariant path — the player survives the settings read', async () => {
+    // THE CONTROL HALF, and a property in its own right: on every path except a
+    // remembered workspace-scoped tab, the async `settings.get` must not disturb
+    // the editor that is already on screen. `<Player>` is rendered UNCONDITIONALLY
+    // inside Workspace (Workspace.tsx:591-597, single top-level return at :554),
+    // so if this path ever acquired a keyed remount the <video> element would be
+    // destroyed and recreated — which is precisely what Workspace.tsx:360-363 and
+    // :588-590 forbid for the SAME video ("NOT a key-remount, which would visibly
+    // restart the element mid-load — the 'shakiness' bug").
+    const seam = await openAcrossSettle(null);
+
+    expect(seam.opensBeforeSettle).toBe(1);
+    expect(seam.opensAfterSettle).toBe(1);
+    expect(seam.playerBefore).not.toBeNull();
+    expect(seam.playerAfter).toBe(seam.playerBefore);
+  });
+
+  it('bounds the remembered-tab resume at ONE remount, and keeps the invariant', async () => {
+    // THE COST OF THE `key`, MEASURED RATHER THAN ASSERTED IN PROSE. Against the
+    // control above this same probe returns opens 1 → 2 and a DIFFERENT <video>
+    // node: the resume tears the Workspace subtree down and rebuilds it, Player
+    // included. That is a real cost and Edit.tsx now enumerates it honestly
+    // instead of pricing it as "one extra project.get" (an RPC that does not
+    // exist — `git grep project\.get -- app/renderer/src` hits only that comment;
+    // Workspace's only rpc call is `project.open`, Workspace.tsx:380).
+    //
+    // The assertion is an UPPER BOUND, deliberately not `toBe(2)`: pinning the
+    // exact count would make this suite go RED the day someone lands the durable
+    // fix (Workspace consuming `initialTab` AFTER mount instead of only in its two
+    // lazy `useState` initializers, Workspace.tsx:254-260/:270-274) — a gate that
+    // punishes fixing the defect it documents. The bound still catches the
+    // regression that matters: a key that flips more than once per open.
+    const seam = await openAcrossSettle('subtitles');
+
+    expect(seam.opensAfterSettle).toBeLessThanOrEqual(2);
+    // And the invariant is not traded away to pay for it.
+    expect(container.querySelector('.task-hub')).toBeNull();
+    expect(dock()).not.toBeNull();
+    expect(clicks).toBe(0);
   });
 });
