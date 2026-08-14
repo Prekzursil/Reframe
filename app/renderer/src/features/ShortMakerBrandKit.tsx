@@ -174,20 +174,20 @@ export function ShortMakerBrandKit({
                   Library.tsx's own comment writes down as forbidden. What is
                   still unconverted house-wide is counted in the file header.
 
-                  WHY THE INLINE WIDTH — a correction, not decoration. Shipped
-                  without it the adoption MEASURED 0.00 x 10 px in real Chromium
-                  and was invisible, where the span it replaced measured
-                  47.14 x 16.50 and this measures 160 x 10. Cause:
-                  `.skeleton-group` is a shrink-to-fit flex item of
+                  THE 0px TRAP — FIXED AT THE COMPONENT, NOT HERE. Shipped bare,
+                  this adoption MEASURED 0.00 x 10 px in real Chromium and was
+                  invisible, where the span it replaced measured 47.14 x 16.50.
+                  Cause: `.skeleton-group` is a shrink-to-fit flex item of
                   `.sm-data-folder-row` whose only in-flow child is an EMPTY span
                   at `width: 100%`, and a percentage against an indefinite width
                   contributes 0 to intrinsic sizing (the label that would have
-                  given it content is `position: absolute`). A rule in
-                  shortmaker-p3.css is the tidier home but that file is another
-                  lane's, and its sibling `max-width: 240px` puts a hard px value
-                  there anyway, so the idiom is the house's either way. The
-                  wrapper is a <div> because <Skeleton /> renders a <div> root,
-                  which a <span> may not contain. Both pinned by the test file.
+                  given it content is `position: absolute`).
+                  This first shipped as an inline `width: 160px` wrapper HERE.
+                  That patched one caller and left the trap armed for the next —
+                  and Skeleton.tsx's own header invites sixteen more adopters into
+                  it. The floor now lives once in the component's own stylesheet
+                  (`.skeleton-group { min-width: 8rem }`, emptyState.css), so the
+                  wrapper is gone and every future adopter is safe by default.
 
                   REACHABILITY, so the impact is not overstated: this branch sits
                   behind TWO gates. `brandOpen` starts false in ShortMaker.tsx and
@@ -222,13 +222,11 @@ export function ShortMakerBrandKit({
                   this tip. That file is another lane's, so this branch must not
                   edit it; it needs a scope grant or a follow-up. */}
               {!dataFolderLoaded ? (
-                <div style={{ width: '160px' }}>
-                  <Skeleton
-                    variant="line"
-                    className="sm-data-folder-loading"
-                    label="Loading data folder"
-                  />
-                </div>
+                <Skeleton
+                  variant="line"
+                  className="sm-data-folder-loading"
+                  label="Loading data folder"
+                />
               ) : dataFolder ? (
                 <span className="sm-data-folder-path" title={dataFolder}>
                   {dataFolder}

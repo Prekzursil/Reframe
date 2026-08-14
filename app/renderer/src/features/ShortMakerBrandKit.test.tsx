@@ -5,6 +5,10 @@
 // unavailable) plus the change button and the pending-restart note.
 
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -131,56 +135,53 @@ describe('<ShortMakerBrandKit />', () => {
     expect(region.textContent).not.toBe('Loading…');
   });
 
-  // MEASURED IN REAL CHROMIUM, not inferred: the adoption above, shipped alone,
-  // computed to 0.00 x 10 px and was INVISIBLE. `.skeleton-group` is a
-  // shrink-to-fit flex item of `.sm-data-folder-row` and its only in-flow child
-  // is an EMPTY span with `width: 100%` (emptyState.css), so the percentage
-  // resolves against an indefinite width and contributes 0 to intrinsic sizing;
-  // the label that would have given it content is `position: absolute`. The bare
-  // span it replaced measured 47.14 x 16.50 px, so the adoption traded a visible
-  // affordance for nothing at all until something carries a DEFINITE width.
-  // (An earlier revision of THIS comment said 54.72 x 14 — a reviewer replica's
-  // number, not a measurement of this tree — and the commit that corrected it in
-  // ShortMakerBrandKit.tsx missed this second occurrence three lines above the
-  // hunk it edited. Corrected here; the verdict never depended on the baseline.)
-  // jsdom has no layout engine, so this test pins the MECHANISM — a definite
-  // width exists on the box that establishes the bar's containing block — not
-  // the pixel count. Deleting the width makes the skeleton invisible again and
-  // no other test in this repo would notice.
-  it('gives the wait skeleton a definite width, so the 100%-wide bar is not 0px', () => {
+  // THE 0px TRAP — now pinned where the FIX lives, not where the workaround did.
+  //
+  // MEASURED IN REAL CHROMIUM: this adoption, shipped bare, computed 0.00 x 10 px and
+  // was INVISIBLE, where the span it replaced measured 47.14 x 16.50. `.skeleton-group`
+  // is a shrink-to-fit flex item of `.sm-data-folder-row` and its only in-flow child is
+  // an EMPTY span at `width: 100%`, so the percentage resolves against an indefinite
+  // width and contributes 0 to intrinsic sizing (the label that would have given it
+  // content is `position: absolute`).
+  //
+  // It was first fixed with an inline `width: 160px` wrapper at THIS call site, and two
+  // tests here pinned that wrapper as the contract — which made the proper stylesheet
+  // fix red-on-arrival for whoever attempted it. The floor now lives once in
+  // emptyState.css (`.skeleton-group { min-width: 8rem }`), so the wrapper is gone and
+  // every future adopter inherits it. These assertions moved with the fix.
+  //
+  // jsdom has no layout engine, so this pins the MECHANISM — a definite floor exists on
+  // the box that establishes the bar's containing block — not the pixel count. Deleting
+  // the rule makes the skeleton invisible again and no other test would notice.
+  it('the shared skeleton group declares a width floor, so a 100%-wide bar is never 0px', () => {
+    const css = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), '../components/emptyState.css'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, ' '); // use-not-mention: prose must not satisfy this
+
+    const body = /(?:^|\})\s*\.skeleton-group\s*\{([^}]*)\}/m.exec(css)?.[1] ?? null;
+    // DETECTOR CONTROL: if the rule is not found, every assertion below is vacuous.
+    expect(body, 'no `.skeleton-group` rule found in emptyState.css').not.toBeNull();
+    expect(body).toContain('display: flex');
+
+    const minWidth = /(?:^|;)\s*min-width\s*:\s*([^;]+)/.exec(body as string)?.[1]?.trim();
+    expect(
+      minWidth,
+      '`.skeleton-group` must declare a min-width: as a flex item it is shrink-to-fit, ' +
+        'so its 100%-wide bars resolve to 0 and the skeleton renders invisible',
+    ).toBeTruthy();
+    // Not a truthy-string check: "0" and "0px" are truthy and would re-ship the bug.
+    expect(Number.parseFloat(minWidth ?? '0')).toBeGreaterThan(0);
+  });
+
+  it('no longer carries a per-call-site inline width workaround', () => {
+    // The complement: proves the fix REPLACED the workaround rather than sitting
+    // beside it. A stray inline width here would mask a regression of the rule above.
     mount({ dataFolderLoaded: false });
     const region = container.querySelector('.sm-data-folder-loading') as HTMLElement;
     const sized = region.closest('[style]') as HTMLElement | null;
-    expect(sized).toBeTruthy();
-    // Not `toBeTruthy()` on the raw string: "0px" is a truthy STRING and would
-    // sail through while re-shipping the exact 0-width bug this pins.
-    expect(Number.parseFloat(sized?.style.width ?? '0')).toBeGreaterThan(0);
-    // The width must sit STRICTLY INSIDE the flex row: a width on some outer page
-    // container would not resolve the bar, and neither would one on the ROW itself
-    // (the shrink-to-fit `.skeleton-group` between them would still contribute 0).
-    // `closest` includes SELF, so the row has to be excluded explicitly — without
-    // that, moving this style onto `.sm-data-folder-row` keeps every assertion here
-    // green while re-shipping the exact 0px bug. Mutation-proved, both states.
     const row = region.closest('.sm-data-folder-row');
-    expect(row).toBeTruthy();
-    expect(sized).not.toBe(row);
-    expect(row?.contains(sized as Node)).toBe(true);
-  });
-
-  // The box carrying that width is a <div>, not a <span>. <Skeleton /> renders a
-  // <div> root, and `div` is flow content, which `span` — phrasing content only —
-  // may not contain. Nothing breaks at runtime (browsers do not reparent inside a
-  // span, and this app is client-rendered Electron with no hydration), but the
-  // invalid nesting was free to avoid; the `display: inline-block` that came with
-  // the span was inert too, since a flex item of `.sm-data-folder-row` is
-  // blockified per CSS Display 3 §2.7. Pinned so the span cannot come back.
-  it('carries the width on a flow-content wrapper, not an invalid span > div', () => {
-    mount({ dataFolderLoaded: false });
-    const region = container.querySelector('.sm-data-folder-loading') as HTMLElement;
-    const sized = region.closest('[style]') as HTMLElement;
-    expect(sized.tagName).toBe('DIV');
-    // No inert display declaration riding along with the width.
-    expect(sized.style.display).toBe('');
+    expect(sized === null || sized === row || !row?.contains(sized)).toBe(true);
   });
 
   it('pins a busy status region whose clipped text names the data folder', () => {
