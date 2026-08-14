@@ -435,11 +435,18 @@ describe('TabBar self-citation contract (claims about this file are machine-chec
    *  below passed identically whether the citation form was in use or every real
    *  citation had been deleted. Excluding the placeholder is what makes that control
    *  able to fail at all.
+   *
+   *  The exclusion is NARROW on purpose: only a capture that is nothing but ellipsis
+   *  and whitespace is dropped. Dropping every name that merely CONTAINS a `…` would
+   *  silently stop checking a real citation, which is the quiet weakening this whole
+   *  guard exists to prevent; a mixed placeholder such as `"… name …"` is instead
+   *  captured and fails LOUDLY against a name that does not exist here. Fail loud,
+   *  never quiet.
    */
   const citedTestNames = (source: string): string[] =>
     [...source.matchAll(/TabBar\.test\.tsx > "([^"]+)"/g)]
       .map((m) => m[1])
-      .filter((name) => !name.includes('…'));
+      .filter((name) => name.replace(/[…\s]/g, '') !== '');
 
   /** Cited names this file does not declare. Comments are stripped first, for the
    *  same use-vs-mention reason the skin contract strips them: a cited test renamed
@@ -483,6 +490,15 @@ describe('TabBar self-citation contract (claims about this file are machine-chec
     // unique, or the assertion below is about a string that no longer exists.
     expect(describing).toHaveLength(1);
     expect(citedTestNames(describing[0])).toEqual([]);
+  });
+
+  it('still checks a real name that merely CONTAINS an ellipsis (fail loud, never quiet)', () => {
+    // The exclusion is deliberately narrow. Dropping every capture that CONTAINS a
+    // `…` would silently stop checking a real citation — the same class of quiet
+    // weakening this guard exists to catch. Only a capture that is nothing but the
+    // placeholder is a mention; a mixed one like `"… name …"` is still captured and
+    // fails loudly against a name that does not exist here.
+    expect(citedTestNames('TabBar.test.tsx > "a real … name"')).toEqual(['a real … name']);
   });
 
   it('does NOT resolve a cited name that survives only in a COMMENT (use, not mention)', () => {
