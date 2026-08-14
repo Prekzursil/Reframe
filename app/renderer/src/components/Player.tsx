@@ -235,6 +235,22 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   // and a redundant same-value seek. The flag fires the stop exactly once per
   // arrival at the out point and re-arms when the head returns inside the window
   // (or the player loops).
+  //
+  // RESIDUAL R11 — PRE-EXISTING on origin/main (this block is byte-identical
+  // there), disclosed here because the transport makes it HARDER to see, not
+  // because this lane caused it: the flag re-arms ONLY when the head comes back
+  // INSIDE the window, so pressing Play while parked exactly ON `w.end` never
+  // re-arms, every later `timeupdate` takes the early-return below, and playback
+  // runs past the out point unbounded. The native bar at least showed that — it
+  // reads the element's real time. The transport's span clamp
+  // (Transport.clampToSpan) pins the thumb AND the readout at the out point, so
+  // it would show a frozen `0:04 / 0:04` while playback continued. Not reachable
+  // by a user today (no production mount passes `transport`), and deliberately
+  // NOT fixed in this lane: the repair is a UX decision — replay from
+  // `w.start`, refuse the Play, or render an explicit out-of-span state — on a
+  // surface no call site uses yet, and it would change behaviour four live
+  // window mounts share today. It MUST be settled before the first mount
+  // migrates, and it is the reason `transport` is still opt-in.
   const stoppedAtEndRef = useRef(false);
 
   // Window mode: position the playhead at the window start once metadata is
@@ -422,10 +438,15 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     // The only producer of a negative rate — Transport's `shuttle()` — sets the
     // rate and starts playback in the same batch. A `!playing` guard used to sit
     // here; once every stop path cleared the rate it became unreachable, and
-    // parking an unreachable branch behind a coverage ignore would be a dodge
-    // rather than a safeguard. The FOUR stop-path tests in Player.test.tsx —
-    // including 'clears the shuttle rate at the WINDOW-END stop' — are what hold
-    // the invariant up.
+    // parking a BEHAVIOURAL branch behind a coverage ignore would be a dodge
+    // rather than a safeguard. The rule is "no ignore on a behavioural branch",
+    // NOT "no ignores": this file carries seven `v8 ignore` pragmas (three
+    // inherited from main, four added with the transport) and every one is an
+    // `if (!video)` / `?? 0` null-narrowing guard that React's ref timing makes
+    // structurally unreachable — a different animal from a branch encoding a
+    // playback rule. The FOUR stop-path tests in Player.test.tsx — including
+    // 'clears the shuttle rate at the WINDOW-END stop' and 'ends a REVERSE
+    // shuttle stopped at the out point' — are what hold the invariant up.
     video.pause();
     const stepSec = Math.abs(rate) * frameSec;
     const timer = setInterval(() => {

@@ -160,6 +160,12 @@ export function Transport({
   const spanStart = clampTime(startTime, total);
   const spanEnd = Math.max(clampTime(endTime ?? total, total), spanStart);
   const spanLength = spanEnd - spanStart;
+  // RESIDUAL R11 (see Player.tsx `stoppedAtEndRef`): `position` is PINNED into
+  // the span, so if the owner ever lets the head run PAST `spanEnd` — which its
+  // pre-existing re-arm hole allows — the thumb and the readout both freeze on
+  // the out point while playback continues, where the native bar showed the
+  // truth. Honest for every in-span position; a known gap for an out-of-span
+  // one, to be settled (here or in the owner) before any mount migrates.
   const position = clampToSpan(currentTime, spanStart, spanEnd);
   // Elapsed WITHIN the span: a 4s candidate reads `0:02 / 0:04`, never the
   // source's `0:42 / 10:00`.
