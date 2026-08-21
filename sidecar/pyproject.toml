@@ -19,7 +19,7 @@ dependencies = [
   # P2 (T2, A6 lesson 5: PINNED). ⚠ human: verify current releases at install
   # time. chatterbox-tts/torch must NOT be added here (isolated env asset only).
   "kokoro-onnx==0.5.0",    # A4: the onnx build — NEVER the torch `kokoro` package
-  "onnxruntime==1.28.0",   # kokoro-onnx backend (or onnxruntime-gpu, same pin)
+  "onnxruntime==1.29.0",   # kokoro-onnx backend (or onnxruntime-gpu, same pin)
   "edge-tts==7.2.8",       # hosted TTS engine (network only at runtime)
   # F3: PRIMARY system-RAM source for the device advisor (cross-platform), with
   # an OS-stdlib fallback (Win32 GlobalMemoryStatusEx / POSIX sysconf) behind the
