@@ -209,6 +209,144 @@
   padding-left: var(--space-5);
 }
 
+/* ---- Scrollshot Markdown ---------------------------------------------------- */
+
+.scrollshot-panel .scrollshot-guide,
+.scrollshot-panel .scrollshot-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.scrollshot-panel .scrollshot-guide {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+.scrollshot-panel .scrollshot-guide p {
+  margin: 0;
+}
+
+.scrollshot-panel .scrollshot-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
+.scrollshot-panel .scrollshot-verdict,
+.scrollshot-panel .scrollshot-review,
+.scrollshot-panel .scrollshot-warnings {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+}
+
+.scrollshot-panel .scrollshot-verdict p,
+.scrollshot-panel .scrollshot-review {
+  margin: var(--space-2) 0 0;
+}
+
+.scrollshot-panel .scrollshot-verdict--done {
+  border-left: 3px solid var(--status-success);
+  background: var(--status-success-soft);
+}
+
+.scrollshot-panel .scrollshot-verdict--review,
+.scrollshot-panel .scrollshot-review,
+.scrollshot-panel .scrollshot-warnings {
+  border-left: 3px solid var(--status-warn);
+  background: var(--status-warn-soft);
+}
+
+.scrollshot-panel .scrollshot-paths {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.scrollshot-panel .scrollshot-path {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.scrollshot-panel .scrollshot-panorama-list ul,
+.scrollshot-panel .scrollshot-warnings {
+  padding-left: var(--space-5);
+}
+
+/* ---- Scrollshot Markdown ---------------------------------------------------- */
+
+.scrollshot-panel .scrollshot-guide,
+.scrollshot-panel .scrollshot-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.scrollshot-panel .scrollshot-guide {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+.scrollshot-panel .scrollshot-guide p {
+  margin: 0;
+}
+
+.scrollshot-panel .scrollshot-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
+.scrollshot-panel .scrollshot-verdict,
+.scrollshot-panel .scrollshot-review,
+.scrollshot-panel .scrollshot-warnings {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+}
+
+.scrollshot-panel .scrollshot-verdict p,
+.scrollshot-panel .scrollshot-review {
+  margin: var(--space-2) 0 0;
+}
+
+.scrollshot-panel .scrollshot-verdict--done {
+  border-left: 3px solid var(--status-success);
+  background: var(--status-success-soft);
+}
+
+.scrollshot-panel .scrollshot-verdict--review,
+.scrollshot-panel .scrollshot-review,
+.scrollshot-panel .scrollshot-warnings {
+  border-left: 3px solid var(--status-warn);
+  background: var(--status-warn-soft);
+}
+
+.scrollshot-panel .scrollshot-paths {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.scrollshot-panel .scrollshot-path {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.scrollshot-panel .scrollshot-panorama-list ul,
+.scrollshot-panel .scrollshot-warnings {
+  padding-left: var(--space-5);
+}
+
 /* ---- Dub ---------------------------------------------------------------------- */
 
 .dub-panel .dub-pickers {

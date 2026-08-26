@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+
 // jsdom does not implement HTMLMediaElement playback; the real <Player> the
 // Workspace mounts touches load()/play()/pause() (and reads error). Back them so
 // the proxy-swap reload (video.load() via reloadToken) does not warn/throw.
@@ -75,6 +77,7 @@ vi.mock('../features/NleExport', () => stubPanel('NleExport'));
 vi.mock('../features/Diarize', () => stubPanel('Diarize'));
 vi.mock('../features/Refine', () => stubPanel('Refine'));
 vi.mock('../features/Stabilize', () => stubPanel('Stabilize'));
+vi.mock('../features/ScrollshotMarkdown', () => stubPanel('ScrollshotMarkdown'));
 vi.mock('../features/TranscriptEditor', () => stubPanel('TranscriptEditor'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
@@ -277,6 +280,7 @@ describe('Workspace', () => {
       'Refine',
       'Tracks',
       'Convert',
+      'Scrollshot MD',
       'Short-maker',
       'Fix framing',
       'Caption cues',
@@ -291,7 +295,7 @@ describe('Workspace', () => {
       'Recipes',
       'Assets',
     ]);
-    expect(WORKSPACE_TABS).toHaveLength(21);
+    expect(WORKSPACE_TABS).toHaveLength(22);
   });
 
   // The naming invariant, pinned per-id so it survives a panel being inserted or
@@ -333,6 +337,13 @@ describe('Workspace', () => {
     expect(inspectorTabIds()).toEqual([...WORKSPACE_INSPECTOR_SECTIONS.project]);
   });
 
+  it('opens the scrollshot markdown panel from the project inspector', async () => {
+    await render();
+    await clickEl(tabEl('scrollshot'));
+    expect(tabEl('scrollshot')?.getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelector('[data-panel="ScrollshotMarkdown"]')).not.toBeNull();
+  });
+
   it('mounts a feature panel slot for the default (project) selection', async () => {
     await render();
     expect(container.querySelector('.workspace__body')).not.toBeNull();
@@ -355,6 +366,13 @@ describe('Workspace', () => {
     expect(tabEl('subtitles')?.getAttribute('aria-selected')).toBe('true');
     expect(container.querySelector('[data-panel="Subtitles"]')).not.toBeNull();
     expect(container.querySelector('[data-panel="Timeline"]')).not.toBeNull();
+  });
+
+  it('opens the program-audio lane for an audio-context deep-link', async () => {
+    await render({ initialTab: 'dub' });
+    expect(selectionLabel()).toBe('Program audio');
+    expect(container.querySelector('[data-panel="Dub"]')).not.toBeNull();
+    expect(container.querySelector('[data-role="program-audio"]')).not.toBeNull();
   });
 
   it('ignores an unrecognised deep-link rather than rendering an empty inspector', async () => {
@@ -642,7 +660,7 @@ describe('Workspace', () => {
 // owns the rail). Each is a real test, not a claim.
 // ---------------------------------------------------------------------------
 
-describe('L5 invariant: all 21 panels stay reachable (reconcile, never drop)', () => {
+describe('L5 invariant: all 22 panels stay reachable (reconcile, never drop)', () => {
   // INVARIANT 5, the mechanical half. A reorganisation cannot silently delete a
   // feature: every registry id must have exactly one home, and every home entry
   // must name a real registry id (so the mapping cannot drift into ghosts either).
@@ -658,7 +676,7 @@ describe('L5 invariant: all 21 panels stay reachable (reconcile, never drop)', (
       ...Object.keys(WORKSPACE_DOCK_PANELS),
       ...WORKSPACE_PANELS_ELSEWHERE,
     ];
-    expect(claimed).toHaveLength(21);
+    expect(claimed).toHaveLength(22);
     expect([...new Set(claimed)].sort()).toEqual(WORKSPACE_TABS.map((t) => t.id).sort());
   });
 
@@ -682,6 +700,7 @@ describe('L5 invariant: all 21 panels stay reachable (reconcile, never drop)', (
       'refine',
       'recipes',
       'convert',
+      'scrollshot',
       'nle',
       'tracks',
       'assets',
@@ -913,7 +932,7 @@ describe('L5 invariant: navigation cannot overflow the fixed 1280px window', () 
     const painted = Array.from(container.querySelectorAll('.tab')).map((el) =>
       el.getAttribute('data-tab-id'),
     );
-    // 12 = 3 dock lanes + the 9 project sections. App.tsx paints the 2 REFINE_MODES
+    // 13 = 3 dock lanes + the 10 project sections. App.tsx paints the 2 REFINE_MODES
     // tabs (App.tsx:141-144) around this view on the Refine/editor route. RESCOPED in
     // GRIND round 3: this comment used to say "App.test.tsx owns that list", which was
     // FALSE as a coverage claim — no assertion pinned REFINE_MODES anywhere, so a third
@@ -924,7 +943,7 @@ describe('L5 invariant: navigation cannot overflow the fixed 1280px window', () 
     // not the 21 total / 16 visible it still hardcodes, and nothing is collapsed now
     // so total and visible are the same number. Those two lines are BROKEN by this
     // branch and are outside this lane's file scope: see the PR's scope-escape note.
-    expect(painted).toHaveLength(12);
+    expect(painted).toHaveLength(13);
     expect(painted).toEqual([
       ...WORKSPACE_DOCK_LANES.map((lane) => lane.id),
       ...WORKSPACE_INSPECTOR_SECTIONS.project,

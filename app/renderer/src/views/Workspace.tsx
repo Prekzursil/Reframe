@@ -67,6 +67,7 @@ const Diarize = lazy(() => import('../features/Diarize'));
 const Refine = lazy(() => import('../features/Refine'));
 // v1.5 expose-engines: per-video camera-shake removal.
 const Stabilize = lazy(() => import('../features/Stabilize'));
+const ScrollshotMarkdown = lazy(() => import('../features/ScrollshotMarkdown'));
 // v1.5 flagship #2: transcript-native editing (strike a word -> the video cuts).
 const TranscriptEditor = lazy(() => import('../features/TranscriptEditor'));
 const Recipes = lazy(() => import('../features/Recipes'));
@@ -112,6 +113,7 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'refine', label: 'Refine' },
   { id: 'tracks', label: 'Tracks' },
   { id: 'convert', label: 'Convert' },
+  { id: 'scrollshot', label: 'Scrollshot MD' },
   { id: 'shortmaker', label: 'Short-maker' },
   { id: 'reframeFix', label: 'Fix framing' },
   // WORK ITEM 6 — "Subtitle timeline" vs "Video timeline" were two DIFFERENT
@@ -162,6 +164,7 @@ export const WORKSPACE_INSPECTOR_SECTIONS: Record<InspectorContext, readonly str
     'refine',
     'recipes',
     'convert',
+    'scrollshot',
     'nle',
     'tracks',
     'assets',
@@ -489,6 +492,8 @@ export function Workspace({
         return <BrollPanel videoId={video.id} />;
       case 'stabilize':
         return <Stabilize videoId={video.id} />;
+      case 'scrollshot':
+        return <ScrollshotMarkdown videoId={video.id} title={video.title} />;
       case 'gaze':
         // No extra props: `gaze.run` accepts only {videoId|path, strength,
         // likeness*} (`gaze.py:619-637`), and the panel owns the strength control

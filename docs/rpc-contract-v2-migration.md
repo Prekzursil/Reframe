@@ -3,7 +3,7 @@
 > **Status:** ACTIVE
 
 Companion to [`rpc-contract-v2.md`](./rpc-contract-v2.md). This is the incremental,
-parity-tested, CI-gated path from "5-method POC" to "all 169 live-registered methods
+parity-tested, CI-gated path from "5-method POC" to "all 170 live-registered methods
 generated", with the 100%-coverage gate green at **every** commit.
 
 > **The surface size is measured, not remembered.** This plan previously said `123`

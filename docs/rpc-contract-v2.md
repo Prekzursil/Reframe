@@ -9,7 +9,7 @@ Migration plan: [`rpc-contract-v2-migration.md`](./rpc-contract-v2-migration.md)
 
 ## 1. The problem — one contract, hand-mirrored in 7 places that drift
 
-Reframe's JSON-RPC contract (169 live-registered methods) has **no single source of
+Reframe's JSON-RPC contract (170 live-registered methods) has **no single source of
 truth**. The same method name, its params, its result, and its "needs a provider
 key" flag are re-typed by hand across at least seven surfaces, and nothing keeps
 them in sync:

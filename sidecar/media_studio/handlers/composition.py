@@ -561,12 +561,23 @@ def register_all(
     from ..features import diarize as _diarize  # local: import-light
     from ..features import health as _health  # local: import-light
     from ..features import recipes as _recipes  # local: import-light
+    from ..features import scrollshot_markdown as _scrollshot_markdown  # local: import-light
 
     # system.health (feature 1): the single "is my setup OK?" diagnostic. Reads
     # the same settings + tools_resolver chains the rest of the sidecar uses.
     _health.register(
         settings_provider=svc.settings.get,
         root=svc.data_dir,
+        register_fn=reg,
+    )
+
+    # scrollshot.exportMarkdown: convert a scrolling screen-recording clip into
+    # a globally-aligned evidence bundle with a Markdown companion under
+    # exports/scrollshots.
+    _scrollshot_markdown.register(
+        resolver=svc._resolve_video_path,
+        title_resolver=svc._video_title,
+        out_root=svc.exports_dir / "scrollshots",
         register_fn=reg,
     )
 
