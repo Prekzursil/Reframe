@@ -18,9 +18,9 @@ dependencies = [
   "httpx>=0.27",           # HTTP client for the llama.cpp OpenAI-compatible server (§7)
   # P2 (T2, A6 lesson 5: PINNED). ⚠ human: verify current releases at install
   # time. chatterbox-tts/torch must NOT be added here (isolated env asset only).
-  "kokoro-onnx==0.5.0",    # A4: the onnx build — NEVER the torch `kokoro` package
-  "onnxruntime==1.28.0",   # kokoro-onnx backend (or onnxruntime-gpu, same pin)
-  "edge-tts==7.2.8",       # hosted TTS engine (network only at runtime)
+  "kokoro-onnx==0.6.1",    # A4: the onnx build — NEVER the torch `kokoro` package
+  "onnxruntime==1.31.0",   # kokoro-onnx backend (or onnxruntime-gpu, same pin)
+  "edge-tts==7.3.1",       # hosted TTS engine (network only at runtime)
   # F3: PRIMARY system-RAM source for the device advisor (cross-platform), with
   # an OS-stdlib fallback (Win32 GlobalMemoryStatusEx / POSIX sysconf) behind the
   # RamProbe seam. PINNED (A6 lesson 5) so the probe number is reproducible.
@@ -59,7 +59,7 @@ reframe-gpu = [
   "safetensors==0.8.0",           # verify-before-load safetensors weight reader (B4/I2)
   "opencv-python-headless==4.14.0.94",  # frame I/O + face-crop ops (headless: no GUI libs)
   "python_speech_features==0.6",  # MFCC features for the ASD audio frontend
-  "scipy==1.18.0",                # face-track interpolation + median filter + wav read
+  "scipy==1.18.1",                # face-track interpolation + median filter + wav read
   # DIARIZE stage (VAD + ECAPA-TDNN) — the speaker turns the director fuses with
   # visual ASD. Uses the ``speechbrain.inference`` API (requires >= 1.0.0). PINNED to
   # 1.1.0: loads ``speechbrain/vad-crdnn-libriparty`` + ``spkrec-ecapa-voxceleb``, and
@@ -70,7 +70,7 @@ reframe-gpu = [
   # bare ``revision=``). See ``pinned_fetch_kwargs``.
   #
   # HISTORY — this comment used to say "PINNED to 1.0.3 ... 1.1.0 is DELIBERATELY
-  # AVOIDED", six lines above a line that reads ``speechbrain==1.1.0``. The prose was
+  # AVOIDED", six lines above a line that reads ``speechbrain==1.1.1``. The prose was
   # the stale half: the codebase was later adapted TO 1.1.0 (the FetchConfig probe and
   # the two-shape ``pinned_fetch_kwargs``) and the note was never updated, leaving the
   # file contradicting itself and three docs repeating the dead value.
@@ -84,7 +84,7 @@ reframe-gpu = [
   #
   # speechbrain missing at runtime still fails LOUD (typed
   # ``DiarizeBackendUnavailableError``), never a silent ModuleNotFoundError.
-  "speechbrain==1.1.0",
+  "speechbrain==1.1.1",
   # speechbrain 1.0.x calls ``hf_hub_download(use_auth_token=...)``, an argument
   # REMOVED in huggingface_hub 1.0. Cap below 1.0 so the diarize models actually
   # fetch/load (validated at 0.36.2, the newest 0.x). huggingface_hub is otherwise a
