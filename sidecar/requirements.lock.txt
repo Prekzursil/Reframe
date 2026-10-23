@@ -20,7 +20,7 @@ babel==2.18.0
     # via csvw
 blake3==1.0.9
     # via media-studio-sidecar
-certifi==2026.7.22
+certifi==2026.10.19
     # via
     #   edge-tts
     #   httpcore
