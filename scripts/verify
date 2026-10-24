@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Canonical local verification for Prekzursil/Reframe.
+#
+# Runs every lane of the QZP lean gate with quality-zero-platform's preflight
+# at the EXACT commit that .github/workflows/quality.yml pins, so a local pass
+# means what a CI pass means. Managed by quality-zero-platform
+# (docs/FLEET-BASELINE.md); arguments are passed through to the preflight.
+#
+#   bash scripts/verify
+#   QZP_DIR=/path/to/a/dedicated/qzp/clone bash scripts/verify
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+# the pin of whichever workflow calls the lean gate (quality.yml by convention)
+pin="$(grep -rhE '^[^#]*uses:.*reusable-quality\.yml@[0-9a-f]{40}' "$root/.github/workflows" 2>/dev/null | grep -oE 'reusable-quality\.yml@[0-9a-f]{40}' | head -n 1 | cut -d@ -f2 || true)"
+if [ -z "$pin" ]; then
+  echo "verify: no workflow in .github/workflows pins reusable-quality.yml to a 40-hex commit; wire the lean gate first." >&2
+  exit 2
+fi
+
+# A dedicated clone (never your working copy of QZP): the checkout below moves its HEAD.
+qzp="${QZP_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/qzp-verify/quality-zero-platform}"
+if [ ! -d "$qzp/.git" ]; then
+  git clone --quiet https://github.com/Prekzursil/quality-zero-platform.git "$qzp"
+fi
+git -C "$qzp" fetch --quiet origin "$pin"
+git -C "$qzp" -c advice.detachedHead=false checkout --quiet --detach "$pin"
+
+cd "$root"
+exec bash "$qzp/scripts/quality/preflight.sh" "$@"
