@@ -51,7 +51,7 @@ espeakng-loader==0.2.4
     # via kokoro-onnx
 faster-whisper==1.2.1
     # via media-studio-sidecar (sidecar/pyproject.toml)
-filelock==3.32.2
+filelock==4.2.1
     # via huggingface-hub
 flatbuffers==25.12.19
     # via onnxruntime
