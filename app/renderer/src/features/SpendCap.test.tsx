@@ -69,7 +69,9 @@ function makeApi(over: Overrides = {}): {
   spend: ReturnType<typeof vi.fn>;
 } {
   const spend = vi.fn(over.spend ?? (() => Promise.resolve(spendInfo())));
-  const set = over.set ?? vi.fn<(values: Record<string, unknown>) => Promise<unknown>>(() => Promise.resolve({}));
+  const set =
+    over.set ??
+    vi.fn<(values: Record<string, unknown>) => Promise<unknown>>(() => Promise.resolve({}));
   return { api: { providers: { spend }, settings: { set } }, set, spend };
 }
 

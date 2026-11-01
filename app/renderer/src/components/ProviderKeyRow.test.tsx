@@ -45,9 +45,19 @@ interface Handlers {
 function makeHandlers(over: Partial<Handlers> = {}): Handlers {
   return {
     onRemove: over.onRemove ?? vi.fn<(providerId: string, index: number) => void>(),
-    onReveal: over.onReveal ?? vi.fn<(providerId: string, index: number) => Promise<string>>(() => Promise.resolve(SECRET)),
-    onRevalidate: over.onRevalidate ?? vi.fn<(providerId: string, index: number) => Promise<KeyCheckResult>>(() => Promise.resolve<KeyCheckResult>({ ok: true })),
-    onReplace: over.onReplace ?? vi.fn<(providerId: string, index: number, newKey: string) => Promise<KeyCheckResult>>(() => Promise.resolve<KeyCheckResult>({ ok: true })),
+    onReveal:
+      over.onReveal ??
+      vi.fn<(providerId: string, index: number) => Promise<string>>(() => Promise.resolve(SECRET)),
+    onRevalidate:
+      over.onRevalidate ??
+      vi.fn<(providerId: string, index: number) => Promise<KeyCheckResult>>(() =>
+        Promise.resolve<KeyCheckResult>({ ok: true }),
+      ),
+    onReplace:
+      over.onReplace ??
+      vi.fn<(providerId: string, index: number, newKey: string) => Promise<KeyCheckResult>>(() =>
+        Promise.resolve<KeyCheckResult>({ ok: true }),
+      ),
   };
 }
 

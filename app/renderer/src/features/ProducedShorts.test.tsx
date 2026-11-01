@@ -102,7 +102,12 @@ describe('<ProducedShorts />', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    s = { onPlay: vi.fn<(path: string) => void>(), onOpenFolder: vi.fn<(path: string) => void>(), onReexport: vi.fn<(path: string) => void>(), onDelete: vi.fn<(path: string) => void>() };
+    s = {
+      onPlay: vi.fn<(path: string) => void>(),
+      onOpenFolder: vi.fn<(path: string) => void>(),
+      onReexport: vi.fn<(path: string) => void>(),
+      onDelete: vi.fn<(path: string) => void>(),
+    };
   });
 
   afterEach(() => {

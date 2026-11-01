@@ -22,9 +22,11 @@ const AUDIO_TRACKS: AudioTrackOption[] = [
 
 interface Spies {
   setPrompt: Mock<(value: string) => void>;
-  setControl: Mock<<K extends keyof ShortMakerControlsState>(key: K, value: ShortMakerControlsState[K]) => void>;
+  setControl: Mock<
+    <K extends keyof ShortMakerControlsState>(key: K, value: ShortMakerControlsState[K]) => void
+  >;
   setAudioTrackId: Mock<(value: string) => void>;
-  applyPlatformPreset: Mock<(presetId: "tiktok" | "reels" | "shorts") => void>;
+  applyPlatformPreset: Mock<(presetId: 'tiktok' | 'reels' | 'shorts') => void>;
   onSubmit: Mock<() => void>;
   onBatch: Mock<() => void>;
   onCancel: Mock<() => void>;
@@ -41,9 +43,15 @@ describe('<ShortMakerControls />', () => {
     root = createRoot(container);
     spies = {
       setPrompt: vi.fn<(value: string) => void>(),
-      setControl: vi.fn<<K extends keyof ShortMakerControlsState>(key: K, value: ShortMakerControlsState[K]) => void>(),
+      setControl:
+        vi.fn<
+          <K extends keyof ShortMakerControlsState>(
+            key: K,
+            value: ShortMakerControlsState[K],
+          ) => void
+        >(),
       setAudioTrackId: vi.fn<(value: string) => void>(),
-      applyPlatformPreset: vi.fn<(presetId: "tiktok" | "reels" | "shorts") => void>(),
+      applyPlatformPreset: vi.fn<(presetId: 'tiktok' | 'reels' | 'shorts') => void>(),
       onSubmit: vi.fn<() => void>(),
       onBatch: vi.fn<() => void>(),
       onCancel: vi.fn<() => void>(),

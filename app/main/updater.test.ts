@@ -65,7 +65,7 @@ function makeAutoUpdater(over: Partial<AutoUpdaterLike> = {}): {
   return { autoUpdater, emit, checkForUpdates, downloadUpdate, quitAndInstall };
 }
 
-const okVerify = (): (candidate: DownloadedUpdate) => Promise<UpdateVerifyResult> =>
+const okVerify = (): ((candidate: DownloadedUpdate) => Promise<UpdateVerifyResult>) =>
   vi.fn(async (_c: DownloadedUpdate): Promise<UpdateVerifyResult> => ({ ok: true }));
 
 /** Wire registerUpdater with a fake autoUpdater + verifier; return the moving parts. */

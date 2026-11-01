@@ -51,7 +51,8 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  onRerender = vi.fn<(shotIndices: readonly number[], overrides: readonly ShotOverride[]) => void>();
+  onRerender =
+    vi.fn<(shotIndices: readonly number[], overrides: readonly ShotOverride[]) => void>();
 });
 
 afterEach(async () => {
