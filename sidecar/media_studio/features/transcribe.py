@@ -198,7 +198,11 @@ def resolve_model_source(
             clean_for_log(model),
         )
         return model
-    log.info("resolved whisper model %r to pinned local snapshot %s", clean_for_log(model), snapshot)
+    log.info(
+        "resolved whisper model %r to pinned local snapshot %s",
+        clean_for_log(model),
+        clean_for_log(snapshot),
+    )
     return snapshot
 
 
