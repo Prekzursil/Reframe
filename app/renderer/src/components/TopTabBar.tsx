@@ -74,7 +74,7 @@ export function TopTabBar({
     // The ref is always populated for a rendered tab; the guard is a runtime
     // safety net only (e.g. a tab removed mid-keypress).
     const el = btnRefs.current[next.id];
-    /* v8 ignore next -- el is always set for a rendered tab. */
+    /* v8 ignore next -- el is always set for a rendered tab. -- @preserve */
     if (el) el.focus();
   };
 

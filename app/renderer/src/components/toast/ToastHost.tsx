@@ -66,7 +66,7 @@ export function ToastHost({ container }: ToastHostProps = {}): React.ReactElemen
   if (!api) return null;
   // document is always defined in the Electron renderer (and in jsdom under test),
   // so the SSR-style `typeof document` guard's false arm is unreachable here.
-  /* v8 ignore next */
+  /* v8 ignore next -- @preserve */
   const target = container ?? (typeof document !== 'undefined' ? document.body : null);
   if (!target) return null;
   return createPortal(

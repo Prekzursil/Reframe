@@ -266,7 +266,7 @@ export function Settings({ initialSection }: SettingsProps): React.ReactElement 
 
   // `active` is always a known section id, so `find` always resolves; the
   // fallback satisfies the `T | undefined` return type only.
-  /* v8 ignore next -- find always resolves for a known active id. */
+  /* v8 ignore next -- find always resolves for a known active id. -- @preserve */
   const current = SETTINGS_SECTIONS.find((s) => s.id === active) ?? SETTINGS_SECTIONS[0];
 
   // C1 (docs/plans/v1.5/uiux-qol-audit-2026-08.md §5) — Settings LANDED SCROLLED,

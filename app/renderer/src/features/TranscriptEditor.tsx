@@ -150,7 +150,7 @@ export function TranscriptEditor({ videoId, api }: TranscriptEditorProps): React
 
   const preview = useCallback(async (): Promise<void> => {
     // defensive: the button is disabled while a preview is in flight.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (previewing) return;
     setPreviewing(true);
     setError('');
@@ -166,7 +166,7 @@ export function TranscriptEditor({ videoId, api }: TranscriptEditorProps): React
 
   const apply = useCallback(async (): Promise<void> => {
     // defensive: Apply is disabled until a plan exists and while a job runs.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (applying || !plan) return;
     setApplying(true);
     setError('');
@@ -195,7 +195,7 @@ export function TranscriptEditor({ videoId, api }: TranscriptEditorProps): React
 
   const undo = useCallback(async (): Promise<void> => {
     // defensive: Undo renders disabled until an edit has been applied.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!editId) return;
     setError('');
     try {

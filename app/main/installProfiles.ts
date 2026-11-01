@@ -198,7 +198,7 @@ export function resolveInstallChoice(
     const meta = BUNDLE_BY_ID.get(id);
     // Unreachable: `selected` only holds validated ids, but fail loud rather than
     // silently drop assets if the bundle table and id list ever drift.
-    /* v8 ignore next 3 -- defensive: validated ids are always in the table */
+    /* v8 ignore next 3 -- defensive: validated ids are always in the table -- @preserve */
     if (!meta) {
       throw new InstallProfileError(`bundle has no asset mapping: ${id}`);
     }

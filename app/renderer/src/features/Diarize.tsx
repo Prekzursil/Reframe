@@ -66,7 +66,7 @@ export function Diarize({ videoId, api }: DiarizeProps): React.ReactElement {
   const run = useCallback(async (): Promise<void> => {
     // defensive re-entrancy guard: the trigger button is `disabled={busy}`, so a
     // second run cannot be dispatched via UI while one is in flight.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (busy) return;
     setBusy(true);
     setError('');
@@ -96,7 +96,7 @@ export function Diarize({ videoId, api }: DiarizeProps): React.ReactElement {
   const cancel = useCallback(async (): Promise<void> => {
     // defensive: the Cancel button renders only while `busy && jobId`, so cancel
     // is never invoked with a null jobId via UI.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });

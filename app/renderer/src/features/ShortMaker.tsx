@@ -258,7 +258,7 @@ export function ShortMaker({
   useEffect(() => {
     // resolvedApi is always present (prop or window.api) and exposes onProgress,
     // so this guard is defensive against a malformed bridge.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi || typeof resolvedApi.onProgress !== 'function') return;
     const off = resolvedApi.onProgress((p) => {
       const active = activeJobRef.current;
@@ -328,7 +328,7 @@ export function ShortMaker({
   // ---- taste profile (P3-D): populate the footer from feedback.stats -------
   useEffect(() => {
     // resolvedApi is always present; defensive guard for a missing bridge.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi) return undefined;
     let alive = true;
     Promise.resolve(resolvedApi.rpc<{ labels?: unknown; calibrated?: unknown }>('feedback.stats'))
@@ -355,7 +355,7 @@ export function ShortMaker({
   // readBrandSettings. A failure leaves the empty kit rather than blocking.
   useEffect(() => {
     // resolvedApi is always present; defensive guard for a missing bridge.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi) return undefined;
     let alive = true;
     Promise.resolve(resolvedApi.rpc<Record<string, unknown>>('settings.get'))
@@ -566,7 +566,7 @@ export function ShortMaker({
   // ---- select / regenerate ------------------------------------------------
   const runSelect = useCallback(async () => {
     // resolvedApi is always present; the submit button is disabled while busy.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi || busy) return;
     // The video this run is FOR. Every settle-time write below is a factual claim
     // about THIS id, so each is gated on the selection still being it when the job
@@ -712,11 +712,11 @@ export function ShortMaker({
   // ---- export (only explicitly-approved; nothing auto-exports) ------------
   const runExport = useCallback(async () => {
     // resolvedApi is always present; the export button is disabled while busy.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi || busy) return;
     const ids = approvedIds(items);
     // The export button is also disabled with 0 approved, so this guard is defensive.
-    /* v8 ignore next 4 */
+    /* v8 ignore next 4 -- @preserve */
     if (ids.length === 0) {
       setError('Approve at least one clip before exporting.');
       return;
@@ -828,7 +828,7 @@ export function ShortMaker({
   // inspect/adjust afterwards; nothing is destructive.
   const runBatch = useCallback(async () => {
     // resolvedApi/videoId are always present; the batch button is disabled while busy.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi || busy || !videoId) return;
     // See `runSelect` above: the video this batch is a receipt FOR.
     const startedFor = videoId;
@@ -971,7 +971,7 @@ export function ShortMaker({
     // reachable branch behind an unreachable one; it is covered by its own test now.
     if (!jobId) return;
     // resolvedApi is always present (prop or window.api); defensive guard.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi) return;
     try {
       await resolvedApi.rpc('job.cancel', { jobId });

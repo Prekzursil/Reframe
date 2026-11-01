@@ -367,7 +367,7 @@ export function Gaze({ videoId, api, c2pa = C2PA_EXPORT_STATUS }: GazeProps): Re
 
   const run = useCallback(async (): Promise<void> => {
     // Defensive: the button is disabled unless `canRun` and not already running.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (running || !canRun) return;
     // The video this run belongs to, frozen at dispatch. `gaze.run` is a DEFERRED
     // job, so the reset effect above can fire while we are still awaiting
@@ -432,7 +432,7 @@ export function Gaze({ videoId, api, c2pa = C2PA_EXPORT_STATUS }: GazeProps): Re
 
   const cancel = useCallback(async (): Promise<void> => {
     // Defensive: Cancel renders only while `running && jobId`.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });
