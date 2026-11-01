@@ -65,20 +65,20 @@ function makeAutoUpdater(over: Partial<AutoUpdaterLike> = {}): {
   return { autoUpdater, emit, checkForUpdates, downloadUpdate, quitAndInstall };
 }
 
-const okVerify = (): ReturnType<typeof vi.fn> =>
+const okVerify = (): (candidate: DownloadedUpdate) => Promise<UpdateVerifyResult> =>
   vi.fn(async (_c: DownloadedUpdate): Promise<UpdateVerifyResult> => ({ ok: true }));
 
 /** Wire registerUpdater with a fake autoUpdater + verifier; return the moving parts. */
 function setup(
   opts: {
     autoUpdater?: ReturnType<typeof makeAutoUpdater>;
-    verifyUpdate?: ReturnType<typeof vi.fn>;
+    verifyUpdate?: (candidate: DownloadedUpdate) => Promise<UpdateVerifyResult>;
     log?: (message: string) => void;
   } = {},
 ): {
   au: ReturnType<typeof makeAutoUpdater>;
   broadcast: ReturnType<typeof vi.fn>;
-  verifyUpdate: ReturnType<typeof vi.fn>;
+  verifyUpdate: (candidate: DownloadedUpdate) => Promise<UpdateVerifyResult>;
   handle: ReturnType<typeof registerUpdater>;
 } {
   const au = opts.autoUpdater ?? makeAutoUpdater();

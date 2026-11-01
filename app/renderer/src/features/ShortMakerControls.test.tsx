@@ -4,7 +4,7 @@
 // the audio-track option rendering, so each callback prop is exercised.
 
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -21,13 +21,13 @@ const AUDIO_TRACKS: AudioTrackOption[] = [
 ];
 
 interface Spies {
-  setPrompt: ReturnType<typeof vi.fn>;
-  setControl: ReturnType<typeof vi.fn>;
-  setAudioTrackId: ReturnType<typeof vi.fn>;
-  applyPlatformPreset: ReturnType<typeof vi.fn>;
-  onSubmit: ReturnType<typeof vi.fn>;
-  onBatch: ReturnType<typeof vi.fn>;
-  onCancel: ReturnType<typeof vi.fn>;
+  setPrompt: Mock<(value: string) => void>;
+  setControl: Mock<<K extends keyof ShortMakerControlsState>(key: K, value: ShortMakerControlsState[K]) => void>;
+  setAudioTrackId: Mock<(value: string) => void>;
+  applyPlatformPreset: Mock<(presetId: "tiktok" | "reels" | "shorts") => void>;
+  onSubmit: Mock<() => void>;
+  onBatch: Mock<() => void>;
+  onCancel: Mock<() => void>;
 }
 
 describe('<ShortMakerControls />', () => {
@@ -40,13 +40,13 @@ describe('<ShortMakerControls />', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     spies = {
-      setPrompt: vi.fn(),
-      setControl: vi.fn(),
-      setAudioTrackId: vi.fn(),
-      applyPlatformPreset: vi.fn(),
-      onSubmit: vi.fn(),
-      onBatch: vi.fn(),
-      onCancel: vi.fn(),
+      setPrompt: vi.fn<(value: string) => void>(),
+      setControl: vi.fn<<K extends keyof ShortMakerControlsState>(key: K, value: ShortMakerControlsState[K]) => void>(),
+      setAudioTrackId: vi.fn<(value: string) => void>(),
+      applyPlatformPreset: vi.fn<(presetId: "tiktok" | "reels" | "shorts") => void>(),
+      onSubmit: vi.fn<() => void>(),
+      onBatch: vi.fn<() => void>(),
+      onCancel: vi.fn<() => void>(),
     };
   });
 

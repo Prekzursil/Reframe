@@ -6,14 +6,14 @@
 // can ever send them to `shortmaker.export {reframeOverrides}`).
 
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import { ReframeOverridePanel } from './ReframeOverridePanel';
-import type { ShotPlan } from '../lib/reframeOverride';
+import type { ShotOverride, ShotPlan } from '../lib/reframeOverride';
 
 function planFixture(): ShotPlan {
   return {
@@ -45,13 +45,13 @@ function planFixture(): ShotPlan {
 
 let container: HTMLDivElement;
 let root: Root;
-let onRerender: ReturnType<typeof vi.fn>;
+let onRerender: Mock<(shotIndices: readonly number[], overrides: readonly ShotOverride[]) => void>;
 
 beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  onRerender = vi.fn();
+  onRerender = vi.fn<(shotIndices: readonly number[], overrides: readonly ShotOverride[]) => void>();
 });
 
 afterEach(async () => {

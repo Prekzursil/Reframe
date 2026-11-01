@@ -5,7 +5,7 @@
 // inline <video> Player), and every card-action callback.
 
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, type Mock } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -92,17 +92,17 @@ describe('<ProducedShorts />', () => {
   let container: HTMLDivElement;
   let root: Root;
   let s: {
-    onPlay: ReturnType<typeof vi.fn>;
-    onOpenFolder: ReturnType<typeof vi.fn>;
-    onReexport: ReturnType<typeof vi.fn>;
-    onDelete: ReturnType<typeof vi.fn>;
+    onPlay: Mock<(path: string) => void>;
+    onOpenFolder: Mock<(path: string) => void>;
+    onReexport: Mock<(path: string) => void>;
+    onDelete: Mock<(path: string) => void>;
   };
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    s = { onPlay: vi.fn(), onOpenFolder: vi.fn(), onReexport: vi.fn(), onDelete: vi.fn() };
+    s = { onPlay: vi.fn<(path: string) => void>(), onOpenFolder: vi.fn<(path: string) => void>(), onReexport: vi.fn<(path: string) => void>(), onDelete: vi.fn<(path: string) => void>() };
   });
 
   afterEach(() => {

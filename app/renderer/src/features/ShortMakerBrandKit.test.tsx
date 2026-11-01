@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -19,19 +19,19 @@ import { EMPTY_BRAND_SETTINGS, type BrandSettings } from './shortMakerPresets';
 describe('<ShortMakerBrandKit />', () => {
   let container: HTMLDivElement;
   let root: Root;
-  let onToggle: ReturnType<typeof vi.fn>;
-  let onPickLogo: ReturnType<typeof vi.fn>;
-  let setBrandField: ReturnType<typeof vi.fn>;
-  let onChangeDataFolder: ReturnType<typeof vi.fn>;
+  let onToggle: Mock<() => void>;
+  let onPickLogo: Mock<() => void>;
+  let setBrandField: Mock<(key: keyof BrandSettings, value: string) => void>;
+  let onChangeDataFolder: Mock<() => void>;
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    onToggle = vi.fn();
-    onPickLogo = vi.fn();
-    setBrandField = vi.fn();
-    onChangeDataFolder = vi.fn();
+    onToggle = vi.fn<() => void>();
+    onPickLogo = vi.fn<() => void>();
+    setBrandField = vi.fn<(key: keyof BrandSettings, value: string) => void>();
+    onChangeDataFolder = vi.fn<() => void>();
   });
 
   afterEach(() => {

@@ -8,7 +8,7 @@
 // must be blocked HERE with the offending clip named — not after a wasted render.
 
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { act } from 'react';
 import { type Root, createRoot } from 'react-dom/client';
 
@@ -26,13 +26,13 @@ const CLIPS: readonly TransitionClip[] = [
 
 let container: HTMLDivElement;
 let root: Root;
-let onAdd: ReturnType<typeof vi.fn>;
+let onAdd: Mock<(op: DirectorOp) => void>;
 
 beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  onAdd = vi.fn();
+  onAdd = vi.fn<(op: DirectorOp) => void>();
 });
 
 afterEach(async () => {
