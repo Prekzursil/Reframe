@@ -173,7 +173,7 @@ export function DirectorPanel({
   video,
   onChooseVideo,
 }: DirectorPanelProps): React.ReactElement {
-  /* v8 ignore next 2 -- the `?? real` defaults only run in the real app; every test injects both. */
+  /* v8 ignore next 2 -- the `?? real` defaults only run in the real app; every test injects both. -- @preserve */
   const api = useMemo(() => rpcClient ?? client, [rpcClient]);
   const events = useMemo(() => jobEvents ?? realJobEvents, [jobEvents]);
 
@@ -382,7 +382,7 @@ export function DirectorPanel({
   const submit = useCallback(async (): Promise<void> => {
     const trimmed = goal.trim();
     if (!trimmed || busy) return;
-    /* v8 ignore next -- presence guard: the prompt form (hence submit) only renders when activeVideoId is non-null, so this never fires in practice. */
+    /* v8 ignore next -- presence guard: the prompt form (hence submit) only renders when activeVideoId is non-null, so this never fires in practice. -- @preserve */
     if (activeVideoId === null) return;
     setBusy(true);
     setError('');
@@ -403,7 +403,7 @@ export function DirectorPanel({
   // ack is the first per-function cacheKey from the preview (apply's gate mirrors
   // the plan envelope; an echoed key clears the budget ack).
   const apply = useCallback(async (): Promise<void> => {
-    /* v8 ignore next -- re-entrancy + presence guard: the Apply button is `disabled={busy}` and only renders inside `plan && (…)`, so neither arm trips in tests. */
+    /* v8 ignore next -- re-entrancy + presence guard: the Apply button is `disabled={busy}` and only renders inside `plan && (…)`, so neither arm trips in tests. -- @preserve */
     if (busy || !plan) return;
     setBusy(true);
     setError('');
@@ -430,7 +430,7 @@ export function DirectorPanel({
 
   // One-shot undo of the applied plan (re-applies the recorded inverse).
   const undo = useCallback(async (): Promise<void> => {
-    /* v8 ignore next -- re-entrancy + presence guard: the Undo button is `disabled={busy}` and only renders inside `plan && … && applied`, so neither arm trips in tests. */
+    /* v8 ignore next -- re-entrancy + presence guard: the Undo button is `disabled={busy}` and only renders inside `plan && … && applied`, so neither arm trips in tests. -- @preserve */
     if (busy || !plan) return;
     setBusy(true);
     setError('');
@@ -448,7 +448,7 @@ export function DirectorPanel({
 
   // Objective before/after evaluation (synchronous — no job).
   const evaluate = useCallback(async (): Promise<void> => {
-    /* v8 ignore next -- re-entrancy + presence guard: the Evaluate button is `disabled={busy}` and only renders inside `plan && … && applied`, so neither arm trips in tests. */
+    /* v8 ignore next -- re-entrancy + presence guard: the Evaluate button is `disabled={busy}` and only renders inside `plan && … && applied`, so neither arm trips in tests. -- @preserve */
     if (busy || !plan) return;
     setBusy(true);
     setError('');
@@ -482,7 +482,7 @@ export function DirectorPanel({
   const toggleOp = useCallback(
     (opId: string): void => {
       patchSession((prev) =>
-        /* v8 ignore next 3 -- presence guard: the controls only render inside `plan && …`, so `prev.plan` is non-null whenever this fires. (Counts 3 lines: the whole ternary — a bare `next` would leave the `: prev` arm uncovered and red the 100% gate.) */
+        /* v8 ignore next 3 -- presence guard: the controls only render inside `plan && …`, so `prev.plan` is non-null whenever this fires. (Counts 3 lines: the whole ternary — a bare `next` would leave the `: prev` arm uncovered and red the 100% gate.) -- @preserve */
         prev.plan
           ? { ...prev, plan: { ...prev.plan, ops: toggleOpStatus(prev.plan.ops, opId) } }
           : prev,
@@ -496,7 +496,7 @@ export function DirectorPanel({
   const moveOp = useCallback(
     (opId: string, dir: OpMoveDirection): void => {
       patchSession((prev) =>
-        /* v8 ignore next 3 -- presence guard: the controls only render inside `plan && …`, so `prev.plan` is non-null whenever this fires. (Counts 3 lines: the whole ternary — see toggleOp above.) */
+        /* v8 ignore next 3 -- presence guard: the controls only render inside `plan && …`, so `prev.plan` is non-null whenever this fires. (Counts 3 lines: the whole ternary — see toggleOp above.) -- @preserve */
         prev.plan
           ? { ...prev, plan: { ...prev.plan, ops: moveOpWithinKind(prev.plan.ops, opId, dir) } }
           : prev,

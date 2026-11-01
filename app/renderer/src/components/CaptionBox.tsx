@@ -101,7 +101,7 @@ export function CaptionBox({
     if (!d) return;
     const frame = frameRef.current;
     // The frame is the element receiving this move, so it is always mounted here.
-    /* v8 ignore next -- runtime-only guard; frameRef is set whenever a drag is active */
+    /* v8 ignore next -- runtime-only guard; frameRef is set whenever a drag is active -- @preserve */
     if (!frame) return;
     const rect = frame.getBoundingClientRect();
     const dx = frac(e.clientX - d.startX, rect.width);

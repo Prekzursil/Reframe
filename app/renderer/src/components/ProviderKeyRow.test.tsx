@@ -3,7 +3,7 @@
 // ONLY in a ref, is masked-by-default, re-masks on blur/timeout/unmount, and NEVER
 // enters React state/store, a log, or any of the callbacks.
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -36,18 +36,28 @@ async function flush(): Promise<void> {
 const SECRET = 'gsk-live-SECRET-ABCDWXYZ';
 
 interface Handlers {
-  onRemove: ReturnType<typeof vi.fn>;
-  onReveal: ReturnType<typeof vi.fn>;
-  onRevalidate: ReturnType<typeof vi.fn>;
-  onReplace: ReturnType<typeof vi.fn>;
+  onRemove: Mock<(providerId: string, index: number) => void>;
+  onReveal: Mock<(providerId: string, index: number) => Promise<string>>;
+  onRevalidate: Mock<(providerId: string, index: number) => Promise<KeyCheckResult>>;
+  onReplace: Mock<(providerId: string, index: number, newKey: string) => Promise<KeyCheckResult>>;
 }
 
 function makeHandlers(over: Partial<Handlers> = {}): Handlers {
   return {
-    onRemove: over.onRemove ?? vi.fn(),
-    onReveal: over.onReveal ?? vi.fn(() => Promise.resolve(SECRET)),
-    onRevalidate: over.onRevalidate ?? vi.fn(() => Promise.resolve<KeyCheckResult>({ ok: true })),
-    onReplace: over.onReplace ?? vi.fn(() => Promise.resolve<KeyCheckResult>({ ok: true })),
+    onRemove: over.onRemove ?? vi.fn<(providerId: string, index: number) => void>(),
+    onReveal:
+      over.onReveal ??
+      vi.fn<(providerId: string, index: number) => Promise<string>>(() => Promise.resolve(SECRET)),
+    onRevalidate:
+      over.onRevalidate ??
+      vi.fn<(providerId: string, index: number) => Promise<KeyCheckResult>>(() =>
+        Promise.resolve<KeyCheckResult>({ ok: true }),
+      ),
+    onReplace:
+      over.onReplace ??
+      vi.fn<(providerId: string, index: number, newKey: string) => Promise<KeyCheckResult>>(() =>
+        Promise.resolve<KeyCheckResult>({ ok: true }),
+      ),
   };
 }
 

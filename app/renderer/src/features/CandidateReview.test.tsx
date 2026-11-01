@@ -5,7 +5,7 @@
 // handlers (Rank and Virality).
 
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, type Mock } from 'vitest';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -53,13 +53,13 @@ function item(over: Partial<Candidate> = {}): ReviewItem {
 describe('<CandidateReview />', () => {
   let container: HTMLDivElement;
   let root: Root;
-  let setSortMode: ReturnType<typeof vi.fn>;
+  let setSortMode: Mock<(mode: CandidateSort) => void>;
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    setSortMode = vi.fn();
+    setSortMode = vi.fn<(mode: CandidateSort) => void>();
   });
 
   afterEach(() => {

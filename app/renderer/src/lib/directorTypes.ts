@@ -197,7 +197,7 @@ export function statusLabel(status: DirectorOp['status']): string {
       return 'Failed';
     case 'dropped':
       return 'Dropped';
-    /* v8 ignore next 2 -- the switch is exhaustive over OpStatus; "planned" is the default arm. */
+    /* v8 ignore next 2 -- the switch is exhaustive over OpStatus; "planned" is the default arm. -- @preserve */
     default:
       return 'Planned';
   }

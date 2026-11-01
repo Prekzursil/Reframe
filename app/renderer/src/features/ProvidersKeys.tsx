@@ -275,7 +275,7 @@ export function ProvidersKeys({
   spendClient,
   onOpenModels,
 }: ProvidersKeysProps): React.ReactElement {
-  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. */
+  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. -- @preserve */
   const api = rpcClient ?? client;
 
   const [providers, setProviders] = useState<ProviderEntry[]>([]);
@@ -304,7 +304,7 @@ export function ProvidersKeys({
         Promise.resolve(api.providers.list()),
         Promise.resolve(api.providers.catalog()),
         Promise.resolve(api.providers.usage()),
-        /* v8 ignore next -- the optional-chaining fallback only fires when a test omits settings.get; every meaningful test injects it. */
+        /* v8 ignore next -- the optional-chaining fallback only fires when a test omits settings.get; every meaningful test injects it. -- @preserve */
         Promise.resolve<SettingsConsentRead>(api.settings?.get?.() ?? {}),
       ])
         .then(([list, cat, use, settings]) => {
@@ -364,7 +364,7 @@ export function ProvidersKeys({
   const addKey = useCallback(
     async (id: string, key: string): Promise<void> => {
       const entry = providers.find((p) => p.id === id);
-      /* v8 ignore next -- addKey is only invoked from a card bound to a live entry; the guard is defensive. */
+      /* v8 ignore next -- addKey is only invoked from a card bound to a live entry; the guard is defensive. -- @preserve */
       if (!entry) return;
       const { baseUrl, model, capabilities } = resolveKeyTarget(entry);
       setBusy(true);
@@ -402,7 +402,7 @@ export function ProvidersKeys({
   const removeKey = useCallback(
     async (id: string, index: number): Promise<void> => {
       const entry = providers.find((p) => p.id === id);
-      /* v8 ignore next 2 -- removeKey is bound to a live key row, so entry exists AND its apiKeys is a non-empty array; both guards are defensive. */
+      /* v8 ignore next 2 -- removeKey is bound to a live key row, so entry exists AND its apiKeys is a non-empty array; both guards are defensive. -- @preserve */
       if (!entry) return;
       const keys = (Array.isArray(entry.apiKeys) ? entry.apiKeys : []).filter(
         (_, i) => i !== index,
@@ -449,7 +449,7 @@ export function ProvidersKeys({
   const revalidateKey = useCallback(
     async (id: string, index: number): Promise<KeyCheckResult> => {
       const entry = providers.find((p) => p.id === id);
-      /* v8 ignore next -- bound to a live key row; the guard is defensive. */
+      /* v8 ignore next -- bound to a live key row; the guard is defensive. -- @preserve */
       if (!entry) return { ok: false, error: 'unknown provider' };
       const { baseUrl, model, capabilities } = resolveKeyTarget(entry);
       try {
@@ -506,7 +506,7 @@ export function ProvidersKeys({
   const replaceKey = useCallback(
     async (id: string, index: number, newKey: string): Promise<KeyCheckResult> => {
       const entry = providers.find((p) => p.id === id);
-      /* v8 ignore next -- bound to a live key row, so entry AND its apiKeys array exist; defensive. */
+      /* v8 ignore next -- bound to a live key row, so entry AND its apiKeys array exist; defensive. -- @preserve */
       if (!entry || !Array.isArray(entry.apiKeys)) return { ok: false, error: 'unknown provider' };
       const { baseUrl, model, capabilities } = resolveKeyTarget(entry);
       try {

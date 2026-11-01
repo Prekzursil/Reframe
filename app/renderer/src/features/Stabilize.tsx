@@ -110,7 +110,7 @@ export function Stabilize({ videoId, api }: StabilizeProps): React.ReactElement 
   const run = useCallback(async (): Promise<void> => {
     // defensive: the button is disabled while a run is in flight, so the UI
     // cannot dispatch a second one.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (running) return;
     setRunning(true);
     setError('');
@@ -140,7 +140,7 @@ export function Stabilize({ videoId, api }: StabilizeProps): React.ReactElement 
 
   const cancel = useCallback(async (): Promise<void> => {
     // defensive: Cancel renders only while `running && jobId`.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });

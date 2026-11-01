@@ -114,7 +114,7 @@ export function isSuperpowered(rows: UsageRow[]): boolean {
 
 /** Detect prefers-reduced-motion (testable via window.matchMedia). */
 export function prefersReducedMotion(): boolean {
-  /* v8 ignore next -- jsdom always defines matchMedia in tests; the typeof guard only matters in a non-DOM host. */
+  /* v8 ignore next -- jsdom always defines matchMedia in tests; the typeof guard only matters in a non-DOM host. -- @preserve */
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }

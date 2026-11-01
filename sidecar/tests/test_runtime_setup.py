@@ -67,16 +67,16 @@ class TestShippedRequirementFiles:
         pins = dict(p.split("==", 1) for p in reqs.pins)
         # the T5 brief's KNOWN dev-venv versions
         assert pins["faster-whisper"] == "1.2.1"
-        assert pins["ctranslate2"] == "4.8.1"
-        # scenedetect 0.7 -> 0.7.1 (dependabot pip-sidecar-patch-minor). This guard
+        assert pins["ctranslate2"] == "4.8.4"
+        # scenedetect 0.7.1 -> 0.7.2 (pip-sidecar-patch-minor re-roll 2026-11-01). This guard
         # asserts EXACT versions on purpose: a dependency bump cannot land until a
         # human re-verifies the pin, and updating this line IS that review step.
-        # Verified for 0.7.1: the only API surface we touch is the top-level
+        # Verified for 0.7.x: the only API surface we touch is the top-level
         # ``from scenedetect import ContentDetector, detect`` in boundary.py:568,
         # which is stable across 0.7.x. NOT runtime-verified in CI — quality.yml
         # deliberately does not install scenedetect (see its install block), so the
         # green suite is evidence about the pin FILE, not about the wheel.
-        assert pins["scenedetect"] == "0.7.1"
+        assert pins["scenedetect"] == "0.7.2"
         assert pins["httpx"] == "0.28.1"
         # opencv-python 4.13.0.92 -> 4.14.0.94 (dependabot pip-sidecar-patch-minor).
         # Same exact-pin discipline as scenedetect above: updating this line IS the
@@ -98,7 +98,7 @@ class TestShippedRequirementFiles:
         # inference code; the reframe suite's real-cv2 tests are the standing guard.
         assert pins["opencv-python"] == "4.14.0.94"
         assert pins["nvidia-cublas-cu12"] == "12.9.2.10"
-        assert pins["nvidia-cudnn-cu12"] == "9.24.0.43"
+        assert pins["nvidia-cudnn-cu12"] == "9.27.0.42"
         # DELIBERATELY ABSENT: mediapipe. Its legacy Solutions API (used by the
         # claudeshorts backend) only exists in wheels that pin numpy<2, which
         # conflicts with numpy==2.5.1; numpy-2-clean mediapipe removed Solutions.

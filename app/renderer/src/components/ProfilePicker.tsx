@@ -28,7 +28,7 @@ import './profilePicker.css';
 // installProfiles.test.ts pins Default as the sole recommended profile, so this
 // find is total — the fallback only exists to satisfy the type.
 const RECOMMENDED = INSTALL_PROFILES.find((p) => p.recommended);
-/* v8 ignore next -- a recommended profile is guaranteed (pinned by installProfiles.test.ts) */
+/* v8 ignore next -- a recommended profile is guaranteed (pinned by installProfiles.test.ts) -- @preserve */
 export const DEFAULT_PROFILE_ID: InstallProfileId = RECOMMENDED ? RECOMMENDED.id : 'default';
 
 export interface ProfilePickerProps {

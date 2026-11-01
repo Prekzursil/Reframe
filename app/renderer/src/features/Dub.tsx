@@ -233,7 +233,7 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
 
   // `engine` is only ever set from the engine <select> whose options ARE ENGINES,
   // so the `?? ENGINES[0]` fallback is defensive.
-  /* v8 ignore next */
+  /* v8 ignore next -- @preserve */
   const engineOption = useMemo(() => ENGINES.find((e) => e.id === engine) ?? ENGINES[0], [engine]);
   const engineVoices = useMemo(() => voicesForEngine(voices, engine), [voices, engine]);
   // Every W62 audio-track control is gated on the SAME flag: a dub job in flight
@@ -286,7 +286,7 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
     const path = samplePath.trim();
     // The Add-sample button is disabled when the path is blank OR the consent
     // box is unticked, so this guard is defensive.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!path || !consentAttested) return;
     setSampleMessage('');
     try {
@@ -311,7 +311,7 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
   const startDub = useCallback(async (): Promise<void> => {
     // The Start-dub button is disabled while busy and without a video/track/voice,
     // so this guard is defensive.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (busy || !videoId || !trackId) return;
     setBusy(true);
     setError('');
@@ -401,7 +401,7 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
     async (track: AudioTrack): Promise<void> => {
       const path = replacePath.trim();
       // The Save button is disabled while the path is blank, so this is defensive.
-      /* v8 ignore next */
+      /* v8 ignore next -- @preserve */
       if (!path) return;
       const ok = await runAudioOp(`Replaced the audio of "${track.name}"`, () =>
         bridge.rpc<{ audioTrack: AudioTrack }>('tracks.audio.replace', {
@@ -421,7 +421,7 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
   const importTrack = useCallback(async (): Promise<void> => {
     const fields = { path: importPath, lang: importLang, name: importName };
     // The Import button is disabled until all three are filled, so this is defensive.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!canImportAudioTrack(fields)) return;
     const name = fields.name.trim();
     const ok = await runAudioOp(`Imported "${name}"`, () =>
@@ -443,7 +443,7 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
   const cancel = useCallback(async (): Promise<void> => {
     // The Cancel button renders only while `busy && jobId`, so this guard is
     // defensive.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });

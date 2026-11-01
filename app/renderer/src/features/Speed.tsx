@@ -96,7 +96,7 @@ export function Speed({ videoId, sourceDurationSec, api }: SpeedProps): React.Re
 
   const apply = useCallback(async (): Promise<void> => {
     // defensive: Apply is disabled while a job runs and at an unsendable factor.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (applying || !sendable) return;
     setApplying(true);
     setError('');
@@ -126,7 +126,7 @@ export function Speed({ videoId, sourceDurationSec, api }: SpeedProps): React.Re
 
   const cancel = useCallback(async (): Promise<void> => {
     // defensive: Cancel renders only while `applying && jobId`.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });

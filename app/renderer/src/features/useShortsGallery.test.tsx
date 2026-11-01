@@ -12,7 +12,7 @@
 // message content, AND the absence of the native dialog.
 
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -42,13 +42,13 @@ describe('useShortsGallery', () => {
   let container: HTMLDivElement;
   let root: Root;
   let gallery: ShortsGallery;
-  let setError: ReturnType<typeof vi.fn>;
+  let setError: Mock<(msg: string | null) => void>;
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    setError = vi.fn();
+    setError = vi.fn<(msg: string | null) => void>();
   });
 
   afterEach(() => {

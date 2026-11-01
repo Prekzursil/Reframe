@@ -95,7 +95,7 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
   const preview = useCallback(async (): Promise<void> => {
     // defensive: the button is disabled while previewing, so the UI cannot
     // dispatch a second preview in flight.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (previewing) return;
     setPreviewing(true);
     setError('');
@@ -112,7 +112,7 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
 
   const apply = useCallback(async (): Promise<void> => {
     // defensive: Apply is disabled until a plan exists and while a job runs.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (applying || !plan) return;
     setApplying(true);
     setError('');
@@ -142,7 +142,7 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
 
   const cancel = useCallback(async (): Promise<void> => {
     // defensive: Cancel renders only while `applying && jobId`.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });

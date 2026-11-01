@@ -35,6 +35,7 @@ from typing import Any, Protocol
 
 from ..assets import manager as _asset_manager
 from ..assets import manifest
+from ..pathsafe import clean_for_log
 from ..util import clamp, get_logger
 from . import asr_vocabulary as _vocabulary
 from .diarize_backend import UnpinnedModelRevisionError, resolve_pinned_hf_source
@@ -194,10 +195,14 @@ def resolve_model_source(
         log.warning(
             "no pinned local snapshot for whisper model %r; faster-whisper will resolve it "
             "over the network (this FAILS offline). Install the transcription asset to fix.",
-            model,
+            clean_for_log(model),
         )
         return model
-    log.info("resolved whisper model %r to pinned local snapshot %s", model, snapshot)
+    log.info(
+        "resolved whisper model %r to pinned local snapshot %s",
+        clean_for_log(model),
+        clean_for_log(snapshot),
+    )
     return snapshot
 
 

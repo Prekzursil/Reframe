@@ -145,7 +145,7 @@ export function ensureFailureText(failed: EnsureDone['failed']): string {
  * falls back to a plain `assets.list` refresh.
  */
 export function defaultJobBridge(): JobDoneCapable {
-  /* v8 ignore next -- hasApi() is TRUE only in the packaged app with a real preload bridge; this jsdom host and every test run bridgeless and take the `{}` arm. */
+  /* v8 ignore next -- hasApi() is TRUE only in the packaged app with a real preload bridge; this jsdom host and every test run bridgeless and take the `{}` arm. -- @preserve */
   return hasApi() ? { onJobDone } : {};
 }
 
@@ -328,7 +328,7 @@ export function ModelsSystemPanel({
   onOpenProviders,
   jobBridge,
 }: ModelsSystemPanelProps): React.ReactElement {
-  /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
+  /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. -- @preserve */
   const api = useMemo(() => rpcClient ?? client, [rpcClient]);
   const jobs = useMemo<JobDoneCapable>(() => jobBridge ?? defaultJobBridge(), [jobBridge]);
 
@@ -428,7 +428,7 @@ export function ModelsSystemPanel({
             setUsageAvailability(Array.isArray(availRes.availability) ? availRes.availability : []);
         }
       })
-      /* v8 ignore next 2 -- every inner read already .catch()es to null, so the outer Promise.all never rejects; this is a belt-and-braces guard. */
+      /* v8 ignore next 2 -- every inner read already .catch()es to null, so the outer Promise.all never rejects; this is a belt-and-braces guard. -- @preserve */
       .catch(() => undefined);
     return () => {
       alive = false;
@@ -437,7 +437,7 @@ export function ModelsSystemPanel({
 
   // Opt-in analysis: probe hardware + advisor + asset/engine state in parallel.
   const analyze = useCallback(async (): Promise<void> => {
-    /* v8 ignore next -- re-entrancy guard: the Analyze button is disabled while busy, so this never trips in tests. */
+    /* v8 ignore next -- re-entrancy guard: the Analyze button is disabled while busy, so this never trips in tests. -- @preserve */
     if (busy) return;
     setBusy(true);
     setError('');
@@ -649,7 +649,7 @@ export function ModelsSystemPanel({
   );
 
   const applyPreset = useCallback(() => {
-    /* v8 ignore next -- the Apply-preset button only renders inside the `analyzed && report` block, so report is always set here. */
+    /* v8 ignore next -- the Apply-preset button only renders inside the `analyzed && report` block, so report is always set here. -- @preserve */
     if (!report) return;
     void patchSettings({ phase8Tier: presetTier(report.recommendedPreset) });
   }, [report, patchSettings]);
@@ -717,7 +717,7 @@ export function ModelsSystemPanel({
   const download = useCallback(
     async (componentName: string): Promise<void> => {
       const asset = componentAsset(componentName);
-      /* v8 ignore next -- defensive guard: floor components (no asset) render an "Installed", disabled button, and this card's Download button is disabled while it downloads, so neither arm trips in tests. */
+      /* v8 ignore next -- defensive guard: floor components (no asset) render an "Installed", disabled button, and this card's Download button is disabled while it downloads, so neither arm trips in tests. -- @preserve */
       if (!asset || downloading.has(componentName)) return;
       setDownloading((prev) => new Set(prev).add(componentName));
       setError('');

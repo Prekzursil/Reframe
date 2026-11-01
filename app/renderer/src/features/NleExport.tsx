@@ -167,7 +167,7 @@ export function NleExport({ videoId }: NleExportProps): React.ReactElement {
   // The "N clip(s) " prefix for the saved-path line. clipCount is always set
   // alongside lastPath by runExport, so the null arm is defensive only.
   const savedClipPrefix =
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     clipCount !== null ? `${clipCount} clip${clipCount === 1 ? '' : 's'} ` : '';
 
   return (
