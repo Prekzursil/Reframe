@@ -57,7 +57,7 @@
     "electron-builder": "^26.18.0",
     "electron-playwright-helpers": "^2.3.1",
     "electron-vite": "^3.1.0",
-    "fast-check": "^3.23.2",
+    "fast-check": "^4.10.2",
     "jsdom": "^24.1.0",
     "typescript": "^5.5.0",
     "vite": "^6.4.5",
