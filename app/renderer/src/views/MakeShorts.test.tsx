@@ -63,6 +63,9 @@ vi.mock('./Shorts', () => ({
         type="button"
         onClick={() =>
           onReexport?.({
+            // videoId is a required string on the wire, but an EMPTY one is
+            // falsy — exactly the `if (hint.videoId)` false arm below.
+            videoId: '',
             candidate: { hook: 'h', template: 't', viralityPct: 50, durationSec: 30 },
           })
         }
