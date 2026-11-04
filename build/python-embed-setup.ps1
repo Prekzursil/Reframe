@@ -144,7 +144,15 @@ param(
     # with this digest. Corrected to the measured 2,230,488 B. A figure nothing checks drifts.
     # Provenance + its limits are documented at the runtime site, which is the SSOT —
     # see sidecar/media_studio/assets/manager.py::GET_PIP_SHA256. Keep the two in lockstep.
-    [string]$ExpectedGetPipSha256 = 'fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6',
+    # ROTATED 2026-11-04 (third rotation): measured 2,397,294 B, pip rotation observed
+    # by TWO independent TLS fetches (docs/validation/tools/verify_getpip_rotation.py,
+    # Last-Modified "Tue, 03 Nov 2026 06:39:13 GMT") and by the Actions scheduled-e2e
+    # download itself (run 41826885831: expected fb24e693..., got 356e0d0d...). An
+    # interim f4448a01... rotation was reported during triage but the artifact had
+    # already rotated past it; this pin records the observed-current bytes. Re-staged
+    # build/python-embed/get-pip.py in the same commit; test_get_pip_staged_pin.py
+    # compares all three.
+    [string]$ExpectedGetPipSha256 = '356e0d0de21cdc348c3394084d90939b85e4246c4d14c76aee6ca4f46646ea98',
     # Fail-closed bootstrap escape hatch: fetch every artifact, PRINT its sha256,
     # delete it, stage NOTHING, exit non-zero. The only way to obtain a pin you
     # do not have yet — it can never produce a build.

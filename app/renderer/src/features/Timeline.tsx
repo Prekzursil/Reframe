@@ -305,6 +305,10 @@ export function Timeline({
     /* v8 ignore next -- @preserve */
     if (selected === null || !history) return;
     const next = mergeAt(present, selected);
+    // mergeAt returns the SAME array only when pos is invalid or is the last
+    // cue — both states disable the Merge button before this handler can run,
+    // so the no-op arm is unreachable through the rendered UI.
+    /* v8 ignore next -- @preserve */
     if (next !== present) commit(next);
   };
 

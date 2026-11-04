@@ -428,8 +428,9 @@ export function ModelsSystemPanel({
             setUsageAvailability(Array.isArray(availRes.availability) ? availRes.availability : []);
         }
       })
-      /* v8 ignore next 2 -- every inner read already .catch()es to null, so the outer Promise.all never rejects; this is a belt-and-braces guard. -- @preserve */
+      /* v8 ignore start -- every inner read already .catch()es to null, so the outer Promise.all never rejects; this is a belt-and-braces guard. (Block form: the `next N` hint does not survive esbuild's transform for arrow-in-call-chain positions.) -- @preserve */
       .catch(() => undefined);
+    /* v8 ignore stop -- @preserve */
     return () => {
       alive = false;
     };

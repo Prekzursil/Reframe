@@ -427,6 +427,7 @@ function makeClient(
     readiness?: ReadinessItem[];
     rejectEnsure?: boolean;
     rejectRoutingPolicy?: boolean;
+    rejectSettingsGet?: boolean;
   } = {},
 ): FakeClient {
   const calls: FakeClient['calls'] = [];
@@ -548,7 +549,10 @@ function makeClient(
       }),
     },
     settings: {
-      get: vi.fn(async () => ({ ...settings })),
+      get: vi.fn(async () => {
+        if (over.rejectSettingsGet) throw new Error('settings.get failed');
+        return { ...settings };
+      }),
       set: vi.fn(async (patch: Record<string, unknown>) => {
         calls.push({ method: 'settings.set', args: [patch] });
         Object.assign(settings, patch);
@@ -2918,5 +2922,17 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
     });
     expect(container.querySelector('.models-system-panel')).not.toBeNull();
     expect(container.querySelector('p.error[role="alert"]')).not.toBeNull();
+  });
+});
+
+describe('<ModelsSystemPanel /> fail-soft reads', () => {
+  it('a rejected settings.get degrades quietly (outer .catch swallow, no error banner)', async () => {
+    const c = makeClient({ rejectSettingsGet: true });
+    await mount(c);
+    await settle();
+    // The panel still renders its opt-in prompt; the failed read never becomes
+    // an error banner (fail-soft contract of the settings hydrate effect).
+    expect(container.querySelector('[data-section="prompt"]')).not.toBeNull();
+    expect(container.querySelector('p.error[role="alert"]')).toBeNull();
   });
 });

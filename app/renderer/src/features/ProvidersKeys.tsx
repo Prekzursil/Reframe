@@ -402,11 +402,12 @@ export function ProvidersKeys({
   const removeKey = useCallback(
     async (id: string, index: number): Promise<void> => {
       const entry = providers.find((p) => p.id === id);
-      /* v8 ignore next 2 -- removeKey is bound to a live key row, so entry exists AND its apiKeys is a non-empty array; both guards are defensive. -- @preserve */
+      /* v8 ignore start -- removeKey is bound to a live key row, so entry exists AND its apiKeys is a non-empty array; both guards are defensive. (Block form: `next N` does not survive the transform for the ternary on the keys line.) -- @preserve */
       if (!entry) return;
       const keys = (Array.isArray(entry.apiKeys) ? entry.apiKeys : []).filter(
         (_, i) => i !== index,
       );
+      /* v8 ignore stop -- @preserve */
       setBusy(true);
       setError('');
       try {

@@ -466,6 +466,10 @@ export function DirectorPanel({
   // prior plan stays visible until the re-plan returns) and focus the box so a
   // keyboard user lands in the prefilled textarea rather than on the button.
   const adjust = useCallback((): void => {
+    // The Adjust button renders only inside the `{plan && (…storyboard/actions…)}`
+    // block, so `plan` is always truthy when this handler runs; the falsy arm is
+    // unreachable through the rendered UI.
+    /* v8 ignore next 4 -- @preserve */
     if (plan) {
       setGoal(plan.goal);
       // The textarea is mounted alongside the Adjust button (same

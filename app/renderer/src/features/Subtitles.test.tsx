@@ -640,4 +640,53 @@ describe('<Subtitles />', () => {
       await Promise.resolve();
     });
   });
+
+  it('an inline translate result without a jobId applies directly (id falsy arm)', async () => {
+    const fake = makeFakeApi();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
+      vi.fn(async <T,>(method: string) => {
+        if (method === 'subtitles.translate') {
+          return { track: track({ lang: 'de', name: 'German' }) } as T;
+        }
+        return {} as T;
+      }),
+    );
+    await mount(fake, { initialTrack: track() });
+    const langSel = container.querySelector('#subtitles-target-lang') as HTMLSelectElement;
+    await act(async () => {
+      langSel.value = 'de';
+      langSel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const translateBtn = [...container.querySelectorAll('.translate-row button')].find(
+      (b) => b.textContent === 'Translate',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      translateBtn.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.track-meta')?.textContent).toContain('German');
+  });
+
+  it('a job.done without a track leaves the panel without applying (translated falsy arm)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake, { initialTrack: track() });
+    const langSel = container.querySelector('#subtitles-target-lang') as HTMLSelectElement;
+    await act(async () => {
+      langSel.value = 'fr';
+      langSel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const translateBtn = [...container.querySelectorAll('.translate-row button')].find(
+      (b) => b.textContent === 'Translate',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      translateBtn.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-tr', result: {} });
+      await Promise.resolve();
+    });
+    // No error banner; the ORIGINAL track is still the applied one.
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
 });

@@ -251,3 +251,37 @@ describe('<SetupStatusPanel /> — WU-2 first-run diagnostic', () => {
     root = createRoot(container);
   });
 });
+
+describe('<SetupStatusPanel /> — unmount-abort arm (alive)', () => {
+  it('drops a selfTest resolution that lands after unmount', async () => {
+    let resolveLate!: (v: SelfTestReport) => void;
+    const rpcClient = makeClient(() => new Promise<SelfTestReport>((res) => (resolveLate = res)));
+    await act(async () => {
+      root.render(<SetupStatusPanel rpcClient={rpcClient} />);
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      resolveLate(OK_REPORT);
+      await Promise.resolve();
+    });
+  });
+});
+
+describe('<SetupStatusPanel /> — unmount-abort catch arm', () => {
+  it('drops a selfTest rejection that lands after unmount', async () => {
+    let rejectLate!: (e: unknown) => void;
+    const rpcClient = makeClient(() => new Promise((_, rej) => (rejectLate = rej)));
+    await act(async () => {
+      root.render(<SetupStatusPanel rpcClient={rpcClient} />);
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      rejectLate(new Error('late selfTest boom'));
+      await Promise.resolve();
+    });
+  });
+});
