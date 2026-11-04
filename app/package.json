@@ -55,7 +55,7 @@
     "axe-core": "^4.12.1",
     "electron": "^43.8.4",
     "electron-builder": "^26.18.0",
-    "electron-playwright-helpers": "^2.3.1",
+    "electron-playwright-helpers": "^3.1.2",
     "electron-vite": "^3.1.0",
     "fast-check": "^3.23.2",
     "jsdom": "^24.1.0",
