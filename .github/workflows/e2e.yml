@@ -129,7 +129,7 @@ jobs:
 
       - name: Upload sidecar E2E artifacts
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-sidecar-artifacts
           path: e2e_artifacts/
@@ -742,7 +742,7 @@ jobs:
 
       - name: Upload regenerated visual baselines
         if: always() && runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: updated-visual-baselines
           # Playwright stores baselines next to each spec (playwright.visual.config.ts
@@ -783,7 +783,7 @@ jobs:
       # beside it, for a stated reason that does not survive scrutiny.
       - name: Upload VISUAL screenshot-diff diagnostics (actual + diff + html report)
         if: ${{ always() && runner.os == 'Windows' }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-gui-visual-diff-${{ matrix.os }}
           path: |
@@ -796,7 +796,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-gui-playwright-report-${{ matrix.os }}
           path: |
