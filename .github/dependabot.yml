@@ -12,10 +12,6 @@ updates:
       update-types:
       - patch
       - minor
-  ignore:
-  - dependency-name: '*'
-    update-types:
-    - version-update:semver-major
   # torch / torchvision / torchaudio are GPU-validated, CUDA-wheel-pinned runtime
   # assets (declared in sidecar/pyproject.toml, deliberately NOT in the scanned
   # requirements.lock.txt) and must be bumped together only after manual GPU
@@ -24,6 +20,7 @@ updates:
   # LOCAL attack-vector (AV:L), low/medium, several with no fixed version, and are
   # not reachable in a local desktop app processing the user's own media. Triaged
   # + alerts dismissed 2026-06-29; reopen if the threat model changes.
+  ignore:
   - dependency-name: torch
   - dependency-name: torchvision
   - dependency-name: torchaudio
@@ -43,10 +40,6 @@ updates:
       update-types:
       - patch
       - minor
-  ignore:
-  - dependency-name: '*'
-    update-types:
-    - version-update:semver-major
   labels:
   - dependencies
   - type:chore
@@ -63,10 +56,6 @@ updates:
       update-types:
       - patch
       - minor
-  ignore:
-  - dependency-name: '*'
-    update-types:
-    - version-update:semver-major
   labels:
   - dependencies
   - type:chore
@@ -83,10 +72,6 @@ updates:
       update-types:
       - patch
       - minor
-  ignore:
-  - dependency-name: '*'
-    update-types:
-    - version-update:semver-major
   labels:
   - dependencies
   - type:chore
