@@ -28,7 +28,7 @@ export function SetupStatusPanel({
   rpcClient,
   title = 'Setup status',
 }: SetupStatusPanelProps): React.ReactElement {
-  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. */
+  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. -- @preserve */
   const api = rpcClient ?? client;
   const [report, setReport] = useState<SelfTestReport | null>(null);
   const [error, setError] = useState<string>('');

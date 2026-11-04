@@ -982,4 +982,55 @@ describe('<SemanticSearch />', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('search blew up');
     expect(container.querySelector('ul.search-hits li')).toBeNull();
   });
+
+  // ---- index.status fail-soft + unmount-abort arms -------------------------
+  it('degrades to the un-built CTA when index.status rejects', async () => {
+    const fake = makeFakeApi({
+      'index.status': () => Promise.reject(new Error('status boom')),
+    });
+    await mount(fake);
+    // A failed probe must read as "unbuilt": the search box stays disabled and
+    // the Build CTA shows (the same surface AC(c) pins), never an error banner.
+    expect(queryInput().disabled).toBe(true);
+    const cta = [...container.querySelectorAll('button')].find((b) =>
+      /Build the search index/.test(b.textContent ?? ''),
+    );
+    expect(cta).toBeTruthy();
+  });
+
+  it('drops an index.status resolution that lands after unmount', async () => {
+    let resolveLate!: (v: IndexStatus) => void;
+    const fake = makeFakeApi({
+      'index.status': () => new Promise<IndexStatus>((res) => (resolveLate = res)),
+    });
+    install(fake);
+    await act(async () => {
+      root.render(<SemanticSearch videoId="v1" />);
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      resolveLate(BUILT);
+      await Promise.resolve();
+    });
+  });
+
+  it('drops an index.status rejection that lands after unmount', async () => {
+    let rejectLate!: (e: unknown) => void;
+    const fake = makeFakeApi({
+      'index.status': () => new Promise((_, rej) => (rejectLate = rej)),
+    });
+    install(fake);
+    await act(async () => {
+      root.render(<SemanticSearch videoId="v1" />);
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      rejectLate(new Error('late status boom'));
+      await Promise.resolve();
+    });
+  });
 });

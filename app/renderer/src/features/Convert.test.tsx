@@ -370,4 +370,56 @@ describe('<Convert />', () => {
     });
     expect(fake.calls.find((c) => c.method === 'job.cancel')?.params).toEqual({ jobId: 'job-c' });
   });
+
+  // ---- param/jobId branch arms ------------------------------------------------
+  it('submitting with neither videoId nor path sends an identifier-less start', async () => {
+    // The form's onSubmit calls start() unconditionally; the button is disabled
+    // without a source but the handler itself must not assume one, so the
+    // `else if (path)` false arm is reachable through a bare form submit.
+    const fake = makeFakeApi({ startInline: '/out/none.mp4' });
+    await mount(fake, {});
+    await submit();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const startCall = fake.calls.find((c) => c.method === 'convert.start')!;
+    expect(startCall.params).not.toHaveProperty('videoId');
+    expect(startCall.params).not.toHaveProperty('path');
+  });
+
+  it('an inline result without a jobId skips the job subscription (id falsy arm)', async () => {
+    const fake = makeFakeApi();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
+      vi.fn(async <T,>(method: string) => {
+        if (method === 'convert.start') return { path: '/out/direct.mp4' } as T;
+        return {} as T;
+      }),
+    );
+    await mount(fake, { videoId: 'v1' });
+    await submit();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.output-paths')?.textContent).toContain('/out/direct.mp4');
+  });
+
+  it('a batch result without a jobId resolves inline (batch id falsy arm)', async () => {
+    const items: ConvertBatchItem[] = [{ videoId: 'v1', options: undefined as never }];
+    const fake = makeFakeApi();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
+      vi.fn(async <T,>(method: string) => {
+        if (method === 'convert.batch') return { paths: ['/out/b1.mp4'] } as T;
+        return {} as T;
+      }),
+    );
+    await mount(fake, { videoId: 'v1', batchItems: items });
+    const batchBtn = [...container.querySelectorAll('button')].find((b) =>
+      /Convert batch/.test(b.textContent ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      batchBtn.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.output-paths')?.textContent).toContain('/out/b1.mp4');
+  });
 });

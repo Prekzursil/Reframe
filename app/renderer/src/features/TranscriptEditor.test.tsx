@@ -414,4 +414,45 @@ describe('<TranscriptEditor />', () => {
     );
     expect(container.textContent).not.toContain('not mine');
   });
+
+  // ---- transcript.get unmount-abort arms (live=false in then/catch/finally) --
+  it('drops a transcript.get resolution that lands after unmount', async () => {
+    let resolveLate!: (v: unknown) => void;
+    const api = {
+      rpc: vi.fn(() => new Promise((res) => (resolveLate = res))),
+      onProgress: () => () => undefined,
+      onJobDone: () => () => undefined,
+    } as unknown as MediaStudioApi;
+    await act(async () => {
+      root.render(<TranscriptEditor videoId="v1" api={api} />);
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      resolveLate({ transcript: TRANSCRIPT });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
+  it('drops a transcript.get rejection that lands after unmount', async () => {
+    let rejectLate!: (e: unknown) => void;
+    const api = {
+      rpc: vi.fn(() => new Promise((_, rej) => (rejectLate = rej))),
+      onProgress: () => () => undefined,
+      onJobDone: () => () => undefined,
+    } as unknown as MediaStudioApi;
+    await act(async () => {
+      root.render(<TranscriptEditor videoId="v1" api={api} />);
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      rejectLate(new Error('late transcript boom'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
 });

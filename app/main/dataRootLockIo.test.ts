@@ -25,6 +25,7 @@ vi.mock('node:os', () => ({
 }));
 
 import { linkSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { hostname, uptime } from 'node:os';
 import {
   bootProbe,
   computeBootId,
@@ -47,7 +48,14 @@ function killThrows(code: string): void {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // vitest 4 aligns with jest: restoreAllMocks no longer resets factory-made
+  // vi.fn() mocks, so a mockImplementation set by one test (e.g. the EACCES
+  // writeFileSync error path) leaked into the next. resetAllMocks wipes
+  // implementations across the board; the node:os factory mocks carried
+  // deterministic return values, so re-prime those right after.
+  vi.resetAllMocks();
+  vi.mocked(hostname).mockReturnValue('test-host');
+  vi.mocked(uptime).mockReturnValue(1000);
 });
 
 afterEach(() => {

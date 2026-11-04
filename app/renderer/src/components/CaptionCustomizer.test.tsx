@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { CaptionCustomizer } from './CaptionCustomizer';
@@ -25,9 +25,9 @@ describe('<CaptionCustomizer />', () => {
     value: CaptionOverride | undefined = undefined,
     style = 'clean',
   ): {
-    onChange: ReturnType<typeof vi.fn>;
+    onChange: Mock<(next: CaptionOverride | undefined) => void>;
   } {
-    const onChange = vi.fn();
+    const onChange = vi.fn<(next: CaptionOverride | undefined) => void>();
     act(() => root.render(<CaptionCustomizer value={value} onChange={onChange} style={style} />));
     return { onChange };
   }
@@ -70,7 +70,7 @@ describe('<CaptionCustomizer />', () => {
   });
 
   it('uses a custom label when provided', () => {
-    const onChange = vi.fn();
+    const onChange = vi.fn<(next: CaptionOverride | undefined) => void>();
     act(() =>
       root.render(
         <CaptionCustomizer value={undefined} onChange={onChange} label="Tune" style="clean" />,

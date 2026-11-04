@@ -157,6 +157,7 @@ vi.mock('./components/JobQueue', () => ({
 vi.mock('./components/SidecarBanner', () => ({ SidecarBanner: () => <div /> }));
 
 import { App } from './App';
+import { resolveJobRetry } from './components/useJob';
 
 function makeVideo(over: Partial<Video> = {}): Video {
   return {
@@ -1125,5 +1126,40 @@ describe('L5 rail: exactly four destinations plus Settings', () => {
     const main = container.querySelector('main.app__main')!;
     expect(main.id).toBe('toptabpanel-produce');
     expect(main.getAttribute('aria-labelledby')).toBe('toptab-produce');
+  });
+
+  it('the module-level job.retry seam resolves and calls rpc(job.retry) (U5 wiring)', async () => {
+    // App.tsx registers `(jobId) => rpc('job.retry', {jobId})` at import time;
+    // resolve it through the SAME seam the error-toast Retry button uses and
+    // pin the wire contract.
+    rpcMock.mockResolvedValue({ jobId: 'job-2' });
+    const retry = resolveJobRetry();
+    expect(retry).toBeTypeOf('function');
+    await retry!('job-1');
+    expect(rpcMock).toHaveBeenCalledWith('job.retry', { jobId: 'job-1' });
+  });
+
+  it('opening a video still routes to the editor when the settings.set persist fails', async () => {
+    // WU-13 persist is best-effort: the catch arm must swallow the rejection —
+    // navigation already happened in-memory.
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.set') return Promise.reject(new Error('persist boom'));
+      return Promise.resolve({});
+    });
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    const openBtn = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (b) => b.textContent === 'open-video',
+    );
+    expect(openBtn).toBeTruthy();
+    await act(async () => {
+      openBtn!.click();
+    });
+    await flush();
+    // Routed off the library onto the (mocked) editor marker.
+    expect(container.querySelector('[data-testid="library"]')).toBeNull();
+    expect(rpcMock).toHaveBeenCalledWith('settings.set', { lastOpenedVideoId: 'v1' });
   });
 });
