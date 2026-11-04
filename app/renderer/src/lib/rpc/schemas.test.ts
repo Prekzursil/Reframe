@@ -48,9 +48,7 @@ describe('lib/rpc/schemas module surface', () => {
   it('declares the union codecs the §2 call surface keys on', () => {
     expectTypeOf<schemas.SubtitleFormat>().toEqualTypeOf<'srt' | 'ass' | 'vtt'>();
     expectTypeOf<schemas.TrackKind>().toEqualTypeOf<'soft' | 'hard'>();
-    expectTypeOf<schemas.BilingualOrder>().toEqualTypeOf<
-      'original-first' | 'translation-first'
-    >();
+    expectTypeOf<schemas.BilingualOrder>().toEqualTypeOf<'original-first' | 'translation-first'>();
     expectTypeOf<schemas.NleFormat>().toEqualTypeOf<'edl' | 'csv'>();
   });
 
