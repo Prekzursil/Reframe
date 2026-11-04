@@ -11,17 +11,17 @@
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
-    "@remotion/captions": "4.0.506",
-    "@remotion/renderer": "4.0.506",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "remotion": "4.0.506",
-    "zod": "4.6.6"
+    "@remotion/captions": "4.0.539",
+    "@remotion/renderer": "4.0.539",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.539",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@remotion/bundler": "4.0.506",
+    "@remotion/bundler": "4.0.539",
     "@types/node": "20.19.43",
-    "@types/react": "19.2.18",
+    "@types/react": "19.3.0",
     "typescript": "5.9.3"
   },
   "overrides": {
@@ -32,6 +32,6 @@
     "nanoid": "^3.3.17",
     "postcss": "^8.5.18",
     "ws": "^8.21.0",
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   }
 }
