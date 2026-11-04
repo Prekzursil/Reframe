@@ -1,0 +1,22 @@
+name: Bug report
+description: Something broken in the app, sidecar, or CI
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Steps to reproduce, expected vs actual behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Paste log lines (redact anything sensitive first).
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: App version / commit
+      placeholder: "e.g. 1.5.0 or commit sha"
