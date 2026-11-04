@@ -112,7 +112,7 @@ function SpendMeter({ info }: { info: SpendInfo }): React.ReactElement {
  * + the enforce toggle locally, and saves through `settings.set`.
  */
 export function SpendCap({ rpcClient }: SpendCapProps): React.ReactElement {
-  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. */
+  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. -- @preserve */
   const api = rpcClient ?? client;
 
   const [info, setInfo] = useState<SpendInfo | null>(null);

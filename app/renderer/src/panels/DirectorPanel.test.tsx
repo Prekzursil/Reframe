@@ -178,6 +178,7 @@ interface FakeOpts {
   initialSettings?: Record<string, unknown>;
   /** settings.get rejects (best-effort read failure → tour simply stays closed). */
   rejectSettingsGet?: boolean;
+  rejectSettingsSet?: boolean;
 }
 
 function makeClient(o: FakeOpts = {}): FakeClient {
@@ -197,6 +198,7 @@ function makeClient(o: FakeOpts = {}): FakeClient {
       }),
       set: vi.fn(async (values: Record<string, unknown>) => {
         calls.push({ method: 'settings.set', args: [values] });
+        if (o.rejectSettingsSet) throw new Error('settings write failed');
         Object.assign(settings, values);
         return { ...settings };
       }),
@@ -1539,6 +1541,19 @@ describe('DirectorPanel', () => {
     expect(container.querySelector('.director-onboarding')).toBeNull();
     // The panel still renders normally.
     expect(container.querySelector('form.director-prompt')).not.toBeNull();
+  });
+
+  it('dismissing the tour stays dismissed when the settings.set write fails', async () => {
+    // Best-effort persistence: the catch arm must swallow the rejection — the
+    // tour is already closed in-memory, and no error banner appears.
+    const c = makeClient({ initialSettings: {}, rejectSettingsSet: true });
+    await mount(c);
+    expect(container.querySelector('.director-onboarding')).not.toBeNull();
+    await act(async () => {
+      $('button[data-action="skip"]').click();
+    });
+    await flush();
+    expect(container.querySelector('.director-onboarding')).toBeNull();
   });
 
   it('dismissing the tour persists directorOnboardingSeen and closes it', async () => {

@@ -85,6 +85,15 @@ PINNED_PIP = "pip==25.2"
 # for EOL Pythons, so there is no non-rolling artifact to pin. Vendoring get-pip.py
 # into the tree is the only way to stop trusting a mutable URL.
 #
+# ROTATED 2026-11-04 (third rotation; measured by docs/validation/tools/
+# verify_getpip_rotation.py and independently by Actions run 41826885831 step
+# "[embed-setup]"): pypa republished the rolling URL at Last-Modified
+# "Tue, 03 Nov 2026 06:39:13 GMT", so the previous pin
+# (fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6, 2,230,488 B)
+# began failing closed — correctly. Current: 2,397,294 B. An interim rotation to
+# f4448a01… was reported while triaging the scheduled-e2e red but the artifact
+# rotated past it before any re-pin landed; this pin records what TWO independent
+# TLS fetches + the run-41826885831 download actually observed.
 # WHAT CHANGED THIS TIME: the previous rotation's note said "14 sidecar tests ... went
 # red on the mismatch; that is the pin working, not breaking." Half of that was wrong.
 # Those 14 tests do not exercise the pin at all — they pre-stage a dummy cached
@@ -93,7 +102,7 @@ PINNED_PIP = "pip==25.2"
 # reached tests that had no business touching it and took the blocking gate down with
 # it. They now inject their staged digest through the `get_pip_sha256=` seam below and
 # pass with egress blocked. Re-pinning is maintenance; that was a defect.
-GET_PIP_SHA256 = "fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6"
+GET_PIP_SHA256 = "356e0d0de21cdc348c3394084d90939b85e4246c4d14c76aee6ca4f46646ea98"
 #: success sentinel written into an env dir after a full install
 ENV_SENTINEL = ".media-studio-env.json"
 

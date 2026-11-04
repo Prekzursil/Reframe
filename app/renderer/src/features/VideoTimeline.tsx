@@ -243,7 +243,7 @@ export function VideoTimeline({
   /** Run the newest inverse. Does NOT push an inverse of its own (that is redo). */
   const undoLast = useCallback(() => {
     const top = inverses[inverses.length - 1];
-    /* v8 ignore next -- the button is disabled when the stack is empty */
+    /* v8 ignore next -- the button is disabled when the stack is empty -- @preserve */
     if (!top) return;
     setInverses((prev) => prev.slice(0, -1));
     setBusy('commit');
@@ -269,7 +269,7 @@ export function VideoTimeline({
   const laneTime = useCallback(
     (laneId: string, clientX: number): number => {
       const el = trackRefs.current.get(laneId);
-      /* v8 ignore next -- the ref is set by the same render that binds the handler */
+      /* v8 ignore next -- the ref is set by the same render that binds the handler -- @preserve */
       if (!el) return 0;
       const rect = el.getBoundingClientRect();
       return timeFromClientX(clientX, rect.left, rect.width, duration);
@@ -296,10 +296,10 @@ export function VideoTimeline({
       setDraft((prev) => {
         // NOTE: a v8 ignore comment must be ONE line — v8 miscounts `next N` across a
         // wrapped block comment, which silently leaves the line uncovered instead.
-        /* v8 ignore next -- mousedown seeds the draft, so `prev` is never null here */
+        /* v8 ignore next -- mousedown seeds the draft, so `prev` is never null here -- @preserve */
         const base = prev ?? lanes;
         const at = findClip(base, drag.clipId);
-        /* v8 ignore next -- the drag was started from a clip in this very list */
+        /* v8 ignore next -- the drag was started from a clip in this very list -- @preserve */
         if (!at) return base;
         const next =
           drag.kind === 'trim'
@@ -387,7 +387,7 @@ export function VideoTimeline({
   const nudge = useCallback(
     (clipId: string, frames: number) => {
       const at = findClip(storedLanes, clipId);
-      /* v8 ignore next -- the handler is bound to a clip in this very list */
+      /* v8 ignore next -- the handler is bound to a clip in this very list -- @preserve */
       if (!at) return;
       const target = Math.max(0, at.clip.timelineStart + frames / fps);
       const next = movePreview(at.lane, clipId, target, fps);
@@ -400,7 +400,7 @@ export function VideoTimeline({
   const trimToPlayhead = useCallback(
     (clipId: string, edge: ClipEdge) => {
       const at = findClip(storedLanes, clipId);
-      /* v8 ignore next -- the handler is bound to a clip in this very list */
+      /* v8 ignore next -- the handler is bound to a clip in this very list -- @preserve */
       if (!at) return;
       const next = trimPreview(at.lane, clipId, edge, playhead, fps);
       if (next === null) return;
@@ -502,7 +502,7 @@ export function VideoTimeline({
     });
     try {
       const path = await new Promise<string>((resolve, reject) => {
-        /* v8 ignore next 4 -- the real preload bridge always exposes onJobDone */
+        /* v8 ignore next 4 -- the real preload bridge always exposes onJobDone -- @preserve */
         if (typeof api.onJobDone !== 'function') {
           reject(new Error('This build cannot report job completion.'));
           return;

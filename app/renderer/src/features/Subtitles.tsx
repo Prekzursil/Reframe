@@ -174,7 +174,7 @@ export function Subtitles({
     async (cues: Cue[]) => {
       // defensive null-narrowing: saveEdits is only wired to the cue inputs'
       // onBlur, which render only inside `track && (...)`, so track is non-null.
-      /* v8 ignore next */
+      /* v8 ignore next -- @preserve */
       if (!track) return;
       setBusy('saving');
       setError('');
@@ -199,7 +199,7 @@ export function Subtitles({
     (index: number, text: string) => {
       // defensive null-narrowing: editCueText is only wired to the cue inputs'
       // onChange, which render only inside `track && (...)`, so track is non-null.
-      /* v8 ignore next */
+      /* v8 ignore next -- @preserve */
       if (!track) return;
       // Local optimistic update; persisted on blur via saveEdits.
       const cues = track.cues.map((c) => (c.index === index ? { ...c, text } : c));
@@ -246,7 +246,7 @@ export function Subtitles({
   const translate = useCallback(async () => {
     // defensive null-narrowing: the Translate button renders only inside
     // `track && (...)`, so track is non-null here.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!track) return;
     setBusy('translating');
     setError('');
@@ -285,7 +285,7 @@ export function Subtitles({
   const exportTrack = useCallback(async () => {
     // defensive null-narrowing: the Export button renders only inside
     // `track && (...)`, so track is non-null here.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!track) return;
     setBusy('exporting');
     setError('');
@@ -307,7 +307,7 @@ export function Subtitles({
   const cancel = useCallback(async () => {
     // defensive: the Cancel button renders only while `translating && jobId`,
     // so cancel is never invoked with a null jobId via UI.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await getApi().rpc('job.cancel', { jobId });

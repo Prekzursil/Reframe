@@ -258,7 +258,7 @@ export function ShortMaker({
   useEffect(() => {
     // resolvedApi is always present (prop or window.api) and exposes onProgress,
     // so this guard is defensive against a malformed bridge.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi || typeof resolvedApi.onProgress !== 'function') return;
     const off = resolvedApi.onProgress((p) => {
       const active = activeJobRef.current;
@@ -328,7 +328,7 @@ export function ShortMaker({
   // ---- taste profile (P3-D): populate the footer from feedback.stats -------
   useEffect(() => {
     // resolvedApi is always present; defensive guard for a missing bridge.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi) return undefined;
     let alive = true;
     Promise.resolve(resolvedApi.rpc<{ labels?: unknown; calibrated?: unknown }>('feedback.stats'))
@@ -355,7 +355,7 @@ export function ShortMaker({
   // readBrandSettings. A failure leaves the empty kit rather than blocking.
   useEffect(() => {
     // resolvedApi is always present; defensive guard for a missing bridge.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi) return undefined;
     let alive = true;
     Promise.resolve(resolvedApi.rpc<Record<string, unknown>>('settings.get'))
@@ -566,7 +566,7 @@ export function ShortMaker({
   // ---- select / regenerate ------------------------------------------------
   const runSelect = useCallback(async () => {
     // resolvedApi is always present; the submit button is disabled while busy.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi || busy) return;
     // The video this run is FOR. Every settle-time write below is a factual claim
     // about THIS id, so each is gated on the selection still being it when the job
@@ -659,6 +659,10 @@ export function ShortMaker({
     (id: string) => {
       dispatch({ type: 'approve', id });
       const it = items.find((i) => i.id === id);
+      // Callers pass the live selection (repaired to a valid id whenever items
+      // exist) or a row's own id, so the lookup always hits; the miss arm is a
+      // defensive guard for a stale-selection race the UI cannot produce.
+      /* v8 ignore next -- @preserve */
       if (it) recordFeedback(resolvedApi, videoId, it.current, 'approved');
     },
     [items, resolvedApi, videoId],
@@ -667,6 +671,8 @@ export function ShortMaker({
     (id: string) => {
       dispatch({ type: 'discard', id });
       const it = items.find((i) => i.id === id);
+      // Same invariant as approve: the id always resolves to a live row.
+      /* v8 ignore next -- @preserve */
       if (it) recordFeedback(resolvedApi, videoId, it.current, 'discarded');
     },
     [items, resolvedApi, videoId],
@@ -677,6 +683,8 @@ export function ShortMaker({
       dispatch({ type: 'nudge', id, deltaStart, deltaEnd });
       const it = items.find((i) => i.id === id);
       // Record the POST-nudge boundaries (what the user steered toward).
+      // Same invariant as approve/discard: the id always resolves to a live row.
+      /* v8 ignore next -- @preserve */
       if (it) {
         recordFeedback(
           resolvedApi,
@@ -712,11 +720,11 @@ export function ShortMaker({
   // ---- export (only explicitly-approved; nothing auto-exports) ------------
   const runExport = useCallback(async () => {
     // resolvedApi is always present; the export button is disabled while busy.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi || busy) return;
     const ids = approvedIds(items);
     // The export button is also disabled with 0 approved, so this guard is defensive.
-    /* v8 ignore next 4 */
+    /* v8 ignore next 4 -- @preserve */
     if (ids.length === 0) {
       setError('Approve at least one clip before exporting.');
       return;
@@ -828,7 +836,7 @@ export function ShortMaker({
   // inspect/adjust afterwards; nothing is destructive.
   const runBatch = useCallback(async () => {
     // resolvedApi/videoId are always present; the batch button is disabled while busy.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi || busy || !videoId) return;
     // See `runSelect` above: the video this batch is a receipt FOR.
     const startedFor = videoId;
@@ -971,7 +979,7 @@ export function ShortMaker({
     // reachable branch behind an unreachable one; it is covered by its own test now.
     if (!jobId) return;
     // resolvedApi is always present (prop or window.api); defensive guard.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!resolvedApi) return;
     try {
       await resolvedApi.rpc('job.cancel', { jobId });
@@ -1023,6 +1031,11 @@ export function ShortMaker({
       case ' ': {
         e.preventDefault(); // Space must toggle playback, never scroll
         const player = playerRef.current;
+        // The `.sm-review` group (the ONLY keydown target) renders solely when
+        // items exist, the selection-repair effect then guarantees a selected
+        // item, and previewWindow() is total — so the preview Player (and its
+        // ref) always exist by the time any key can arrive here.
+        /* v8 ignore next 4 -- @preserve */
         if (player) {
           if (player.isPlaying()) player.pause();
           else player.play();
@@ -1032,16 +1045,29 @@ export function ShortMaker({
       case 'a':
       case 'A':
         e.preventDefault();
+        // The keydown group only exists with items, and the selection-repair
+        // effect guarantees a valid selection then — selectedId is never null
+        // when this handler runs. (Block form: a `next` hint does not survive
+        // the esbuild transform at this switch-case position.)
+        /* v8 ignore start -- @preserve */
         if (selectedId) approve(selectedId);
+        /* v8 ignore stop -- @preserve */
         break;
       case 'x':
       case 'X':
         e.preventDefault();
+        // Same invariant as the 'a' arm: the group exists only with a valid
+        // selection (selection-repair effect).
+        /* v8 ignore start -- @preserve */
         if (selectedId) discard(selectedId);
+        /* v8 ignore stop -- @preserve */
         break;
       case 'ArrowLeft':
       case 'ArrowRight': {
         e.preventDefault(); // arrows nudge the window, never scroll
+        // Same invariant as the 'a'/'x' arms: the group exists only with a
+        // valid selection (selection-repair effect).
+        /* v8 ignore next -- @preserve */
         if (selectedId) {
           const step = e.shiftKey ? NUDGE_FINE_SEC : NUDGE_COARSE_SEC;
           const delta = e.key === 'ArrowLeft' ? -step : step;

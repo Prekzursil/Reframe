@@ -154,7 +154,7 @@ export function Recipes({ videoId, api }: RecipesProps): React.ReactElement {
     async (id: string): Promise<void> => {
       // The Run buttons are disabled while a recipe is running, so this
       // re-entrancy guard is defensive.
-      /* v8 ignore next */
+      /* v8 ignore next -- @preserve */
       if (runningId) return;
       setRunningId(id);
       setRunError('');
@@ -183,7 +183,7 @@ export function Recipes({ videoId, api }: RecipesProps): React.ReactElement {
   const cancel = useCallback(async (): Promise<void> => {
     // The Cancel button renders only while a run job is active, so this guard is
     // defensive.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });

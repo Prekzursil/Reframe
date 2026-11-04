@@ -416,7 +416,7 @@ export function LipSync({
   // `engine` is only ever set from the <select> whose options ARE LIPSYNC_ENGINES,
   // so the fallback is defensive and unreachable from the UI.
   const engineOption = useMemo(
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     () => LIPSYNC_ENGINES.find((e) => e.id === engine) ?? LIPSYNC_ENGINES[0],
     [engine],
   );
@@ -510,7 +510,7 @@ export function LipSync({
 
   const start = useCallback(async (): Promise<void> => {
     // Defensive: the button is disabled unless `canStart` and not already busy.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (busy || !canStart) return;
     // The video this relip belongs to, frozen at dispatch. `tts.lipsync.start` is a
     // DEFERRED job, so the reset effect above can fire while we are still awaiting
@@ -566,7 +566,7 @@ export function LipSync({
 
   const cancel = useCallback(async (): Promise<void> => {
     // Defensive: Cancel renders only while `busy && jobId`.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });

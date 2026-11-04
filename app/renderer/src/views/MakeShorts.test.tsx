@@ -59,6 +59,19 @@ vi.mock('./Shorts', () => ({
       >
         reexport
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          onReexport?.({
+            // videoId is a required string on the wire, but an EMPTY one is
+            // falsy — exactly the `if (hint.videoId)` false arm below.
+            videoId: '',
+            candidate: { hook: 'h', template: 't', viralityPct: 50, durationSec: 30 },
+          })
+        }
+      >
+        reexport-no-video
+      </button>
     </div>
   ),
 }));
@@ -422,6 +435,29 @@ describe('<MakeShorts />', () => {
     expect(
       container.querySelector('[data-testid="shortmaker"]')!.getAttribute('data-video-id'),
     ).toBe('v2');
+  });
+
+  it('a re-export hint without a videoId keeps the current selection', async () => {
+    // The hint's videoId is optional; without it the jump to Make must keep
+    // whatever video is already selected (the `if (hint.videoId)` false arm).
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    await mount();
+    await selectVideo('v1');
+    await act(async () => sectionBtn('Produced shorts').click());
+    await flush();
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'reexport-no-video',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await flush();
+    expect(
+      container.querySelector('[data-testid="shortmaker"]')!.getAttribute('data-video-id'),
+    ).toBe('v1');
   });
 
   it('re-export from the gallery jumps to Make primed with the source video', async () => {

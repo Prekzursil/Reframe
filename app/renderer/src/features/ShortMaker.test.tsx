@@ -2489,6 +2489,114 @@ describe('<ShortMaker /> component', () => {
     expect(container.querySelector('.sm-nudged')).toBeTruthy();
   });
 
+  it('a discarded candidate can be reinstated from its row button (reinstate wiring)', async () => {
+    await loadThree();
+    key({ key: 'x' });
+    expect(
+      container.querySelector('.sm-candidate.sm-selected')?.querySelector('.sm-status-discarded'),
+    ).toBeTruthy();
+    const reinstateBtn = container.querySelector(
+      '.sm-candidate.sm-selected [aria-label="Reinstate"]',
+    ) as HTMLButtonElement;
+    expect(reinstateBtn).toBeTruthy();
+    await act(async () => {
+      reinstateBtn.click();
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector('.sm-candidate.sm-selected')?.querySelector('.sm-status-discarded'),
+    ).toBeNull();
+  });
+
+  it('an empty settings.get / getDataFolder resolution after unmount is dropped (alive guards)', async () => {
+    let resolveSettings!: (v: unknown) => void;
+    let resolveFolder!: (v: string) => void;
+    const api = makeApi({
+      rpc: vi.fn((method: string) =>
+        method === 'settings.get'
+          ? new Promise((res) => (resolveSettings = res))
+          : Promise.resolve({}),
+      ) as unknown as Api['rpc'],
+      getDataFolder: vi.fn(
+        () => new Promise<string>((res) => (resolveFolder = res)),
+      ) as unknown as Api['getDataFolder'],
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      resolveSettings({});
+      resolveFolder('D:/late-root');
+      await Promise.resolve();
+    });
+  });
+
+  it('a REJECTED media.playable re-poll after job.done is swallowed (inner catch)', async () => {
+    let doneCb: ((d: JobDone) => void) | null = null;
+    let polls = 0;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'media.playable') {
+        polls += 1;
+        if (polls === 1) return { playable: false, reason: 'building…' };
+        throw new Error('playable poll blew up');
+      }
+      if (method === 'shortmaker.select') {
+        return {
+          candidates: [cand({ rank: 1, start: 100, end: 130, durationSec: 30, sourceStart: 100 })],
+        };
+      }
+      if (method === 'captions.cues') return { cues: [] };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onJobDone: (fn) => {
+        doneCb = fn;
+        return () => {
+          doneCb = null;
+        };
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await submitForm();
+    await act(async () => {
+      doneCb!({ jobId: 'proxy-9', result: {} });
+      await Promise.resolve();
+    });
+    await flush();
+    // The re-poll rejected and was swallowed: no error banner, no crash.
+    expect(polls).toBeGreaterThanOrEqual(2);
+    expect(container.querySelector('.sm-error')).toBeNull();
+  });
+
+  it('brand edits with NO bridge resolved skip the settings.set persist (guard false arm)', async () => {
+    // A bridge-less host (no api prop, no window.api): setBrandField must keep
+    // the local edit and skip the settings.set RPC entirely.
+    const w = (globalThis as { window?: { api?: unknown } }).window;
+    const hadWindow = 'window' in (globalThis as object);
+    const savedApi = w?.api;
+    if (w) delete (w as { api?: unknown }).api;
+    try {
+      render(<ShortMaker videoId="v1" />);
+      await flush();
+      openBrandKit();
+      const sel = container.querySelector(
+        '[aria-label="Default caption template"]',
+      ) as HTMLSelectElement;
+      expect(sel).toBeTruthy();
+      await act(async () => {
+        sel.value = sel.options[1]?.value ?? 'bold';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await Promise.resolve();
+      });
+      // The local edit applied (select shows a non-empty template) with no RPC seam.
+      expect(sel.value).not.toBe('');
+    } finally {
+      if (w && savedApi !== undefined) (w as { api?: unknown }).api = savedApi;
+      else if (!hadWindow) delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
   it('ignores review keys with a modifier or from a text-entry target', async () => {
     await loadThree();
     const selectedId = () =>

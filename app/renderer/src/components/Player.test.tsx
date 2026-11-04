@@ -552,6 +552,36 @@ describe('Player imperative handle', () => {
     expect(ref.current!.isPlaying()).toBe(true);
   });
 
+  it('swallows a REJECTED play() promise (the .catch(() => undefined) arm)', async () => {
+    // safePlay's `Promise.resolve(video.play()).catch(() => undefined)` exists
+    // for Chromium's AbortError rejections when playback is interrupted; the
+    // promise-REJECTION arm is distinct from the synchronous-throw arm below.
+    const ref = React.createRef<PlayerHandle>();
+    render({ videoId: 'vid-1' }, ref);
+    playMock.mockImplementationOnce(() => Promise.reject(new Error('AbortError')));
+    expect(() => ref.current!.play()).not.toThrow();
+    // Drain microtasks so the rejection reaches the .catch arm inside the test.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(playMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('imperative handle no-ops against a stale capture after unmount', () => {
+    // A parent can legitimately hold the handle object it received before the
+    // Player unmounted (e.g. a preview pane swapped mid-keypress). Every ref
+    // read inside the handle must be guarded so the stale call is a no-op,
+    // never a crash: play/seek/scrub with videoRef.current === null.
+    const ref = React.createRef<PlayerHandle>();
+    render({ videoId: 'vid-1' }, ref);
+    const stale = ref.current!;
+    act(() => root.unmount());
+    playMock.mockClear();
+    expect(() => stale.play()).not.toThrow();
+    expect(() => stale.seek(3)).not.toThrow();
+    expect(() => stale.scrub(4)).not.toThrow();
+    expect(playMock).not.toHaveBeenCalled();
+  });
+
   it('swallows a synchronous play() throw (detached/jsdom element)', () => {
     // safePlay()'s try/catch (Player.tsx:124-128) guards the rare case where
     // video.play() throws synchronously rather than returning a promise — the UI

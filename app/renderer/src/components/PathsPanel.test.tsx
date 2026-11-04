@@ -334,3 +334,80 @@ describe('<PathsPanel />', () => {
     expect(container.querySelectorAll('.paths-panel__row').length).toBe(11);
   });
 });
+
+describe('<PathsPanel /> unmount-abort arms (stale-response guards)', () => {
+  // The describe/getDataFolder effects must ignore resolutions and rejections
+  // that land AFTER the panel unmounted (`alive === false`) — otherwise a
+  // disposed panel would setState on an unmounted root.
+  function deferred<T>(): {
+    promise: Promise<T>;
+    resolve: (v: T) => void;
+    reject: (e: unknown) => void;
+  } {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it('ignores a describe resolution that lands after unmount', async () => {
+    const d = deferred<PathsDescribe>();
+    const rpc = makeRpc({ describe: vi.fn().mockReturnValue(d.promise) });
+    const bridge = makeBridge();
+    await mount({ rpc, bridge });
+    act(() => root.unmount());
+    await act(async () => {
+      d.resolve(layout());
+      await Promise.resolve();
+    });
+    // No crash, no act-warning leak: the late resolution was dropped.
+  });
+
+  it('ignores a describe rejection that lands after unmount', async () => {
+    const d = deferred<PathsDescribe>();
+    const rpc = makeRpc({ describe: vi.fn().mockReturnValue(d.promise) });
+    const bridge = makeBridge();
+    await mount({ rpc, bridge });
+    act(() => root.unmount());
+    await act(async () => {
+      d.reject(new Error('late describe boom'));
+      await Promise.resolve();
+    });
+  });
+
+  it('ignores a getDataFolder resolution that lands after unmount', async () => {
+    const d = deferred<string>();
+    const bridge = makeBridge({ getDataFolder: vi.fn().mockReturnValue(d.promise) });
+    await mount({ rpc: makeRpc(), bridge });
+    act(() => root.unmount());
+    await act(async () => {
+      d.resolve('D:/late-root');
+      await Promise.resolve();
+    });
+  });
+
+  it('renders the Unknown placeholder when getDataFolder resolves empty', async () => {
+    // The `folder || ROOT_UNKNOWN` falsy arm: the sidecar may resolve '' (no
+    // root chosen yet) — the panel must show "Unknown", not an empty string.
+    const bridge = makeBridge({ getDataFolder: vi.fn().mockResolvedValue('') });
+    await mount({ rpc: makeRpc(), bridge });
+    expect((container.querySelector('.paths-panel__root-value') as HTMLElement).textContent).toBe(
+      'Unknown',
+    );
+  });
+
+  it('swallows a getDataFolder rejection (fail-soft placeholder)', async () => {
+    const bridge = makeBridge({
+      getDataFolder: vi.fn().mockRejectedValue(new Error('root boom')),
+    });
+    await mount({ rpc: makeRpc(), bridge });
+    // Placeholder stays; the failed read never becomes an error banner.
+    expect((container.querySelector('.paths-panel__root-value') as HTMLElement).textContent).toBe(
+      'Unknown',
+    );
+    expect(container.querySelector('.paths-panel__error')).toBeNull();
+  });
+});

@@ -91,7 +91,7 @@ export function Assets({ api }: AssetsProps): React.ReactElement {
     async (names: string[]): Promise<void> => {
       // defensive: the install / install-all buttons are disabled while busy and
       // when there is nothing missing, so this guard is never reached via UI.
-      /* v8 ignore next */
+      /* v8 ignore next -- @preserve */
       if (names.length === 0 || busy) return;
       setBusy(true);
       setEnsureError('');
@@ -127,7 +127,7 @@ export function Assets({ api }: AssetsProps): React.ReactElement {
   const cancel = useCallback(async (): Promise<void> => {
     // defensive: the Cancel button renders only while `busy && jobId`, so cancel
     // is never invoked with a null jobId via UI.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('assets.cancel', { jobId });

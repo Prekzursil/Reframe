@@ -724,4 +724,106 @@ describe('<Timeline />', () => {
     expect(container.textContent).toContain('Saved');
     expect(cueRects()).toHaveLength(3);
   });
+
+  // ---- no-op commit arms + unmount-abort guards --------------------------------
+  it('split is a no-op on a cue shorter than 2*MIN_CUE_SEC (same-ref arm)', async () => {
+    const tiny = makeTrack({ cues: [cue(1, 0, 0.04, 'tiny'), cue(2, 1, 2, 'next')] });
+    const fake = makeFakeApi({ tracks: [tiny] });
+    await mount(fake.api);
+    await selectCue(0, 2); // select the tiny cue
+    await act(async () => {
+      button('split').click();
+    });
+    // splitAt returns the SAME array when splitCue cannot halve the span, so
+    // nothing was committed: undo stays disabled.
+    expect(button('undo').disabled).toBe(true);
+  });
+
+  it('retime is a no-op when neighbors bound the cue tighter than MIN_CUE_SEC (same-ref arm)', async () => {
+    // prev ends at 1, next starts at 1.04 -> hi-lo = 0.04 < MIN_CUE_SEC.
+    const packed = makeTrack({
+      cues: [cue(1, 0, 1, 'a'), cue(2, 1, 1.04, 'pinched'), cue(3, 1.04, 3, 'b')],
+    });
+    const fake = makeFakeApi({ tracks: [packed] });
+    await mount(fake.api);
+    await selectCue(1, 12);
+    await act(async () => {
+      button('retime').click();
+    });
+    expect(button('undo').disabled).toBe(true);
+  });
+
+  it('an edge drag that never moves commits nothing (draft === present arm)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await selectCue(1, 40);
+    const endHandle = cueRects()[1].querySelector('[data-edge="end"]')!;
+    await act(async () => {
+      endHandle.dispatchEvent(mouse('mousedown', 50));
+    });
+    // mouseup with NO intervening mousemove: draft was seeded with
+    // history.present, so the mouseup guard skips the commit.
+    await act(async () => {
+      lane().dispatchEvent(mouse('mouseup', 50));
+    });
+    expect(button('undo').disabled).toBe(true);
+  });
+
+  it('a click on an element whose data-cue is not an integer keeps the selection', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    // Craft a foreign [data-cue] carrier inside the lane (defensive guard:
+    // real cue rects always carry integer positions).
+    const decoy = document.createElement('div');
+    decoy.setAttribute('data-cue', 'not-a-number');
+    lane().appendChild(decoy);
+    await act(async () => {
+      decoy.dispatchEvent(mouse('click', 40));
+    });
+    expect(container.querySelector('.timeline__editor')).toBeNull();
+  });
+
+  it('drops a tracks.list rejection that lands after unmount', async () => {
+    let rejectLate!: (e: unknown) => void;
+    const calls: FakeApi['calls'] = [];
+    const api = {
+      rpc: vi.fn((method: string) => {
+        calls.push({ method });
+        if (method === 'tracks.list') return new Promise((_, rej) => (rejectLate = rej));
+        if (method === 'timeline.peaks') return Promise.resolve(PEAKS);
+        return Promise.resolve({});
+      }),
+    } as unknown as MediaStudioApi;
+    await act(async () => {
+      root.render(<Timeline videoId="vid-1" api={api} durationSec={100} />);
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      rejectLate(new Error('late tracks.list boom'));
+      await Promise.resolve();
+    });
+  });
+
+  it('drops a timeline.peaks rejection that lands after unmount', async () => {
+    let rejectLate!: (e: unknown) => void;
+    const api = {
+      rpc: vi.fn((method: string) => {
+        if (method === 'tracks.list') return Promise.resolve({ tracks: [makeTrack()] });
+        if (method === 'timeline.peaks') return new Promise((_, rej) => (rejectLate = rej));
+        return Promise.resolve({});
+      }),
+    } as unknown as MediaStudioApi;
+    await act(async () => {
+      root.render(<Timeline videoId="vid-1" api={api} durationSec={100} />);
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      rejectLate(new Error('late peaks boom'));
+      await Promise.resolve();
+    });
+  });
 });

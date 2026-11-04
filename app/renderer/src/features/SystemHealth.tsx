@@ -93,7 +93,7 @@ export function SystemHealth({ api }: SystemHealthProps): React.ReactElement {
   const toggleOffline = useCallback(async (): Promise<void> => {
     // defensive: the toggle button renders only when `report` exists and is
     // `disabled={offlineBusy}`, so this guard is never reached via UI.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!report || offlineBusy) return;
     const next = !report.offline;
     setOfflineBusy(true);
@@ -112,7 +112,7 @@ export function SystemHealth({ api }: SystemHealthProps): React.ReactElement {
   // renders inside `report && (...)`, where summary is always non-null, so the
   // empty-string arm is defensive only.
   const backendCountLabel =
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     summary ? ` (${summary.installed}/${summary.total})` : '';
 
   return (

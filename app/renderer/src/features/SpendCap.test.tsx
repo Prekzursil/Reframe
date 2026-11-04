@@ -60,16 +60,18 @@ function spendInfo(over: Partial<SpendInfo> = {}): SpendInfo {
 
 interface Overrides {
   spend?: () => Promise<SpendInfo>;
-  set?: ReturnType<typeof vi.fn>;
+  set?: (values: Record<string, unknown>) => Promise<unknown>;
 }
 
 function makeApi(over: Overrides = {}): {
   api: SpendCapClient;
-  set: ReturnType<typeof vi.fn>;
+  set: (values: Record<string, unknown>) => Promise<unknown>;
   spend: ReturnType<typeof vi.fn>;
 } {
   const spend = vi.fn(over.spend ?? (() => Promise.resolve(spendInfo())));
-  const set = over.set ?? vi.fn(() => Promise.resolve({}));
+  const set =
+    over.set ??
+    vi.fn<(values: Record<string, unknown>) => Promise<unknown>>(() => Promise.resolve({}));
   return { api: { providers: { spend }, settings: { set } }, set, spend };
 }
 

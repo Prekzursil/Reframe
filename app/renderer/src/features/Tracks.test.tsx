@@ -639,4 +639,63 @@ describe('<Tracks />', () => {
       trackId: 'avail-1',
     });
   });
+
+  // ---- burn/relabel branch arms ------------------------------------------------
+  it('an inline burn result without a jobId skips the job subscription (id falsy arm)', async () => {
+    const fake = makeFakeApi({ tracks: [track()] });
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
+      vi.fn(async <T,>(method: string) => {
+        if (method === 'tracks.list') return { tracks: [track()] } as T;
+        if (method === 'tracks.burn') return { path: '/out/direct-burn.mp4' } as T;
+        return {} as T;
+      }),
+    );
+    await mount(fake);
+    const burnBtn = [...container.querySelectorAll('.track-row button')].find((b) =>
+      /Burn/.test(b.textContent ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      burnBtn.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.status')?.textContent).toContain('/out/direct-burn.mp4');
+  });
+
+  it('a burn job.done without a path leaves no success status (outPath falsy arm)', async () => {
+    const fake = makeFakeApi({ tracks: [track()] });
+    await mount(fake);
+    const burnBtn = [...container.querySelectorAll('.track-row button')].find((b) =>
+      /Burn/.test(b.textContent ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      burnBtn.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-burn', result: {} });
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.status')?.textContent).not.toContain('Burned');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('relabel on blur is a no-op for an empty value and for an unchanged value', async () => {
+    const fake = makeFakeApi({ tracks: [track()] });
+    await mount(fake);
+    const lang = container.querySelector('[aria-label="Track t1 language"]') as HTMLInputElement;
+
+    // Empty trim -> guarded off.
+    await act(async () => {
+      lang.value = '   ';
+      lang.dispatchEvent(new Event('focusout', { bubbles: true }));
+      await Promise.resolve();
+    });
+    // Unchanged value -> guarded off.
+    await act(async () => {
+      lang.value = 'en';
+      lang.dispatchEvent(new Event('focusout', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'tracks.relabel')).toBeUndefined();
+  });
 });
