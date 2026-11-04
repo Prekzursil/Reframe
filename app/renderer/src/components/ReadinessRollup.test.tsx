@@ -428,3 +428,22 @@ describe('<ReadinessRollup /> — WU-14 wiring', () => {
     root = createRoot(container);
   });
 });
+
+describe('<ReadinessRollup /> — unmount-abort arm (aliveRef)', () => {
+  it('drops a summary rejection that lands after unmount', async () => {
+    // The aliveRef guard must also cover the .catch arm: an `assets.ensure`
+    // refresh outliving the panel must not setError on a dead root.
+    let reject!: (e: unknown) => void;
+    const client = makeClient(() => new Promise((_, rej) => (reject = rej)));
+    await act(async () => {
+      root.render(<ReadinessRollup rpcClient={client} />);
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      reject(new Error('late readiness boom'));
+      await Promise.resolve();
+    });
+  });
+});

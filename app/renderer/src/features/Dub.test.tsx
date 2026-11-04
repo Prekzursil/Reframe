@@ -114,6 +114,25 @@ describe('buildDubParams', () => {
     expect(params).not.toHaveProperty('sampleId');
   });
 
+  it('a clone engine without a sampleId omits both sampleId and voice', () => {
+    const params = buildDubParams({
+      videoId: 'v1',
+      trackId: 't1',
+      engine: 'chatterbox',
+      voice: 'will-not-appear',
+    });
+    expect(params).toEqual({ videoId: 'v1', trackId: 't1', engine: 'chatterbox' });
+  });
+
+  it('a non-clone engine without a voice omits both voice and sampleId', () => {
+    const params = buildDubParams({
+      videoId: 'v1',
+      trackId: 't1',
+      engine: 'kokoro',
+    });
+    expect(params).toEqual({ videoId: 'v1', trackId: 't1', engine: 'kokoro' });
+  });
+
   it('includes targetLang only when non-blank (trimmed)', () => {
     expect(
       buildDubParams({
@@ -650,6 +669,27 @@ describe('<Dub />', () => {
     });
     await flush();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('dub error obj');
+  });
+
+  it('a job.done object without audioTrack+path reaches Done without an audition', async () => {
+    // The setResult guard requires BOTH fields; a partial payload (e.g. only a
+    // path) must still mark the job done + refresh, but never render a broken
+    // audition player.
+    const { api, doneCbs, calls } = makeBridge();
+    await mount(api);
+    pick('[data-picker="track"]', 't1');
+    await act(async () => {
+      (container.querySelector('[data-action="start-dub"]') as HTMLButtonElement).click();
+    });
+    await flush();
+    await act(async () => {
+      doneCbs.forEach((cb) => cb({ jobId: 'job-9', result: { path: 'C:/dubs/dub.wav' } }));
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="dub-audio"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    // The post-done refresh still ran (A3 row list re-pulled).
+    expect(calls.filter((c) => c.method === 'tracks.audio.list').length).toBeGreaterThan(1);
   });
 
   it('treats a null dub job.done payload as a no-op (extract ?? null)', async () => {

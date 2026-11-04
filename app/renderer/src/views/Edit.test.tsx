@@ -434,4 +434,26 @@ describe('<Edit />', () => {
     );
     expect(onBack).toHaveBeenCalled();
   });
+
+  it('a failing settings.set on the choice persist is swallowed (best-effort)', async () => {
+    // The in-memory choice must survive a rejected persistence write: the catch
+    // arm keeps the pick applied and surfaces nothing.
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.set') return Promise.reject(new Error('persist boom'));
+      return Promise.resolve({});
+    });
+    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} initialMode="hub" />));
+    await flush();
+    pick('shorts');
+    // Drain the rejected persist through its catch inside the test.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(rpcMock).toHaveBeenCalledWith('settings.set', expect.anything());
+    // The choice still applied: the TaskHub stub records the routed choice.
+    expect(container.querySelector('[data-testid="taskhub"]')!.getAttribute('data-last')).toBe(
+      'shorts',
+    );
+  });
 });

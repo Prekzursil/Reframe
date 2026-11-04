@@ -320,7 +320,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     const video = videoRef.current;
     // defensive: the <video> ref is always attached before this mount-effect runs
     // (React sets refs before effects), so `video` is never null here.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!video) return undefined;
     const handleTimeUpdate = (): void => {
       const t = video.currentTime;
@@ -383,7 +383,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     lastReloadToken.current = reloadToken;
     const video = videoRef.current;
     // defensive: ref is attached before effects run; guarded for type-safety.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!video) return;
     video.load();
   }, [reloadToken]);
@@ -394,7 +394,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   useEffect(() => {
     if (!transport) return undefined;
     const video = videoRef.current;
-    /* v8 ignore next -- React attaches refs before effects run; unreachable */
+    /* v8 ignore next -- React attaches refs before effects run; unreachable -- @preserve */
     if (!video) return undefined;
     const syncTime = (): void => setPlayhead(video.currentTime);
     const syncDuration = (): void =>
@@ -445,7 +445,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   useEffect(() => {
     if (!transport) return undefined;
     const video = videoRef.current;
-    /* v8 ignore next -- React attaches refs before effects run; unreachable */
+    /* v8 ignore next -- React attaches refs before effects run; unreachable -- @preserve */
     if (!video) return undefined;
     if (rate > 0) {
       video.playbackRate = rate;
@@ -519,7 +519,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   /** Transport intent: play or pause. Stopping always ends a shuttle. */
   const handlePlayPause = (play: boolean): void => {
     const video = videoRef.current;
-    /* v8 ignore next -- the transport only renders while the element is mounted */
+    /* v8 ignore next -- the transport only renders while the element is mounted -- @preserve */
     if (!video) return;
     if (play) {
       safePlay(video);
@@ -534,7 +534,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   /** Transport intent: seek (through the same window clamp as the ref handle). */
   const handleSeek = (timeSec: number): void => {
     const video = videoRef.current;
-    /* v8 ignore next -- the transport only renders while the element is mounted */
+    /* v8 ignore next -- the transport only renders while the element is mounted -- @preserve */
     if (!video) return;
     const target = clampToWindow(timeSec, winRef.current);
     video.currentTime = target;
@@ -575,7 +575,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       },
       // the `?? 0` only fires if the ref is null, which the imperative handle can
       // never observe (it is callable only while the component is mounted).
-      /* v8 ignore next */
+      /* v8 ignore next -- @preserve */
       currentTime: () => videoRef.current?.currentTime ?? 0,
       isPlaying: () => {
         const video = videoRef.current;

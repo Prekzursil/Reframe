@@ -100,6 +100,20 @@ describe('activeLine', () => {
     expect(line.find((w) => w.text === 'new')?.active).toBe(false);
   });
 
+  it('drops cues that fall entirely outside the window (rebaseCue null arm)', () => {
+    // Cues before the window in-point (end <= window.start) and after its
+    // out-point (start >= window.end) can never display in this preview: the
+    // null-filter at the top of activeLine must skip them while still building
+    // the line from the in-window remainder.
+    const mixed: Cue[] = [
+      cue(1, 95, 99.9, 'before'), // ends before the window starts -> dropped
+      cue(2, 101, 101.4, 'Hello'), // in window -> kept
+      cue(3, 130, 130.5, 'after'), // starts at/after the window end -> dropped
+    ];
+    const line = activeLine(mixed, WINDOW, 1.2); // mid "Hello"
+    expect(line.map((w) => w.text)).toEqual(['Hello']);
+  });
+
   it('returns an empty line before any cue starts', () => {
     expect(activeLine(CUES, WINDOW, 0.2)).toEqual([]);
   });

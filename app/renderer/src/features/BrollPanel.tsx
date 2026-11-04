@@ -691,7 +691,7 @@ export function BrollPanel({ videoId, api }: BrollPanelProps): React.ReactElemen
 
   const cancel = useCallback(async (): Promise<void> => {
     // Defensive: Cancel renders only while `busy && jobId`.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });

@@ -8,6 +8,8 @@ import {
   type Candidate,
   type ReviewItem,
   errMsg,
+  extractCandidates,
+  extractClips,
   moveSelection,
   nudgeCandidate,
   previewWindow,
@@ -170,5 +172,40 @@ describe('errMsg', () => {
     expect(errMsg(null)).toBe('Unknown error');
     expect(errMsg(123)).toBe('Unknown error');
     expect(errMsg({ noMessage: true })).toBe('Unknown error');
+  });
+});
+
+describe('extractCandidates / extractClips (payload-shape guards)', () => {
+  it('extractCandidates returns the array when payload.candidates is an array', () => {
+    const list = [cand({ rank: 2 })];
+    expect(extractCandidates({ candidates: list })).toBe(list);
+  });
+
+  it('extractCandidates returns null for non-object payloads', () => {
+    expect(extractCandidates(null)).toBeNull();
+    expect(extractCandidates(undefined)).toBeNull();
+    expect(extractCandidates('nope')).toBeNull();
+    expect(extractCandidates(7)).toBeNull();
+  });
+
+  it('extractCandidates returns null when the key is absent or not an array', () => {
+    expect(extractCandidates({})).toBeNull();
+    expect(extractCandidates({ candidates: 'not-an-array' })).toBeNull();
+    expect(extractCandidates({ candidates: null })).toBeNull();
+  });
+
+  it('extractClips returns the array when payload.clips is an array', () => {
+    const clips = [{ candidate: cand(), path: '/out/a.mp4' }];
+    expect(extractClips({ clips })).toBe(clips);
+  });
+
+  it('extractClips returns null for non-object payloads', () => {
+    expect(extractClips(null)).toBeNull();
+    expect(extractClips('nope')).toBeNull();
+  });
+
+  it('extractClips returns null when the key is absent or not an array', () => {
+    expect(extractClips({})).toBeNull();
+    expect(extractClips({ clips: 42 })).toBeNull();
   });
 });

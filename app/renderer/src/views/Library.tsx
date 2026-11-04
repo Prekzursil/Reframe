@@ -316,7 +316,7 @@ export function Library({
     // so its onClick can never fire while `adding` is true (React does not
     // dispatch onClick for a control it rendered disabled) — the guard is
     // therefore unreachable via the UI but kept as defence-in-depth.
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     if (adding) return;
     const bridge = pickerBridge();
     if (!bridge || typeof bridge.openVideos !== 'function') {
