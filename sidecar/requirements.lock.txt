@@ -6,7 +6,7 @@ aiosignal==1.4.0
     # via aiohttp
 annotated-doc==0.0.5
     # via typer
-anyio==4.15.1
+anyio==4.16.0
     # via httpx
 attrs==26.1.0
     # via
@@ -41,7 +41,7 @@ colorlog==6.12.0
     # via kokoro-onnx
 csvw==4.1.1
     # via segments
-ctranslate2==4.8.4
+ctranslate2==4.8.5
     # via faster-whisper
 dlinfo==2.0.0
     # via phonemizer-fork
@@ -51,7 +51,7 @@ espeakng-loader==0.2.4
     # via kokoro-onnx
 faster-whisper==1.2.1
     # via media-studio-sidecar (sidecar/pyproject.toml)
-filelock==4.2.1
+filelock==4.2.7
     # via huggingface-hub
 flatbuffers==25.12.19
     # via onnxruntime
@@ -63,7 +63,7 @@ fsspec==2026.9.0
     # via huggingface-hub
 h11==0.16.0
     # via httpcore
-hf-xet==1.7.0
+hf-xet==1.8.0
     # via huggingface-hub
 httpcore==1.0.9
     # via httpx
@@ -124,7 +124,7 @@ packaging==26.3
     #   onnxruntime
 phonemizer-fork==3.3.2
     # via kokoro-onnx
-platformdirs==4.13.6
+platformdirs==4.14.3
     # via scenedetect
 propcache==0.5.4
     # via
@@ -166,7 +166,7 @@ scenedetect==0.7.2
     # via media-studio-sidecar (sidecar/pyproject.toml)
 segments==2.4.0
     # via phonemizer-fork
-setuptools==84.1.0
+setuptools==84.2.1
     # via ctranslate2
 shellingham==1.5.4
     # via typer
