@@ -22,7 +22,7 @@
 # lock is validated by media_studio.assets.manager.validate_hashed_lock first.
 
 faster-whisper==1.2.1
-ctranslate2==4.8.4
+ctranslate2==4.8.5
 scenedetect==0.7.2
 opencv-python==4.14.0.94
 httpx==0.28.1
@@ -38,7 +38,7 @@ tokenizers==0.23.3
 kokoro-onnx==0.6.1
 
 # CUDA runtime wheels for ctranslate2/onnxruntime GPU paths (pins = dev venv)
-nvidia-cublas-cu12==12.9.2.10
+nvidia-cublas-cu12==12.9.3.13
 nvidia-cudnn-cu12==9.27.0.42
 
 # DELIBERATELY NOT HERE: mediapipe. The claudeshorts reframe engine's optional
