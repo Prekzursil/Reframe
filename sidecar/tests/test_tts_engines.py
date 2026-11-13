@@ -423,20 +423,20 @@ class TestChatterbox:
         assert entry is not None
         assert entry.kind == "env" and entry.installer == "env"
         assert entry.dest == cb.CHATTERBOX_ENV_DEST
-        # A4+: installs with the dedicated py3.14 interpreter (torch 2.10 only
+        # A4+: installs with the dedicated py3.14 interpreter (torch 2.13 only
         # resolves there), not the host py3.12.
         assert entry.python_kind == "chatterbox"
         # A6 lesson 5: every requirement is PINNED
         assert all("==" in req for req in entry.requirements)
         torch_pins = [r for r in entry.requirements if r.startswith("torch==")]
-        assert torch_pins and "+cu128" in torch_pins[0]
+        assert torch_pins and "+cu130" in torch_pins[0]
         assert any(r == "chatterbox-tts==0.1.7" for r in entry.requirements)
         # ORDER MATTERS: the env sentinel compares the requirement LIST against
         # this tuple, so chatterbox-tts/torch/torchaudio must stay at indices
         # 0/1/2 (the same order requirements-chatterbox.txt mirrors).
         assert entry.requirements[0].startswith("chatterbox-tts==")
-        assert entry.requirements[1] == "torch==2.10.0+cu128"
-        assert entry.requirements[2] == "torchaudio==2.10.0+cu128"
+        assert entry.requirements[1] == "torch==2.13.0+cu130"
+        assert entry.requirements[2] == "torchaudio==2.11.0+cu130"
 
     def test_default_chatterbox_python_resolves_staged_embed(self, tmp_path):
         # The py3.12 embed sits at <res>/python/; the py3.14 chatterbox embed at
