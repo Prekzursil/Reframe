@@ -92,9 +92,15 @@ jobs:
           # (pyproject reframe-gpu extra, A6 lesson 5). Unpinned resolves to OpenCV
           # 5.x, whose cv2.FaceDetectorYN/YuNet path is a major-version break and
           # fails the claudeshorts reframe.
+          # av is BOUNDED < 17 for the same reason: faster-whisper 1.2.1 calls
+          # av.open(..., metadata_errors=...) which PyAV 17 removed, so an
+          # unpinned `av` resolves to 17.x and the TRANSCRIBE leg dies with
+          # "open() got an unexpected keyword argument 'metadata_errors'"
+          # (nightly e2e 2026-11-03..13). Mirrors sidecar/pyproject.toml's
+          # av>=14,<17; lift both together when faster-whisper supports av 17.
           pip install \
             httpx numpy opencv-python-headless==4.13.0.92 \
-            faster-whisper scenedetect av onnxruntime \
+            faster-whisper scenedetect "av>=14,<17" onnxruntime \
             huggingface_hub tokenizers
 
       - name: E2E sidecar — pytest -m e2e (AI2 hub/director + intel/repurpose + nasty inputs)
