@@ -1,0 +1,80 @@
+# Advanced CodeQL analysis (fleet standard 2026-11): in-repo workflow with BOTH
+# query suites — security-extended + security-and-quality (strictly subsumes the
+# default suite AND the extended suite) — matrixed over every language this
+# repo actually ships (Python sidecar + app JS/TS + GitHub Actions workflows),
+# triggered on push to main, pull_request targeting main, and a weekly schedule;
+# each language's SARIF is uploaded to code scanning under its own category.
+# The repo's own 100%-coverage quality gate (quality.yml) and the mutation /
+# e2e suites stay wired beside this. Default-setup (suite=extended) is disabled
+# via the API once this workflow's first run is green so no language is
+# analyzed twice.
+name: codeql
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  merge_group:
+    types: [checks_requested]
+  schedule:
+    - cron: "31 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          # Both suites per the fleet CODEQL DECISION — strictly subsumes the
+          # default suite and the extended suite.
+          queries: security-extended,security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # Fail-closed gate: a required check named `CodeQL` must never be satisfied
+  # by a skipped, cancelled, or failed analysis.
+  codeql-gate:
+    name: CodeQL
+    if: always()
+    needs: [analyze]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every language analysis passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          [ -n "$RESULTS" ] || { echo "::error title=CodeQL gate::no analysis results to gate on"; exit 1; }
+          for r in $RESULTS; do
+            [ "$r" = success ] || { echo "::error title=CodeQL gate::an analysis ended with '$r' (all: $RESULTS)"; exit 1; }
+          done
+          echo "all CodeQL analyses passed: $RESULTS"

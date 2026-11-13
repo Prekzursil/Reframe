@@ -99,7 +99,11 @@ def resolve_binary(name: str, settings: Mapping[str, Any] | None = None) -> str:
     #    when it names ffmpeg but we're resolving ffprobe, find the sibling).
     setting_val = settings.get("ffmpegPath") or settings.get(f"{name}Path")
     if setting_val:
-        sp = Path(str(setting_val))
+        # ensure_within (bare, no parts) canonicalises the settings-supplied
+        # binary path through the SAME CodeQL py/path-injection barrier the env
+        # branch below uses; every str(sp)/str(sib)/str(cand) returned from here
+        # is then the sanitised value interprocedurally (pathsafe.py contract).
+        sp = Path(ensure_within(str(setting_val)))
         if sp.is_file():
             # Use the file directly only when it IS the binary we want — its
             # stem matches `name`, or it's the generic ffmpegPath and we're
