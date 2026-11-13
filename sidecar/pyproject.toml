@@ -56,9 +56,9 @@ dev = [
 #   pip install "media-studio-sidecar[reframe-gpu]" \
 #     --extra-index-url https://download.pytorch.org/whl/cu130
 reframe-gpu = [
-  "torch==2.13.0",                # LR-ASD runtime (cu130 build via the torch index; 2.13.0 clears the torch advisory batch incl. GHSA-rrmf-rvhw-rf47)
-  "torchvision==0.28.0",          # paired with torch 2.13.0
-  "torchaudio==2.11.0",           # torchaudio DISCONTINUED above 2.11.x; 2.11.0 pairs install-wise with torch 2.13 (no requires_dist pin) — GPU-verify on first install
+  "torch==2.15.0",                # LR-ASD runtime (cu130 build via the torch index; 2.13.0 clears the torch advisory batch incl. GHSA-rrmf-rvhw-rf47)
+  "torchvision==0.29.2",          # paired with torch 2.13.0
+  "torchaudio==2.11.1",           # torchaudio DISCONTINUED above 2.11.x; 2.11.0 pairs install-wise with torch 2.13 (no requires_dist pin) — GPU-verify on first install
   # WU B4 (I2): the ONLY permitted weight-container reader on the load path — the
   # vendored ViNet-S / TransNetV2 backends load their re-hosted weights via
   # safetensors.torch.load_file (torch.load / pickle is FORBIDDEN, an RCE surface).
