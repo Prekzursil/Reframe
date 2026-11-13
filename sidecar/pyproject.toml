@@ -14,6 +14,12 @@ license = { text = "MIT" }
 # after the build. Versions are floors, not pins, kept lean per §6.
 dependencies = [
   "faster-whisper>=1.0",   # §7 transcription (large-v3-turbo)
+  # PyAV constraint: faster-whisper 1.2.1 decode_audio() calls
+  # av.open(..., metadata_errors="ignore"), which PyAV 17.x removed -- av 17
+  # breaks transcription with "open() got an unexpected keyword argument
+  # 'metadata_errors'" (nightly e2e 2026-11-03..13). Hold < 17 until
+  # faster-whisper ships an av-17-compatible release, then drop this bound.
+  "av>=14,<17",            # faster-whisper 1.2.1 compatibility ceiling
   "scenedetect>=0.6",      # §5 PySceneDetect scene cuts for boundary snapping
   "httpx>=0.27",           # HTTP client for the llama.cpp OpenAI-compatible server (§7)
   # P2 (T2, A6 lesson 5: PINNED). ⚠ human: verify current releases at install
@@ -43,14 +49,16 @@ dev = [
 # reframe_multispeaker_backend._stage_diarize -> diarize_backend.SpeechBrainDiarizer).
 # These are NOT installed by build agents and NOT in the CI gate env (the unit tests
 # are heavy-ML-free); a human installs them on the GPU host. PINNED to the
-# GPU-validated versions (A6 lesson 5). ⚠ torch / torchvision / torchaudio must be
+# GPU-validated versions (A6 lesson 5). 2026-11-14: trio advanced to the torch
+# 2.13 line — cu128/cu124 do not publish 2.13.0, so use the cu130 index; the
+# first GPU install re-validates. ⚠ torch / torchvision / torchaudio must be
 # installed from the CUDA wheel index to get the +cuXXX builds, e.g.:
 #   pip install "media-studio-sidecar[reframe-gpu]" \
-#     --extra-index-url https://download.pytorch.org/whl/cu124
+#     --extra-index-url https://download.pytorch.org/whl/cu130
 reframe-gpu = [
-  "torch==2.6.0",                 # GPU-validated LR-ASD runtime (cu124 build via the torch index)
-  "torchvision==0.21.0",          # paired with torch 2.6.0
-  "torchaudio==2.6.0",            # paired with torch 2.6.0
+  "torch==2.13.0",                # LR-ASD runtime (cu130 build via the torch index; 2.13.0 clears the torch advisory batch incl. GHSA-rrmf-rvhw-rf47)
+  "torchvision==0.28.0",          # paired with torch 2.13.0
+  "torchaudio==2.11.0",           # torchaudio DISCONTINUED above 2.11.x; 2.11.0 pairs install-wise with torch 2.13 (no requires_dist pin) — GPU-verify on first install
   # WU B4 (I2): the ONLY permitted weight-container reader on the load path — the
   # vendored ViNet-S / TransNetV2 backends load their re-hosted weights via
   # safetensors.torch.load_file (torch.load / pickle is FORBIDDEN, an RCE surface).

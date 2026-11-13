@@ -179,8 +179,8 @@ the isolated env asset (A6 lesson 5).
 
 ## 5. Chatterbox env install — PIP_EXTRA_INDEX_URL
 
-The `chatterbox-env` manifest entry pins `torch==2.6.0+cu124` /
-`torchaudio==2.6.0+cu124` (CUDA12 wheels). pip can only resolve `+cu124`
+The `chatterbox-env` manifest entry pins `torch==2.13.0+cu130` /
+`torchaudio==2.11.0+cu130` (CUDA13 wheels). pip can only resolve `+cu130`
 local versions with the PyTorch index visible. The assets manager's runner
 inherits `os.environ`, so the sidecar process (or T5's runtime_setup) must
 export, before `assets.ensure(["chatterbox-env"])` runs:

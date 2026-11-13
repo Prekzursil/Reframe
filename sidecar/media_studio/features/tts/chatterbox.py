@@ -17,21 +17,21 @@ env (A6 lesson 5). So this engine never imports it: synthesis is a
   internally — A6 lesson 2) and the call is an argv LIST (lesson 4).
 
 CONTRACT-NOTE (CUDA12 wheels): the manifest validator requires ``pkg==ver``
-pins; the ``+cu128`` local-version pins below satisfy that, but pip can only
+pins; the ``+cu130`` local-version pins below satisfy that, but pip can only
 resolve them with the PyTorch index available — the env install step needs
-``PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128`` in the
+``PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu130`` in the
 process environment (the assets manager inherits ``os.environ``). See
 docs/wiring/WIRING-T2.md for where the wiring agent sets it.
 
 CONTRACT-NOTE (dedicated Python 3.14 interpreter): chatterbox-tts 0.1.7 pins
 ``torch==2.6.0`` for ``python_version<"3.14"`` and ``torch>=2.9.0`` for
 ``python_version>="3.14"``. The main sidecar env is LOCKED to py3.12
-(kokoro-onnx needs <3.14), so ``torch==2.10.0`` is only HONESTLY installable
+(kokoro-onnx needs <3.14), so ``torch==2.13.0`` is only HONESTLY installable
 on its own py3.14 interpreter. A second embeddable CPython 3.14 is staged at
 build prep (``build/python-embed-setup.ps1`` -> ``build/python-embed-314`` ->
 shipped to ``<resources>/python-chatterbox``); :func:`default_chatterbox_python`
 locates it at runtime and the engine runs the runner with THAT python (not
-``sys.executable``). Without the second interpreter, pinning torch 2.10 would
+``sys.executable``). Without the second interpreter, pinning torch 2.13 would
 be a manifest lie: pip would refuse to resolve it against chatterbox-tts's
 ``torch==2.6.0`` py<3.14 constraint.
 
@@ -65,27 +65,31 @@ log = get_logger("media_studio.tts.chatterbox")
 # --------------------------------------------------------------------------- #
 CHATTERBOX_ENV_ASSET = "chatterbox-env"
 CHATTERBOX_ENV_DEST = "envs/chatterbox"
-# Disk-preflight headroom only (NOT a correctness pin): torch 2.10 cu128 wheels
+# Disk-preflight headroom only (NOT a correctness pin): torch 2.13 cu130 wheels
 # are materially larger than the old 2.6 cu124 pair. Conservative bump from
 # 6500; human confirms against the real on-disk env size on first GPU install.
+# NOTE (2026-11-14): torchaudio is DISCONTINUED above 2.11.x while torch moved to
+# 2.13.0 (GHSA-rrmf-rvhw-rf47 fix); torchaudio==2.11.0 declares no requires_dist
+# pin, so the 2.13/2.11 pair installs, but the ABI pairing is unverified until
+# the first real GPU install. Revisit when torchaudio ships >=2.12 (if ever).
 CHATTERBOX_ENV_SIZE_MB = 7500
 # PINNED requirements (manifest rejects loose specifiers). torch/torchaudio
-# carry the cu128 local version — CUDA 12.8 wheels off download.pytorch.org
+# carry the cu130 local version — CUDA 13.0 wheels off download.pytorch.org
 # (PIP_EXTRA_INDEX_URL needed at install time; see module docstring). torch
-# 2.10.0 is only resolvable under the dedicated py3.14 interpreter (chatterbox
+# 2.13.0 is only resolvable under the dedicated py3.14 interpreter (chatterbox
 # -tts 0.1.7 pins torch>=2.9.0 only for python_version>="3.14").
 CHATTERBOX_REQUIREMENTS: tuple[str, ...] = (
     "chatterbox-tts==0.1.7",
-    "torch==2.10.0+cu128",
-    "torchaudio==2.10.0+cu128",
+    "torch==2.13.0+cu130",
+    "torchaudio==2.11.0+cu130",
 )
-#: the index pip needs for the +cu128 wheels (wiring sets it; kept here so
+#: the index pip needs for the +cu130 wheels (wiring sets it; kept here so
 #: the value is pinned next to the requirements it serves).
-TORCH_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
+TORCH_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cu130"
 
 # WU-S10 (T4 supply chain): the fully-hashed lock this env installs from. The
 # inline pins above are TOP-LEVEL only — without a lock, torch and its entire
-# transitive closure resolve UNHASHED from PyPI + the cu128 index, so a swapped
+# transitive closure resolve UNHASHED from PyPI + the cu130 index, so a swapped
 # upstream wheel would be installed and imported unnoticed. Declaring the lock on
 # the asset entry is the C4 activation point: when the lock is staged the manager
 # installs it with ``pip --require-hashes --only-binary=:all: --no-deps``, so
@@ -100,7 +104,7 @@ TORCH_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
 # (``resources/sidecar/runtime_setup``, electron-builder ``requirements-*.txt``
 # filter), so ``parents[3]`` resolves in dev and packaged layouts alike; derived
 # by path so this feature module keeps its no-import rule on the packaging layer.
-# Its CONTENT is a build-prep artifact (real hashes need PyPI + the cu128 index)
+# Its CONTENT is a build-prep artifact (real hashes need PyPI + the cu130 index)
 # and is not committed; until it is staged the manager logs a LOUD fallback line.
 CHATTERBOX_LOCK_FILE = str(Path(__file__).resolve().parents[3] / "runtime_setup" / "requirements-chatterbox.lock.txt")
 
