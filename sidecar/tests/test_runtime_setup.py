@@ -142,25 +142,28 @@ class TestShippedRequirementFiles:
     def test_chatterbox_file_parses_with_torch_cu12(self):
         reqs = bs.load_requirements(bs.CHATTERBOX_REQUIREMENTS)
         pins = dict(p.split("==", 1) for p in reqs.pins)
-        # The py3.14 trio (torch 2.10 cu128, per CHATTERBOX_REQUIREMENTS — see the
-        # mirror test above, which is what actually keeps these two files in step).
-        assert pins["torch"] == "2.10.0+cu128"
-        assert pins["torchaudio"] == "2.10.0+cu128"
+        # The py3.14 trio (torch 2.13.0 + torchaudio 2.11.0, both cu130, per
+        # CHATTERBOX_REQUIREMENTS — the mirror test above keeps these two files
+        # in step). 2026-11-14: torch moved to 2.13.0 (GHSA-rrmf-rvhw-rf47 fix);
+        # torchaudio is DISCONTINUED above 2.11.x, so the pair is no longer
+        # version-identical — torchaudio 2.11.0 declares no requires_dist, so
+        # the 2.13/2.11 pair resolves; the ABI pairing is GPU-unverified until
+        # the first real install (requirements-chatterbox.txt CONTRACT-NOTE).
+        assert pins["torch"] == "2.13.0+cu130"
+        assert pins["torchaudio"] == "2.11.0+cu130"
         # HARDENING (WU1, dependabot #259 regression class): torch/torchaudio must
-        # stay PAIRED (identical version) and BOTH must keep the +cu128 CUDA local
-        # tag. #259 bumped torch->2.12.1 (stripped +cu128) while leaving torchaudio
-        # at 2.11.0+cu128 — an incompatible pair that would install CPU torch for
-        # the GPU dub env. These invariants fail LOUDLY on any such desync/strip,
-        # independent of the exact pinned version above.
-        assert pins["torch"] == pins["torchaudio"], (
-            f"torch ({pins['torch']}) and torchaudio ({pins['torchaudio']}) must be the same version"
-        )
-        assert pins["torch"].endswith("+cu128"), f"torch must keep the +cu128 CUDA tag, got {pins['torch']}"
-        assert pins["torchaudio"].endswith("+cu128"), (
-            f"torchaudio must keep the +cu128 CUDA tag, got {pins['torchaudio']}"
+        # stay on the SAME CUDA local-version tag — a mixed-tag pair (e.g. torch
+        # +cu130 with torchaudio +cu128 or a stripped CPU torch) is the #259
+        # regression class that would install CPU torch for the GPU dub env.
+        # These invariants fail LOUDLY on any such desync/strip, independent of
+        # the exact pinned versions above.
+        torch_tag = pins["torch"].rsplit("+", 1)[-1]
+        audio_tag = pins["torchaudio"].rsplit("+", 1)[-1]
+        assert torch_tag == audio_tag and torch_tag.startswith("cu"), (
+            f"torch ({pins['torch']}) and torchaudio ({pins['torchaudio']}) must carry the SAME +cuXXX CUDA tag"
         )
         assert pins["chatterbox-tts"] == "0.1.7"
-        assert reqs.options == ("--extra-index-url https://download.pytorch.org/whl/cu128",)
+        assert reqs.options == ("--extra-index-url https://download.pytorch.org/whl/cu130",)
         # ORDER MATTERS: mirror the CHATTERBOX_REQUIREMENTS tuple order so a
         # bootstrap-built env registers as the installed asset (sentinel match).
         # Derived from the tuple rather than re-stated as literals: the version string
@@ -195,20 +198,25 @@ class TestShippedRequirementFiles:
             name, ver = dep.split("==", 1)
             assert name not in pins, f"{name} pinned twice in reframe-gpu (merge/bump artifact)"
             pins[name] = ver
-        # GPU-validated cu124 trio: torch==torchaudio (paired), torchvision 0.21.0
-        # <-> torch 2.6.0, and NONE carry a +cu128 tag (CUDA comes from the
-        # extra-index-url, not a local version). #259 broke all three: torch->2.12.1,
-        # torchvision duplicated->0.27.1, torchaudio injected as 2.11.0+cu128.
-        assert pins["torch"] == "2.6.0", f"reframe-gpu torch must stay 2.6.0, got {pins.get('torch')}"
-        assert pins["torchvision"] == "0.21.0", (
-            f"reframe-gpu torchvision must stay 0.21.0 (paired w/ torch 2.6.0), got {pins.get('torchvision')}"
+        # 2026-11-14 trio (GHSA-rrmf-rvhw-rf47 fix): torch 2.13.0, torchvision
+        # 0.28.0 (paired w/ torch 2.13.0), torchaudio 2.11.0 (DISCONTINUED above
+        # 2.11.x — no version-identical pairing exists for torch 2.13; torchaudio
+        # 2.11.0 declares no requires_dist so the pair resolves, GPU-unverified
+        # until the first real install). NONE carry a +cuXXX tag here (CUDA comes
+        # from the extra-index-url, not a local version). #259 broke all three
+        # once: torch->2.12.1, torchvision duplicated->0.27.1, torchaudio
+        # injected as 2.11.0+cu128.
+        assert pins["torch"] == "2.13.0", f"reframe-gpu torch must stay 2.13.0, got {pins.get('torch')}"
+        assert pins["torchvision"] == "0.28.0", (
+            f"reframe-gpu torchvision must stay 0.28.0 (paired w/ torch 2.13.0), got {pins.get('torchvision')}"
         )
-        assert pins["torchaudio"] == "2.6.0", (
-            f"reframe-gpu torchaudio must stay 2.6.0 (paired w/ torch), got {pins.get('torchaudio')}"
+        assert pins["torchaudio"] == "2.11.0", (
+            f"reframe-gpu torchaudio must stay 2.11.0 (last release; see trio note), got {pins.get('torchaudio')}"
         )
-        assert pins["torch"] == pins["torchaudio"], "reframe-gpu torch/torchaudio must be paired"
         for pkg in ("torch", "torchvision", "torchaudio"):
-            assert "+cu128" not in pins[pkg], f"reframe-gpu {pkg} is cu124, must not carry +cu128: {pins[pkg]}"
+            assert "+cu" not in pins[pkg], (
+                f"reframe-gpu {pkg} installs from the cu130 extra-index, must not carry a +cuXXX tag: {pins[pkg]}"
+            )
 
 
 # --------------------------------------------------------------------------- #
