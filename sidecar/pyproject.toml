@@ -14,6 +14,12 @@ license = { text = "MIT" }
 # after the build. Versions are floors, not pins, kept lean per §6.
 dependencies = [
   "faster-whisper>=1.0",   # §7 transcription (large-v3-turbo)
+  # PyAV constraint: faster-whisper 1.2.1 decode_audio() calls
+  # av.open(..., metadata_errors="ignore"), which PyAV 17.x removed -- av 17
+  # breaks transcription with "open() got an unexpected keyword argument
+  # 'metadata_errors'" (nightly e2e 2026-11-03..13). Hold < 17 until
+  # faster-whisper ships an av-17-compatible release, then drop this bound.
+  "av>=14,<17",            # faster-whisper 1.2.1 compatibility ceiling
   "scenedetect>=0.6",      # §5 PySceneDetect scene cuts for boundary snapping
   "httpx>=0.27",           # HTTP client for the llama.cpp OpenAI-compatible server (§7)
   # P2 (T2, A6 lesson 5: PINNED). ⚠ human: verify current releases at install

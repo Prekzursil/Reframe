@@ -14,7 +14,7 @@ attrs==26.1.0
     #   jsonschema
     #   phonemizer-fork
     #   referencing
-av==17.1.0
+av==16.1.0
     # via faster-whisper
 babel==2.18.0
     # via csvw
