@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -92,9 +92,15 @@ jobs:
           # (pyproject reframe-gpu extra, A6 lesson 5). Unpinned resolves to OpenCV
           # 5.x, whose cv2.FaceDetectorYN/YuNet path is a major-version break and
           # fails the claudeshorts reframe.
+          # av is BOUNDED < 17 for the same reason: faster-whisper 1.2.1 calls
+          # av.open(..., metadata_errors=...) which PyAV 17 removed, so an
+          # unpinned `av` resolves to 17.x and the TRANSCRIBE leg dies with
+          # "open() got an unexpected keyword argument 'metadata_errors'"
+          # (nightly e2e 2026-11-03..13). Mirrors sidecar/pyproject.toml's
+          # av>=14,<17; lift both together when faster-whisper supports av 17.
           pip install \
             httpx numpy opencv-python-headless==4.13.0.92 \
-            faster-whisper scenedetect av onnxruntime \
+            faster-whisper scenedetect "av>=14,<17" onnxruntime \
             huggingface_hub tokenizers
 
       - name: E2E sidecar — pytest -m e2e (AI2 hub/director + intel/repurpose + nasty inputs)
@@ -129,7 +135,7 @@ jobs:
 
       - name: Upload sidecar E2E artifacts
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-sidecar-artifacts
           path: e2e_artifacts/
@@ -150,7 +156,7 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
         id: setup-python
@@ -159,7 +165,7 @@ jobs:
           python-version: "3.12"
 
       - name: Set up Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
 
@@ -742,7 +748,7 @@ jobs:
 
       - name: Upload regenerated visual baselines
         if: always() && runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: updated-visual-baselines
           # Playwright stores baselines next to each spec (playwright.visual.config.ts
@@ -783,7 +789,7 @@ jobs:
       # beside it, for a stated reason that does not survive scrutiny.
       - name: Upload VISUAL screenshot-diff diagnostics (actual + diff + html report)
         if: ${{ always() && runner.os == 'Windows' }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-gui-visual-diff-${{ matrix.os }}
           path: |
@@ -796,7 +802,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-gui-playwright-report-${{ matrix.os }}
           path: |
