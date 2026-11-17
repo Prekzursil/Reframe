@@ -435,7 +435,7 @@ class TestChatterbox:
         # this tuple, so chatterbox-tts/torch/torchaudio must stay at indices
         # 0/1/2 (the same order requirements-chatterbox.txt mirrors).
         assert entry.requirements[0].startswith("chatterbox-tts==")
-        assert entry.requirements[1] == "torch==2.13.0+cu130"
+        assert entry.requirements[1] == "torch==2.15.0"
         assert entry.requirements[2] == "torchaudio==2.11.0+cu130"
 
     def test_default_chatterbox_python_resolves_staged_embed(self, tmp_path):

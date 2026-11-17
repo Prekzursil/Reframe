@@ -67,7 +67,7 @@ class TestShippedRequirementFiles:
         pins = dict(p.split("==", 1) for p in reqs.pins)
         # the T5 brief's KNOWN dev-venv versions
         assert pins["faster-whisper"] == "1.2.1"
-        assert pins["ctranslate2"] == "4.8.4"
+        assert pins["ctranslate2"] == "4.9.0"  # pip-sidecar-patch-minor 2026-11-17 (was 4.8.4)
         # scenedetect 0.7.1 -> 0.7.2 (pip-sidecar-patch-minor re-roll 2026-11-01). This guard
         # asserts EXACT versions on purpose: a dependency bump cannot land until a
         # human re-verifies the pin, and updating this line IS that review step.

@@ -74,14 +74,14 @@ CHATTERBOX_ENV_DEST = "envs/chatterbox"
 # the first real GPU install. Revisit when torchaudio ships >=2.12 (if ever).
 CHATTERBOX_ENV_SIZE_MB = 7500
 # PINNED requirements (manifest rejects loose specifiers). torch/torchaudio
-# carry the cu130 local version — CUDA 13.0 wheels off download.pytorch.org
-# (PIP_EXTRA_INDEX_URL needed at install time; see module docstring). torch
-# 2.13.0 is only resolvable under the dedicated py3.14 interpreter (chatterbox
-# -tts 0.1.7 pins torch>=2.9.0 only for python_version>="3.14").
+# moved to plain PyPI pins (pip-sidecar-patch-minor bump, 2026-11-17): the
+# cu130 extra index stays configured in requirements-chatterbox.txt, but the
+# pins no longer carry the +cu130 local tag. This tuple MUST mirror that file
+# exactly (order included) — the env sentinel compares the requirement LIST.
 CHATTERBOX_REQUIREMENTS: tuple[str, ...] = (
     "chatterbox-tts==0.1.7",
-    "torch==2.13.0+cu130",
-    "torchaudio==2.11.0+cu130",
+    "torch==2.15.0",
+    "torchaudio==2.11.1",
 )
 #: the index pip needs for the +cu130 wheels (wiring sets it; kept here so
 #: the value is pinned next to the requirements it serves).
