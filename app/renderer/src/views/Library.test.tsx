@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 
 // Mock the bridge module so the view's rpc calls are controllable.
 const rpcMock = vi.fn();
-vi.mock("../components/api", () => ({
+vi.mock('../components/api', () => ({
   rpc: (...args: unknown[]) => rpcMock(...args),
   onProgress: () => () => {},
   hasApi: () => true,
@@ -22,8 +22,8 @@ vi.mock("../components/api", () => ({
 const readinessSummaryMock = vi.fn(
   async (): Promise<{ items: ReadinessItem[] }> => ({ items: [] }),
 );
-vi.mock("../lib/rpc", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../lib/rpc")>();
+vi.mock('../lib/rpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/rpc')>();
   return {
     ...actual,
     client: {
@@ -37,7 +37,7 @@ vi.mock("../lib/rpc", async (importOriginal) => {
 // covered by its own suite + ShortsGalleryModal.test) exposes the per-clip
 // affordances so Library's shorts wiring (count label, modal, delete/index-update,
 // open-folder, edit-in-Studio) is exercised directly.
-vi.mock("../features/ProducedShorts", () => ({
+vi.mock('../features/ProducedShorts', () => ({
   ProducedShorts: ({
     shorts,
     onOpenFolder,
@@ -52,26 +52,14 @@ vi.mock("../features/ProducedShorts", () => ({
     <div data-testid="produced-shorts">
       {shorts.map((s) => (
         <div key={s.id}>
-          <button
-            type="button"
-            data-testid={`folder-${s.id}`}
-            onClick={() => onOpenFolder(s.path)}
-          >
+          <button type="button" data-testid={`folder-${s.id}`} onClick={() => onOpenFolder(s.path)}>
             folder
           </button>
-          <button
-            type="button"
-            data-testid={`delete-${s.id}`}
-            onClick={() => onDelete(s.path)}
-          >
+          <button type="button" data-testid={`delete-${s.id}`} onClick={() => onDelete(s.path)}>
             delete
           </button>
           {onReexport ? (
-            <button
-              type="button"
-              data-testid={`edit-${s.id}`}
-              onClick={() => onReexport(s.path)}
-            >
+            <button type="button" data-testid={`edit-${s.id}`} onClick={() => onReexport(s.path)}>
               edit
             </button>
           ) : null}
@@ -81,25 +69,25 @@ vi.mock("../features/ProducedShorts", () => ({
   ),
 }));
 
-import { Library, type LibraryShortsApi } from "./Library";
-import type { Video } from "../components/api";
-import type { ReadinessItem, ShortInfo } from "../lib/rpc";
-import { videoThumbnailSrc } from "../components/useVideoThumbnail";
+import { Library, type LibraryShortsApi } from './Library';
+import type { Video } from '../components/api';
+import type { ReadinessItem, ShortInfo } from '../lib/rpc';
+import { videoThumbnailSrc } from '../components/useVideoThumbnail';
 
 function makeShort(over: Partial<ShortInfo> = {}): ShortInfo {
   return {
-    id: "sh1",
-    path: "/out/sh1.mp4",
-    videoId: "v1",
-    sourceTitle: "Talk",
-    template: "",
+    id: 'sh1',
+    path: '/out/sh1.mp4',
+    videoId: 'v1',
+    sourceTitle: 'Talk',
+    template: '',
     viralityPct: null,
     durationSec: 30,
     width: 1080,
     height: 1920,
     createdAt: 1,
-    thumbnailPath: "",
-    hook: "",
+    thumbnailPath: '',
+    hook: '',
     ...over,
   };
 }
@@ -107,9 +95,7 @@ function makeShort(over: Partial<ShortInfo> = {}): ShortInfo {
 /** A produced-shorts port whose handlers are spies. */
 function shortsPort(over: Partial<LibraryShortsApi> = {}): LibraryShortsApi {
   return {
-    listAll: vi.fn(async () => [
-      makeShort({ id: "s1", path: "/out/s1.mp4", videoId: "v1" }),
-    ]),
+    listAll: vi.fn(async () => [makeShort({ id: 's1', path: '/out/s1.mp4', videoId: 'v1' })]),
     openFolder: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
     ...over,
@@ -118,26 +104,24 @@ function shortsPort(over: Partial<LibraryShortsApi> = {}): LibraryShortsApi {
 
 /** Set a controlled input's value so React's tracker fires onChange. */
 function typeInto(input: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    "value",
-  )?.set as (v: string) => void;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+    ?.set as (v: string) => void;
   setter.call(input, value);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function makeVideo(over: Partial<Video> = {}): Video {
   return {
-    id: "v1",
-    path: "/movies/talk.mp4",
-    title: "Talk",
-    addedAt: "2026-06-11T00:00:00Z",
+    id: 'v1',
+    path: '/movies/talk.mp4',
+    title: 'Talk',
+    addedAt: '2026-06-11T00:00:00Z',
     durationSec: 605,
     hasTranscript: false,
     // WU-14: an already-persisted poster path serves immediately via
     // useVideoThumbnail (no on-demand `library.thumbnail` rpc), so the existing
     // rpc-call-count assertions stay exact. Thumbnail-specific tests override it.
-    thumbnailPath: "/data/thumbnails/v1.jpg",
+    thumbnailPath: '/data/thumbnails/v1.jpg',
     ...over,
   };
 }
@@ -170,7 +154,7 @@ beforeEach(() => {
   readinessSummaryMock.mockClear();
   readinessSummaryMock.mockResolvedValue({ items: [] });
   installBridge();
-  container = document.createElement("div");
+  container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
 });
@@ -202,23 +186,21 @@ async function renderLibrary(
 }
 
 function addButton(): HTMLButtonElement {
-  return container.querySelector(
-    "button.library__add-btn",
-  ) as HTMLButtonElement;
+  return container.querySelector('button.library__add-btn') as HTMLButtonElement;
 }
 
 async function clickAdd(): Promise<void> {
   await act(async () => {
-    addButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    addButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
   });
   await flush();
 }
 
 /** Dispatch a native drop event carrying a synthetic DataTransfer file list. */
 async function dropFiles(files: File[]): Promise<void> {
-  const target = container.querySelector("div.library") as HTMLDivElement;
-  const event = new Event("drop", { bubbles: true, cancelable: true });
-  Object.defineProperty(event, "dataTransfer", { value: { files } });
+  const target = container.querySelector('div.library') as HTMLDivElement;
+  const event = new Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: { files } });
   await act(async () => {
     target.dispatchEvent(event);
   });
@@ -226,59 +208,59 @@ async function dropFiles(files: File[]): Promise<void> {
 }
 
 function errorToasts(): string[] {
-  return [...container.querySelectorAll(".library__toast--error")].map(
-    (el) => el.textContent ?? "",
+  return [...container.querySelectorAll('.library__toast--error')].map(
+    (el) => el.textContent ?? '',
   );
 }
 
-describe("Library", () => {
-  it("lists videos from library.list", async () => {
+describe('Library', () => {
+  it('lists videos from library.list', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [makeVideo(), makeVideo({ id: "v2", title: "Second" })],
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Second' })],
     });
     await renderLibrary();
 
-    expect(rpcMock).toHaveBeenCalledWith("library.list");
-    expect(container.textContent).toContain("Talk");
-    expect(container.textContent).toContain("Second");
+    expect(rpcMock).toHaveBeenCalledWith('library.list');
+    expect(container.textContent).toContain('Talk');
+    expect(container.textContent).toContain('Second');
     // 605s -> 10:05
-    expect(container.textContent).toContain("10:05");
+    expect(container.textContent).toContain('10:05');
   });
 
-  it("shows the empty state when there are no videos", async () => {
+  it('shows the empty state when there are no videos', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
-    expect(container.textContent).toContain("No videos yet");
+    expect(container.textContent).toContain('No videos yet');
   });
 
-  it("multi-adds videos picked via the native dialog (window.api.openVideos)", async () => {
+  it('multi-adds videos picked via the native dialog (window.api.openVideos)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] }); // initial list
     await renderLibrary();
 
-    openVideosMock.mockResolvedValueOnce(["/clips/a.mp4", "/clips/b.mp4"]);
+    openVideosMock.mockResolvedValueOnce(['/clips/a.mp4', '/clips/b.mp4']);
     rpcMock
       .mockResolvedValueOnce({
-        video: makeVideo({ id: "a", title: "Clip A", path: "/clips/a.mp4" }),
+        video: makeVideo({ id: 'a', title: 'Clip A', path: '/clips/a.mp4' }),
       })
       .mockResolvedValueOnce({
-        video: makeVideo({ id: "b", title: "Clip B", path: "/clips/b.mp4" }),
+        video: makeVideo({ id: 'b', title: 'Clip B', path: '/clips/b.mp4' }),
       });
 
     await clickAdd();
 
     expect(openVideosMock).toHaveBeenCalledTimes(1);
-    expect(rpcMock).toHaveBeenCalledWith("library.add", {
-      path: "/clips/a.mp4",
+    expect(rpcMock).toHaveBeenCalledWith('library.add', {
+      path: '/clips/a.mp4',
     });
-    expect(rpcMock).toHaveBeenCalledWith("library.add", {
-      path: "/clips/b.mp4",
+    expect(rpcMock).toHaveBeenCalledWith('library.add', {
+      path: '/clips/b.mp4',
     });
-    expect(container.textContent).toContain("Clip A");
-    expect(container.textContent).toContain("Clip B");
-    expect(container.textContent).toContain("Added 2 videos");
+    expect(container.textContent).toContain('Clip A');
+    expect(container.textContent).toContain('Clip B');
+    expect(container.textContent).toContain('Added 2 videos');
   });
 
-  it("does nothing when the picker is cancelled (empty path list)", async () => {
+  it('does nothing when the picker is cancelled (empty path list)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
@@ -287,21 +269,21 @@ describe("Library", () => {
 
     // Only the initial library.list call — no library.add.
     expect(rpcMock).toHaveBeenCalledTimes(1);
-    expect(container.querySelectorAll(".library__toast").length).toBe(0);
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
   });
 
-  it("shows a typed error toast when the openVideos bridge is missing", async () => {
+  it('shows a typed error toast when the openVideos bridge is missing', async () => {
     installBridge({ openVideos: undefined });
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
     await clickAdd();
 
-    expect(errorToasts().join(" ")).toContain("Native file picker unavailable");
+    expect(errorToasts().join(' ')).toContain('Native file picker unavailable');
     expect(rpcMock).toHaveBeenCalledTimes(1); // list only
   });
 
-  it("adds dropped files via drag-drop using the pathForFile bridge (Electron >=32)", async () => {
+  it('adds dropped files via drag-drop using the pathForFile bridge (Electron >=32)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
@@ -310,108 +292,101 @@ describe("Library", () => {
     rpcMock
       .mockResolvedValueOnce({
         video: makeVideo({
-          id: "d1",
-          title: "Drop One",
-          path: "/dropped/a.mp4",
+          id: 'd1',
+          title: 'Drop One',
+          path: '/dropped/a.mp4',
         }),
       })
       .mockResolvedValueOnce({
         video: makeVideo({
-          id: "d2",
-          title: "Drop Two",
-          path: "/dropped/b.mp4",
+          id: 'd2',
+          title: 'Drop Two',
+          path: '/dropped/b.mp4',
         }),
       });
 
-    await dropFiles([new File(["x"], "a.mp4"), new File(["y"], "b.mp4")]);
+    await dropFiles([new File(['x'], 'a.mp4'), new File(['y'], 'b.mp4')]);
 
     expect(pathForFileMock).toHaveBeenCalledTimes(2);
-    expect(rpcMock).toHaveBeenCalledWith("library.add", {
-      path: "/dropped/a.mp4",
+    expect(rpcMock).toHaveBeenCalledWith('library.add', {
+      path: '/dropped/a.mp4',
     });
-    expect(rpcMock).toHaveBeenCalledWith("library.add", {
-      path: "/dropped/b.mp4",
+    expect(rpcMock).toHaveBeenCalledWith('library.add', {
+      path: '/dropped/b.mp4',
     });
-    expect(container.textContent).toContain("Drop One");
-    expect(container.textContent).toContain("Drop Two");
+    expect(container.textContent).toContain('Drop One');
+    expect(container.textContent).toContain('Drop Two');
   });
 
-  it("falls back to legacy File.path when pathForFile is absent", async () => {
+  it('falls back to legacy File.path when pathForFile is absent', async () => {
     installBridge({ pathForFile: undefined });
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
-    const file = new File(["x"], "c.mp4");
-    Object.defineProperty(file, "path", { value: "/legacy/c.mp4" });
+    const file = new File(['x'], 'c.mp4');
+    Object.defineProperty(file, 'path', { value: '/legacy/c.mp4' });
     rpcMock.mockResolvedValueOnce({
-      video: makeVideo({ id: "c", title: "Legacy C", path: "/legacy/c.mp4" }),
+      video: makeVideo({ id: 'c', title: 'Legacy C', path: '/legacy/c.mp4' }),
     });
 
     await dropFiles([file]);
 
-    expect(rpcMock).toHaveBeenCalledWith("library.add", {
-      path: "/legacy/c.mp4",
+    expect(rpcMock).toHaveBeenCalledWith('library.add', {
+      path: '/legacy/c.mp4',
     });
-    expect(container.textContent).toContain("Legacy C");
+    expect(container.textContent).toContain('Legacy C');
   });
 
-  it("emits a per-file error toast for a dropped file with no recoverable path", async () => {
+  it('emits a per-file error toast for a dropped file with no recoverable path', async () => {
     installBridge({ pathForFile: undefined });
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
-    await dropFiles([new File(["x"], "nopath.mp4")]);
+    await dropFiles([new File(['x'], 'nopath.mp4')]);
 
-    expect(errorToasts().join(" ")).toContain("nopath.mp4");
-    expect(errorToasts().join(" ")).toContain("no filesystem path");
+    expect(errorToasts().join(' ')).toContain('nopath.mp4');
+    expect(errorToasts().join(' ')).toContain('no filesystem path');
     expect(rpcMock).toHaveBeenCalledTimes(1); // list only, no add
   });
 
-  it("de-duplicates by id when the same video is added twice", async () => {
+  it('de-duplicates by id when the same video is added twice', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
     pathForFileMock.mockImplementation((file: File) => `/dropped/${file.name}`);
     const dup = makeVideo({
-      id: "dup",
-      title: "Same Video",
-      path: "/dropped/same.mp4",
+      id: 'dup',
+      title: 'Same Video',
+      path: '/dropped/same.mp4',
     });
-    rpcMock
-      .mockResolvedValueOnce({ video: dup })
-      .mockResolvedValueOnce({ video: dup });
+    rpcMock.mockResolvedValueOnce({ video: dup }).mockResolvedValueOnce({ video: dup });
 
-    await dropFiles([
-      new File(["x"], "same.mp4"),
-      new File(["x"], "same-copy.mp4"),
-    ]);
+    await dropFiles([new File(['x'], 'same.mp4'), new File(['x'], 'same-copy.mp4')]);
 
-    expect(container.querySelectorAll("li.library__item").length).toBe(1);
-    expect(container.textContent).toContain("Same Video");
+    expect(container.querySelectorAll('li.library__item').length).toBe(1);
+    expect(container.textContent).toContain('Same Video');
   });
 
-  it("surfaces a per-file typed error toast but continues the batch (bad-file path)", async () => {
+  it('surfaces a per-file typed error toast but continues the batch (bad-file path)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
-    openVideosMock.mockResolvedValueOnce(["/clips/bad.bin", "/clips/good.mp4"]);
-    rpcMock
-      .mockRejectedValueOnce(new Error("not a video file"))
-      .mockResolvedValueOnce({
-        video: makeVideo({ id: "g", title: "Good", path: "/clips/good.mp4" }),
-      });
+    openVideosMock.mockResolvedValueOnce(['/clips/bad.bin', '/clips/good.mp4']);
+    rpcMock.mockRejectedValueOnce(new Error('not a video file')).mockResolvedValueOnce({
+      video: makeVideo({ id: 'g', title: 'Good', path: '/clips/good.mp4' }),
+    });
 
     await clickAdd();
 
-    const errors = errorToasts().join(" ");
-    expect(errors).toContain("bad.bin");
-    expect(errors).toContain("not a video file");
+    const errors = errorToasts().join(' ');
+    expect(errors).toContain('bad.bin');
+    expect(errors).toContain('not a video file');
     // The good file still landed.
-    expect(container.textContent).toContain("Good");
-    expect(container.textContent).toContain("Added 1 video");
+    expect(container.textContent).toContain('Good');
+    expect(container.textContent).toContain('Added 1 video');
   });
 
-  it("routes toasts to the external toast prop when provided (U3 integration seam)", async () => {
+  it('routes toasts to the external toast prop when provided (U3 integration seam)', async () => {
     installBridge({ openVideos: undefined });
     const toastSpy = vi.fn();
     rpcMock.mockResolvedValueOnce({ videos: [] });
@@ -420,109 +395,103 @@ describe("Library", () => {
     await clickAdd();
 
     expect(toastSpy).toHaveBeenCalledWith({
-      kind: "error",
-      message: expect.stringContaining("Native file picker unavailable"),
+      kind: 'error',
+      message: expect.stringContaining('Native file picker unavailable'),
     });
     // No local fallback strip when the external sink is wired.
-    expect(container.querySelectorAll(".library__toast").length).toBe(0);
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
   });
 
-  it("removes a video via library.remove", async () => {
+  it('removes a video via library.remove', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     await renderLibrary();
-    expect(container.textContent).toContain("Talk");
+    expect(container.textContent).toContain('Talk');
 
     rpcMock.mockResolvedValueOnce({ ok: true });
-    const removeBtn = container.querySelector(
-      "button.library__remove-btn",
-    ) as HTMLButtonElement;
+    const removeBtn = container.querySelector('button.library__remove-btn') as HTMLButtonElement;
     await act(async () => {
-      removeBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      removeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
 
-    expect(rpcMock).toHaveBeenCalledWith("library.remove", { id: "v1" });
-    expect(container.textContent).not.toContain("Talk");
+    expect(rpcMock).toHaveBeenCalledWith('library.remove', { id: 'v1' });
+    expect(container.textContent).not.toContain('Talk');
   });
 
-  it("opens a video on click (calls onOpen)", async () => {
+  it('opens a video on click (calls onOpen)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const onOpen = vi.fn();
     await renderLibrary(onOpen);
 
     // A11Y: the open affordance is now the inner <button>, not the <li> itself.
-    const open = container.querySelector(
-      ".library__item-open",
-    ) as HTMLButtonElement;
+    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
     await act(async () => {
-      open.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      open.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(onOpen).toHaveBeenCalledTimes(1);
-    expect(onOpen.mock.calls[0][0].id).toBe("v1");
+    expect(onOpen.mock.calls[0][0].id).toBe('v1');
   });
 
-  it("surfaces a list error", async () => {
-    rpcMock.mockRejectedValueOnce(new Error("sidecar down"));
+  it('surfaces a list error', async () => {
+    rpcMock.mockRejectedValueOnce(new Error('sidecar down'));
     await renderLibrary();
-    expect(container.textContent).toContain("sidecar down");
+    expect(container.textContent).toContain('sidecar down');
   });
 
-  it("stringifies a non-Error list rejection", async () => {
-    rpcMock.mockRejectedValueOnce("plain string failure");
+  it('stringifies a non-Error list rejection', async () => {
+    rpcMock.mockRejectedValueOnce('plain string failure');
     await renderLibrary();
-    expect(container.querySelector(".library__error")?.textContent).toContain(
-      "plain string failure",
+    expect(container.querySelector('.library__error')?.textContent).toContain(
+      'plain string failure',
     );
   });
 
-  it("does not claim the library is empty when library.list failed", async () => {
+  it('does not claim the library is empty when library.list failed', async () => {
     // F03: a failed listing left `videos === []`, so the first-run "No videos yet"
     // poster rendered UNDER the error alert — the app told the user their library
     // was empty when it had simply failed to read it.
-    rpcMock.mockRejectedValueOnce(new Error("database is locked"));
+    rpcMock.mockRejectedValueOnce(new Error('database is locked'));
     await renderLibrary();
 
     // Precondition guard: the rejection really reached `refresh` (not a mock slip).
-    expect(container.querySelector(".library__error")?.textContent).toContain(
-      "database is locked",
-    );
-    expect(container.textContent).not.toContain("No videos yet");
+    expect(container.querySelector('.library__error')?.textContent).toContain('database is locked');
+    expect(container.textContent).not.toContain('No videos yet');
   });
 
-  it("emits a typed error toast when library.add returns no video", async () => {
+  it('emits a typed error toast when library.add returns no video', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
-    openVideosMock.mockResolvedValueOnce(["/clips/empty.mp4"]);
+    openVideosMock.mockResolvedValueOnce(['/clips/empty.mp4']);
     // add resolves but with no `video` field
     rpcMock.mockResolvedValueOnce({});
     await clickAdd();
 
-    const errors = errorToasts().join(" ");
-    expect(errors).toContain("empty.mp4");
-    expect(errors).toContain("returned no video");
+    const errors = errorToasts().join(' ');
+    expect(errors).toContain('empty.mp4');
+    expect(errors).toContain('returned no video');
     // no success toast because nothing was actually added
-    expect(container.textContent).not.toContain("Added");
+    expect(container.textContent).not.toContain('Added');
   });
 
-  it("shows an error toast when the picker (openVideos) itself rejects", async () => {
+  it('shows an error toast when the picker (openVideos) itself rejects', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
-    openVideosMock.mockRejectedValueOnce(new Error("dialog crashed"));
+    openVideosMock.mockRejectedValueOnce(new Error('dialog crashed'));
     await clickAdd();
 
-    expect(errorToasts().join(" ")).toContain("dialog crashed");
+    expect(errorToasts().join(' ')).toContain('dialog crashed');
   });
 
-  it("ignores a second Add click while a batch is already adding", async () => {
+  it('ignores a second Add click while a batch is already adding', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
     // First click: picker returns a path; hold library.add unresolved so `adding`
     // stays true across the second click.
     let resolveAdd: (v: unknown) => void = () => {};
-    openVideosMock.mockResolvedValueOnce(["/clips/slow.mp4"]);
+    openVideosMock.mockResolvedValueOnce(['/clips/slow.mp4']);
     rpcMock.mockImplementationOnce(
       () =>
         new Promise((res) => {
@@ -531,7 +500,7 @@ describe("Library", () => {
     );
 
     await act(async () => {
-      addButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      addButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
     // mid-flight: button is disabled / labelled "Adding…"
@@ -539,7 +508,7 @@ describe("Library", () => {
 
     // A second click while adding must be a no-op (handlePick early-returns).
     await act(async () => {
-      addButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      addButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
     expect(openVideosMock).toHaveBeenCalledTimes(1);
@@ -548,17 +517,17 @@ describe("Library", () => {
     await act(async () => {
       resolveAdd({
         video: makeVideo({
-          id: "slow",
-          title: "Slow",
-          path: "/clips/slow.mp4",
+          id: 'slow',
+          title: 'Slow',
+          path: '/clips/slow.mp4',
         }),
       });
     });
     await flush();
-    expect(container.textContent).toContain("Slow");
+    expect(container.textContent).toContain('Slow');
   });
 
-  it("shows a typed error toast when pickerBridge is absent (no window.api)", async () => {
+  it('shows a typed error toast when pickerBridge is absent (no window.api)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
     // Remove the bridge entirely so pickerBridge() returns null.
@@ -566,126 +535,120 @@ describe("Library", () => {
 
     await clickAdd();
 
-    expect(errorToasts().join(" ")).toContain("Native file picker unavailable");
+    expect(errorToasts().join(' ')).toContain('Native file picker unavailable');
   });
 
-  it("falls back to legacy File.path when pathForFile throws", async () => {
+  it('falls back to legacy File.path when pathForFile throws', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
     // pathForFile is wired but throws -> the catch falls through to legacy .path.
     pathForFileMock.mockImplementation(() => {
-      throw new Error("bridge boom");
+      throw new Error('bridge boom');
     });
-    const file = new File(["x"], "thrown.mp4");
-    Object.defineProperty(file, "path", { value: "/legacy/thrown.mp4" });
+    const file = new File(['x'], 'thrown.mp4');
+    Object.defineProperty(file, 'path', { value: '/legacy/thrown.mp4' });
     rpcMock.mockResolvedValueOnce({
       video: makeVideo({
-        id: "t",
-        title: "Thrown",
-        path: "/legacy/thrown.mp4",
+        id: 't',
+        title: 'Thrown',
+        path: '/legacy/thrown.mp4',
       }),
     });
 
     await dropFiles([file]);
 
-    expect(rpcMock).toHaveBeenCalledWith("library.add", {
-      path: "/legacy/thrown.mp4",
+    expect(rpcMock).toHaveBeenCalledWith('library.add', {
+      path: '/legacy/thrown.mp4',
     });
-    expect(container.textContent).toContain("Thrown");
+    expect(container.textContent).toContain('Thrown');
   });
 
-  it("treats an empty-string pathForFile result as no path (legacy fallback)", async () => {
+  it('treats an empty-string pathForFile result as no path (legacy fallback)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
     // pathForFile returns '' -> not accepted; no legacy .path either -> error toast.
-    pathForFileMock.mockReturnValue("");
-    await dropFiles([new File(["x"], "blank.mp4")]);
+    pathForFileMock.mockReturnValue('');
+    await dropFiles([new File(['x'], 'blank.mp4')]);
 
-    expect(errorToasts().join(" ")).toContain("blank.mp4");
-    expect(errorToasts().join(" ")).toContain("no filesystem path");
+    expect(errorToasts().join(' ')).toContain('blank.mp4');
+    expect(errorToasts().join(' ')).toContain('no filesystem path');
   });
 
-  it("is a no-op when a drop carries no files", async () => {
+  it('is a no-op when a drop carries no files', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
     await dropFiles([]);
     // only the initial list — no add, no toasts.
     expect(rpcMock).toHaveBeenCalledTimes(1);
-    expect(container.querySelectorAll(".library__toast").length).toBe(0);
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
   });
 
-  it("shows and clears the drag-over drop hint on dragover/dragleave", async () => {
+  it('shows and clears the drag-over drop hint on dragover/dragleave', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
-    const lib = container.querySelector("div.library") as HTMLDivElement;
-    const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
-    Object.defineProperty(dragOver, "dataTransfer", {
-      value: { dropEffect: "" },
+    const lib = container.querySelector('div.library') as HTMLDivElement;
+    const dragOver = new Event('dragover', { bubbles: true, cancelable: true });
+    Object.defineProperty(dragOver, 'dataTransfer', {
+      value: { dropEffect: '' },
     });
     await act(async () => {
       lib.dispatchEvent(dragOver);
     });
     await flush();
-    expect(container.querySelector(".library__drophint")).not.toBeNull();
-    expect(lib.className).toContain("library--dragover");
+    expect(container.querySelector('.library__drophint')).not.toBeNull();
+    expect(lib.className).toContain('library--dragover');
 
     await act(async () => {
-      lib.dispatchEvent(new Event("dragleave", { bubbles: true }));
+      lib.dispatchEvent(new Event('dragleave', { bubbles: true }));
     });
     await flush();
-    expect(container.querySelector(".library__drophint")).toBeNull();
-    expect(lib.className).not.toContain("library--dragover");
+    expect(container.querySelector('.library__drophint')).toBeNull();
+    expect(lib.className).not.toContain('library--dragover');
   });
 
-  it("tolerates a dragover with no dataTransfer (sets the hint anyway)", async () => {
+  it('tolerates a dragover with no dataTransfer (sets the hint anyway)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
-    const lib = container.querySelector("div.library") as HTMLDivElement;
+    const lib = container.querySelector('div.library') as HTMLDivElement;
     // No dataTransfer property -> the `if (event.dataTransfer)` guard is false.
     await act(async () => {
-      lib.dispatchEvent(
-        new Event("dragover", { bubbles: true, cancelable: true }),
-      );
+      lib.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
     });
     await flush();
-    expect(container.querySelector(".library__drophint")).not.toBeNull();
+    expect(container.querySelector('.library__drophint')).not.toBeNull();
   });
 
-  it("restores the list and surfaces an error when library.remove fails", async () => {
+  it('restores the list and surfaces an error when library.remove fails', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     await renderLibrary();
-    expect(container.textContent).toContain("Talk");
+    expect(container.textContent).toContain('Talk');
 
-    rpcMock.mockRejectedValueOnce(new Error("delete failed"));
-    const removeBtn = container.querySelector(
-      "button.library__remove-btn",
-    ) as HTMLButtonElement;
+    rpcMock.mockRejectedValueOnce(new Error('delete failed'));
+    const removeBtn = container.querySelector('button.library__remove-btn') as HTMLButtonElement;
     await act(async () => {
-      removeBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      removeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
 
     // optimistic removal rolled back -> the video is back
-    expect(container.textContent).toContain("Talk");
-    expect(container.querySelector(".library__error")?.textContent).toContain(
-      "delete failed",
-    );
+    expect(container.textContent).toContain('Talk');
+    expect(container.querySelector('.library__error')?.textContent).toContain('delete failed');
   });
 
-  it("a failed remove does not resurrect a video whose own remove succeeded", async () => {
+  it('a failed remove does not resurrect a video whose own remove succeeded', async () => {
     // F02 CASE 1: the rollback restored a whole-list SNAPSHOT captured at click
     // time, so a reject on Alpha wrote Beta back onto the grid even though the
     // sidecar had already deleted Beta's row and unlinked its manifest + poster
     // (library_ops.py:160-161). A phantom card that opens into failing RPCs.
     rpcMock.mockResolvedValueOnce({
       videos: [
-        makeVideo({ id: "a", title: "Alpha", path: "/movies/a.mp4" }),
-        makeVideo({ id: "b", title: "Beta", path: "/movies/b.mp4" }),
+        makeVideo({ id: 'a', title: 'Alpha', path: '/movies/a.mp4' }),
+        makeVideo({ id: 'b', title: 'Beta', path: '/movies/b.mp4' }),
       ],
     });
     await renderLibrary();
@@ -702,34 +665,32 @@ describe("Library", () => {
       .mockResolvedValueOnce({ ok: true });
 
     await act(async () => {
-      (
-        container.querySelectorAll(
-          ".library__remove-btn",
-        )[0] as HTMLButtonElement
-      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      (container.querySelectorAll('.library__remove-btn')[0] as HTMLButtonElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
     });
     await flush();
 
     // Alpha is optimistically gone, so the sole remaining button is Beta's.
     await act(async () => {
-      (
-        container.querySelector(".library__remove-btn") as HTMLButtonElement
-      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      (container.querySelector('.library__remove-btn') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
     });
     await flush();
 
     await act(async () => {
-      rejectAlpha(new Error("refusing to destroy the only surviving copy"));
+      rejectAlpha(new Error('refusing to destroy the only surviving copy'));
     });
     await flush();
 
     // Alpha comes back (its remove FAILED) ...
-    expect(container.textContent).toContain("Alpha");
+    expect(container.textContent).toContain('Alpha');
     // ... and Beta stays gone (its remove SUCCEEDED).
-    expect(container.textContent).not.toContain("Beta");
+    expect(container.textContent).not.toContain('Beta');
   });
 
-  it("a failed remove does not erase a video added while it was in flight", async () => {
+  it('a failed remove does not erase a video added while it was in flight', async () => {
     // F02 CASE 2: the same snapshot rollback also wiped a concurrent import off
     // the grid while it WAS in the library DB. This case is load-bearing for the
     // 100% `functions` gate: it is the only one where `prev` is non-empty at
@@ -745,33 +706,31 @@ describe("Library", () => {
         }),
     );
     await act(async () => {
-      (
-        container.querySelector(
-          "button.library__remove-btn",
-        ) as HTMLButtonElement
-      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      (container.querySelector('button.library__remove-btn') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
     });
     await flush();
 
     // A drag-drop import lands while the remove RPC is still pending.
-    pathForFileMock.mockReturnValue("/movies/new.mp4");
+    pathForFileMock.mockReturnValue('/movies/new.mp4');
     rpcMock.mockResolvedValueOnce({
-      video: makeVideo({ id: "x", title: "Xray", path: "/movies/new.mp4" }),
+      video: makeVideo({ id: 'x', title: 'Xray', path: '/movies/new.mp4' }),
     });
-    await dropFiles([new File(["x"], "new.mp4")]);
-    expect(container.textContent).toContain("Xray");
+    await dropFiles([new File(['x'], 'new.mp4')]);
+    expect(container.textContent).toContain('Xray');
 
     await act(async () => {
-      rejectRemove(new Error("delete failed"));
+      rejectRemove(new Error('delete failed'));
     });
     await flush();
 
     // The rollback restores ONLY the removed video; the import survives.
-    expect(container.textContent).toContain("Talk");
-    expect(container.textContent).toContain("Xray");
+    expect(container.textContent).toContain('Talk');
+    expect(container.textContent).toContain('Xray');
   });
 
-  it("exposes the open affordance as a real, labelled <button> (keyboard-native)", async () => {
+  it('exposes the open affordance as a real, labelled <button> (keyboard-native)', async () => {
     // A11Y: the row open action is a native <button> (was a role="button" <li>
     // with a custom Enter/Space handler — which nested the focusable Remove
     // button and tripped axe nested-interactive/only-listitems). A native button
@@ -781,84 +740,78 @@ describe("Library", () => {
     const onOpen = vi.fn();
     await renderLibrary(onOpen);
 
-    const open = container.querySelector(
-      ".library__item-open",
-    ) as HTMLButtonElement;
-    expect(open.tagName).toBe("BUTTON");
+    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
+    expect(open.tagName).toBe('BUTTON');
     // v1.5: the open name is enriched with duration + status (title+status+duration).
-    expect(open.getAttribute("aria-label")).toBe(
-      "Open Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4",
+    expect(open.getAttribute('aria-label')).toBe(
+      'Open Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4',
     );
     // The <li> is a plain list item (no button role / tabindex) so the <ul> only
     // contains list items and the open/remove buttons are SIBLINGS, not nested.
-    const item = container.querySelector("li.library__item") as HTMLLIElement;
-    expect(item.getAttribute("role")).toBeNull();
-    expect(item.getAttribute("tabindex")).toBeNull();
+    const item = container.querySelector('li.library__item') as HTMLLIElement;
+    expect(item.getAttribute('role')).toBeNull();
+    expect(item.getAttribute('tabindex')).toBeNull();
   });
 
-  it("renders the transcript badge only for videos that have a transcript", async () => {
+  it('renders the transcript badge only for videos that have a transcript', async () => {
     rpcMock.mockResolvedValueOnce({
       videos: [
-        makeVideo({ id: "with", title: "WithT", hasTranscript: true }),
-        makeVideo({ id: "without", title: "NoT", hasTranscript: false }),
+        makeVideo({ id: 'with', title: 'WithT', hasTranscript: true }),
+        makeVideo({ id: 'without', title: 'NoT', hasTranscript: false }),
       ],
     });
     await renderLibrary();
 
-    const badges = container.querySelectorAll(".library__badge");
+    const badges = container.querySelectorAll('.library__badge');
     expect(badges.length).toBe(1);
-    expect(badges[0].textContent).toContain("T");
+    expect(badges[0].textContent).toContain('T');
   });
 
-  it("renders the placeholder duration badge for an unknown duration", async () => {
+  it('renders the placeholder duration badge for an unknown duration', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo({ durationSec: 0 })] });
     await renderLibrary();
-    expect(
-      container.querySelector(".library__thumb-duration")?.textContent,
-    ).toBe("--:--");
+    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('--:--');
   });
 
-  it("uses the whole path as the baseName when it ends in a separator (toast text)", async () => {
+  it('uses the whole path as the baseName when it ends in a separator (toast text)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
     // Path ending in a slash -> baseName's last component is empty -> falls back
     // to the full path. The add fails so the toast text carries that baseName.
-    openVideosMock.mockResolvedValueOnce(["/clips/folder/"]);
-    rpcMock.mockRejectedValueOnce(new Error("is a directory"));
+    openVideosMock.mockResolvedValueOnce(['/clips/folder/']);
+    rpcMock.mockRejectedValueOnce(new Error('is a directory'));
     await clickAdd();
 
-    expect(errorToasts().join(" ")).toContain("/clips/folder/");
-    expect(errorToasts().join(" ")).toContain("is a directory");
+    expect(errorToasts().join(' ')).toContain('/clips/folder/');
+    expect(errorToasts().join(' ')).toContain('is a directory');
   });
 
-  it("dismisses a fallback toast when its × button is clicked", async () => {
+  it('dismisses a fallback toast when its × button is clicked', async () => {
     installBridge({ openVideos: undefined });
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
     await clickAdd(); // produces a "Native file picker unavailable" error toast
-    expect(container.querySelectorAll(".library__toast").length).toBe(1);
+    expect(container.querySelectorAll('.library__toast').length).toBe(1);
 
-    const dismiss = container.querySelector(
-      "button.library__toast-dismiss",
-    ) as HTMLButtonElement;
+    const dismiss = container.querySelector('button.library__toast-dismiss') as HTMLButtonElement;
     await act(async () => {
-      dismiss.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      dismiss.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
-    expect(container.querySelectorAll(".library__toast").length).toBe(0);
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
   });
 
-  it("treats a library.list result without a videos field as an empty list", async () => {
+  it('treats a library.list result without a videos field as an empty list', async () => {
     // result.videos is undefined -> the `result?.videos ?? []` fallback runs.
     rpcMock.mockResolvedValueOnce({});
     await renderLibrary();
-    expect(container.textContent).toContain("No videos yet");
-    expect(container.querySelectorAll("li.library__item").length).toBe(0);
+    expect(container.textContent).toContain('No videos yet');
+    expect(container.querySelectorAll('li.library__item').length).toBe(0);
   });
 
-  it("treats a non-array openVideos result as an empty pick (no add)", async () => {
+  it('treats a non-array openVideos result as an empty pick (no add)', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
@@ -870,28 +823,26 @@ describe("Library", () => {
     expect(openVideosMock).toHaveBeenCalledTimes(1);
     // Only the initial library.list — no library.add for a non-array pick.
     expect(rpcMock).toHaveBeenCalledTimes(1);
-    expect(container.querySelectorAll(".library__toast").length).toBe(0);
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
   });
 
-  it("tolerates a drop event with no dataTransfer at all", async () => {
+  it('tolerates a drop event with no dataTransfer at all', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
 
     // No dataTransfer property -> `event.dataTransfer?.files ?? []` yields [].
-    const target = container.querySelector("div.library") as HTMLDivElement;
+    const target = container.querySelector('div.library') as HTMLDivElement;
     await act(async () => {
-      target.dispatchEvent(
-        new Event("drop", { bubbles: true, cancelable: true }),
-      );
+      target.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
     });
     await flush();
 
     // No add, no toasts, no crash.
     expect(rpcMock).toHaveBeenCalledTimes(1);
-    expect(container.querySelectorAll(".library__toast").length).toBe(0);
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
   });
 
-  it("auto-expires a fallback toast after its TTL and clears timers on unmount", async () => {
+  it('auto-expires a fallback toast after its TTL and clears timers on unmount', async () => {
     vi.useFakeTimers();
     try {
       // Build directly (renderLibrary uses real microtask flushing which is fine
@@ -907,19 +858,19 @@ describe("Library", () => {
       });
 
       await act(async () => {
-        addButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        addButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
       });
       await act(async () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(container.querySelectorAll(".library__toast").length).toBe(1);
+      expect(container.querySelectorAll('.library__toast').length).toBe(1);
 
       // Advance past TOAST_TTL_MS (6000ms) -> the expiry timer removes it.
       await act(async () => {
         vi.advanceTimersByTime(6001);
       });
-      expect(container.querySelectorAll(".library__toast").length).toBe(0);
+      expect(container.querySelectorAll('.library__toast').length).toBe(0);
     } finally {
       vi.useRealTimers();
     }
@@ -930,109 +881,87 @@ describe("Library", () => {
 // WU-14: poster-frame thumbnails (useVideoThumbnail) + the readiness roll-up
 // ---------------------------------------------------------------------------
 
-describe("Library thumbnails (WU-14 useVideoThumbnail wiring)", () => {
-  it("renders the thumb: <img> poster per card when a thumbnailPath exists", async () => {
+describe('Library thumbnails (WU-14 useVideoThumbnail wiring)', () => {
+  it('renders the thumb: <img> poster per card when a thumbnailPath exists', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [makeVideo(), makeVideo({ id: "v2", title: "Second" })],
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Second' })],
     });
     await renderLibrary();
 
-    const imgs = container.querySelectorAll("img.library__thumb-img");
+    const imgs = container.querySelectorAll('img.library__thumb-img');
     expect(imgs.length).toBe(2);
     // Served immediately through the thumb: mstream resolver (no on-demand rpc).
-    expect(imgs[0].getAttribute("src")).toBe(
-      videoThumbnailSrc("/data/thumbnails/v1.jpg"),
-    );
+    expect(imgs[0].getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/v1.jpg'));
     // A persisted poster short-circuits the hook -> no library.thumbnail call.
-    expect(rpcMock).not.toHaveBeenCalledWith(
-      "library.thumbnail",
-      expect.anything(),
-    );
+    expect(rpcMock).not.toHaveBeenCalledWith('library.thumbnail', expect.anything());
     // No glyph fallback while the poster resolves.
-    expect(container.querySelector(".library__thumb-fallback")).toBeNull();
+    expect(container.querySelector('.library__thumb-fallback')).toBeNull();
   });
 
-  it("treats an absent thumbnailPath (undefined) as no poster -> generates on demand", async () => {
+  it('treats an absent thumbnailPath (undefined) as no poster -> generates on demand', async () => {
     // thumbnailPath omitted entirely -> the `video.thumbnailPath ?? ''` fallback.
     rpcMock.mockResolvedValueOnce({
       videos: [makeVideo({ thumbnailPath: undefined })],
     });
-    rpcMock.mockResolvedValueOnce({ thumbnailPath: "/data/thumbnails/u.jpg" });
+    rpcMock.mockResolvedValueOnce({ thumbnailPath: '/data/thumbnails/u.jpg' });
     await renderLibrary();
 
-    expect(rpcMock).toHaveBeenCalledWith("library.thumbnail", { id: "v1" });
-    const img = container.querySelector(
-      "img.library__thumb-img",
-    ) as HTMLImageElement;
-    expect(img.getAttribute("src")).toBe(
-      videoThumbnailSrc("/data/thumbnails/u.jpg"),
-    );
+    expect(rpcMock).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
+    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/u.jpg'));
   });
 
-  it("generates the poster on demand when a card has no thumbnailPath", async () => {
+  it('generates the poster on demand when a card has no thumbnailPath', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [makeVideo({ thumbnailPath: "" })],
+      videos: [makeVideo({ thumbnailPath: '' })],
     });
     rpcMock.mockResolvedValueOnce({
-      thumbnailPath: "/data/thumbnails/gen.jpg",
+      thumbnailPath: '/data/thumbnails/gen.jpg',
     });
     await renderLibrary();
 
-    expect(rpcMock).toHaveBeenCalledWith("library.thumbnail", { id: "v1" });
-    const img = container.querySelector(
-      "img.library__thumb-img",
-    ) as HTMLImageElement;
-    expect(img.getAttribute("src")).toBe(
-      videoThumbnailSrc("/data/thumbnails/gen.jpg"),
-    );
+    expect(rpcMock).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
+    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/gen.jpg'));
   });
 
-  it("falls back to the glyph when on-demand generation yields no poster", async () => {
+  it('falls back to the glyph when on-demand generation yields no poster', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [makeVideo({ thumbnailPath: "" })],
+      videos: [makeVideo({ thumbnailPath: '' })],
     });
-    rpcMock.mockRejectedValueOnce(new Error("no poster"));
+    rpcMock.mockRejectedValueOnce(new Error('no poster'));
     await renderLibrary();
 
-    expect(container.querySelector("img.library__thumb-img")).toBeNull();
-    expect(container.querySelector(".library__thumb-fallback")).not.toBeNull();
+    expect(container.querySelector('img.library__thumb-img')).toBeNull();
+    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
     // Duration badge still renders.
-    expect(
-      container.querySelector(".library__thumb-duration")?.textContent,
-    ).toBe("10:05");
+    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
   });
 
-  it("falls back to the glyph when the poster <img> fails to load", async () => {
+  it('falls back to the glyph when the poster <img> fails to load', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     await renderLibrary();
 
-    const img = container.querySelector(
-      "img.library__thumb-img",
-    ) as HTMLImageElement;
+    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
     await act(async () => {
-      img.dispatchEvent(new Event("error"));
+      img.dispatchEvent(new Event('error'));
     });
 
-    expect(container.querySelector("img.library__thumb-img")).toBeNull();
-    expect(container.querySelector(".library__thumb-fallback")).not.toBeNull();
-    expect(
-      container.querySelector(".library__thumb-duration")?.textContent,
-    ).toBe("10:05");
+    expect(container.querySelector('img.library__thumb-img')).toBeNull();
+    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
   });
 
-  it("shows a duration badge formatted mm:ss from durationSec", async () => {
+  it('shows a duration badge formatted mm:ss from durationSec', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [
-        makeVideo(),
-        makeVideo({ id: "h1", title: "Long", durationSec: 3725 }),
-      ],
+      videos: [makeVideo(), makeVideo({ id: 'h1', title: 'Long', durationSec: 3725 })],
     });
     await renderLibrary();
 
-    const badges = [
-      ...container.querySelectorAll(".library__thumb-duration"),
-    ].map((el) => el.textContent);
-    expect(badges).toEqual(["10:05", "1:02:05"]); // 605s and 3725s
+    const badges = [...container.querySelectorAll('.library__thumb-duration')].map(
+      (el) => el.textContent,
+    );
+    expect(badges).toEqual(['10:05', '1:02:05']); // 605s and 3725s
   });
 });
 
@@ -1040,9 +969,9 @@ describe("Library thumbnails (WU-14 useVideoThumbnail wiring)", () => {
 // L4: the Lineage-view toggle + asset provenance drawer
 // ---------------------------------------------------------------------------
 
-describe("Library lineage view (L4)", () => {
+describe('Library lineage view (L4)', () => {
   const EMPTY_LINEAGE = {
-    id: "v1",
+    id: 'v1',
     entity: null,
     ancestors: [],
     descendants: [],
@@ -1050,34 +979,30 @@ describe("Library lineage view (L4)", () => {
   };
 
   function lineageToggle(): HTMLButtonElement {
-    return container.querySelector(
-      ".library__lineage-toggle",
-    ) as HTMLButtonElement;
+    return container.querySelector('.library__lineage-toggle') as HTMLButtonElement;
   }
 
   async function click(el: HTMLElement): Promise<void> {
     await act(async () => {
-      el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
   }
 
-  it("opens an asset provenance drawer (not the Workspace) while in Lineage view", async () => {
+  it('opens an asset provenance drawer (not the Workspace) while in Lineage view', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const onOpen = vi.fn();
     await renderLibrary(onOpen);
 
     const toggle = lineageToggle();
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
     await click(toggle);
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
 
     // The card open affordance re-labels itself for the history action.
-    const open = container.querySelector(
-      ".library__item-open",
-    ) as HTMLButtonElement;
-    expect(open.getAttribute("aria-label")).toBe(
-      "Show history of Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4",
+    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
+    expect(open.getAttribute('aria-label')).toBe(
+      'Show history of Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4',
     );
 
     rpcMock.mockResolvedValueOnce(EMPTY_LINEAGE);
@@ -1085,44 +1010,38 @@ describe("Library lineage view (L4)", () => {
 
     // Lineage view diverts the click to the drawer — onOpen is NOT called.
     expect(onOpen).not.toHaveBeenCalled();
-    expect(rpcMock).toHaveBeenCalledWith("library.lineage", { id: "v1" });
-    const drawer = container.querySelector(".lineage-panel");
-    expect(drawer?.getAttribute("aria-label")).toBe("Lineage of Talk");
+    expect(rpcMock).toHaveBeenCalledWith('library.lineage', { id: 'v1' });
+    const drawer = container.querySelector('.lineage-panel');
+    expect(drawer?.getAttribute('aria-label')).toBe('Lineage of Talk');
   });
 
-  it("closes the drawer via its close button", async () => {
+  it('closes the drawer via its close button', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     await renderLibrary();
 
     await click(lineageToggle());
     rpcMock.mockResolvedValue(EMPTY_LINEAGE);
-    await click(
-      container.querySelector(".library__item-open") as HTMLButtonElement,
-    );
-    expect(container.querySelector(".lineage-panel")).not.toBeNull();
+    await click(container.querySelector('.library__item-open') as HTMLButtonElement);
+    expect(container.querySelector('.lineage-panel')).not.toBeNull();
 
-    await click(
-      container.querySelector(".lineage-panel__close") as HTMLButtonElement,
-    );
-    expect(container.querySelector(".lineage-panel")).toBeNull();
+    await click(container.querySelector('.lineage-panel__close') as HTMLButtonElement);
+    expect(container.querySelector('.lineage-panel')).toBeNull();
   });
 
-  it("closes any open drawer when leaving Lineage view", async () => {
+  it('closes any open drawer when leaving Lineage view', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     await renderLibrary();
 
     const toggle = lineageToggle();
     await click(toggle);
     rpcMock.mockResolvedValue(EMPTY_LINEAGE);
-    await click(
-      container.querySelector(".library__item-open") as HTMLButtonElement,
-    );
-    expect(container.querySelector(".lineage-panel")).not.toBeNull();
+    await click(container.querySelector('.library__item-open') as HTMLButtonElement);
+    expect(container.querySelector('.lineage-panel')).not.toBeNull();
 
     // Toggling the view off drops the open drawer.
     await click(toggle);
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(container.querySelector(".lineage-panel")).toBeNull();
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(container.querySelector('.lineage-panel')).toBeNull();
   });
 });
 
@@ -1130,16 +1049,16 @@ describe("Library lineage view (L4)", () => {
 // WU-1f: per-card source provenance (path + on-disk/missing badge + relink)
 // ---------------------------------------------------------------------------
 
-describe("Library source provenance (WU-1f)", () => {
+describe('Library source provenance (WU-1f)', () => {
   function provenanceHandlers() {
     return {
       reveal: vi.fn(async () => ({
-        id: "v1",
+        id: 'v1',
         sources: [
           {
-            id: "v1",
-            path: "/movies/talk.mp4",
-            title: "Talk",
+            id: 'v1',
+            path: '/movies/talk.mp4',
+            title: 'Talk',
             exists: true,
             relinkable: true,
           },
@@ -1153,7 +1072,7 @@ describe("Library source provenance (WU-1f)", () => {
     };
   }
 
-  it("demotes each card provenance behind a disclosure and drops the legacy path line", async () => {
+  it('demotes each card provenance behind a disclosure and drops the legacy path line', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const handlers = provenanceHandlers();
     await act(async () => {
@@ -1163,23 +1082,23 @@ describe("Library source provenance (WU-1f)", () => {
 
     // Resting card: the disclosure toggle is present, but the provenance plumbing
     // is hidden (and not even fetched) — the card stays content-first.
-    expect(container.querySelector(".card-provenance__toggle")).not.toBeNull();
-    expect(container.querySelector(".library-provenance")).toBeNull();
+    expect(container.querySelector('.card-provenance__toggle')).not.toBeNull();
+    expect(container.querySelector('.library-provenance')).toBeNull();
     expect(handlers.reveal).not.toHaveBeenCalled();
     // The legacy tiny grey path line is gone regardless (provenance owns the path).
-    expect(container.querySelector(".library__item-path")).toBeNull();
+    expect(container.querySelector('.library__item-path')).toBeNull();
 
     // Opening the disclosure reveals the full source path and calls reveal.
     await act(async () => {
-      (
-        container.querySelector(".card-provenance__toggle") as HTMLButtonElement
-      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      (container.querySelector('.card-provenance__toggle') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
     });
     await flush();
-    expect(
-      container.querySelector(".library-provenance__path")?.textContent,
-    ).toBe("/movies/talk.mp4");
-    expect(handlers.reveal).toHaveBeenCalledWith("v1");
+    expect(container.querySelector('.library-provenance__path')?.textContent).toBe(
+      '/movies/talk.mp4',
+    );
+    expect(handlers.reveal).toHaveBeenCalledWith('v1');
   });
 });
 
@@ -1207,7 +1126,7 @@ describe("Library source provenance (WU-1f)", () => {
 // rows were decoys. `openProviders` / `setConsent` rows SHOULD navigate, and they
 // still do — from Settings, where they live. Nothing here removes navigation from
 // those; it removes the READINESS SURFACE FROM THE LIBRARY.
-describe("Library readiness surface (Q3 — chip deleted, not relocated)", () => {
+describe('Library readiness surface (Q3 — chip deleted, not relocated)', () => {
   it('renders no capabilities chip and no "N of M installed" counter', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
@@ -1215,13 +1134,13 @@ describe("Library readiness surface (Q3 — chip deleted, not relocated)", () =>
     // would pass vacuously against an empty container — i.e. they would also
     // "prove" the chip is gone if the whole view had failed to render. Anchor them
     // to a landmark that must be present for the absence to mean anything.
-    expect(container.querySelector(".library__title")).not.toBeNull();
-    expect(container.querySelector(".capabilities-chip")).toBeNull();
-    expect(container.textContent).not.toContain("Capabilities:");
+    expect(container.querySelector('.library__title')).not.toBeNull();
+    expect(container.querySelector('.capabilities-chip')).toBeNull();
+    expect(container.textContent).not.toContain('Capabilities:');
     expect(container.textContent).not.toMatch(/\d+ of \d+ installed/);
   });
 
-  it("issues no readiness.summary probe from the landing route", async () => {
+  it('issues no readiness.summary probe from the landing route', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
     // The whole point of deleting the surface: the landing route stops paying for
@@ -1230,39 +1149,35 @@ describe("Library readiness surface (Q3 — chip deleted, not relocated)", () =>
     expect(readinessSummaryMock).not.toHaveBeenCalled();
   });
 
-  it("offers no download-labelled button that only navigates, even when a capability needs one", async () => {
+  it('offers no download-labelled button that only navigates, even when a capability needs one', async () => {
     // The exact shape that produced the decoy: an `assets.ensure` row, whose
     // ReadinessBadge action button reads "Download the <label> model".
     readinessSummaryMock.mockResolvedValue({
       items: [
         {
-          capability: "tier1-multimodal",
-          label: "Transcribe speech",
-          status: "needsDownload",
-          blockedBy: "model not installed",
-          action: { kind: "assets.ensure", assets: ["whisper-large-v3"] },
+          capability: 'tier1-multimodal',
+          label: 'Transcribe speech',
+          status: 'needsDownload',
+          blockedBy: 'model not installed',
+          action: { kind: 'assets.ensure', assets: ['whisper-large-v3'] },
         },
       ],
     });
     rpcMock.mockResolvedValueOnce({ videos: [] });
     const onReadinessAction = vi.fn();
     await act(async () => {
-      root.render(
-        <Library onOpen={() => {}} onReadinessAction={onReadinessAction} />,
-      );
+      root.render(<Library onOpen={() => {}} onReadinessAction={onReadinessAction} />);
     });
     await flush();
 
     // Positive control (see the first pin): the view really did render.
-    expect(container.querySelector(".library__title")).not.toBeNull();
+    expect(container.querySelector('.library__title')).not.toBeNull();
     // There is no disclosure left to expand...
-    expect(container.querySelector(".capabilities-chip__toggle")).toBeNull();
+    expect(container.querySelector('.capabilities-chip__toggle')).toBeNull();
     // ...so no readiness action button can be reached from here at all...
-    expect(
-      container.querySelector("button.readiness-badge__action"),
-    ).toBeNull();
+    expect(container.querySelector('button.readiness-badge__action')).toBeNull();
     // ...and the decoy label never renders on the landing route.
-    expect(container.textContent).not.toContain("Download the");
+    expect(container.textContent).not.toContain('Download the');
     expect(onReadinessAction).not.toHaveBeenCalled();
   });
 });
@@ -1272,11 +1187,11 @@ describe("Library readiness surface (Q3 — chip deleted, not relocated)", () =>
 // ---------------------------------------------------------------------------
 
 function selectBoxes(): NodeListOf<HTMLInputElement> {
-  return container.querySelectorAll<HTMLInputElement>(".library__select-box");
+  return container.querySelectorAll<HTMLInputElement>('.library__select-box');
 }
 
 function fire(el: Element | null): void {
-  (el as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  (el as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
 }
 
 // W04 — REVIEWED TEST CHANGE (not a weakening). The gallery-delete tests below
@@ -1288,72 +1203,61 @@ function fire(el: Element | null): void {
 // `expect(confirmSpy).toHaveBeenCalledTimes(1)` is replaced by the stronger pair
 // "the themed gate is open" + "nothing was removed before it was answered".
 async function answerConfirmGate(approve: boolean): Promise<void> {
-  const gate = container.querySelector(".confirm-dialog");
-  if (!gate) throw new Error("themed confirm gate is not open");
-  const sel = approve ? ".confirm-dialog-approve" : ".confirm-dialog-cancel";
+  const gate = container.querySelector('.confirm-dialog');
+  if (!gate) throw new Error('themed confirm gate is not open');
+  const sel = approve ? '.confirm-dialog-approve' : '.confirm-dialog-cancel';
   await act(async () => {
     fire(gate.querySelector(sel));
   });
   await flush();
 }
 
-describe("Library search + sort (v1.5 §4)", () => {
-  it("filters the grid by the search query, showing a filter-empty state on no match", async () => {
+describe('Library search + sort (v1.5 §4)', () => {
+  it('filters the grid by the search query, showing a filter-empty state on no match', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [
-        makeVideo({ id: "a", title: "Keynote" }),
-        makeVideo({ id: "b", title: "Bloopers" }),
-      ],
+      videos: [makeVideo({ id: 'a', title: 'Keynote' }), makeVideo({ id: 'b', title: 'Bloopers' })],
     });
     await renderLibrary();
-    expect(container.querySelectorAll("li.library__item").length).toBe(2);
+    expect(container.querySelectorAll('li.library__item').length).toBe(2);
 
-    const search = container.querySelector(
-      ".library-toolbar__search",
-    ) as HTMLInputElement;
+    const search = container.querySelector('.library-toolbar__search') as HTMLInputElement;
     await act(async () => {
-      typeInto(search, "key");
+      typeInto(search, 'key');
     });
     await flush();
-    expect(container.querySelectorAll("li.library__item").length).toBe(1);
-    expect(container.textContent).toContain("Keynote");
+    expect(container.querySelectorAll('li.library__item').length).toBe(1);
+    expect(container.textContent).toContain('Keynote');
 
     await act(async () => {
-      typeInto(search, "zzz");
+      typeInto(search, 'zzz');
     });
     await flush();
-    expect(container.querySelector(".library__empty--filtered")).not.toBeNull();
-    expect(container.textContent).toContain("No videos match");
+    expect(container.querySelector('.library__empty--filtered')).not.toBeNull();
+    expect(container.textContent).toContain('No videos match');
   });
 
-  it("sorts the grid by the chosen mode", async () => {
+  it('sorts the grid by the chosen mode', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [
-        makeVideo({ id: "a", title: "Bravo" }),
-        makeVideo({ id: "b", title: "Alpha" }),
-      ],
+      videos: [makeVideo({ id: 'a', title: 'Bravo' }), makeVideo({ id: 'b', title: 'Alpha' })],
     });
     await renderLibrary();
-    const sort = container.querySelector(
-      ".library-toolbar__sort-select",
-    ) as HTMLSelectElement;
+    const sort = container.querySelector('.library-toolbar__sort-select') as HTMLSelectElement;
     await act(async () => {
-      sort.value = "title";
-      sort.dispatchEvent(new Event("change", { bubbles: true }));
+      sort.value = 'title';
+      sort.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await flush();
-    const titles = [...container.querySelectorAll(".library__item-title")].map(
+    const titles = [...container.querySelectorAll('.library__item-title')].map(
       (e) => e.textContent,
     );
-    expect(titles).toEqual(["Alpha", "Bravo"]);
+    expect(titles).toEqual(['Alpha', 'Bravo']);
   });
 });
 
 // W53 + W54 — two claims the Library made that its own code does not back.
-describe("Library first-run honesty + control gating (W53/W54)", () => {
+describe('Library first-run honesty + control gating (W53/W54)', () => {
   // The EXACT first-run hint. Pinned byte-for-byte on purpose — see below.
-  const EMPTY_HINT =
-    "Click “Add videos”, or drop video files onto the Library.";
+  const EMPTY_HINT = 'Click “Add videos”, or drop video files onto the Library.';
 
   // W53. The only React drag-and-drop HANDLERS in the renderer are the three on
   // this view's ROOT div (views/Library.tsx:521-523), so the Library is the only
@@ -1362,12 +1266,10 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
   // audit that raised W53: docs/plans/v1.5/uiux-qol-audit-2026-08.md:299 ("M6.
   // Drag-and-drop works only on Library"). Same shape as Edit.test.tsx's "does not
   // promise editing verbs the app cannot deliver".
-  it("names the Library as the drop target instead of claiming files drop anywhere", async () => {
+  it('names the Library as the drop target instead of claiming files drop anywhere', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
-    const hint =
-      container.querySelector(".library__empty-hint")?.textContent?.trim() ??
-      "";
+    const hint = container.querySelector('.library__empty-hint')?.textContent?.trim() ?? '';
     // EXACT pin. The first version of this test asserted only `length > 20` +
     // `not.toContain('anywhere')` + `toContain('library')`, and adversarial review
     // REFUTED that as a keyword filter rather than a property check: it stayed
@@ -1378,8 +1280,8 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
     expect(hint).toBe(EMPTY_HINT);
     // The properties the exact string exists to satisfy, asserted separately so a
     // future reword must keep them AND so the failure names which one broke.
-    expect(hint.toLowerCase()).not.toContain("anywhere");
-    expect(hint.toLowerCase()).toContain("library");
+    expect(hint.toLowerCase()).not.toContain('anywhere');
+    expect(hint.toLowerCase()).toContain('library');
     // ...and it must not point at a view that cannot take a drop.
     expect(hint.toLowerCase()).not.toMatch(
       /\bedit\b|\bcaption\b|\bexport\b|\bshorts\b|\bworkspace\b|\bdeliver\b|\banywhere\b|\bany screen\b/,
@@ -1390,47 +1292,41 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
   // `videos.length === 0` arm, so a first-run user got a live, enabled search box
   // and sort select over zero rows. LibraryToolbar already gates its batch bar on
   // `selectedCount > 0`; the filters now use the same gate on the video count.
-  it("does not offer search or sort over an empty library", async () => {
+  it('does not offer search or sort over an empty library', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
     // We really are in the first-run arm (not, say, the error arm).
-    expect(container.querySelector(".library__empty")).not.toBeNull();
-    expect(container.querySelector(".library-toolbar__search")).toBeNull();
-    expect(container.querySelector(".library-toolbar__sort-select")).toBeNull();
+    expect(container.querySelector('.library__empty')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__search')).toBeNull();
+    expect(container.querySelector('.library-toolbar__sort-select')).toBeNull();
   });
 
   // Detector control for the two `toBeNull()` assertions above: prove these
   // selectors DO find the controls when they are present, so their absence in the
   // empty case is a real absence and not a typo'd selector.
-  it("offers search and sort as soon as the library has content", async () => {
+  it('offers search and sort as soon as the library has content', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     await renderLibrary();
-    expect(container.querySelector(".library-toolbar__search")).not.toBeNull();
-    expect(
-      container.querySelector(".library-toolbar__sort-select"),
-    ).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__search')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__sort-select')).not.toBeNull();
   });
 
   // The gate is the RAW library count, never the filtered/visible count. Gating on
   // `visible.length` would delete the only control that can undo the filter the
   // moment a query matched nothing, trapping the user in "No matches".
-  it("keeps search reachable when a query matches nothing", async () => {
+  it('keeps search reachable when a query matches nothing', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [makeVideo({ id: "a", title: "Keynote" })],
+      videos: [makeVideo({ id: 'a', title: 'Keynote' })],
     });
     await renderLibrary();
-    const search = container.querySelector(
-      ".library-toolbar__search",
-    ) as HTMLInputElement;
+    const search = container.querySelector('.library-toolbar__search') as HTMLInputElement;
     await act(async () => {
-      typeInto(search, "zzz");
+      typeInto(search, 'zzz');
     });
     await flush();
-    expect(container.querySelector(".library__empty--filtered")).not.toBeNull();
-    expect(container.querySelector(".library-toolbar__search")).not.toBeNull();
-    expect(
-      container.querySelector(".library-toolbar__sort-select"),
-    ).not.toBeNull();
+    expect(container.querySelector('.library__empty--filtered')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__search')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__sort-select')).not.toBeNull();
   });
 
   // The W54 gate must NOT swallow the in-flight arm. `videos` is `[]` while the
@@ -1447,7 +1343,7 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
   // toolbar while the first listing is still in flight"); adversarial review refuted
   // it as a first-paint layout-shift regression and this test deliberately replaces
   // it. `loading` now holds the strip mounted.
-  it("keeps the toolbar mounted across the first listing so the list cannot shift", async () => {
+  it('keeps the toolbar mounted across the first listing so the list cannot shift', async () => {
     let settle: (r: { videos: Video[] }) => void = () => {};
     rpcMock.mockReturnValueOnce(
       new Promise<{ videos: Video[] }>((resolve) => {
@@ -1458,10 +1354,10 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
       root.render(<Library onOpen={() => {}} />);
     });
     // In flight: skeleton rows AND an already-mounted strip holding its own box.
-    expect(container.querySelector(".library__loading")).not.toBeNull();
-    const during = container.querySelector(".library-toolbar");
+    expect(container.querySelector('.library__loading')).not.toBeNull();
+    const during = container.querySelector('.library-toolbar');
     expect(during).not.toBeNull();
-    expect(container.querySelector(".library-toolbar__search")).not.toBeNull();
+    expect(container.querySelector('.library-toolbar__search')).not.toBeNull();
 
     await act(async () => {
       settle({ videos: [makeVideo()] });
@@ -1469,23 +1365,23 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
     await flush();
 
     // The listing landed...
-    expect(container.querySelector(".library__loading")).toBeNull();
-    expect(container.querySelector(".library__item-title")).not.toBeNull();
+    expect(container.querySelector('.library__loading')).toBeNull();
+    expect(container.querySelector('.library__item-title')).not.toBeNull();
     // ...and it is the SAME host node. Node identity is the property that matters:
     // a strip that unmounted and remounted is what displaces the list, and a
     // presence-only assertion cannot tell the two apart.
-    expect(container.querySelector(".library-toolbar")).toBe(during);
+    expect(container.querySelector('.library-toolbar')).toBe(during);
   });
 
   // ...but once the listing resolves EMPTY there is genuinely nothing to filter, so
   // the strip goes (W54). This is the arm where hiding is correct, and it is the
   // only one: `loading` is false and the count is really 0.
-  it("drops the toolbar once the listing resolves to an empty library", async () => {
+  it('drops the toolbar once the listing resolves to an empty library', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
-    expect(container.querySelector(".library__loading")).toBeNull();
-    expect(container.querySelector(".library__empty")).not.toBeNull();
-    expect(container.querySelector(".library-toolbar")).toBeNull();
+    expect(container.querySelector('.library__loading')).toBeNull();
+    expect(container.querySelector('.library__empty')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar')).toBeNull();
   });
 
   // The SEQUENCE, which the two tests above only cover as separate halves: the one
@@ -1511,7 +1407,7 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
   // resolve") is REFUTED and kept here as the record: `.library__empty` does not
   // exist while the listing is in flight, so it has no before-sample and would have
   // reported "no y-shift" in both the true and the false state.
-  it("flashes the toolbar over the skeleton before dropping it on an empty library", async () => {
+  it('flashes the toolbar over the skeleton before dropping it on an empty library', async () => {
     let settle: (r: { videos: Video[] }) => void = () => {};
     rpcMock.mockReturnValueOnce(
       new Promise<{ videos: Video[] }>((resolve) => {
@@ -1536,12 +1432,10 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
     // comment at LibraryToolbar.tsx for the full derivation. If a future change decides to add
     // `disabled={loading}`, this assertion is EXPECTED to go red: flip it there and
     // here together, and do not read the test name as saying the flash is wanted.
-    expect(container.querySelector(".library__loading")).not.toBeNull();
-    const during = container.querySelector(".library-toolbar") as HTMLElement;
+    expect(container.querySelector('.library__loading')).not.toBeNull();
+    const during = container.querySelector('.library-toolbar') as HTMLElement;
     expect(during).not.toBeNull();
-    const search = container.querySelector(
-      ".library-toolbar__search",
-    ) as HTMLInputElement;
+    const search = container.querySelector('.library-toolbar__search') as HTMLInputElement;
     expect(search).not.toBeNull();
     expect(search.disabled).toBe(false);
 
@@ -1560,9 +1454,9 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
     // Edge 2 — empty landed: the strip is GONE, not merely re-rendered, and the
     // first-run poster is what replaces it. Node identity mirrors the
     // "cannot shift" test above, where the same node surviving is the property.
-    expect(container.querySelector(".library__loading")).toBeNull();
-    expect(container.querySelector(".library__empty")).not.toBeNull();
-    expect(container.querySelector(".library-toolbar")).toBeNull();
+    expect(container.querySelector('.library__loading')).toBeNull();
+    expect(container.querySelector('.library__empty')).not.toBeNull();
+    expect(container.querySelector('.library-toolbar')).toBeNull();
     expect(container.contains(during)).toBe(false);
   });
 
@@ -1576,7 +1470,7 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
   // nothing takes the collapsed strip's place. Because the view remounts on every tab
   // switch (App.tsx renderRoute(), :532-548 called at :598) and `refresh` re-runs, this
   // repeats on every return to the Library for as long as the listing keeps failing.
-  it("flashes the toolbar over the skeleton before dropping it on a FAILED listing", async () => {
+  it('flashes the toolbar over the skeleton before dropping it on a FAILED listing', async () => {
     let fail: (err: Error) => void = () => {};
     rpcMock.mockReturnValueOnce(
       new Promise<{ videos: Video[] }>((_resolve, reject) => {
@@ -1590,42 +1484,35 @@ describe("Library first-run honesty + control gating (W53/W54)", () => {
     // Edge 1 — indistinguishable from the empty-resolve case: skeleton rows under an
     // already-mounted strip with a live, enabled search box. Nothing yet says which
     // way the listing will end, which is the whole reason `loading` holds the strip up.
-    expect(container.querySelector(".library__loading")).not.toBeNull();
-    const during = container.querySelector(".library-toolbar") as HTMLElement;
+    expect(container.querySelector('.library__loading')).not.toBeNull();
+    const during = container.querySelector('.library-toolbar') as HTMLElement;
     expect(during).not.toBeNull();
-    const search = container.querySelector(
-      ".library-toolbar__search",
-    ) as HTMLInputElement;
+    const search = container.querySelector('.library-toolbar__search') as HTMLInputElement;
     expect(search).not.toBeNull();
     expect(search.disabled).toBe(false);
 
     await act(async () => {
-      fail(new Error("sidecar down"));
+      fail(new Error('sidecar down'));
     });
     await flush();
 
     // Precondition guard: the rejection really reached `refresh` (not a mock slip), so
     // a green result cannot come from the promise never settling.
-    expect(container.querySelector(".library__error")?.textContent).toContain(
-      "sidecar down",
-    );
+    expect(container.querySelector('.library__error')?.textContent).toContain('sidecar down');
 
     // Edge 2 — the strip is GONE and, unlike the empty resolve, nothing replaces it:
     // `.library__empty` is suppressed by the error arm, so the collapse is unbackfilled.
-    expect(container.querySelector(".library__loading")).toBeNull();
-    expect(container.querySelector(".library__empty")).toBeNull();
-    expect(container.querySelector(".library-toolbar")).toBeNull();
+    expect(container.querySelector('.library__loading')).toBeNull();
+    expect(container.querySelector('.library__empty')).toBeNull();
+    expect(container.querySelector('.library-toolbar')).toBeNull();
     expect(container.contains(during)).toBe(false);
   });
 });
 
-describe("Library multi-select + batch actions (v1.5 §4)", () => {
-  it("selects cards and batch-removes them", async () => {
+describe('Library multi-select + batch actions (v1.5 §4)', () => {
+  it('selects cards and batch-removes them', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [
-        makeVideo({ id: "a", title: "A" }),
-        makeVideo({ id: "b", title: "B" }),
-      ],
+      videos: [makeVideo({ id: 'a', title: 'A' }), makeVideo({ id: 'b', title: 'B' })],
     });
     await renderLibrary();
     await act(async () => {
@@ -1633,38 +1520,38 @@ describe("Library multi-select + batch actions (v1.5 §4)", () => {
       fire(selectBoxes()[1]);
     });
     await flush();
-    expect(
-      container.querySelector(".library-toolbar__batch-count")?.textContent,
-    ).toBe("2 selected");
+    expect(container.querySelector('.library-toolbar__batch-count')?.textContent).toBe(
+      '2 selected',
+    );
 
     rpcMock.mockResolvedValue({ ok: true });
     await act(async () => {
-      fire(container.querySelector(".library-toolbar__batch-remove"));
+      fire(container.querySelector('.library-toolbar__batch-remove'));
     });
     await flush();
-    expect(rpcMock).toHaveBeenCalledWith("library.remove", { id: "a" });
-    expect(rpcMock).toHaveBeenCalledWith("library.remove", { id: "b" });
-    expect(container.querySelectorAll("li.library__item").length).toBe(0);
+    expect(rpcMock).toHaveBeenCalledWith('library.remove', { id: 'a' });
+    expect(rpcMock).toHaveBeenCalledWith('library.remove', { id: 'b' });
+    expect(container.querySelectorAll('li.library__item').length).toBe(0);
   });
 
-  it("toggles a selection off again", async () => {
+  it('toggles a selection off again', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     await renderLibrary();
     await act(async () => {
       fire(selectBoxes()[0]);
     });
     await flush();
-    expect(
-      container.querySelector(".library-toolbar__batch-count")?.textContent,
-    ).toBe("1 selected");
+    expect(container.querySelector('.library-toolbar__batch-count')?.textContent).toBe(
+      '1 selected',
+    );
     await act(async () => {
       fire(selectBoxes()[0]);
     });
     await flush();
-    expect(container.querySelector(".library-toolbar__batch")).toBeNull();
+    expect(container.querySelector('.library-toolbar__batch')).toBeNull();
   });
 
-  it("clears a selection via Clear", async () => {
+  it('clears a selection via Clear', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     await renderLibrary();
     await act(async () => {
@@ -1672,41 +1559,35 @@ describe("Library multi-select + batch actions (v1.5 §4)", () => {
     });
     await flush();
     await act(async () => {
-      fire(container.querySelector(".library-toolbar__batch-clear"));
+      fire(container.querySelector('.library-toolbar__batch-clear'));
     });
     await flush();
-    expect(container.querySelector(".library-toolbar__batch")).toBeNull();
+    expect(container.querySelector('.library-toolbar__batch')).toBeNull();
   });
 
-  it("prunes a removed video from the selection on single remove", async () => {
+  it('prunes a removed video from the selection on single remove', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [
-        makeVideo({ id: "a", title: "A" }),
-        makeVideo({ id: "b", title: "B" }),
-      ],
+      videos: [makeVideo({ id: 'a', title: 'A' }), makeVideo({ id: 'b', title: 'B' })],
     });
     await renderLibrary();
     await act(async () => {
       fire(selectBoxes()[0]);
     });
     await flush();
-    expect(
-      container.querySelector(".library-toolbar__batch-count")?.textContent,
-    ).toBe("1 selected");
+    expect(container.querySelector('.library-toolbar__batch-count')?.textContent).toBe(
+      '1 selected',
+    );
     rpcMock.mockResolvedValueOnce({ ok: true });
     await act(async () => {
-      fire(container.querySelectorAll(".library__remove-btn")[0]);
+      fire(container.querySelectorAll('.library__remove-btn')[0]);
     });
     await flush();
-    expect(container.querySelector(".library-toolbar__batch")).toBeNull();
+    expect(container.querySelector('.library-toolbar__batch')).toBeNull();
   });
 
-  it("reports a singular batch-remove failure", async () => {
+  it('reports a singular batch-remove failure', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [
-        makeVideo({ id: "a", title: "A" }),
-        makeVideo({ id: "b", title: "B" }),
-      ],
+      videos: [makeVideo({ id: 'a', title: 'A' }), makeVideo({ id: 'b', title: 'B' })],
     });
     await renderLibrary();
     await act(async () => {
@@ -1714,24 +1595,19 @@ describe("Library multi-select + batch actions (v1.5 §4)", () => {
       fire(selectBoxes()[1]);
     });
     await flush();
-    rpcMock
-      .mockRejectedValueOnce(new Error("x"))
-      .mockResolvedValueOnce({ ok: true });
+    rpcMock.mockRejectedValueOnce(new Error('x')).mockResolvedValueOnce({ ok: true });
     await act(async () => {
-      fire(container.querySelector(".library-toolbar__batch-remove"));
+      fire(container.querySelector('.library-toolbar__batch-remove'));
     });
     await flush();
-    expect(container.querySelector(".library__error")?.textContent).toContain(
-      "Could not remove 1 video",
+    expect(container.querySelector('.library__error')?.textContent).toContain(
+      'Could not remove 1 video',
     );
   });
 
-  it("pluralizes a multi-failure batch-remove", async () => {
+  it('pluralizes a multi-failure batch-remove', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [
-        makeVideo({ id: "a", title: "A" }),
-        makeVideo({ id: "b", title: "B" }),
-      ],
+      videos: [makeVideo({ id: 'a', title: 'A' }), makeVideo({ id: 'b', title: 'B' })],
     });
     await renderLibrary();
     await act(async () => {
@@ -1739,87 +1615,81 @@ describe("Library multi-select + batch actions (v1.5 §4)", () => {
       fire(selectBoxes()[1]);
     });
     await flush();
-    rpcMock
-      .mockRejectedValueOnce(new Error("x"))
-      .mockRejectedValueOnce(new Error("y"));
+    rpcMock.mockRejectedValueOnce(new Error('x')).mockRejectedValueOnce(new Error('y'));
     await act(async () => {
-      fire(container.querySelector(".library-toolbar__batch-remove"));
+      fire(container.querySelector('.library-toolbar__batch-remove'));
     });
     await flush();
-    expect(container.querySelector(".library__error")?.textContent).toContain(
-      "Could not remove 2 videos",
+    expect(container.querySelector('.library__error')?.textContent).toContain(
+      'Could not remove 2 videos',
     );
   });
 });
 
-describe("Library produced-shorts gallery (v1.5 §4 P0)", () => {
+describe('Library produced-shorts gallery (v1.5 §4 P0)', () => {
   async function renderWithShorts(
     port: LibraryShortsApi,
     onEditShort?: (s: ShortInfo) => void,
   ): Promise<void> {
     await act(async () => {
-      root.render(
-        <Library onOpen={() => {}} shorts={port} onEditShort={onEditShort} />,
-      );
+      root.render(<Library onOpen={() => {}} shorts={port} onEditShort={onEditShort} />);
     });
     await flush();
   }
 
-  it("shows no shorts label without the shorts port", async () => {
+  it('shows no shorts label without the shorts port', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     await renderLibrary();
-    expect(container.querySelector(".library__shorts-label")).toBeNull();
+    expect(container.querySelector('.library__shorts-label')).toBeNull();
   });
 
-  it("degrades to no counts when the shorts index fails to load", async () => {
+  it('degrades to no counts when the shorts index fails to load', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const port = shortsPort({
       listAll: vi.fn(async () => {
-        throw new Error("boom");
+        throw new Error('boom');
       }),
     });
     await renderWithShorts(port);
-    expect(container.querySelector(".library__shorts-label")).toBeNull();
+    expect(container.querySelector('.library__shorts-label')).toBeNull();
   });
 
   it('shows the "N shorts" count and opens + closes the gallery modal', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const port = shortsPort({
       listAll: vi.fn(async () => [
-        makeShort({ id: "s1", videoId: "v1" }),
-        makeShort({ id: "s2", videoId: "v1" }),
+        makeShort({ id: 's1', videoId: 'v1' }),
+        makeShort({ id: 's2', videoId: 'v1' }),
       ]),
     });
     await renderWithShorts(port);
     expect(port.listAll).toHaveBeenCalled();
-    const label = container.querySelector(
-      ".library__shorts-label",
-    ) as HTMLButtonElement;
-    expect(label.textContent).toBe("2 shorts");
+    const label = container.querySelector('.library__shorts-label') as HTMLButtonElement;
+    expect(label.textContent).toBe('2 shorts');
 
     await act(async () => {
       fire(label);
     });
     await flush();
-    expect(
-      container.querySelector(".shorts-modal")?.getAttribute("aria-label"),
-    ).toBe("Produced shorts for Talk");
+    expect(container.querySelector('.shorts-modal')?.getAttribute('aria-label')).toBe(
+      'Produced shorts for Talk',
+    );
 
     await act(async () => {
-      fire(container.querySelector(".shorts-modal__close"));
+      fire(container.querySelector('.shorts-modal__close'));
     });
     await flush();
-    expect(container.querySelector(".shorts-modal")).toBeNull();
+    expect(container.querySelector('.shorts-modal')).toBeNull();
   });
 
-  it("opens a short in Studio via the gallery edit action", async () => {
+  it('opens a short in Studio via the gallery edit action', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
-    const short = makeShort({ id: "s1", videoId: "v1", path: "/out/s1.mp4" });
+    const short = makeShort({ id: 's1', videoId: 'v1', path: '/out/s1.mp4' });
     const port = shortsPort({ listAll: vi.fn(async () => [short]) });
     const onEditShort = vi.fn();
     await renderWithShorts(port, onEditShort);
     await act(async () => {
-      fire(container.querySelector(".library__shorts-label"));
+      fire(container.querySelector('.library__shorts-label'));
     });
     await flush();
     await act(async () => {
@@ -1828,24 +1698,24 @@ describe("Library produced-shorts gallery (v1.5 §4 P0)", () => {
     expect(onEditShort).toHaveBeenCalledWith(short);
   });
 
-  it("reveals a clip folder + deletes clips (updating the index) from the gallery", async () => {
+  it('reveals a clip folder + deletes clips (updating the index) from the gallery', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const port = shortsPort({
       listAll: vi.fn(async () => [
-        makeShort({ id: "s1", path: "/o/s1.mp4", videoId: "v1" }),
-        makeShort({ id: "s2", path: "/o/s2.mp4", videoId: "v1" }),
+        makeShort({ id: 's1', path: '/o/s1.mp4', videoId: 'v1' }),
+        makeShort({ id: 's2', path: '/o/s2.mp4', videoId: 'v1' }),
       ]),
     });
     await renderWithShorts(port);
     await act(async () => {
-      fire(container.querySelector(".library__shorts-label"));
+      fire(container.querySelector('.library__shorts-label'));
     });
     await flush();
 
     await act(async () => {
       fire(container.querySelector('[data-testid="folder-s1"]'));
     });
-    expect(port.openFolder).toHaveBeenCalledWith("/o/s1.mp4");
+    expect(port.openFolder).toHaveBeenCalledWith('/o/s1.mp4');
 
     // Delete s1 -> the v1 group keeps s2 (kept.length > 0). Deletion CONFIRMS
     // first through the themed gate (see the dedicated test below), so approve it.
@@ -1854,17 +1724,17 @@ describe("Library produced-shorts gallery (v1.5 §4 P0)", () => {
     });
     await flush();
     await answerConfirmGate(true);
-    expect(port.remove).toHaveBeenCalledWith("/o/s1.mp4");
+    expect(port.remove).toHaveBeenCalledWith('/o/s1.mp4');
     // Delete s2 -> the group empties (kept.length === 0 -> dropped) -> modal empty.
     await act(async () => {
       fire(container.querySelector('[data-testid="delete-s2"]'));
     });
     await flush();
     await answerConfirmGate(true);
-    expect(container.querySelector(".shorts-modal__empty")).not.toBeNull();
+    expect(container.querySelector('.shorts-modal__empty')).not.toBeNull();
   });
 
-  it("Delete CONFIRMS first through the THEMED gate and is a no-op when the user cancels", async () => {
+  it('Delete CONFIRMS first through the THEMED gate and is a no-op when the user cancels', async () => {
     // shorts.delete hard-unlinks the .mp4, its .thumb.jpg and its .json
     // (sidecar/media_studio/features/shorts.py:442-455) with no OS recycle bin, so
     // one stray click destroyed a finished render. The other TWO call sites of the
@@ -1875,14 +1745,12 @@ describe("Library produced-shorts gallery (v1.5 §4 P0)", () => {
     // someone else and it landed nowhere.
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const port = shortsPort({
-      listAll: vi.fn(async () => [
-        makeShort({ id: "s1", path: "/o/s1.mp4", videoId: "v1" }),
-      ]),
+      listAll: vi.fn(async () => [makeShort({ id: 's1', path: '/o/s1.mp4', videoId: 'v1' })]),
     });
-    const native = vi.spyOn(window, "confirm");
+    const native = vi.spyOn(window, 'confirm');
     await renderWithShorts(port);
     await act(async () => {
-      fire(container.querySelector(".library__shorts-label"));
+      fire(container.querySelector('.library__shorts-label'));
     });
     await flush();
 
@@ -1891,17 +1759,13 @@ describe("Library produced-shorts gallery (v1.5 §4 P0)", () => {
     });
     await flush();
     // The gate is up, names the clip, and NOTHING has been removed yet.
-    expect(
-      container.querySelector(".confirm-dialog")?.getAttribute("role"),
-    ).toBe("alertdialog");
-    expect(
-      container.querySelector(".confirm-dialog-blurb")?.textContent,
-    ).toContain("/o/s1.mp4");
+    expect(container.querySelector('.confirm-dialog')?.getAttribute('role')).toBe('alertdialog');
+    expect(container.querySelector('.confirm-dialog-blurb')?.textContent).toContain('/o/s1.mp4');
     expect(port.remove).not.toHaveBeenCalled();
 
     await answerConfirmGate(false);
     expect(port.remove).not.toHaveBeenCalled();
-    expect(container.querySelector(".confirm-dialog")).toBeNull();
+    expect(container.querySelector('.confirm-dialog')).toBeNull();
 
     // Approving the same click deletes for real.
     await act(async () => {
@@ -1909,40 +1773,38 @@ describe("Library produced-shorts gallery (v1.5 §4 P0)", () => {
     });
     await flush();
     await answerConfirmGate(true);
-    expect(port.remove).toHaveBeenCalledWith("/o/s1.mp4");
+    expect(port.remove).toHaveBeenCalledWith('/o/s1.mp4');
     // The renderer-blocking native dialog is never reached on either path.
     expect(native).not.toHaveBeenCalled();
   });
 
-  it("surfaces a toast when a gallery action fails", async () => {
+  it('surfaces a toast when a gallery action fails', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const port = shortsPort({
-      listAll: vi.fn(async () => [
-        makeShort({ id: "s1", path: "/o/s1.mp4", videoId: "v1" }),
-      ]),
+      listAll: vi.fn(async () => [makeShort({ id: 's1', path: '/o/s1.mp4', videoId: 'v1' })]),
       openFolder: vi.fn(async () => {
-        throw new Error("reveal failed");
+        throw new Error('reveal failed');
       }),
       remove: vi.fn(async () => {
-        throw new Error("delete failed");
+        throw new Error('delete failed');
       }),
     });
     await renderWithShorts(port);
     await act(async () => {
-      fire(container.querySelector(".library__shorts-label"));
+      fire(container.querySelector('.library__shorts-label'));
     });
     await flush();
     await act(async () => {
       fire(container.querySelector('[data-testid="folder-s1"]'));
     });
     await flush();
-    expect(errorToasts().join(" ")).toContain("reveal failed");
+    expect(errorToasts().join(' ')).toContain('reveal failed');
     // Approve the gate so the rejection path (not the cancel path) is exercised.
     await act(async () => {
       fire(container.querySelector('[data-testid="delete-s1"]'));
     });
     await flush();
     await answerConfirmGate(true);
-    expect(errorToasts().join(" ")).toContain("delete failed");
+    expect(errorToasts().join(' ')).toContain('delete failed');
   });
 });
