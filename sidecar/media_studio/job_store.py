@@ -54,15 +54,15 @@ class JobStore(Protocol):
 
     def write(self, record: JobRecord) -> None:
         """Persist ``record`` (keyed by ``record["jobId"]``); a repeat id updates."""
-        ...  # pragma: no cover - Protocol method body is never executed
+        pass  # pragma: no cover - Protocol method body is never executed
 
     def load_all(self) -> list[JobRecord]:
         """Return every persisted record (order unspecified). ``[]`` when empty."""
-        ...  # pragma: no cover - Protocol method body is never executed
+        raise NotImplementedError  # pragma: no cover - Protocol method body is never executed
 
     def delete(self, job_id: str) -> None:
         """Remove the record for ``job_id`` if present (a no-op when absent)."""
-        ...  # pragma: no cover - Protocol method body is never executed
+        pass  # pragma: no cover - Protocol method body is never executed
 
 
 class DiskJobStore:

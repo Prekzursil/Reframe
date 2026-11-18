@@ -176,15 +176,15 @@ class AnalysisStore(Protocol):
 
     def get(self, key: AnalysisKey) -> AnalysisBundle | None:
         """The bundle stored under ``key``, or ``None``."""
-        ...  # pragma: no cover - Protocol stub
+        pass  # pragma: no cover - Protocol stub
 
     def put(self, key: AnalysisKey, bundle: AnalysisBundle) -> None:
         """Store ``bundle`` under ``key`` (evicting if the store is full)."""
-        ...  # pragma: no cover - Protocol stub
+        pass  # pragma: no cover - Protocol stub
 
     def find(self, video_id: str, aspect: str) -> AnalysisBundle | None:
         """The most recent bundle for ``video_id`` at ``aspect``, ignoring flags."""
-        ...  # pragma: no cover - Protocol stub
+        pass  # pragma: no cover - Protocol stub
 
 
 class LruAnalysisCache:

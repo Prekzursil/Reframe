@@ -218,7 +218,7 @@ class CtcAlignBackend(Protocol):
         should_cancel: CancelProbe | None = None,
     ) -> list[WordSpan]:
         """Return one :class:`WordSpan` per token, in order."""
-        ...  # pragma: no cover - Protocol method body is never executed
+        raise NotImplementedError  # pragma: no cover - Protocol method body is never executed
 
 
 #: factory seam: default = lazy real impl; tests inject a fake.

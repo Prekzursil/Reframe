@@ -53,7 +53,7 @@ class Provider(Protocol):
     """
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:  # pragma: no cover - interface
-        ...
+        raise NotImplementedError
 
 
 # A line-translator seam: maps one source line -> its translation. Used by

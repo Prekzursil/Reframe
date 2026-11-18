@@ -223,11 +223,11 @@ class RankerBackend(Protocol):
 
     def fit(self, x: Sequence[FeatureVector], y: Sequence[int], groups: Sequence[int]) -> None:
         """Train on feature rows ``x``, relevance labels ``y``, query ``groups``."""
-        ...  # pragma: no cover - Protocol body, never executed
+        pass  # pragma: no cover - Protocol body, never executed
 
     def predict(self, x: Sequence[FeatureVector]) -> list[float]:
         """Score each feature row — higher is more relevant."""
-        ...  # pragma: no cover - Protocol body, never executed
+        raise NotImplementedError  # pragma: no cover - Protocol body, never executed
 
 
 #: Factory seam: ``settings -> RankerBackend`` (default = lazy real impl).

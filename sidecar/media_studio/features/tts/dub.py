@@ -67,11 +67,11 @@ class Translator(Protocol):
 
     def translate(self, texts: Sequence[str], target_lang: str, source_lang: str | None = None) -> list[str]:
         """Translate ALL texts in one batched call (order-preserving)."""
-        ...  # pragma: no cover - protocol
+        raise NotImplementedError  # pragma: no cover - protocol
 
     def free(self) -> None:
         """Unload/release the MT model (the 'free MT' stage)."""
-        ...  # pragma: no cover - protocol
+        pass  # pragma: no cover - protocol
 
 
 # videoId -> absolute media path (or None when unknown).

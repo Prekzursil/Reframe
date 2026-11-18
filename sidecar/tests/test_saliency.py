@@ -381,7 +381,8 @@ def test_default_models_present_registered_but_not_installed(monkeypatch: pytest
     fake_entry = object()
 
     class _FakeMgr:
-        def __init__(self, **_kw: Any) -> None: ...
+        def __init__(self, **_kw: Any) -> None:
+            pass
 
         def installed_path(self, _entry: Any) -> str | None:
             return None
@@ -397,7 +398,8 @@ def test_default_models_present_installed_is_true(monkeypatch: pytest.MonkeyPatc
     from media_studio.assets import manifest
 
     class _FakeMgr:
-        def __init__(self, **_kw: Any) -> None: ...
+        def __init__(self, **_kw: Any) -> None:
+            pass
 
         def installed_path(self, _entry: Any) -> str | None:
             return "/cache/vinet-s.pt"

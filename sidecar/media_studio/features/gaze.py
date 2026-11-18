@@ -510,11 +510,11 @@ class GazeBackend(Protocol):
         should_cancel: Callable[[], bool],
     ) -> GazeReport:
         """Warp ``in_path`` to ``out_path``; return the tally."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
     def release(self) -> None:
         """Free the model/decoder held by this run."""
-        ...  # pragma: no cover - Protocol stub
+        pass  # pragma: no cover - Protocol stub
 
 
 BackendFactory = Callable[[dict[str, Any]], GazeBackend]

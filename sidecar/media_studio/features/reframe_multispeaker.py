@@ -812,11 +812,11 @@ class MultiSpeakerBackend(Protocol):
         should_cancel: Callable[[], bool] | None = None,
     ) -> ShotAnalysis:
         """Run the staged pipeline and return the analysis bundle."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
     def release(self) -> None:
         """Free GPU memory held by the last stage (called between stages)."""
-        ...  # pragma: no cover - Protocol stub
+        pass  # pragma: no cover - Protocol stub
 
 
 BackendFactory = Callable[[dict[str, Any]], MultiSpeakerBackend]
