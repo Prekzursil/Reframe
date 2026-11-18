@@ -239,7 +239,7 @@ class DiarizerBackend(Protocol):
         should_cancel: CancelProbe | None = None,
     ) -> tuple[list[dict[str, Any]], list[list[float]]]:
         """Return ``(regions, embeddings)`` — speech windows + their ECAPA vecs."""
-        ...  # pragma: no cover
+        raise NotImplementedError  # pragma: no cover
 
 
 # --------------------------------------------------------------------------- #

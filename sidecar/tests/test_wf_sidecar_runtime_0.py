@@ -73,7 +73,7 @@ class TestSettingsProviderWiring:
             def ensure(self, names, job_ctx):
                 captured["names"] = list(names)
 
-        import media_studio.assets.manager as mgr_mod
+        from media_studio.assets import manager as mgr_mod
 
         monkeypatch.setattr(mgr_mod, "AssetManager", _Spy)
         bs.ensure_assets([manifest.YUNET_ASSET_NAME], tmp_path)
@@ -102,7 +102,7 @@ class TestSettingsProviderWiring:
                 # mimic the real manager: no todo -> guard is never consulted.
                 job_ctx.progress(100.0, "all installed")
 
-        import media_studio.assets.manager as mgr_mod
+        from media_studio.assets import manager as mgr_mod
 
         monkeypatch.setattr(mgr_mod, "AssetManager", _AllInstalled)
         # no raise == the wired provider did not block the online path.

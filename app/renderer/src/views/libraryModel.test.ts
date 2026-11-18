@@ -99,9 +99,24 @@ describe('filterVideos', () => {
 describe('sortVideos', () => {
   const count = (id: string): number => ({ a: 2, b: 5, c: 5 })[id] ?? 0;
   const list = [
-    makeVideo({ id: 'a', title: 'Bravo', addedAt: '2026-01-02', durationSec: 100 }),
-    makeVideo({ id: 'b', title: 'Alpha', addedAt: '2026-01-03', durationSec: 100 }),
-    makeVideo({ id: 'c', title: 'Charlie', addedAt: '2026-01-01', durationSec: 300 }),
+    makeVideo({
+      id: 'a',
+      title: 'Bravo',
+      addedAt: '2026-01-02',
+      durationSec: 100,
+    }),
+    makeVideo({
+      id: 'b',
+      title: 'Alpha',
+      addedAt: '2026-01-03',
+      durationSec: 100,
+    }),
+    makeVideo({
+      id: 'c',
+      title: 'Charlie',
+      addedAt: '2026-01-01',
+      durationSec: 300,
+    }),
   ];
 
   it('sorts by title A–Z', () => {
@@ -170,21 +185,39 @@ describe('cardBadges', () => {
 });
 
 describe('cardAriaLabel', () => {
-  it('names open + duration + transcript status', () => {
+  // The card's visible text runs (badge chips, facts caption, file path)
+  // render INSIDE the open button, so WCAG 2.5.3 requires them in the
+  // accessible name alongside the verb/duration/status summary.
+  const TAIL = 'MP4 · Added 2026-06-11, /movies/talk.mp4';
+  it('names open + badges + duration + status + visible caption runs', () => {
     expect(cardAriaLabel(makeVideo({ hasTranscript: true }), false)).toBe(
-      'Open Talk, 10:05, transcript ready',
+      `Open Talk, Transcript, 10:05, transcript ready, ${TAIL}`,
     );
   });
   it('names the history verb + no-transcript status in lineage view', () => {
-    expect(cardAriaLabel(makeVideo(), true)).toBe('Show history of Talk, 10:05, no transcript');
+    expect(cardAriaLabel(makeVideo(), true)).toBe(
+      `Show history of Talk, 10:05, no transcript, ${TAIL}`,
+    );
   });
-  it('names the failed status', () => {
+  it('names the failed status and its Failed badge', () => {
     expect(cardAriaLabel(makeVideo({ failed: true }), false)).toBe(
-      'Open Talk, 10:05, processing failed',
+      `Open Talk, Failed, 10:05, processing failed, ${TAIL}`,
     );
   });
   it('omits an unknown duration from the name', () => {
-    expect(cardAriaLabel(makeVideo({ durationSec: 0 }), false)).toBe('Open Talk, no transcript');
+    expect(cardAriaLabel(makeVideo({ durationSec: 0 }), false)).toBe(
+      `Open Talk, no transcript, ${TAIL}`,
+    );
+  });
+  it('drops the facts segment when the path has no usable extension', () => {
+    expect(cardAriaLabel(makeVideo({ path: '/movies/talk', addedAt: 'not-a-date' }), false)).toBe(
+      'Open Talk, 10:05, no transcript, /movies/talk',
+    );
+  });
+  it('drops the path segment too when the video carries no path', () => {
+    expect(cardAriaLabel(makeVideo({ path: '', addedAt: 'not-a-date' }), false)).toBe(
+      'Open Talk, 10:05, no transcript',
+    );
   });
 });
 

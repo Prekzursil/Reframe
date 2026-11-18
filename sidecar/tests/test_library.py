@@ -111,12 +111,14 @@ def test_get_returns_video_or_none(lib: Library, fake_video: Path):
 
 def test_remove_existing_returns_true(lib: Library, fake_video: Path):
     v = lib.add(str(fake_video))
-    assert lib.remove(v["id"]) is True
+    delete_result_114 = lib.remove(v["id"])
+    assert delete_result_114 is True
     assert lib.list() == []
 
 
 def test_remove_missing_returns_false(lib: Library):
-    assert lib.remove("ghost") is False
+    delete_result_119 = lib.remove("ghost")
+    assert delete_result_119 is False
 
 
 def test_remove_does_not_delete_source_file(lib: Library, fake_video: Path):
@@ -137,7 +139,8 @@ def test_remove_evicts_managed_copy(lib: Library, fake_video: Path):
     assert managed_file.exists()
     assert lib.managed_status()["count"] == 1
 
-    assert lib.remove(v["id"]) is True
+    delete_result_140 = lib.remove(v["id"])
+    assert delete_result_140 is True
     assert lib.get(v["id"]) is None
     assert lib.managed_status()["count"] == 0  # row reclaimed
     assert not managed_file.exists()  # bytes freed
@@ -175,7 +178,8 @@ def test_remove_refuses_to_silently_destroy_the_only_surviving_copy(lib: Library
     assert lib.managed_status()["count"] == 1
 
     # Explicit opt-in still destroys — the caller must SAY so.
-    assert lib.remove(v["id"], destroy_managed_copy=True) is True
+    delete_result_178 = lib.remove(v["id"], destroy_managed_copy=True)
+    assert delete_result_178 is True
     assert lib.get(v["id"]) is None
     assert not managed_file.exists()
     assert lib.managed_status()["count"] == 0

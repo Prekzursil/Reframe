@@ -67,7 +67,7 @@ def svc(tmp_path: Path) -> Services:
 
 def _cloud(svc: Services) -> None:
     """Force an egressing (cloud) pool so willEgress is True."""
-    svc._ai_pool = lambda: _CloudPool()  # type: ignore[method-assign]
+    svc._ai_pool = _CloudPool  # type: ignore[method-assign]
 
 
 def _envelope(svc: Services, content: str = "q") -> Any:

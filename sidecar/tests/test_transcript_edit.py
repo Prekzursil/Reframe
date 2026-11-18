@@ -795,7 +795,8 @@ def test_project_without_transcript_edits_omits_the_key(tmp_path):
         {"id": "p1", "video": {}, "tracks": [], "clips": [], "settings": {}},
         manifest_path=manifest,
     ).save()
-    assert "transcriptEdits" not in lib.Project.open(manifest).data
+    reopened = lib.Project.open(manifest)
+    assert "transcriptEdits" not in reopened.data
 
 
 # --------------------------------------------------------------------------- #

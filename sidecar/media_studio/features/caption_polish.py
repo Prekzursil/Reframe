@@ -151,7 +151,7 @@ class PunctBackend(Protocol):
 
     def restore(self, text: str) -> str:
         """Return ``text`` with punctuation + casing restored."""
-        ...  # pragma: no cover - Protocol stub (the body lives in the backend)
+        raise NotImplementedError  # pragma: no cover - Protocol stub (the body lives in the backend)
 
 
 class KeywordBackend(Protocol):
@@ -164,7 +164,7 @@ class KeywordBackend(Protocol):
 
     def keywords(self, text: str) -> list[str]:
         """Return the salient keywords of ``text`` (most-salient first)."""
-        ...  # pragma: no cover - Protocol stub (the body lives in the backend)
+        raise NotImplementedError  # pragma: no cover - Protocol stub (the body lives in the backend)
 
 
 class ProfanityBackend(Protocol):
@@ -176,7 +176,7 @@ class ProfanityBackend(Protocol):
 
     def is_profane(self, word: str) -> bool:
         """Return True when ``word`` should be masked."""
-        ...  # pragma: no cover - Protocol stub (the body lives in the backend)
+        raise NotImplementedError  # pragma: no cover - Protocol stub (the body lives in the backend)
 
 
 #: ``settings -> PunctBackend`` — default lazily builds the real sherpa-onnx impl.

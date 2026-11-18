@@ -32,7 +32,13 @@ function provenanceHandlers() {
     reveal: vi.fn(async () => ({
       id: 'v1',
       sources: [
-        { id: 'v1', path: '/movies/talk.mp4', title: 'Talk', exists: true, relinkable: true },
+        {
+          id: 'v1',
+          path: '/movies/talk.mp4',
+          title: 'Talk',
+          exists: true,
+          relinkable: true,
+        },
       ],
       missing: [] as string[],
     })),
@@ -107,7 +113,9 @@ describe('LibraryCard', () => {
   it('renders the poster, title, added date, and an enriched open aria-label', async () => {
     await renderCard();
     const open = container.querySelector('.library__item-open') as HTMLButtonElement;
-    expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript');
+    expect(open.getAttribute('aria-label')).toBe(
+      'Open Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4',
+    );
     expect(container.querySelector('.library__item-title')?.textContent).toBe('Talk');
     expect(container.querySelector('.library__item-facts')?.textContent).toBe(
       'MP4 · Added 2026-06-11',
@@ -130,12 +138,16 @@ describe('LibraryCard', () => {
   });
 
   it('omits the meta line entirely when neither format nor date is derivable', async () => {
-    await renderCard({ video: makeVideo({ addedAt: 'nope', path: '/movies/talk' }) });
+    await renderCard({
+      video: makeVideo({ addedAt: 'nope', path: '/movies/talk' }),
+    });
     expect(container.querySelector('.library__item-facts')).toBeNull();
   });
 
   it('shows the FAILED attention badge before the Transcript chip', async () => {
-    await renderCard({ video: makeVideo({ failed: true, hasTranscript: true }) });
+    await renderCard({
+      video: makeVideo({ failed: true, hasTranscript: true }),
+    });
     const badges = [...container.querySelectorAll('.library__badge')].map((b) => b.textContent);
     expect(badges).toEqual(['Failed', 'Transcript']);
     expect(container.querySelector('.library__chip--failed')).not.toBeNull();
@@ -194,7 +206,7 @@ describe('LibraryCard', () => {
       (container.querySelector('.library__item-open') as HTMLButtonElement).getAttribute(
         'aria-label',
       ),
-    ).toBe('Show history of Talk, 10:05, no transcript');
+    ).toBe('Show history of Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4');
   });
 
   it('toggles selection via the checkbox', async () => {
@@ -298,7 +310,9 @@ describe('LibraryCard', () => {
     });
     expect(container.querySelector('img.library__thumb-img')).toBeNull();
 
-    await renderCard({ video: makeVideo({ thumbnailPath: '/data2/thumbnails/v1.jpg' }) });
+    await renderCard({
+      video: makeVideo({ thumbnailPath: '/data2/thumbnails/v1.jpg' }),
+    });
     const back = container.querySelector('img.library__thumb-img') as HTMLImageElement;
     expect(back).not.toBeNull();
     expect(back.getAttribute('src')).toBe(videoThumbnailSrc('/data2/thumbnails/v1.jpg'));

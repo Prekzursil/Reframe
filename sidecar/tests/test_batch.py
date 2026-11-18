@@ -331,12 +331,14 @@ class TestBatchStore:
     def test_delete_removes_file_and_reports(self, tmp_path):
         store = batch.BatchStore(tmp_path / "batches")
         state = store.create("run", "t", ["v1"])
-        assert store.delete(state["id"]) is True
+        delete_result_334 = store.delete(state["id"])
+        assert delete_result_334 is True
         assert store.load(state["id"]) is None
 
     def test_delete_unknown_reports_false(self, tmp_path):
         store = batch.BatchStore(tmp_path / "batches")
-        assert store.delete("nope") is False
+        delete_result_339 = store.delete("nope")
+        assert delete_result_339 is False
 
     def test_atomic_write_failure_leaves_prior_file_intact(self, tmp_path, monkeypatch):
         store = batch.BatchStore(tmp_path / "batches")
@@ -1259,7 +1261,8 @@ class TestBatchServiceCrud:
 
     def test_delete_unknown_is_false(self, tmp_path):
         service = _service(tmp_path)
-        assert service.delete({"id": "nope"}, _ctx(_registry()))["ok"] is False
+        delete_result_1262 = service.delete({"id": "nope"}, _ctx(_registry()))["ok"]
+        assert delete_result_1262 is False
 
     def test_delete_refuses_while_parent_job_is_live(self, tmp_path):
         """Deleting a LIVE batch kills the run; only the sidecar can tell it is live.

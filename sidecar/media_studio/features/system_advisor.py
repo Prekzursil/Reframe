@@ -283,7 +283,6 @@ COMPONENTS: tuple[ComponentSpec, ...] = (
 )
 
 #: components keyed by name for O(1) lookup.
-_BY_NAME: dict[str, ComponentSpec] = {c.name: c for c in COMPONENTS}
 
 
 # --------------------------------------------------------------------------- #

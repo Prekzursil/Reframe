@@ -55,7 +55,6 @@ KIND_SOFT = "soft"
 KIND_HARD = "hard"
 
 # Subtitle sidecar formats the contract speaks (subtitles.export: srt|ass|vtt).
-_SUBTITLE_FORMATS = ("srt", "ass", "vtt")
 
 # ffmpeg's text-subtitle muxers per container. MP4/MOV want mov_text; MKV and
 # most others can carry the original codec, so we copy for those.

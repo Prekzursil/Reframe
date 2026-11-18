@@ -285,8 +285,10 @@ class TestPresetStore:
 
     def test_delete_removes_and_reports(self, tmp_path):
         store = export_presets.PresetStore(tmp_path / "p.json")
-        assert store.delete("tiktok") is True
-        assert store.delete("tiktok") is False
+        delete_result_288 = store.delete("tiktok")
+        assert delete_result_288 is True
+        delete_result_289 = store.delete("tiktok")
+        assert delete_result_289 is False
         assert "tiktok" not in {p["id"] for p in store.list()}
 
     def test_reset_restores_seeds(self, tmp_path):
@@ -390,7 +392,8 @@ class TestExportPresetsHandlers:
 
     def test_delete_then_reset_restores_seed(self, tmp_path):
         svc = self._svc(tmp_path)
-        assert svc.delete({"id": "tiktok"}, _ctx()) == {"ok": True}
+        delete_result_393 = svc.delete({"id": "tiktok"}, _ctx())
+        assert delete_result_393 == {"ok": True}
         assert "tiktok" not in {p["id"] for p in svc.list({}, _ctx())["presets"]}
         restored = svc.reset({}, _ctx())
         assert {p["id"] for p in restored["presets"]} == {"tiktok", "reels", "shorts"}
@@ -398,7 +401,8 @@ class TestExportPresetsHandlers:
 
     def test_delete_unknown_reports_false(self, tmp_path):
         svc = self._svc(tmp_path)
-        assert svc.delete({"id": "__nope__"}, _ctx()) == {"ok": False}
+        delete_result_401 = svc.delete({"id": "__nope__"}, _ctx())
+        assert delete_result_401 == {"ok": False}
 
     def test_delete_requires_id(self, tmp_path):
         svc = self._svc(tmp_path)

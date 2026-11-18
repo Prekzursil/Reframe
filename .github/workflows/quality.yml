@@ -81,7 +81,15 @@ jobs:
       #    `bash -e`, so a swapped asset FAILS the gate instead of being run.
       - name: Install opengrep + osv-scanner
         run: |
-          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/f458d7f0d52cc58eae1ca3cf3d5caf101e637519/install.sh | bash -s -- -v v1.22.0
+          # The opengrep installer queries the GitHub Releases API and has been
+          # flaking on shared runner IPs ("Error: Failed to fetch available
+          # versions from GitHub", runs 44261743120 / 44290602996); retry a few
+          # times before letting the gate go red on a transient fetch.
+          for attempt in 1 2 3 4; do
+            curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/f458d7f0d52cc58eae1ca3cf3d5caf101e637519/install.sh | bash -s -- -v v1.22.0 && break
+            echo "opengrep install attempt $attempt failed; retrying in 20s"
+            sleep 20
+          done
           echo "$HOME/.opengrep/cli/latest" >> "$GITHUB_PATH"
           curl -sSL -o /usr/local/bin/osv-scanner \
             https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64

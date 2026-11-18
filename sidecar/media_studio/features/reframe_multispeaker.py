@@ -85,7 +85,6 @@ DEFAULT_ASPECT = "9:16"
 #: strictly-better successor of Light-ASD vendored under ``_lightasd``.
 LIGHT_ASD_ASSET = "light-asd"
 LIGHT_ASD_REPO = "Junhua-Liao/LR-ASD"
-LIGHT_ASD_SIZE_MB = 110.0
 
 # --- Decision-layer tunables (design note) ---------------------------------- #
 #: shots shorter than this many seconds are merged into their neighbour so a
@@ -812,11 +811,11 @@ class MultiSpeakerBackend(Protocol):
         should_cancel: Callable[[], bool] | None = None,
     ) -> ShotAnalysis:
         """Run the staged pipeline and return the analysis bundle."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
     def release(self) -> None:
         """Free GPU memory held by the last stage (called between stages)."""
-        ...  # pragma: no cover - Protocol stub
+        pass  # pragma: no cover - Protocol stub
 
 
 BackendFactory = Callable[[dict[str, Any]], MultiSpeakerBackend]

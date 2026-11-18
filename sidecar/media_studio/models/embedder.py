@@ -75,7 +75,7 @@ class Embedder(Protocol):
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:  # pragma: no cover - interface
         """Return one embedding vector per text, in input order."""
-        ...
+        raise NotImplementedError
 
 
 # --------------------------------------------------------------------------- #

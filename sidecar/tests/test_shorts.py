@@ -494,7 +494,8 @@ def test_delete_removes_mp4_thumb_and_json(exports_dir):
 def test_delete_is_ok_when_sidecars_absent(exports_dir):
     clip = make_clip(exports_dir / "shorts-v1", "src-1")  # no thumb / json
     svc = service(exports_dir)
-    assert svc.delete({"path": str(clip)}, ctx()) == {"ok": True}
+    delete_result_497 = svc.delete({"path": str(clip)}, ctx())
+    assert delete_result_497 == {"ok": True}
     assert not clip.exists()
 
 

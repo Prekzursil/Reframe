@@ -194,9 +194,8 @@ class SafeZone:
 class OcrBackend(Protocol):
     """Heavy seam: detect text boxes at the given sample times (one per frame)."""
 
-    def detect(
-        self, media_path: str, *, sample_times: tuple[float, ...]
-    ) -> tuple[tuple[TextBox, ...], ...]: ...  # pragma: no cover - Protocol stub
+    def detect(self, media_path: str, *, sample_times: tuple[float, ...]) -> tuple[tuple[TextBox, ...], ...]:
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 # --------------------------------------------------------------------------- #

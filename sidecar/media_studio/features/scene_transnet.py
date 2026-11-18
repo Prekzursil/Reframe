@@ -113,7 +113,7 @@ class TransNetBackend(Protocol):
         should_cancel: CancelProbe | None = None,
     ) -> np.ndarray:
         """Return a 1-D per-frame shot-change probability array for ``frames``."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 # Seam types (mirror reframe_claudeshorts's Detector / diarize's factory).

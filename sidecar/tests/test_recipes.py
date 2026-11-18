@@ -96,8 +96,10 @@ class TestRecipeStore:
     def test_delete(self, tmp_path):
         store = recipes.RecipeStore(tmp_path / "r.json")
         store.save({"id": "1", "name": "A", "steps": []})
-        assert store.delete("1") is True
-        assert store.delete("1") is False  # already gone
+        delete_result_99 = store.delete("1")
+        assert delete_result_99 is True
+        delete_result_100 = store.delete("1")
+        assert delete_result_100 is False  # already gone
         assert store.list() == []
 
     def test_get(self, tmp_path):
@@ -139,7 +141,8 @@ class TestCrudHandlers:
     def test_delete_handler(self, tmp_path):
         svc = recipes.Recipes(recipes.RecipeStore(tmp_path / "r.json"))
         svc.save({"recipe": {"id": "1", "name": "P", "steps": [{"method": "m"}]}}, _ctx())
-        assert svc.delete({"id": "1"}, _ctx())["ok"] is True
+        delete_result_142 = svc.delete({"id": "1"}, _ctx())["ok"]
+        assert delete_result_142 is True
 
     def test_delete_requires_id(self, tmp_path):
         svc = recipes.Recipes(recipes.RecipeStore(tmp_path / "r.json"))

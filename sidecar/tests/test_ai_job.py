@@ -400,7 +400,7 @@ def test_run_passes_metadata_to_registry(tmp_path: Any) -> None:
     run_ai_job(
         env,
         jobs=CapturingRegistry(),
-        provider_factory=lambda: SpyProvider(),
+        provider_factory=SpyProvider,
         cache=cache,
         feature="phase8",
         label="Select",
@@ -454,7 +454,7 @@ def test_run_returns_the_job(tmp_path: Any) -> None:
     cache = AiCache(store_dir=tmp_path)
     env = _env(cache)
     harness = JobHarness()
-    job = run_ai_job(env, jobs=harness.registry, provider_factory=lambda: SpyProvider(), cache=cache)
+    job = run_ai_job(env, jobs=harness.registry, provider_factory=SpyProvider, cache=cache)
     harness.registry.join(timeout=5)
     assert hasattr(job, "id")
 
@@ -606,7 +606,7 @@ def test_on_egress_skipped_when_provider_errors(tmp_path: Any) -> None:
     run_ai_job(
         env,
         jobs=harness.registry,
-        provider_factory=lambda: RaisingProvider(),
+        provider_factory=RaisingProvider,
         cache=cache,
         on_egress=fired.append,
     )

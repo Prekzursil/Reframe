@@ -161,7 +161,7 @@ class VlmReranker(Protocol):
 
     def rerank_top_k(self, cands: Sequence[Mapping[str, Any]], *, top_k: int) -> list[dict[str, Any]]:
         """Reorder the top ``top_k`` candidates; the tail is left untouched."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 # --------------------------------------------------------------------------- #
@@ -178,7 +178,7 @@ class SmolVlmBackend(Protocol):
 
     def rank_clips(self, frames_per_clip: Sequence[Any], prompt: str) -> list[float]:
         """Score each clip (a frame stack) for the prompt — higher = more relevant."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 #: Factory seam: ``settings -> SmolVlmBackend`` (default = lazy real impl).

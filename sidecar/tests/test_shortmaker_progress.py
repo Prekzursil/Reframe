@@ -24,7 +24,7 @@ class _RecCtx:
         self.events.append((int(pct), msg))
 
     def raise_if_cancelled(self) -> None:  # pragma: no cover - never cancelled here
-        ...
+        pass
 
 
 def test_export_stage_notice_does_not_reset_progress(tmp_path: Path) -> None:
