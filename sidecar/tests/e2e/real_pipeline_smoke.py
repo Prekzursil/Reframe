@@ -156,8 +156,10 @@ class SidecarClient:
         try:
             if self._proc.stdin and not self._proc.stdin.closed:
                 self._proc.stdin.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Best-effort stdin close during teardown: a pipe whose reader
+            # already exited raises; the process is still waited on below.
+            print(f"smoke: stdin close during teardown ignored: {exc}")
         try:
             self._proc.wait(timeout=10)
         except Exception:

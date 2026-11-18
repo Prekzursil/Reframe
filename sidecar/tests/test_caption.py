@@ -476,7 +476,7 @@ def test_render_cleans_up_temp_ass(fake_ffmpeg):
     def runner(argv, total_sec=0.0, on_progress=None, should_cancel=None):
         return 0
 
-    import media_studio.features.caption as capmod
+    from media_studio.features import caption as capmod
 
     orig = capmod.tempfile.mkstemp
 
@@ -497,7 +497,7 @@ def test_render_cleans_up_temp_ass(fake_ffmpeg):
 
 def test_render_cleans_up_temp_even_on_error(fake_ffmpeg):
     paths: list[str] = []
-    import media_studio.features.caption as capmod
+    from media_studio.features import caption as capmod
 
     orig = capmod.tempfile.mkstemp
 
@@ -553,7 +553,7 @@ def test_render_threads_progress_and_cancel_to_runner(fake_ffmpeg):
 
 def test_render_uses_width_height_in_ass(fake_ffmpeg, monkeypatch):
     captured: dict[str, str] = {}
-    import media_studio.features.caption as capmod
+    from media_studio.features import caption as capmod
 
     orig = capmod.tempfile.mkstemp
 

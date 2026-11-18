@@ -371,7 +371,7 @@ def test_default_backend_factory_lazy_imports_sibling(monkeypatch: pytest.Monkey
     fake_mod.PannsCnn14Backend = _FakeReal  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "media_studio.features.audio_saliency_backend", fake_mod)
     # Also set the parent-package attr so ``from .audio_saliency_backend import`` resolves.
-    import media_studio.features as features_pkg
+    from media_studio import features as features_pkg
 
     monkeypatch.setattr(features_pkg, "audio_saliency_backend", fake_mod, raising=False)
 

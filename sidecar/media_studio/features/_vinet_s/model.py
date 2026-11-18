@@ -21,7 +21,6 @@ never-imported it contributes zero measurable statements to the 100% gate.
 
 import torch  # pragma: no cover - vendored ViNet-S arch (never imported by the gate)
 from torch import nn  # pragma: no cover - vendored ViNet-S arch (never imported by the gate)
-import math  # pragma: no cover - vendored ViNet-S arch (never imported by the gate)
 from .model_utils import *  # pragma: no cover - vendored ViNet-S arch (never imported by the gate)
 
 # added

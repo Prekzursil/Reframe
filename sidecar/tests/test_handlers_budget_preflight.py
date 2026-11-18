@@ -142,7 +142,7 @@ def _envelope(svc: Services, content: str = "q") -> Any:
 
 def test_gate_refuses_unacknowledged_cloud_run(svc: Services) -> None:
     # Force an egressing envelope by monkeypatching the pool to a cloud pool.
-    svc._ai_pool = lambda: _CloudPool()  # type: ignore[method-assign]
+    svc._ai_pool = _CloudPool  # type: ignore[method-assign]
     envelope = _envelope(svc)
     assert envelope.route.willEgress is True
     with pytest.raises(RpcError, match="budget acknowledgement"):
@@ -150,14 +150,14 @@ def test_gate_refuses_unacknowledged_cloud_run(svc: Services) -> None:
 
 
 def test_gate_accepts_matching_ack(svc: Services) -> None:
-    svc._ai_pool = lambda: _CloudPool()  # type: ignore[method-assign]
+    svc._ai_pool = _CloudPool  # type: ignore[method-assign]
     envelope = _envelope(svc)
     # The cacheKey is the acknowledgement token; passing it lets the run proceed.
     svc._enforce_cloud_budget_ack(envelope, ack=envelope.cacheKey)
 
 
 def test_gate_skipped_when_setting_disabled(svc: Services) -> None:
-    svc._ai_pool = lambda: _CloudPool()  # type: ignore[method-assign]
+    svc._ai_pool = _CloudPool  # type: ignore[method-assign]
     svc.settings.set({"confirmCloudBudget": False})
     envelope = _envelope(svc)
     # Disabled -> no ack required even though the run would egress.

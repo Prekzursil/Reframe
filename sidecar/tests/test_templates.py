@@ -225,11 +225,13 @@ class TestTemplateStore:
         store.save(t)
         assert store.get("tpl") == t
         assert store.list() == [t]
-        assert store.delete("tpl") is True
+        delete_result_228 = store.delete("tpl")
+        assert delete_result_228 is True
         assert store.list() == []
 
     def test_delete_missing_returns_false(self, tmp_path):
-        assert self._store(tmp_path).delete("nope") is False
+        delete_result_232 = self._store(tmp_path).delete("nope")
+        assert delete_result_232 is False
 
     def test_corrupt_file_treated_as_empty(self, tmp_path):
         path = tmp_path / "templates.json"
@@ -474,8 +476,10 @@ class TestCrudHandlers:
     def test_delete_handler(self, tmp_path):
         svc = self._svc(tmp_path)
         svc.save({"template": _valid_template()}, _ctx())
-        assert svc.delete({"id": "tpl"}, _ctx())["ok"] is True
-        assert svc.delete({"id": "tpl"}, _ctx())["ok"] is False
+        delete_result_477 = svc.delete({"id": "tpl"}, _ctx())["ok"]
+        assert delete_result_477 is True
+        delete_result_478 = svc.delete({"id": "tpl"}, _ctx())["ok"]
+        assert delete_result_478 is False
 
     def test_delete_requires_id(self, tmp_path):
         svc = self._svc(tmp_path)

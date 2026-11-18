@@ -227,7 +227,7 @@ def test_disk_concurrent_writes_same_job_do_not_raise(tmp_path: Path, monkeypatc
     def worker(status: str) -> None:
         try:
             store.write(_record("job-x", status=status))
-        except BaseException as exc:  # noqa: BLE001 - capture for assertion
+        except Exception as exc:  # noqa: BLE001 - capture for assertion
             errors.append(exc)
 
     threads = [threading.Thread(target=worker, args=(status,)) for status in ("running", "done")]

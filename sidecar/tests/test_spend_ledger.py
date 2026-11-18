@@ -210,7 +210,7 @@ class TestDefaultClock:
     def test_default_clock_is_wall_time(self, tmp_path, monkeypatch):
         # No injected clock -> the module uses time.time; patch it so the test is
         # deterministic and the default-arg branch is exercised.
-        import media_studio.models.spend_ledger as mod
+        from media_studio.models import spend_ledger as mod
 
         monkeypatch.setattr(mod.time, "time", lambda: _JUN_2026)
         ledger = SpendLedger(tmp_path / "spend.json")

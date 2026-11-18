@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Turn a YouTube auto-caption .vtt (rolling/duplicated lines + inline timing tags)
 into a clean timestamped transcript: one '[mm:ss] text' line per spoken chunk."""
+
 import re
-import sys
 from pathlib import Path
 
 SPIKE = Path(__file__).parent
