@@ -1,0 +1,116 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/apps/api"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+  - package-ecosystem: pip
+    directory: "/services/worker"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+  - package-ecosystem: pip
+    directory: "/packages/media-core"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+  - package-ecosystem: npm
+    directory: "/apps/web"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+  - package-ecosystem: npm
+    directory: "/apps/desktop"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+  - package-ecosystem: cargo
+    directory: "/apps/desktop/src-tauri"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    labels:
+      - dependencies
