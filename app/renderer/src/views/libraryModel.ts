@@ -145,7 +145,7 @@ export function cardAriaLabel(video: LibraryVideo, lineageView: boolean): string
  * (WCAG 2.5.3 label-content-name-mismatch).
  */
 export function sourceFormatLabel(path: string): string {
-  const match = /[^\/.]\.([A-Za-z0-9]{1,5})$/.exec(path);
+  const match = /[^/.]\.([A-Za-z0-9]{1,5})$/.exec(path);
   return match ? match[1].toUpperCase() : '';
 }
 
