@@ -4,8 +4,8 @@
 // Keeping the branchy logic here lets LibraryCard/Library stay thin render shells
 // and pins each rule once (coverage + no drift). Everything returns NEW data.
 
-import type { Video } from '../components/api';
-import type { ShortInfo } from '../lib/rpc';
+import type { Video } from "../components/api";
+import type { ShortInfo } from "../lib/rpc";
 
 /**
  * A library video enriched with an OPTIONAL, forward-compatible processing
@@ -17,24 +17,31 @@ import type { ShortInfo } from '../lib/rpc';
 export type LibraryVideo = Video & { failed?: boolean };
 
 /** How the library grid is ordered (the per-library sort control). */
-export type LibrarySort = 'recent' | 'title' | 'duration' | 'shorts';
+export type LibrarySort = "recent" | "title" | "duration" | "shorts";
 
 /** Sort modes in DISPLAY order (recent leads — the default home ordering). */
-export const LIBRARY_SORT_MODES: readonly LibrarySort[] = ['recent', 'title', 'duration', 'shorts'];
+export const LIBRARY_SORT_MODES: readonly LibrarySort[] = [
+  "recent",
+  "title",
+  "duration",
+  "shorts",
+];
 
 /** Human labels for the sort control. */
 export const LIBRARY_SORT_LABELS: Record<LibrarySort, string> = {
-  recent: 'Recently added',
-  title: 'Title (A–Z)',
-  duration: 'Duration',
-  shorts: 'Most shorts',
+  recent: "Recently added",
+  title: "Title (A–Z)",
+  duration: "Duration",
+  shorts: "Most shorts",
 };
 
 /**
  * Group produced shorts by their source `videoId` (the P0 one-to-many index).
  * Shorts with no source id are skipped (they cannot attach to a card). Immutable.
  */
-export function groupShortsByVideo(shorts: readonly ShortInfo[]): Record<string, ShortInfo[]> {
+export function groupShortsByVideo(
+  shorts: readonly ShortInfo[],
+): Record<string, ShortInfo[]> {
   const out: Record<string, ShortInfo[]> = {};
   for (const s of shorts) {
     if (!s.videoId) continue;
@@ -44,7 +51,10 @@ export function groupShortsByVideo(shorts: readonly ShortInfo[]): Record<string,
 }
 
 /** Case-insensitive title search (trimmed; empty query → all). Never mutates. */
-export function filterVideos(videos: readonly LibraryVideo[], query: string): LibraryVideo[] {
+export function filterVideos(
+  videos: readonly LibraryVideo[],
+  query: string,
+): LibraryVideo[] {
   const q = query.trim().toLowerCase();
   if (!q) return [...videos];
   return videos.filter((v) => v.title.toLowerCase().includes(q));
@@ -60,13 +70,16 @@ export function sortVideos(
   mode: LibrarySort,
   shortsCount: (id: string) => number,
 ): LibraryVideo[] {
-  const byTitle = (a: LibraryVideo, b: LibraryVideo): number => a.title.localeCompare(b.title);
+  const byTitle = (a: LibraryVideo, b: LibraryVideo): number =>
+    a.title.localeCompare(b.title);
   const copy = [...videos];
-  if (mode === 'title') return copy.sort(byTitle);
-  if (mode === 'duration')
+  if (mode === "title") return copy.sort(byTitle);
+  if (mode === "duration")
     return copy.sort((a, b) => b.durationSec - a.durationSec || byTitle(a, b));
-  if (mode === 'shorts') {
-    return copy.sort((a, b) => shortsCount(b.id) - shortsCount(a.id) || byTitle(a, b));
+  if (mode === "shorts") {
+    return copy.sort(
+      (a, b) => shortsCount(b.id) - shortsCount(a.id) || byTitle(a, b),
+    );
   }
   // 'recent': newest addedAt first (ISO strings sort lexicographically). A STABLE
   // sort (ES2019+) preserves the incoming order for equal timestamps, so freshly
@@ -81,19 +94,19 @@ export function sortVideos(
  * helper the card thumbnail relies on.
  */
 export function formatDuration(sec: number): string {
-  if (!Number.isFinite(sec) || sec <= 0) return '--:--';
+  if (!Number.isFinite(sec) || sec <= 0) return "--:--";
   const total = Math.round(sec);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  const mm = String(m).padStart(2, '0');
-  const ss = String(s).padStart(2, '0');
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
 /** A card status badge — reserved for ATTENTION states (failed) + provenance. */
 export interface CardBadge {
-  kind: 'transcript' | 'failed';
+  kind: "transcript" | "failed";
   label: string;
 }
 
@@ -104,8 +117,9 @@ export interface CardBadge {
  */
 export function cardBadges(video: LibraryVideo): CardBadge[] {
   const badges: CardBadge[] = [];
-  if (video.failed) badges.push({ kind: 'failed', label: 'Failed' });
-  if (video.hasTranscript) badges.push({ kind: 'transcript', label: 'Transcript' });
+  if (video.failed) badges.push({ kind: "failed", label: "Failed" });
+  if (video.hasTranscript)
+    badges.push({ kind: "transcript", label: "Transcript" });
   return badges;
 }
 
@@ -115,13 +129,22 @@ export function cardBadges(video: LibraryVideo): CardBadge[] {
  * a11y contract). Duration is omitted when unknown so the name never reads a
  * bare '--:--'.
  */
-export function cardAriaLabel(video: LibraryVideo, lineageView: boolean): string {
-  const parts = [lineageView ? `Show history of ${video.title}` : `Open ${video.title}`];
+export function cardAriaLabel(
+  video: LibraryVideo,
+  lineageView: boolean,
+): string {
+  const parts = [
+    lineageView ? `Show history of ${video.title}` : `Open ${video.title}`,
+  ];
   for (const badge of cardBadges(video)) parts.push(badge.label);
   const dur = formatDuration(video.durationSec);
-  if (dur !== '--:--') parts.push(dur);
+  if (dur !== "--:--") parts.push(dur);
   parts.push(
-    video.failed ? 'processing failed' : video.hasTranscript ? 'transcript ready' : 'no transcript',
+    video.failed
+      ? "processing failed"
+      : video.hasTranscript
+        ? "transcript ready"
+        : "no transcript",
   );
   // WCAG 2.5.3 (axe label-content-name-mismatch, serious): the card's VISIBLE
   // text runs — the badges above, the facts caption and the file path — render
@@ -129,12 +152,12 @@ export function cardAriaLabel(video: LibraryVideo, lineageView: boolean): string
   // accessible name. The facts line is composed exactly as LibraryCard paints
   // it ("MP4 · Added 2026-06-11") so the substring check holds verbatim.
   const added = formatAdded(video.addedAt);
-  const facts = [sourceFormatLabel(video.path), added ? `Added ${added}` : '']
+  const facts = [sourceFormatLabel(video.path), added ? `Added ${added}` : ""]
     .filter(Boolean)
-    .join(' · ');
+    .join(" · ");
   if (facts) parts.push(facts);
   if (video.path) parts.push(video.path);
-  return parts.join(', ');
+  return parts.join(", ");
 }
 
 /**
@@ -146,13 +169,13 @@ export function cardAriaLabel(video: LibraryVideo, lineageView: boolean): string
  */
 export function sourceFormatLabel(path: string): string {
   const match = /[^/.]\.([A-Za-z0-9]{1,5})$/.exec(path);
-  return match ? match[1].toUpperCase() : '';
+  return match ? match[1].toUpperCase() : "";
 }
 
 /** The date part (YYYY-MM-DD) of an ISO `addedAt`; '' when unparseable. */
 export function formatAdded(iso: string): string {
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(iso);
-  return m ? m[1] : '';
+  return m ? m[1] : "";
 }
 
 /**
@@ -160,7 +183,7 @@ export function formatAdded(iso: string): string {
  * pluralized so a single short never reads the ungrammatical "1 shorts".
  */
 export function shortsCountLabel(count: number): string {
-  return `${count} ${count === 1 ? 'short' : 'shorts'}`;
+  return `${count} ${count === 1 ? "short" : "shorts"}`;
 }
 
 /**
@@ -168,6 +191,6 @@ export function shortsCountLabel(count: number): string {
  * count ("View 1 produced short for <title>" / "View N produced shorts for …").
  */
 export function shortsOpenAriaLabel(count: number, title: string): string {
-  const noun = count === 1 ? 'short' : 'shorts';
+  const noun = count === 1 ? "short" : "shorts";
   return `View ${count} produced ${noun} for ${title}`;
 }

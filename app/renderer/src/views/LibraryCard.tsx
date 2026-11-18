@@ -60,13 +60,16 @@
 // `cursor: pointer` (library-cards.css:208) plus a hover fill (:214-217) — so a
 // non-interactive cue wearing it renders a phantom button. Being reachable inside
 // file scope is not the same as being coherent.
-import React, { useState } from 'react';
+import React, { useState } from "react";
 
-import { rpc } from '../components/api';
-import type { Video } from '../components/api';
-import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVideoThumbnail';
-import type { ProvenanceHandlers } from '../features/LibraryProvenance';
-import { CardProvenanceDisclosure } from './CardProvenanceDisclosure';
+import { rpc } from "../components/api";
+import type { Video } from "../components/api";
+import {
+  useVideoThumbnail,
+  type VideoThumbnailRpc,
+} from "../components/useVideoThumbnail";
+import type { ProvenanceHandlers } from "../features/LibraryProvenance";
+import { CardProvenanceDisclosure } from "./CardProvenanceDisclosure";
 import {
   cardAriaLabel,
   cardBadges,
@@ -76,8 +79,8 @@ import {
   shortsOpenAriaLabel,
   sourceFormatLabel,
   type LibraryVideo,
-} from './libraryModel';
-import '../components/library-cards.css';
+} from "./libraryModel";
+import "../components/library-cards.css";
 
 /**
  * `library.thumbnail({id})` adapter over the shared `rpc` bridge — the thin RPC
@@ -86,7 +89,7 @@ import '../components/library-cards.css';
  */
 const thumbnailRpc: VideoThumbnailRpc = {
   thumbnail: (videoId: string) =>
-    rpc<{ thumbnailPath: string }>('library.thumbnail', { id: videoId }),
+    rpc<{ thumbnailPath: string }>("library.thumbnail", { id: videoId }),
 };
 
 /**
@@ -138,9 +141,13 @@ const thumbnailRpc: VideoThumbnailRpc = {
  * for a video whose row already holds a poster path — prediction: zero.
  */
 function VideoThumb({ video }: { video: Video }): React.ReactElement {
-  const posterUrl = useVideoThumbnail(thumbnailRpc, video.id, video.thumbnailPath ?? '');
-  const [failedUrl, setFailedUrl] = useState('');
-  const showImg = posterUrl !== '' && failedUrl !== posterUrl;
+  const posterUrl = useVideoThumbnail(
+    thumbnailRpc,
+    video.id,
+    video.thumbnailPath ?? "",
+  );
+  const [failedUrl, setFailedUrl] = useState("");
+  const showImg = posterUrl !== "" && failedUrl !== posterUrl;
 
   return (
     <div className="library__thumb">
@@ -157,7 +164,9 @@ function VideoThumb({ video }: { video: Video }): React.ReactElement {
           ▶
         </div>
       )}
-      <span className="library__thumb-duration">{formatDuration(video.durationSec)}</span>
+      <span className="library__thumb-duration">
+        {formatDuration(video.durationSec)}
+      </span>
     </div>
   );
 }
@@ -201,9 +210,9 @@ export function LibraryCard({
   // separated ("MP4 · Added 2026-06-11"). Either half may be missing, so the
   // line is assembled from the present parts and omitted entirely when empty —
   // never an orphan separator and never an empty <span>.
-  const meta = [sourceFormatLabel(video.path), added ? `Added ${added}` : '']
+  const meta = [sourceFormatLabel(video.path), added ? `Added ${added}` : ""]
     .filter(Boolean)
-    .join(' · ');
+    .join(" · ");
 
   return (
     <li className="library__item">

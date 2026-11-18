@@ -1,28 +1,28 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 
 const rpcMock = vi.fn();
-vi.mock('../components/api', () => ({
+vi.mock("../components/api", () => ({
   rpc: (...args: unknown[]) => rpcMock(...args),
   onProgress: () => () => {},
   hasApi: () => true,
 }));
 
-import { LibraryCard } from './LibraryCard';
-import type { LibraryVideo } from './libraryModel';
-import { videoThumbnailSrc } from '../components/useVideoThumbnail';
+import { LibraryCard } from "./LibraryCard";
+import type { LibraryVideo } from "./libraryModel";
+import { videoThumbnailSrc } from "../components/useVideoThumbnail";
 
 function makeVideo(over: Partial<LibraryVideo> = {}): LibraryVideo {
   return {
-    id: 'v1',
-    path: '/movies/talk.mp4',
-    title: 'Talk',
-    addedAt: '2026-06-11T00:00:00Z',
+    id: "v1",
+    path: "/movies/talk.mp4",
+    title: "Talk",
+    addedAt: "2026-06-11T00:00:00Z",
     durationSec: 605,
     hasTranscript: false,
-    thumbnailPath: '/data/thumbnails/v1.jpg',
+    thumbnailPath: "/data/thumbnails/v1.jpg",
     ...over,
   };
 }
@@ -30,9 +30,15 @@ function makeVideo(over: Partial<LibraryVideo> = {}): LibraryVideo {
 function provenanceHandlers() {
   return {
     reveal: vi.fn(async () => ({
-      id: 'v1',
+      id: "v1",
       sources: [
-        { id: 'v1', path: '/movies/talk.mp4', title: 'Talk', exists: true, relinkable: true },
+        {
+          id: "v1",
+          path: "/movies/talk.mp4",
+          title: "Talk",
+          exists: true,
+          relinkable: true,
+        },
       ],
       missing: [] as string[],
     })),
@@ -48,7 +54,7 @@ let root: Root;
 
 beforeEach(() => {
   rpcMock.mockReset();
-  container = document.createElement('div');
+  container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
 });
@@ -94,7 +100,7 @@ async function renderCard(over: Over = {}): Promise<void> {
           // wires it, so a test must be able to pass an EXPLICIT undefined to
           // assert the unwired case. `?? (() => {})` would silently re-wire it and
           // make that assertion unfalsifiable.
-          onOpenHub={'onOpenHub' in over ? over.onOpenHub : () => {}}
+          onOpenHub={"onOpenHub" in over ? over.onOpenHub : () => {}}
           provenance={over.provenance}
         />
       </ul>,
@@ -103,63 +109,85 @@ async function renderCard(over: Over = {}): Promise<void> {
   await flush();
 }
 
-describe('LibraryCard', () => {
-  it('renders the poster, title, added date, and an enriched open aria-label', async () => {
+describe("LibraryCard", () => {
+  it("renders the poster, title, added date, and an enriched open aria-label", async () => {
     await renderCard();
-    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
-    expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4');
-    expect(container.querySelector('.library__item-title')?.textContent).toBe('Talk');
-    expect(container.querySelector('.library__item-facts')?.textContent).toBe(
-      'MP4 · Added 2026-06-11',
+    const open = container.querySelector(
+      ".library__item-open",
+    ) as HTMLButtonElement;
+    expect(open.getAttribute("aria-label")).toBe(
+      "Open Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4",
     );
-    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
-    expect(img.getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/v1.jpg'));
-    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
+    expect(container.querySelector(".library__item-title")?.textContent).toBe(
+      "Talk",
+    );
+    expect(container.querySelector(".library__item-facts")?.textContent).toBe(
+      "MP4 · Added 2026-06-11",
+    );
+    const img = container.querySelector(
+      "img.library__thumb-img",
+    ) as HTMLImageElement;
+    expect(img.getAttribute("src")).toBe(
+      videoThumbnailSrc("/data/thumbnails/v1.jpg"),
+    );
+    expect(
+      container.querySelector(".library__thumb-duration")?.textContent,
+    ).toBe("10:05");
   });
 
-  it('shows the container format alongside the added date in the quiet meta line', async () => {
-    await renderCard({ video: makeVideo({ path: 'C:\\Videos\\talk.MOV' }) });
-    expect(container.querySelector('.library__item-facts')?.textContent).toBe(
-      'MOV · Added 2026-06-11',
+  it("shows the container format alongside the added date in the quiet meta line", async () => {
+    await renderCard({ video: makeVideo({ path: "C:\\Videos\\talk.MOV" }) });
+    expect(container.querySelector(".library__item-facts")?.textContent).toBe(
+      "MOV · Added 2026-06-11",
     );
   });
 
-  it('keeps the format alone when the timestamp is unparseable', async () => {
-    await renderCard({ video: makeVideo({ addedAt: 'nope' }) });
-    expect(container.querySelector('.library__item-facts')?.textContent).toBe('MP4');
+  it("keeps the format alone when the timestamp is unparseable", async () => {
+    await renderCard({ video: makeVideo({ addedAt: "nope" }) });
+    expect(container.querySelector(".library__item-facts")?.textContent).toBe(
+      "MP4",
+    );
   });
 
-  it('omits the meta line entirely when neither format nor date is derivable', async () => {
-    await renderCard({ video: makeVideo({ addedAt: 'nope', path: '/movies/talk' }) });
-    expect(container.querySelector('.library__item-facts')).toBeNull();
+  it("omits the meta line entirely when neither format nor date is derivable", async () => {
+    await renderCard({
+      video: makeVideo({ addedAt: "nope", path: "/movies/talk" }),
+    });
+    expect(container.querySelector(".library__item-facts")).toBeNull();
   });
 
-  it('shows the FAILED attention badge before the Transcript chip', async () => {
-    await renderCard({ video: makeVideo({ failed: true, hasTranscript: true }) });
-    const badges = [...container.querySelectorAll('.library__badge')].map((b) => b.textContent);
-    expect(badges).toEqual(['Failed', 'Transcript']);
-    expect(container.querySelector('.library__chip--failed')).not.toBeNull();
-    expect(container.querySelector('.library__chip--transcript')).not.toBeNull();
+  it("shows the FAILED attention badge before the Transcript chip", async () => {
+    await renderCard({
+      video: makeVideo({ failed: true, hasTranscript: true }),
+    });
+    const badges = [...container.querySelectorAll(".library__badge")].map(
+      (b) => b.textContent,
+    );
+    expect(badges).toEqual(["Failed", "Transcript"]);
+    expect(container.querySelector(".library__chip--failed")).not.toBeNull();
+    expect(
+      container.querySelector(".library__chip--transcript"),
+    ).not.toBeNull();
   });
 
-  it('renders no chips for a plain video', async () => {
+  it("renders no chips for a plain video", async () => {
     await renderCard();
-    expect(container.querySelector('.library__chips')).toBeNull();
+    expect(container.querySelector(".library__chips")).toBeNull();
   });
 
-  it('opens the video on click', async () => {
+  it("opens the video on click", async () => {
     const onOpen = vi.fn();
     await renderCard({ onOpen });
     act(() => {
-      (container.querySelector('.library__item-open') as HTMLButtonElement).dispatchEvent(
-        new MouseEvent('click', { bubbles: true }),
-      );
+      (
+        container.querySelector(".library__item-open") as HTMLButtonElement
+      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onOpen).toHaveBeenCalledTimes(1);
-    expect(onOpen.mock.calls[0][0].id).toBe('v1');
+    expect(onOpen.mock.calls[0][0].id).toBe("v1");
   });
 
-  it('keeps the whole-card open action free of NESTED interactive controls', async () => {
+  it("keeps the whole-card open action free of NESTED interactive controls", async () => {
     // The card's primary action is the card BODY itself — a <button> wrapping the
     // poster and title — so every other control (select / shorts / provenance /
     // remove) must be its SIBLING. A control nested inside it is invalid HTML and
@@ -170,15 +198,18 @@ describe('LibraryCard', () => {
     // <button>Open</button> into the card body — lands inside this button. A
     // non-interactive label (a <span>) is the shape that passes here; a nested
     // control is not. The rule is enforced, not merely commented.
-    const INTERACTIVE = 'button, a[href], input, select, textarea, [tabindex], [role="button"]';
+    const INTERACTIVE =
+      'button, a[href], input, select, textarea, [tabindex], [role="button"]';
     await renderCard({ shortsCount: 3, provenance: provenanceHandlers() });
 
-    const item = container.querySelector('li.library__item') as HTMLLIElement;
-    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
-    expect(open.tagName).toBe('BUTTON');
+    const item = container.querySelector("li.library__item") as HTMLLIElement;
+    const open = container.querySelector(
+      ".library__item-open",
+    ) as HTMLButtonElement;
+    expect(open.tagName).toBe("BUTTON");
     // The primary action really is the whole body: poster + title live inside it.
-    expect(open.querySelector('.library__thumb')).not.toBeNull();
-    expect(open.querySelector('.library__item-title')).not.toBeNull();
+    expect(open.querySelector(".library__thumb")).not.toBeNull();
+    expect(open.querySelector(".library__item-title")).not.toBeNull();
     // DETECTOR CONTROL: the same selector must MATCH on this card, or the zero
     // below would only prove the selector is broken. Deliberately a lower BOUND,
     // not an exact count — an exact count would redden for any legitimately added
@@ -188,99 +219,115 @@ describe('LibraryCard', () => {
     expect(open.querySelectorAll(INTERACTIVE)).toHaveLength(0);
   });
 
-  it('re-labels the open action in lineage view', async () => {
+  it("re-labels the open action in lineage view", async () => {
     await renderCard({ lineageView: true });
     expect(
-      (container.querySelector('.library__item-open') as HTMLButtonElement).getAttribute(
-        'aria-label',
-      ),
-    ).toBe('Show history of Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4');
+      (
+        container.querySelector(".library__item-open") as HTMLButtonElement
+      ).getAttribute("aria-label"),
+    ).toBe(
+      "Show history of Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4",
+    );
   });
 
-  it('toggles selection via the checkbox', async () => {
+  it("toggles selection via the checkbox", async () => {
     const onToggleSelect = vi.fn();
     await renderCard({ selected: true, onToggleSelect });
-    const box = container.querySelector('.library__select-box') as HTMLInputElement;
+    const box = container.querySelector(
+      ".library__select-box",
+    ) as HTMLInputElement;
     expect(box.checked).toBe(true);
     act(() => {
-      box.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      box.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(onToggleSelect).toHaveBeenCalledWith('v1');
+    expect(onToggleSelect).toHaveBeenCalledWith("v1");
   });
 
-  it('removes the video via the Remove control', async () => {
+  it("removes the video via the Remove control", async () => {
     const onRemove = vi.fn();
     await renderCard({ onRemove });
     act(() => {
-      (container.querySelector('.library__remove-btn') as HTMLButtonElement).dispatchEvent(
-        new MouseEvent('click', { bubbles: true }),
-      );
+      (
+        container.querySelector(".library__remove-btn") as HTMLButtonElement
+      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onRemove).toHaveBeenCalledTimes(1);
-    expect(onRemove.mock.calls[0][0]).toBe('v1');
+    expect(onRemove.mock.calls[0][0]).toBe("v1");
   });
 
   it('shows a "N shorts" label that opens the gallery when the video has shorts', async () => {
     const onOpenShorts = vi.fn();
     await renderCard({ shortsCount: 3, onOpenShorts });
-    const label = container.querySelector('.library__shorts-label') as HTMLButtonElement;
-    expect(label.textContent).toBe('3 shorts');
-    expect(label.getAttribute('aria-label')).toBe('View 3 produced shorts for Talk');
+    const label = container.querySelector(
+      ".library__shorts-label",
+    ) as HTMLButtonElement;
+    expect(label.textContent).toBe("3 shorts");
+    expect(label.getAttribute("aria-label")).toBe(
+      "View 3 produced shorts for Talk",
+    );
     act(() => {
-      label.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      label.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onOpenShorts).toHaveBeenCalledTimes(1);
-    expect(onOpenShorts.mock.calls[0][0].id).toBe('v1');
+    expect(onOpenShorts.mock.calls[0][0].id).toBe("v1");
   });
 
   it('pluralizes the shorts label + aria for a single short (never "1 shorts")', async () => {
     await renderCard({ shortsCount: 1 });
-    const label = container.querySelector('.library__shorts-label') as HTMLButtonElement;
-    expect(label.textContent).toBe('1 short');
-    expect(label.getAttribute('aria-label')).toBe('View 1 produced short for Talk');
+    const label = container.querySelector(
+      ".library__shorts-label",
+    ) as HTMLButtonElement;
+    expect(label.textContent).toBe("1 short");
+    expect(label.getAttribute("aria-label")).toBe(
+      "View 1 produced short for Talk",
+    );
   });
 
-  it('hides the shorts label when the video has none', async () => {
+  it("hides the shorts label when the video has none", async () => {
     await renderCard({ shortsCount: 0 });
-    expect(container.querySelector('.library__shorts-label')).toBeNull();
+    expect(container.querySelector(".library__shorts-label")).toBeNull();
   });
 
-  it('demotes provenance behind a per-card disclosure and drops the legacy path line', async () => {
+  it("demotes provenance behind a per-card disclosure and drops the legacy path line", async () => {
     const handlers = provenanceHandlers();
     await renderCard({ provenance: handlers });
     // Resting card: the disclosure toggle is present but the plumbing is hidden
     // (and not even fetched) so the card stays poster + title + shorts + status.
-    expect(container.querySelector('.card-provenance__toggle')).not.toBeNull();
-    expect(container.querySelector('.library-provenance')).toBeNull();
-    expect(container.querySelector('.library__item-path')).toBeNull();
+    expect(container.querySelector(".card-provenance__toggle")).not.toBeNull();
+    expect(container.querySelector(".library-provenance")).toBeNull();
+    expect(container.querySelector(".library__item-path")).toBeNull();
     expect(handlers.reveal).not.toHaveBeenCalled();
     // Opening the disclosure reveals the provenance row and triggers the lookup.
     await act(async () => {
-      (container.querySelector('.card-provenance__toggle') as HTMLButtonElement).dispatchEvent(
-        new MouseEvent('click', { bubbles: true }),
-      );
+      (
+        container.querySelector(".card-provenance__toggle") as HTMLButtonElement
+      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flush();
-    expect(container.querySelector('.library-provenance')).not.toBeNull();
-    expect(handlers.reveal).toHaveBeenCalledWith('v1');
+    expect(container.querySelector(".library-provenance")).not.toBeNull();
+    expect(handlers.reveal).toHaveBeenCalledWith("v1");
   });
 
-  it('keeps the legacy path line when no provenance is wired', async () => {
+  it("keeps the legacy path line when no provenance is wired", async () => {
     await renderCard();
-    expect(container.querySelector('.library__item-path')?.textContent).toBe('/movies/talk.mp4');
+    expect(container.querySelector(".library__item-path")?.textContent).toBe(
+      "/movies/talk.mp4",
+    );
   });
 
-  it('falls back to the ▶ glyph when the poster <img> fails to load', async () => {
+  it("falls back to the ▶ glyph when the poster <img> fails to load", async () => {
     await renderCard();
-    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    const img = container.querySelector(
+      "img.library__thumb-img",
+    ) as HTMLImageElement;
     act(() => {
-      img.dispatchEvent(new Event('error'));
+      img.dispatchEvent(new Event("error"));
     });
-    expect(container.querySelector('img.library__thumb-img')).toBeNull();
-    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+    expect(container.querySelector("img.library__thumb-img")).toBeNull();
+    expect(container.querySelector(".library__thumb-fallback")).not.toBeNull();
   });
 
-  it('recovers the poster when a NEW url arrives after a load error (no glyph latch)', async () => {
+  it("recovers the poster when a NEW url arrives after a load error (no glyph latch)", async () => {
     // A poster that failed to load, then a DIFFERENT poster url for the same
     // card — the <img> MUST come back. A boolean "this card failed" flag latches
     // forever and strands the card on the glyph until it unmounts.
@@ -292,44 +339,52 @@ describe('LibraryCard', () => {
     // pins is the guard's SHAPE — keyed on the failed URL, not on a boolean —
     // so a future writer that DOES diverge the path cannot strand the card.
     await renderCard();
-    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    const img = container.querySelector(
+      "img.library__thumb-img",
+    ) as HTMLImageElement;
     act(() => {
-      img.dispatchEvent(new Event('error'));
+      img.dispatchEvent(new Event("error"));
     });
-    expect(container.querySelector('img.library__thumb-img')).toBeNull();
+    expect(container.querySelector("img.library__thumb-img")).toBeNull();
 
-    await renderCard({ video: makeVideo({ thumbnailPath: '/data2/thumbnails/v1.jpg' }) });
-    const back = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    await renderCard({
+      video: makeVideo({ thumbnailPath: "/data2/thumbnails/v1.jpg" }),
+    });
+    const back = container.querySelector(
+      "img.library__thumb-img",
+    ) as HTMLImageElement;
     expect(back).not.toBeNull();
-    expect(back.getAttribute('src')).toBe(videoThumbnailSrc('/data2/thumbnails/v1.jpg'));
+    expect(back.getAttribute("src")).toBe(
+      videoThumbnailSrc("/data2/thumbnails/v1.jpg"),
+    );
   });
 
-  it('keeps the glyph while the SAME failed url is still being served', async () => {
+  it("keeps the glyph while the SAME failed url is still being served", async () => {
     // The complement of the recovery case: a re-render that does not change the
     // poster url must NOT optimistically re-show an <img> known to be broken.
     await renderCard();
     act(() => {
-      (container.querySelector('img.library__thumb-img') as HTMLImageElement).dispatchEvent(
-        new Event('error'),
-      );
+      (
+        container.querySelector("img.library__thumb-img") as HTMLImageElement
+      ).dispatchEvent(new Event("error"));
     });
     await renderCard({ selected: true });
-    expect(container.querySelector('img.library__thumb-img')).toBeNull();
-    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+    expect(container.querySelector("img.library__thumb-img")).toBeNull();
+    expect(container.querySelector(".library__thumb-fallback")).not.toBeNull();
   });
 
-  it('falls back to the glyph when on-demand poster generation yields nothing', async () => {
+  it("falls back to the glyph when on-demand poster generation yields nothing", async () => {
     // thumbnailPath omitted entirely -> the `video.thumbnailPath ?? ''` fallback,
     // then on-demand generation via library.thumbnail (which fails here).
-    rpcMock.mockRejectedValueOnce(new Error('no poster'));
+    rpcMock.mockRejectedValueOnce(new Error("no poster"));
     await renderCard({ video: makeVideo({ thumbnailPath: undefined }) });
-    expect(rpcMock).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
-    expect(container.querySelector('img.library__thumb-img')).toBeNull();
-    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+    expect(rpcMock).toHaveBeenCalledWith("library.thumbnail", { id: "v1" });
+    expect(container.querySelector("img.library__thumb-img")).toBeNull();
+    expect(container.querySelector(".library__thumb-fallback")).not.toBeNull();
   });
 });
 
-describe('Task hub entry point (the hub is reachable, not orphaned)', () => {
+describe("Task hub entry point (the hub is reachable, not orphaned)", () => {
   // WHY THIS EXISTS. Refine lands DIRECTLY on the Workspace (owner-locked G-7
   // invariant 2), which is correct — but <TaskHub> renders at exactly one site,
   // behind `mode !== 'workspace'`. Without a caller seeding `initialMode='hub'` the
@@ -342,40 +397,47 @@ describe('Task hub entry point (the hub is reachable, not orphaned)', () => {
   //   * an upgraded user whose stored choice is 'subtitles' would land on the
   //     caption lane on every open of that video with NO surface anywhere in the
   //     app to change or clear it — the hub is that preference's only writer.
-  it('renders a Task hub action that opens THIS video onto its hub', async () => {
+  it("renders a Task hub action that opens THIS video onto its hub", async () => {
     const onOpenHub = vi.fn();
     await renderCard({ onOpenHub });
-    const btn = container.querySelector('.library__hub-btn') as HTMLButtonElement;
-    expect(btn, 'the hub entry point must exist when a caller wires it').not.toBeNull();
-    act(() => btn.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const btn = container.querySelector(
+      ".library__hub-btn",
+    ) as HTMLButtonElement;
+    expect(
+      btn,
+      "the hub entry point must exist when a caller wires it",
+    ).not.toBeNull();
+    act(() => btn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onOpenHub).toHaveBeenCalledTimes(1);
-    expect(onOpenHub.mock.calls[0]?.[0]?.id).toBe('v1');
+    expect(onOpenHub.mock.calls[0]?.[0]?.id).toBe("v1");
   });
 
-  it('names the video, so the control is distinguishable per card to a screen reader', async () => {
+  it("names the video, so the control is distinguishable per card to a screen reader", async () => {
     // Every card renders one; an unlabelled "Task hub" repeated down the list is a
     // list of identical accessible names.
     await renderCard({ onOpenHub: () => {} });
-    expect(container.querySelector('.library__hub-btn')?.getAttribute('aria-label')).toBe(
-      'Task hub for Talk',
-    );
+    expect(
+      container.querySelector(".library__hub-btn")?.getAttribute("aria-label"),
+    ).toBe("Task hub for Talk");
   });
 
-  it('renders NO control when no caller wires it, so it cannot ship dead', async () => {
+  it("renders NO control when no caller wires it, so it cannot ship dead", async () => {
     // DETECTOR CONTROL for the case above: without this, a hardcoded button would
     // satisfy the first test while being a dead control on every unwired mount.
     await renderCard({ onOpenHub: undefined });
-    expect(container.querySelector('.library__hub-btn')).toBeNull();
+    expect(container.querySelector(".library__hub-btn")).toBeNull();
   });
 
-  it('does NOT disturb the primary open action', async () => {
+  it("does NOT disturb the primary open action", async () => {
     // The hub is SECONDARY. If wiring it changed what the card body does, the
     // zero-navigation landing invariant would be broken by this very fix.
     const onOpen = vi.fn();
     const onOpenHub = vi.fn();
     await renderCard({ onOpen, onOpenHub });
-    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
-    act(() => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const open = container.querySelector(
+      ".library__item-open",
+    ) as HTMLButtonElement;
+    act(() => open.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onOpen).toHaveBeenCalledTimes(1);
     expect(onOpenHub).not.toHaveBeenCalled();
   });
