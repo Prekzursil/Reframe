@@ -85,24 +85,35 @@ test.describe('packaged (shipped binary) E2E', () => {
     // at runtime by playwright-core's Electron launcher, not written in any file
     // here. A source grep structurally cannot see that dependency.
     //
-    // This throws rather than skipping: the coverage is genuinely lost while the
-    // fuse is off, and a skip would turn a real gap into a green tick. Throwing
-    // keeps the leg red — but red in seconds, naming the cause and the options.
+    // Resolved per option (b) below: keep the coverage AND the hardening. A
+    // missing test-build marker still throws (red in seconds, naming the cause)
+    // rather than skipping — a skip would turn a real gap into a green tick.
     const fuses = readFileSync(resolve(REPO_ROOT, 'electron-builder.yml'), 'utf8').replace(
-      /#[^\n]*/g,
+      /#[^
+]*/g,
       '',
     );
-    if (/enableNodeCliInspectArguments:\s*false/.test(fuses)) {
+    // OPTION (b) of the W66 trade-off, as offered here since the fuse landed:
+    // the RELEASE config keeps `enableNodeCliInspectArguments: false` (asserted
+    // below so the hardening cannot silently regress), while CI builds the
+    // TEST-ONLY package with the fuse flipped on via the electron-builder CLI
+    // override (e2e.yml --config.electronFuses.enableNodeCliInspectArguments=true)
+    // and marks it with RF_E2E_PACKAGED_INSPECT=1. Driving a binary whose fuse
+    // state we did not arrange would hang for the full launch timeout, so a
+    // missing marker fails fast instead.
+    expect(
+      /enableNodeCliInspectArguments:\s*false/.test(fuses),
+      'RELEASE electron-builder.yml must keep enableNodeCliInspectArguments: false ' +
+        '(W66 hardening). Test builds flip it via the CLI override in e2e.yml, ' +
+        'never by editing the release config.',
+    ).toBe(true);
+    if (process.env.RF_E2E_PACKAGED_INSPECT !== '1') {
       throw new Error(
-        'packaged.spec cannot drive the shipped binary: electron-builder.yml sets ' +
-          '`enableNodeCliInspectArguments: false`, so Electron ignores the `--inspect` ' +
-          'flag Playwright needs to attach to the main process. This is a HARDENING vs ' +
-          'TESTABILITY trade-off, not an app defect — the packaged app launches fine. ' +
-          'Resolve by one of: (a) flip the fuse true and accept the re-opened ' +
-          'Node-injection surface; (b) build a test-only package with the fuse on and ' +
-          'assert separately that the RELEASE artifact has it off; or (c) drop these ' +
-          'main-process assertions and cover the package another way. Until then this ' +
-          'leg is red BY CONSTRUCTION and its 900 s hang was measuring nothing.',
+        'packaged.spec needs a TEST-BUILT package with the inspect fuse on ' +
+          '(RF_E2E_PACKAGED_INSPECT=1). e2e.yml sets it around the electron-builder ' +
+          'step that passes --config.electronFuses.enableNodeCliInspectArguments=true; ' +
+          'without that override Playwright cannot attach to the main process and the ' +
+          'launch hangs for its full timeout.',
       );
     }
 

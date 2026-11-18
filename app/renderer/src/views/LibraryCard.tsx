@@ -68,13 +68,14 @@ import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVide
 import type { ProvenanceHandlers } from '../features/LibraryProvenance';
 import { CardProvenanceDisclosure } from './CardProvenanceDisclosure';
 import {
-  type LibraryVideo,
   cardAriaLabel,
   cardBadges,
   formatAdded,
   formatDuration,
   shortsCountLabel,
   shortsOpenAriaLabel,
+  sourceFormatLabel,
+  type LibraryVideo,
 } from './libraryModel';
 import '../components/library-cards.css';
 
@@ -159,23 +160,6 @@ function VideoThumb({ video }: { video: Video }): React.ReactElement {
       <span className="library__thumb-duration">{formatDuration(video.durationSec)}</span>
     </div>
   );
-}
-
-/**
- * The source CONTAINER format for the card's quiet meta line — the extension of
- * `video.path`, uppercased ("MP4", "MOV"). The frozen `library.list` payload has
- * no resolution / codec / fps fields at all (`components/api.ts:65-78` — id,
- * path, title, addedAt, durationSec, hasTranscript, thumbnailPath), so the
- * container is the only technical fact the record actually supports; anything
- * richer has to come from the sidecar, not from a guess here.
- *
- * Returns '' when the path carries no usable extension (an extensionless file,
- * or a leading-dot name with no stem) so the caller drops the segment instead of
- * rendering a stray separator.
- */
-function sourceFormatLabel(path: string): string {
-  const match = /[^\\/.]\.([A-Za-z0-9]{1,5})$/.exec(path);
-  return match ? match[1].toUpperCase() : '';
 }
 
 export interface LibraryCardProps {

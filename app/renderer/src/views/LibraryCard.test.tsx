@@ -107,7 +107,7 @@ describe('LibraryCard', () => {
   it('renders the poster, title, added date, and an enriched open aria-label', async () => {
     await renderCard();
     const open = container.querySelector('.library__item-open') as HTMLButtonElement;
-    expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript');
+    expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4');
     expect(container.querySelector('.library__item-title')?.textContent).toBe('Talk');
     expect(container.querySelector('.library__item-facts')?.textContent).toBe(
       'MP4 · Added 2026-06-11',
@@ -194,7 +194,7 @@ describe('LibraryCard', () => {
       (container.querySelector('.library__item-open') as HTMLButtonElement).getAttribute(
         'aria-label',
       ),
-    ).toBe('Show history of Talk, 10:05, no transcript');
+    ).toBe('Show history of Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4');
   });
 
   it('toggles selection via the checkbox', async () => {

@@ -704,7 +704,7 @@ describe('Library', () => {
     const open = container.querySelector('.library__item-open') as HTMLButtonElement;
     expect(open.tagName).toBe('BUTTON');
     // v1.5: the open name is enriched with duration + status (title+status+duration).
-    expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript');
+    expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4');
     // The <li> is a plain list item (no button role / tabindex) so the <ul> only
     // contains list items and the open/remove buttons are SIBLINGS, not nested.
     const item = container.querySelector('li.library__item') as HTMLLIElement;
@@ -952,7 +952,7 @@ describe('Library lineage view (L4)', () => {
 
     // The card open affordance re-labels itself for the history action.
     const open = container.querySelector('.library__item-open') as HTMLButtonElement;
-    expect(open.getAttribute('aria-label')).toBe('Show history of Talk, 10:05, no transcript');
+    expect(open.getAttribute('aria-label')).toBe('Show history of Talk, 10:05, no transcript, MP4 · Added 2026-06-11, /movies/talk.mp4');
 
     rpcMock.mockResolvedValueOnce(EMPTY_LINEAGE);
     await click(open);
