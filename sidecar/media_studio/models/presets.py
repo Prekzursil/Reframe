@@ -113,7 +113,7 @@ class CatalogLike(Protocol):
     """A catalog need only expose ``all()`` returning entry-likes."""
 
     def all(self) -> tuple[CatalogEntryLike, ...]:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 # --------------------------------------------------------------------------- #

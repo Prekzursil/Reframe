@@ -215,10 +215,10 @@ class FeedbackSeam(Protocol):
     """
 
     def exemplar_block(self, language: str | None = None) -> str | None:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
     def calibrated_pct(self, raw: float) -> int | None:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 class Provider(Protocol):
@@ -236,7 +236,7 @@ class Provider(Protocol):
         temperature: float = ...,
         max_tokens: int = ...,
     ) -> str:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 # ---------------------------------------------------------------------------

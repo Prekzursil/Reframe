@@ -140,7 +140,7 @@ class _ChatProvider(Protocol):
     """The minimal provider surface :func:`run_ai_job` drives."""
 
     def chat(self, messages: Sequence[Message], **kwargs: Any) -> str:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 # A provider factory: returns the resolved (rotating) provider for the run. It is

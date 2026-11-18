@@ -91,7 +91,7 @@ class Catalog(Protocol):
     """
 
     def free_cap(self, provider: str) -> int | None:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 # --------------------------------------------------------------------------- #
