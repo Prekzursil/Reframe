@@ -557,7 +557,8 @@ class TestDefaultModelsPresent:
         monkeypatch.setattr(manifest, "get_asset", lambda _name: sentinel)
 
         class FakeMgr:
-            def __init__(self, *_a: Any, **_k: Any) -> None: ...
+            def __init__(self, *_a: Any, **_k: Any) -> None:
+                pass
 
             def installed_path(self, _entry: Any) -> str | None:
                 return "C:/cache/punct"
@@ -572,7 +573,8 @@ class TestDefaultModelsPresent:
         monkeypatch.setattr(manifest, "get_asset", lambda _name: object())
 
         class FakeMgr:
-            def __init__(self, *_a: Any, **_k: Any) -> None: ...
+            def __init__(self, *_a: Any, **_k: Any) -> None:
+                pass
 
             def installed_path(self, _entry: Any) -> str | None:
                 return None

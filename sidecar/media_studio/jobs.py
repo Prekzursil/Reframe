@@ -57,9 +57,11 @@ class WatchdogTimer(Protocol):
     wall-clock wait.
     """
 
-    def start(self) -> None: ...  # pragma: no cover - Protocol stub
+    def start(self) -> None:
+        pass  # pragma: no cover - Protocol stub
 
-    def cancel(self) -> None: ...  # pragma: no cover - Protocol stub
+    def cancel(self) -> None:
+        pass  # pragma: no cover - Protocol stub
 
 
 # Builds a (not-yet-started) :class:`WatchdogTimer` that calls ``fn`` after ``delay`` s.

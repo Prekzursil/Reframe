@@ -187,7 +187,7 @@ class DoverBackend(Protocol):
 
     def assess(self, frames: np.ndarray) -> tuple[float, float]:
         """Return a raw ``(technical, aesthetic)`` quality pair for one clip."""
-        ...  # pragma: no cover - Protocol stub (the real body lives in the backend)
+        raise NotImplementedError  # pragma: no cover - Protocol stub (the real body lives in the backend)
 
 
 #: ``(path, candidates) -> per-clip frame stacks`` (cv2/decord lives INSIDE it).

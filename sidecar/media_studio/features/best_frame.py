@@ -116,7 +116,7 @@ class _RankClipsBackend(Protocol):
 
     def rank_clips(self, frames_per_clip: Sequence[Any], prompt: str) -> list[float]:
         """Score each clip (a frame stack) for the prompt — higher = better."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 def argmax_index(scores: Sequence[float]) -> int:

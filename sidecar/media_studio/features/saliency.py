@@ -208,7 +208,7 @@ class SaliencyBackend(Protocol):
 
     def infer(self, frames: np.ndarray) -> np.ndarray:
         """Return an ``NxHxW`` per-frame saliency stack for ``frames``."""
-        ...  # pragma: no cover - Protocol body; the real impl lives in the backend module
+        raise NotImplementedError  # pragma: no cover - Protocol body; the real impl lives in the backend module
 
 
 #: factory seam: default = lazy real impl; tests inject a fake.

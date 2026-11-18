@@ -92,7 +92,7 @@ class OcrBackend(Protocol):
 
     def read_text(self, frame: Any) -> list[dict[str, Any]]:
         """OCR one frame into a list of ``{text, top, left}`` boxes."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 #: Factory seam: ``settings -> OcrBackend`` (default = lazy real impl).

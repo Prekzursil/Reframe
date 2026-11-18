@@ -234,7 +234,7 @@ class MotionBackend(Protocol):
 
     def pair_magnitudes(self, frames: list[np.ndarray]) -> list[float]:
         """Per-adjacent-pair motion magnitude (len = ``max(0, len(frames) - 1)``)."""
-        ...  # pragma: no cover - Protocol method body is never executed
+        raise NotImplementedError  # pragma: no cover - Protocol method body is never executed
 
 
 # --------------------------------------------------------------------------- #

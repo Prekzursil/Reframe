@@ -421,11 +421,11 @@ class LipSyncBackend(Protocol):
 
     def relip(self, payload: dict[str, Any]) -> str:
         """Re-lip ``payload['videoPath']`` to ``payload['audioPath']``."""
-        ...  # pragma: no cover - protocol
+        raise NotImplementedError  # pragma: no cover - protocol
 
     def release(self) -> None:
         """Drop the model + free the GPU cache (one model at a time)."""
-        ...  # pragma: no cover - protocol
+        pass  # pragma: no cover - protocol
 
 
 class SubprocessLipSyncBackend:

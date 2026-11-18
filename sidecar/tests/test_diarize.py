@@ -601,9 +601,11 @@ def test_import_speechbrain_returns_api_when_present(monkeypatch):
 
     from media_studio.features import diarize_backend as db
 
-    class _FakeVAD: ...
+    class _FakeVAD:
+        pass
 
-    class _FakeEncoder: ...
+    class _FakeEncoder:
+        pass
 
     sb = _types.ModuleType("speechbrain")
     inference = _types.ModuleType("speechbrain.inference")

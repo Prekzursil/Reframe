@@ -214,9 +214,11 @@ class FeedbackSeam(Protocol):
     through the empirical approval table (or ``None`` below 50 labels).
     """
 
-    def exemplar_block(self, language: str | None = None) -> str | None: ...
+    def exemplar_block(self, language: str | None = None) -> str | None:
+        raise NotImplementedError
 
-    def calibrated_pct(self, raw: float) -> int | None: ...
+    def calibrated_pct(self, raw: float) -> int | None:
+        raise NotImplementedError
 
 
 class Provider(Protocol):
@@ -233,7 +235,7 @@ class Provider(Protocol):
         *,
         temperature: float = ...,
         max_tokens: int = ...,
-    ) -> str: ...
+    ) -> str: raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------

@@ -196,7 +196,7 @@ class OcrBackend(Protocol):
 
     def detect(
         self, media_path: str, *, sample_times: tuple[float, ...]
-    ) -> tuple[tuple[TextBox, ...], ...]: ...  # pragma: no cover - Protocol stub
+    ) -> tuple[tuple[TextBox, ...], ...]: raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 # --------------------------------------------------------------------------- #

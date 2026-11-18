@@ -7,7 +7,8 @@ pure wire helpers a few tests import directly."""
 
 from __future__ import annotations
 
-from ._services import Services
+from typing import TYPE_CHECKING, Any
+
 from ._shared import _invalid, _require_number, _require_str, _routing_block, log
 from ._wire import (
     _advisor_report_to_wire,
@@ -26,7 +27,45 @@ from ._wire import (
     _signals_summary,
     _tier_readiness_items,
 )
-from .composition import register_all
+if TYPE_CHECKING:  # imported lazily below; a module-level import here is the
+    from ._services import Services  # runtime cycle _services -> handlers.*
+
+    from .composition import register_all
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy re-export of the cycle-forming names (PEP 562).
+
+    ``_services`` imports every ``*_ops`` module at class-body time and the
+    ops modules TYPE_CHECKING-import ``Services`` back; importing either of
+    these eagerly from the package ``__init__`` closed a runtime cycle that
+    CodeQL flagged ~150 times (py/unsafe-cyclic-import). The public surface
+    (``handlers.Services``, ``handlers.register_all``, the ``*_ops``
+    submodules) keeps working exactly as before — resolved on first access.
+    """
+    if name == "Services":
+        from ._services import Services
+
+        return Services
+    if name == "register_all":
+        from .composition import register_all
+
+        return register_all
+    if name in {
+        "ai_ops",
+        "director_ops",
+        "library_ops",
+        "media_ops",
+        "providers_ops",
+        "shortmaker_ops",
+        "system_ops",
+        "vision_ops",
+    }:
+        import importlib
+
+        return importlib.import_module(f"{__name__}.{name}")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "Services",

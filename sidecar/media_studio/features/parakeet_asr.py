@@ -83,7 +83,8 @@ class ParakeetModel(Protocol):
     apply.
     """
 
-    def transcribe(self, audio: str, **kwargs: Any) -> Any: ...  # pragma: no cover - Protocol stub
+    def transcribe(self, audio: str, **kwargs: Any) -> Any:
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 class ParakeetLoader(Protocol):
@@ -94,7 +95,8 @@ class ParakeetLoader(Protocol):
     ``nemo_toolkit`` lazily.
     """
 
-    def load(self, model: str, device: str, compute_type: str) -> ParakeetModel: ...  # pragma: no cover - Protocol stub
+    def load(self, model: str, device: str, compute_type: str) -> ParakeetModel:
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
 
 def _default_loader() -> ParakeetLoader:  # pragma: no cover - prod seam (imports the heavy native stack)

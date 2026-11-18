@@ -140,7 +140,7 @@ class PannsBackend(Protocol):
 
     def tag(self, samples: np.ndarray, sr: int) -> np.ndarray:
         """Return a ``frames x 527`` AudioSet tag-probability matrix."""
-        ...  # pragma: no cover - Protocol method body is never executed
+        raise NotImplementedError  # pragma: no cover - Protocol method body is never executed
 
 
 #: factory seam: default = lazy real impl; tests inject a fake.

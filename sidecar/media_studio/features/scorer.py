@@ -116,7 +116,7 @@ class VlmReranker(Protocol):
 
     def rerank_top_k(self, cands: Sequence[Mapping[str, Any]], *, top_k: int) -> list[dict[str, Any]]:
         """Reorder the top ``top_k`` candidates; the tail is left untouched."""
-        ...  # pragma: no cover - Protocol stub, never executed
+        raise NotImplementedError  # pragma: no cover - Protocol stub, never executed
 
 
 # --------------------------------------------------------------------------- #

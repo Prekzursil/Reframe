@@ -90,7 +90,8 @@ class Catalog(Protocol):
     the provider is effectively uncapped for this estimate.
     """
 
-    def free_cap(self, provider: str) -> int | None: ...
+    def free_cap(self, provider: str) -> int | None:
+        raise NotImplementedError
 
 
 # --------------------------------------------------------------------------- #

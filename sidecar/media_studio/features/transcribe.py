@@ -249,7 +249,8 @@ class WhisperModel(Protocol):
     as ``transcribe(audio, language=..., word_timestamps=True)``.
     """
 
-    def transcribe(self, *args: Any, **kwargs: Any) -> Any: ...  # pragma: no cover
+    def transcribe(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError  # pragma: no cover
 
 
 class WhisperLoader(Protocol):
@@ -259,7 +260,8 @@ class WhisperLoader(Protocol):
     loader (:class:`FasterWhisperLoader`) imports ``faster_whisper`` lazily.
     """
 
-    def load(self, model: str, device: str, compute_type: str) -> WhisperModel: ...  # pragma: no cover
+    def load(self, model: str, device: str, compute_type: str) -> WhisperModel:
+        raise NotImplementedError  # pragma: no cover
 
 
 class FasterWhisperLoader:

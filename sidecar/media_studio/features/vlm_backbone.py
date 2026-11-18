@@ -302,15 +302,15 @@ class BackboneBackend(Protocol):
 
     def embed_images(self, frames: np.ndarray) -> np.ndarray:
         """Embed N frames -> ``(N, D)`` image embeddings."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
     def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
         """Embed M prompt strings -> ``(M, D)`` text embeddings."""
-        ...  # pragma: no cover - Protocol stub
+        raise NotImplementedError  # pragma: no cover - Protocol stub
 
     def head_weights(self) -> np.ndarray | None:
         """The tiny aesthetic-MLP head weights, or ``None`` if unavailable."""
-        ...  # pragma: no cover - Protocol stub
+        pass  # pragma: no cover - Protocol stub
 
 
 BackboneFactory = Callable[[dict[str, Any]], BackboneBackend]

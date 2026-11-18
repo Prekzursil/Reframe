@@ -365,7 +365,7 @@ def test_transcribe_and_persist_rejects_unknown_video(services: Services) -> Non
         cancelled = False
 
         def progress(self, *_a: Any, **_k: Any) -> None:  # pragma: no cover - never reached
-            ...
+            pass
 
     with pytest.raises(RpcError) as ei:
         services._transcribe_and_persist("ghost", _Ctx())

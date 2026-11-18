@@ -69,7 +69,7 @@ BatchSummary = dict[str, Any]
 class TemplateRunner(Protocol):
     def __call__(self, video_id: str, ctx: RpcContext, *, confirm_budget: str | None = ...) -> dict[str, Any]:
         """Run one source's template path; returns ``{"jobId": ...}``."""
-        ...  # pragma: no cover - Protocol method body is never executed
+        raise NotImplementedError  # pragma: no cover - Protocol method body is never executed
 
 
 #: Maps a source ``video_id`` to a human title for the progress message.
