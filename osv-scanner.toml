@@ -128,58 +128,6 @@
 # does not affect the exit code.
 # ---------------------------------------------------------------------------
 
-[[IgnoredVulns]]
-id = "GHSA-mh99-v99m-4gvg"
-ignoreUntil = 2026-10-25
-reason = """
-brace-expansion: DoS via unbounded expansion length causing an out-of-memory
-process crash. Published 2026-07-24; vulnerable range <= 5.0.7; fixed ONLY in
-5.0.8. Ignored per the POLICY at the top of this file as GENUINELY UNFIXABLE.
-
-SCOPE: development only. Both remaining resolutions are dev-scope transitives of
-the electron-builder toolchain; no runtime/product code path reaches them.
-Corroboration: GitHub's own Dependabot auto-triage auto-dismisses this advisory
-on scope `development` in a sibling repo of this fleet, and a sibling repo
-(momentstudio) already carries a dated ignore for this same advisory with its own
-independently measured evidence.
-
-WHY UNFIXABLE — measured 2026-07-25 by execution, not assumed. The two remaining
-resolutions are brace-expansion 1.1.16 (via @electron/asar, dir-compare and glob
--> minimatch 3.1.5) and 2.1.2 (via @electron/universal + test-exclude ->
-minimatch 9.0.9, and filelist -> minimatch 5.1.9). No patched 1.x or 2.x release
-exists at all, so there is no in-major upgrade. BOTH escape routes were executed
-and BOTH break at runtime:
-  1. Force brace-expansion to ^5.0.8 — 5.x moved its CJS export from
-     `module.exports = expand` (a callable) to a named object
-     { EXPANSION_MAX, EXPANSION_MAX_LENGTH, expand }. Measured: 1.1.16 typeof
-     'function' and returns ['ab','ac'] for 'a{b,c}'; 5.0.8 typeof 'object' and
-     calling it throws "is not a function". minimatch 3.x does
-     `expand = require('brace-expansion'); expand(pattern)`.
-  2. Lift the parent minimatch to ^10 — measured: minimatch 3.1.2 typeof
-     'function' (returns true for 'a/b.js' vs 'a/*.js'); minimatch 10.x typeof
-     'object' with keys { minimatch, sep, GLOBSTAR, filter, defaults,
-     braceExpand, makeRe, match } and calling it throws "is not a function".
-     @electron/asar (^3.0.4), dir-compare (^3.0.5) and glob (^3.1.1) all require
-     minimatch 3.x and call it as a function, so this breaks identically.
-The real fix is upstream: the electron-builder chain moving off minimatch 3.x.
-
-CAVEAT — READ THIS BEFORE TRUSTING THIS ENTRY. An osv-scanner ignore is keyed by
-VULNERABILITY ID, not by version. This entry therefore ALSO suppresses this
-advisory for the hoisted brace-expansion 5.0.8 resolution, where a real fix DOES
-exist. If that entry ever regresses below 5.0.8, gate-deps will stay silent about
-it. Mitigations: app/package-lock.json pins 5.0.8, and Dependabot alerts
-independently of this file. Do NOT treat gate-deps as the only guard on the 5.x
-line while this ignore is live.
-
-RE-CHECK CONDITION — either one retires this entry outright:
-  (a) the electron-builder chain (@electron/asar, dir-compare, glob) moves off
-      minimatch 3.x, removing the 1.1.16 and 2.1.2 resolutions; or
-  (b) a 1.x and/or 2.x backport of the fix ships — verify with
-      `npm view brace-expansion versions` that a 1.x above 1.1.16 or a 2.x above
-      2.1.2 exists, then re-check that release against the advisory range.
-Re-review at ignoreUntil (2026-10-25) regardless. REMOVING the ignore is the
-default outcome; extending it requires re-measuring both paths above.
-"""
 
 # ---------------------------------------------------------------------------
 # 2026-11-14 SECURITY UPGRADE — GHSA-rrmf-rvhw-rf47 (torch jit.script memory
@@ -207,3 +155,43 @@ default outcome; extending it requires re-measuring both paths above.
 # owner threat model) — they are reported, not ignored: this file adds no
 # [[IgnoredVulns]] entry for them.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 2026-11-18 IGNORE RETIRED — GHSA-mh99-v99m-4gvg (brace-expansion DoS). The
+# entry below hit BOTH retirement conditions: its ignoreUntil (2026-10-25)
+# passed, and osv-scanner now reports it UNUSED (no scanned resolution matches
+# the advisory range anymore — the electron-builder chain's brace-expansion
+# 1.1.16/2.1.2 resolutions moved on). Its own re-check policy names REMOVING
+# the ignore as the default outcome; the full measured evidence remains in git
+# history. Retired by the round-2 dependency-gate repair (measured 2026-11-18:
+# osv-scanner 2.3.8 exit 1, "osv-scanner.toml has unused ignores: GHSA-mh99-
+# v99m-4gvg").
+
+# ---------------------------------------------------------------------------
+# 2026-11-18 RESIDUAL RISK (reasoned ignore) — GHSA-fc5q-39xc-vjpf, picomatch
+# ReDoS (CVE-2026-112366 family; CVSS v3 7.5 / v4 8.7, availability-only).
+# Vulnerable range: <= 4.0.7 — and 4.0.7 IS the newest published release
+# (measured 2026-11-18 via `npm view picomatch versions`), so there is NO
+# fixed release to upgrade to and NO in-major escape: 0 vulnerabilities can
+# be fixed, per the gate's own output. Upstream fix PR exists but is
+# unpublished. Measured scope in THIS tree: development only — the single
+# resolution is app/package-lock.json node_modules/picomatch 4.0.4
+# ("dev": true), pulled by tinyglobby ^4.0.4, vite ^4.0.2 and vitest ^4.0.3
+# (build/test toolchain). No runtime/product code path reaches it; the shipped
+# Electron app does not package devDependencies. Impact ceiling is event-loop
+# blockage in a developer's own test run from a crafted glob pattern.
+# RE-CHECK CONDITION: retire this entry the day a patched picomatch (> 4.0.7)
+# publishes — bump the floor in app/package.json overrides instead. Re-review
+# at ignoreUntil regardless; extending requires re-measuring the resolutions.
+[[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+ignoreUntil = 2027-02-18
+reason = """
+picomatch ReDoS (analyzeRepeatedExtglob exponential backtracking). All
+published releases are vulnerable (<= 4.0.7 = latest published, measured
+2026-11-18); no fixed release exists, so per the POLICY above this is
+GENUINLY UNFIXABLE, not deferred. Dev-scope only: sole resolution is
+app/package-lock.json picomatch 4.0.4 (dev=true) via tinyglobby/vite/vitest.
+Availability-only impact, developer toolchain, no shipped-code exposure.
+Retire as soon as a patched picomatch release publishes.
+"""

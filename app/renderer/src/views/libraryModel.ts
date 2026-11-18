@@ -117,12 +117,36 @@ export function cardBadges(video: LibraryVideo): CardBadge[] {
  */
 export function cardAriaLabel(video: LibraryVideo, lineageView: boolean): string {
   const parts = [lineageView ? `Show history of ${video.title}` : `Open ${video.title}`];
+  for (const badge of cardBadges(video)) parts.push(badge.label);
   const dur = formatDuration(video.durationSec);
   if (dur !== '--:--') parts.push(dur);
   parts.push(
     video.failed ? 'processing failed' : video.hasTranscript ? 'transcript ready' : 'no transcript',
   );
+  // WCAG 2.5.3 (axe label-content-name-mismatch, serious): the card's VISIBLE
+  // text runs — the badges above, the facts caption and the file path — render
+  // inside the open button, so every one of them must also appear in the
+  // accessible name. The facts line is composed exactly as LibraryCard paints
+  // it ("MP4 · Added 2026-06-11") so the substring check holds verbatim.
+  const added = formatAdded(video.addedAt);
+  const facts = [sourceFormatLabel(video.path), added ? `Added ${added}` : '']
+    .filter(Boolean)
+    .join(' · ');
+  if (facts) parts.push(facts);
+  if (video.path) parts.push(video.path);
   return parts.join(', ');
+}
+
+/**
+ * The file's container format as painted on the card facts line ("MP4" for
+ * talk.mp4). Returns '' when the path carries no usable extension so the
+ * caller drops the segment instead of rendering a stray separator. Shared by
+ * the card caption and the card's accessible name so the two cannot drift
+ * (WCAG 2.5.3 label-content-name-mismatch).
+ */
+export function sourceFormatLabel(path: string): string {
+  const match = /[^/.]\.([A-Za-z0-9]{1,5})$/.exec(path);
+  return match ? match[1].toUpperCase() : '';
 }
 
 /** The date part (YYYY-MM-DD) of an ISO `addedAt`; '' when unparseable. */

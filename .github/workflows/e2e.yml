@@ -303,7 +303,19 @@ jobs:
         # AFTER it has already built + signed dist/. We only need dist/ to exist
         # for packaged.spec.ts to drive the shipped .exe; publishing is the
         # release workflow's job, not this gate's.
-        run: npx electron-builder --config ../electron-builder.yml --win --publish never
+        # TEST-ONLY FUSE OVERRIDE (W66 option (b)): the RELEASE config keeps
+        # `enableNodeCliInspectArguments: false` (packaged.spec.ts ASSERTS that on
+        # the checked-in file). This E2E build flips the single fuse on so
+        # Playwright's `--inspect`-based Electron launcher can attach to the
+        # packaged main process; packaged.spec.ts fast-fails unless
+        # RF_E2E_PACKAGED_INSPECT=1 says this override produced the binary.
+        run: >
+          npx electron-builder --config ../electron-builder.yml
+          --config.electronFuses.enableNodeCliInspectArguments=true
+          --win --publish never
+      - name: Mark the test-built package (inspect fuse on)
+        if: runner.os == 'Windows'
+        run: echo "RF_E2E_PACKAGED_INSPECT=1" >> "$GITHUB_ENV"
 
       # --- ANTI-RECURRENCE: does the ffmpeg we just PACKAGED actually work? ---
       # v1.4 shipped a bundled ffmpeg (BtbN win64-LGPL, --disable-libx264

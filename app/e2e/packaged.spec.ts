@@ -17,11 +17,16 @@
 // suite fails fast with a clear message rather than pretending to test the dev
 // build.
 
-import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import {
+  test,
+  expect,
+  _electron as electron,
+  type ElectronApplication,
+} from "@playwright/test";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import {
   COLD_TIMEOUT_MS,
   SIDECAR_DIR,
@@ -30,18 +35,21 @@ import {
   seedEnvironment,
   type BuiltApp,
   type SeededEnv,
-} from './fixtures';
+} from "./fixtures";
 
 /** Repo root, from this file: app/e2e/ -> app/ -> <root>. */
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 // The packaged artifact is ONLY produced on the Windows leg (electron-builder.yml
 // has a win: target; the embeddable CPython + ffmpeg staging is Windows-only —
 // build/python-embed-setup.ps1). On macOS/Linux there is no package to launch, so
 // this whole suite SKIPS there rather than erroring; preview.spec.ts still gives
 // those legs GUI coverage against the dev build. See .github/workflows/e2e.yml.
-test.describe('packaged (shipped binary) E2E', () => {
-  test.skip(process.platform !== 'win32', 'packaged artifact is only built on Windows');
+test.describe("packaged (shipped binary) E2E", () => {
+  test.skip(
+    process.platform !== "win32",
+    "packaged artifact is only built on Windows",
+  );
 
   let seeded: SeededEnv;
   let app: ElectronApplication;
@@ -85,24 +93,34 @@ test.describe('packaged (shipped binary) E2E', () => {
     // at runtime by playwright-core's Electron launcher, not written in any file
     // here. A source grep structurally cannot see that dependency.
     //
-    // This throws rather than skipping: the coverage is genuinely lost while the
-    // fuse is off, and a skip would turn a real gap into a green tick. Throwing
-    // keeps the leg red — but red in seconds, naming the cause and the options.
-    const fuses = readFileSync(resolve(REPO_ROOT, 'electron-builder.yml'), 'utf8').replace(
-      /#[^\n]*/g,
-      '',
-    );
-    if (/enableNodeCliInspectArguments:\s*false/.test(fuses)) {
+    // Resolved per option (b) below: keep the coverage AND the hardening. A
+    // missing test-build marker still throws (red in seconds, naming the cause)
+    // rather than skipping — a skip would turn a real gap into a green tick.
+    const fuses = readFileSync(
+      resolve(REPO_ROOT, "electron-builder.yml"),
+      "utf8",
+    ).replace(/#[^\n]*/g, "");
+    // OPTION (b) of the W66 trade-off, as offered here since the fuse landed:
+    // the RELEASE config keeps `enableNodeCliInspectArguments: false` (asserted
+    // below so the hardening cannot silently regress), while CI builds the
+    // TEST-ONLY package with the fuse flipped on via the electron-builder CLI
+    // override (e2e.yml --config.electronFuses.enableNodeCliInspectArguments=true)
+    // and marks it with RF_E2E_PACKAGED_INSPECT=1. Driving a binary whose fuse
+    // state we did not arrange would hang for the full launch timeout, so a
+    // missing marker fails fast instead.
+    expect(
+      /enableNodeCliInspectArguments:\s*false/.test(fuses),
+      "RELEASE electron-builder.yml must keep enableNodeCliInspectArguments: false " +
+        "(W66 hardening). Test builds flip it via the CLI override in e2e.yml, " +
+        "never by editing the release config.",
+    ).toBe(true);
+    if (process.env.RF_E2E_PACKAGED_INSPECT !== "1") {
       throw new Error(
-        'packaged.spec cannot drive the shipped binary: electron-builder.yml sets ' +
-          '`enableNodeCliInspectArguments: false`, so Electron ignores the `--inspect` ' +
-          'flag Playwright needs to attach to the main process. This is a HARDENING vs ' +
-          'TESTABILITY trade-off, not an app defect — the packaged app launches fine. ' +
-          'Resolve by one of: (a) flip the fuse true and accept the re-opened ' +
-          'Node-injection surface; (b) build a test-only package with the fuse on and ' +
-          'assert separately that the RELEASE artifact has it off; or (c) drop these ' +
-          'main-process assertions and cover the package another way. Until then this ' +
-          'leg is red BY CONSTRUCTION and its 900 s hang was measuring nothing.',
+        "packaged.spec needs a TEST-BUILT package with the inspect fuse on " +
+          "(RF_E2E_PACKAGED_INSPECT=1). e2e.yml sets it around the electron-builder " +
+          "step that passes --config.electronFuses.enableNodeCliInspectArguments=true; " +
+          "without that override Playwright cannot attach to the main process and the " +
+          "launch hangs for its full timeout.",
       );
     }
 
@@ -111,26 +129,36 @@ test.describe('packaged (shipped binary) E2E', () => {
     // never leak into preview.spec (same single-worker process) and force IT to
     // require a package — preview.spec must stay free to use RF_E2E_DEV.
     const prev = process.env.RF_E2E_REQUIRE_PACKAGED;
-    process.env.RF_E2E_REQUIRE_PACKAGED = '1';
+    process.env.RF_E2E_REQUIRE_PACKAGED = "1";
     try {
       built = findBuiltApp();
     } finally {
       if (prev === undefined) delete process.env.RF_E2E_REQUIRE_PACKAGED;
       else process.env.RF_E2E_REQUIRE_PACKAGED = prev;
     }
-    expect(built.packaged, 'packaged.spec must launch a real electron-builder artifact').toBe(true);
-    expect(built.executablePath, 'a packaged artifact must expose an executable path').toBeTruthy();
+    expect(
+      built.packaged,
+      "packaged.spec must launch a real electron-builder artifact",
+    ).toBe(true);
+    expect(
+      built.executablePath,
+      "a packaged artifact must expose an executable path",
+    ).toBeTruthy();
 
     seeded = seedEnvironment();
     app = await electron.launch({
-      args: [built.main, '--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
+      args: [
+        built.main,
+        "--autoplay-policy=no-user-gesture-required",
+        "--no-sandbox",
+      ],
       ...(built.executablePath ? { executablePath: built.executablePath } : {}),
       env: seeded.appEnv,
       timeout: COLD_TIMEOUT_MS,
     });
     const proc = app.process();
-    proc.stdout?.on('data', (d: Buffer) => mainLog.push(d.toString()));
-    proc.stderr?.on('data', (d: Buffer) => mainLog.push(d.toString()));
+    proc.stdout?.on("data", (d: Buffer) => mainLog.push(d.toString()));
+    proc.stderr?.on("data", (d: Buffer) => mainLog.push(d.toString()));
   });
 
   test.afterAll(async () => {
@@ -157,7 +185,7 @@ test.describe('packaged (shipped binary) E2E', () => {
   // for the required-encoder list (media_studio/encoders.py REQUIRED_ENCODERS,
   // itself kept in sync with the tree by an AST scan) instead of a second,
   // drift-prone copy in TypeScript.
-  test('the packaged bundled ffmpeg provides every encoder the pipeline hardcodes', () => {
+  test("the packaged bundled ffmpeg provides every encoder the pipeline hardcodes", () => {
     const bundled = bundledFfmpegPath(built.executablePath!);
     expect(
       existsSync(bundled),
@@ -166,40 +194,47 @@ test.describe('packaged (shipped binary) E2E', () => {
 
     const probe = spawnSync(
       seeded.python,
-      ['-m', 'media_studio.encoders', '--ffmpeg', bundled],
-      { cwd: SIDECAR_DIR, encoding: 'utf8' },
+      ["-m", "media_studio.encoders", "--ffmpeg", bundled],
+      { cwd: SIDECAR_DIR, encoding: "utf8" },
     );
-    const report = `${probe.stdout ?? ''}${probe.stderr ?? ''}`.trim();
+    const report = `${probe.stdout ?? ""}${probe.stderr ?? ""}`.trim();
     // Surface the verdict on green runs too, so the smoke self-documents WHICH
     // binary it measured — a capability claim that does not name the binary it
     // probed is unfalsifiable.
     console.log(`[packaged] encoder-capability report:\n${report}`);
     expect(
       probe.status,
-      'the SHIPPED ffmpeg cannot encode what the pipeline hardcodes — every affected ' +
+      "the SHIPPED ffmpeg cannot encode what the pipeline hardcodes — every affected " +
         `export will fail with "Unknown encoder" on the user's machine.\n${report}`,
     ).toBe(0);
   });
 
-  test('the shipped package reports app.isPackaged === true', async () => {
-    const isPackaged = await app.evaluate(({ app: electronApp }) => electronApp.isPackaged);
-    expect(isPackaged, 'a genuine electron-builder package must be isPackaged').toBe(true);
+  test("the shipped package reports app.isPackaged === true", async () => {
+    const isPackaged = await app.evaluate(
+      ({ app: electronApp }) => electronApp.isPackaged,
+    );
+    expect(
+      isPackaged,
+      "a genuine electron-builder package must be isPackaged",
+    ).toBe(true);
   });
 
-  test('the shipped package runs from the packaged app path (asar)', async () => {
-    const appPath = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
+  test("the shipped package runs from the packaged app path (asar)", async () => {
+    const appPath = await app.evaluate(({ app: electronApp }) =>
+      electronApp.getAppPath(),
+    );
     // A packaged Electron app runs out of resources/app.asar (or the resources
     // dir), never from a loose dev `out/` tree.
-    expect(appPath.replace(/\\/g, '/').toLowerCase()).toContain('resources');
+    expect(appPath.replace(/\\/g, "/").toLowerCase()).toContain("resources");
   });
 
-  test('the packaged renderer boots and shows the first-run setup UI (not a blank screen)', async () => {
+  test("the packaged renderer boots and shows the first-run setup UI (not a blank screen)", async () => {
     const win = await app.firstWindow();
-    win.on('console', (m) => {
-      if (m.type() === 'error') consoleErrors.push(m.text());
+    win.on("console", (m) => {
+      if (m.type() === "error") consoleErrors.push(m.text());
     });
-    win.on('pageerror', (e) => consoleErrors.push(`PAGEERROR: ${e.message}`));
-    await win.waitForLoadState('domcontentloaded');
+    win.on("pageerror", (e) => consoleErrors.push(`PAGEERROR: ${e.message}`));
+    await win.waitForLoadState("domcontentloaded");
     // A COLD packaged first-run pip-installs the heavy sidecar runtime into
     // <configDir>/envs/sidecar (multi-minute, network-bound) BEFORE the sidecar can
     // answer RPCs, so the post-provisioning shell (.app__brand / Library — they settle
@@ -210,12 +245,17 @@ test.describe('packaged (shipped binary) E2E', () => {
     // shows a LIVE setup UI rather than a blank/white screen. The real post-provisioning
     // shell + full pipeline are proven on the dev build (preview.spec, every leg) and by
     // the clean-box first-run smoke (app/e2e/README) — not this 30s CI window.
-    await expect(win.locator('.first-run-setup')).toBeVisible({ timeout: 30_000 });
+    await expect(win.locator(".first-run-setup")).toBeVisible({
+      timeout: 30_000,
+    });
     await win.waitForTimeout(1000);
-    expect(consoleErrors, `console errors: ${JSON.stringify(consoleErrors)}`).toEqual([]);
+    expect(
+      consoleErrors,
+      `console errors: ${JSON.stringify(consoleErrors)}`,
+    ).toEqual([]);
   });
 
-  test('the packaged main process is wired with the seeded env + enters its first-run bootstrap', async () => {
+  test("the packaged main process is wired with the seeded env + enters its first-run bootstrap", async () => {
     // A FRESH packaged launch correctly inherits our seeded env (MEDIA_STUDIO_CONFIG_DIR/
     // PYTHON/SIDECAR_DIR) and then enters the documented FIRST-RUN BOOTSTRAP — it
     // pip-installs the heavy sidecar runtime into <configDir>/envs/sidecar before the
@@ -243,9 +283,9 @@ test.describe('packaged (shipped binary) E2E', () => {
     // survives the CI window, unlike waiting for the multi-minute install to finish.
     const win = await app.firstWindow();
     await expect(
-      win.locator('.first-run-setup'),
+      win.locator(".first-run-setup"),
       `packaged .exe must enter its first-run bootstrap gate.` +
-        `\n--- packaged main/sidecar log ---\n${mainLog.join('').slice(-4000)}`,
+        `\n--- packaged main/sidecar log ---\n${mainLog.join("").slice(-4000)}`,
     ).toBeVisible({ timeout: 30_000 });
   });
 });
