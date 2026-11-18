@@ -214,6 +214,11 @@ describe('cardAriaLabel', () => {
       'Open Talk, 10:05, no transcript, /movies/talk',
     );
   });
+  it('drops the path segment too when the video carries no path', () => {
+    expect(cardAriaLabel(makeVideo({ path: '', addedAt: 'not-a-date' }), false)).toBe(
+      'Open Talk, 10:05, no transcript',
+    );
+  });
 });
 
 describe('shortsCountLabel', () => {
