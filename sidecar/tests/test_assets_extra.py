@@ -171,7 +171,7 @@ def test_preflight_breaks_at_filesystem_root(monkeypatch):
         seen.append(path)
         return SimpleNamespace(total=0, used=0, free=10**13)
 
-    import media_studio.assets.manager as mgr_mod
+    from media_studio.assets import manager as mgr_mod
 
     # Force every ancestor to look non-existent so the walk runs to the root,
     # where Path(root).parent == Path(root) triggers the break.
@@ -215,7 +215,7 @@ def test_default_run_cmd_runs_subprocess_with_argv_list(monkeypatch):
         captured["kwargs"] = kwargs
         return SimpleNamespace(returncode=7, stdout="hello-out")
 
-    import media_studio.assets.manager as mgr_mod
+    from media_studio.assets import manager as mgr_mod
 
     monkeypatch.setattr(mgr_mod.subprocess, "run", fake_run)
     code, out = _default_run_cmd(["py", "-V"], {"EXTRA": "1"})
@@ -227,7 +227,7 @@ def test_default_run_cmd_runs_subprocess_with_argv_list(monkeypatch):
 
 
 def test_default_run_cmd_none_stdout_becomes_empty(monkeypatch):
-    import media_studio.assets.manager as mgr_mod
+    from media_studio.assets import manager as mgr_mod
 
     monkeypatch.setattr(mgr_mod.subprocess, "run", lambda argv, **k: SimpleNamespace(returncode=0, stdout=None))
     code, out = _default_run_cmd(["py"], None)

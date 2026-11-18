@@ -85,7 +85,6 @@ DEFAULT_ASPECT = "9:16"
 #: strictly-better successor of Light-ASD vendored under ``_lightasd``.
 LIGHT_ASD_ASSET = "light-asd"
 LIGHT_ASD_REPO = "Junhua-Liao/LR-ASD"
-LIGHT_ASD_SIZE_MB = 110.0
 
 # --- Decision-layer tunables (design note) ---------------------------------- #
 #: shots shorter than this many seconds are merged into their neighbour so a

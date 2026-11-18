@@ -173,7 +173,8 @@ class TestBatchIdContainment:
         assert store.update_item(batch_id, "v1", status="done")["items"][0]["status"] == "done"
         assert store.set_status(batch_id, "error")["status"] == "error"
         assert [s["id"] for s in store.list()] == [batch_id]
-        assert store.delete(batch_id) is True
+        delete_result_176 = store.delete(batch_id)
+        assert delete_result_176 is True
         assert store.load(batch_id) is None
 
 

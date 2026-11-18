@@ -53,7 +53,9 @@ from typing import Any
 import pytest
 from media_studio import handlers, protocol
 from media_studio import library as _library
-from media_studio.features.apply_engine import OpEngine  # noqa: F401 - documents the seam type
+
+# The apply-engine seam type (media_studio.features.apply_engine.OpEngine) is
+# what these hub/director e2e fixtures drive; it is not referenced directly.
 from media_studio.handlers import Services
 from media_studio.jobs import JobRegistry
 from media_studio.models.edit_plan import EditOp

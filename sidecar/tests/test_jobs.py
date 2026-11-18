@@ -786,7 +786,7 @@ def test_join_breaks_when_deadline_already_passed(emit_sinks, monkeypatch):
     job = reg.start(_blocker(started, release))
     assert started.wait(timeout=5)
 
-    import media_studio.jobs as jobs_mod
+    from media_studio import jobs as jobs_mod
 
     # First monotonic() call sets the deadline; every later call (inside
     # remaining()) returns a value far past it, so rem <= 0 on the first check.

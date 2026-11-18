@@ -124,7 +124,7 @@ class StackedDDCNNV2(nn.Module):  # pragma: no cover - vendored TransNetV2 arch 
             raise NotImplementedError("Octave convolution not implemented in Pytorch version of Transnet!")
 
         assert pool_type == "max" or pool_type == "avg"
-        if use_octave_conv and pool_type == "max":
+        if pool_type == "max":
             print("WARN: Octave convolution was designed with average pooling, not max pooling.")
 
         self.shortcut = shortcut
