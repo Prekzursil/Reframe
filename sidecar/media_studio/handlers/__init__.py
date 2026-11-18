@@ -27,9 +27,9 @@ from ._wire import (
     _signals_summary,
     _tier_readiness_items,
 )
+
 if TYPE_CHECKING:  # imported lazily below; a module-level import here is the
     from ._services import Services  # runtime cycle _services -> handlers.*
-
     from .composition import register_all
 
 

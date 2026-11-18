@@ -235,7 +235,8 @@ class Provider(Protocol):
         *,
         temperature: float = ...,
         max_tokens: int = ...,
-    ) -> str: raise NotImplementedError
+    ) -> str:
+        raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------
