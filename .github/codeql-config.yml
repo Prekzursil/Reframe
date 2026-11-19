@@ -16,11 +16,6 @@
 #   imported by the gate)` markers and is exercised only when the ViNet
 #   saliency feature is explicitly enabled. Revisit if the vendoring is
 #   replaced by a package dependency.
-queries:
-  - uses: security-extended
-  - uses: security-and-quality
 
-paths:
-  - "**"
 paths-exclude:
   - "sidecar/media_studio/features/_vinet_s/**"

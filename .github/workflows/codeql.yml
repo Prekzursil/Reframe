@@ -50,9 +50,10 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           # Both suites per the fleet CODEQL DECISION — strictly subsumes the
-          # default suite and the extended suite — plus the vendored-tree
-          # exclusion live in .github/codeql-config.yml (the action cannot
-          # take the `queries:` input together with a `config:` file).
+          # default suite and the extended suite.
+          queries: security-extended,security-and-quality
+          # Vendored-tree exclusion only (see the config for the loud
+          # rationale); queries stay on the input — the action merges them.
           config-file: .github/codeql-config.yml
 
       - name: Perform CodeQL Analysis
