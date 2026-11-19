@@ -50,10 +50,9 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           # Both suites per the fleet CODEQL DECISION — strictly subsumes the
-          # default suite and the extended suite.
-          queries: security-extended,security-and-quality
-          # Vendored-tree exclusion (see .github/codeql-config.yml for the
-          # loud rationale): _vinet_s is a byte-faithful upstream copy.
+          # default suite and the extended suite — plus the vendored-tree
+          # exclusion live in .github/codeql-config.yml (the action cannot
+          # take the `queries:` input together with a `config:` file).
           config: .github/codeql-config.yml
 
       - name: Perform CodeQL Analysis
