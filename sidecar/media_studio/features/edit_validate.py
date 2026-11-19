@@ -26,6 +26,10 @@ from typing import Any, Literal
 
 from media_studio.models.edit_plan import EditOp, EditPlan
 
+__all__ = [
+    "_UNCONSTRAINED_KINDS",
+]
+
 #: Typed drop reasons (DESIGN §2.1). Surfaced in the storyboard, NEVER trusted
 #: as an instruction. FROZEN — the renderer maps these to plain-language copy.
 StatusReason = Literal[

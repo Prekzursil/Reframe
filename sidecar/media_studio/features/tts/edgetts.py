@@ -27,7 +27,6 @@ from ... import ffmpeg
 from ...util import clamp, get_logger
 from .engine import Cue, TtsEngine, TtsError, Voice
 
-log = get_logger("media_studio.tts.edgetts")
 
 # Factory seam: (text, voice, rate_str) -> a Communicate-like object exposing
 # ``async save(path)``. Tests inject a fake; the default lazily imports edge_tts.

@@ -33,9 +33,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from ...pathsafe import ensure_within
-from ...util import get_logger
 
-log = get_logger("media_studio.tts.engine")
 
 # Type aliases mirroring CONTRACTS.md §3 / A2 (field names frozen).
 Cue = dict[str, Any]

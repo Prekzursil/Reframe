@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import re
+
 import pytest
 from media_studio import handlers
 from media_studio.handlers import Services
@@ -241,7 +243,8 @@ def test_models_runners_composes_device_plan(tmp_path: Path) -> None:
     assert by_kind["ollama"]["present"] is True
     assert by_kind["ollama"]["installedModels"] == ["qwen2.5:7b"]
     assert by_kind["lmstudio"]["present"] is False
-    assert "https://lmstudio.ai" in by_kind["lmstudio"]["installHint"]
+    lm_hint_urls = re.findall(r"https?://[^\s]+", by_kind["lmstudio"]["installHint"])
+    assert "https://lmstudio.ai" in lm_hint_urls  # exact URL token (py/incomplete-url-substring-sanitization)
 
 
 def test_models_runners_registered(tmp_path: Path) -> None:

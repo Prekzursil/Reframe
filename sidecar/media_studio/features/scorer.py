@@ -46,13 +46,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ..util import clamp, get_logger
+from ..util import clamp
 from .ranker import SIGNAL_FEATURES
 
 if TYPE_CHECKING:  # numpy IS in the venv; kept import-light, used only in fallbacks.
     import numpy as np
 
-log = get_logger("media_studio.features.scorer")
 
 #: The shared 1-second window grid all Wave-1 tracks are emitted on.
 WINDOW_SEC: float = 1.0

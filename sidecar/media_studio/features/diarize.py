@@ -36,10 +36,9 @@ from .. import protocol
 from ..assets import manifest
 from ..protocol import ErrorCode, RpcContext, RpcError
 from ..settings_store import default_config_dir
-from ..util import clamp, get_logger
+from ..util import clamp
 from . import offline as _offline
 
-log = get_logger("media_studio.features.diarize")
 
 Transcript = dict[str, Any]
 Segment = dict[str, Any]

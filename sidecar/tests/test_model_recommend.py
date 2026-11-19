@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import re
+
 import pytest
 from media_studio.models import model_recommend as mr
 
@@ -153,7 +155,8 @@ def test_runner_advice_present_running_server() -> None:
     assert lmstudio["present"] is False
     assert lmstudio["installedModels"] == []
     assert lmstudio["installUrl"] == "https://lmstudio.ai"
-    assert "https://lmstudio.ai" in lmstudio["installHint"]
+    lm_hint_urls = re.findall(r"https?://[^\s]+", lmstudio["installHint"])
+    assert "https://lmstudio.ai" in lm_hint_urls  # exact URL token (py/incomplete-url-substring-sanitization)
     assert "never auto-install" in lmstudio["installHint"]
 
 

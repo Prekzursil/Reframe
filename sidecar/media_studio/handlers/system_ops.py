@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, cast
 from ..features import offline as _offline
 from ..protocol import ErrorCode, RpcContext, RpcError
 from ._shared import (
-    Candidate,
     _invalid,
     _require_str,
 )

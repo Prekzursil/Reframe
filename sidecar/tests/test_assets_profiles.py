@@ -409,8 +409,7 @@ class TestRetry:
         cancel = {"v": False}
         body = b"c" * (1 * MB)
 
-        def _mark(_chunk):
-            cancel["v"] = True
+        # (unused `_mark` probe callback removed — py/unused-local-variable)
 
         resp = FakeResponse(200, {"Content-Length": str(MB)}, chunks=[body])
         client = FakeClient([resp])

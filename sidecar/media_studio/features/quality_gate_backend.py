@@ -18,12 +18,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from ..util import get_logger
-
 if TYPE_CHECKING:
     import numpy as np
 
-log = get_logger("media_studio.features.quality_gate_backend")
 
 #: DOVER samples a fixed-size clip frame stream; the exact size is a backend knob.
 TARGET_FRAMES = 32

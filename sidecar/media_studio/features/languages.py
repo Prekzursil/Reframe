@@ -40,6 +40,11 @@ Pure stdlib, no side effects at import time.
 
 from __future__ import annotations
 
+__all__ = [
+    "ORDERED_CODES",
+    "SUPPORTED_LANGS",
+]
+
 #: The sentinel "let the engine detect the language" choice. NOT a language code —
 #: it must be translated to ``None`` before it reaches an engine (see
 #: :func:`resolve_source_language`); faster-whisper would read the literal string

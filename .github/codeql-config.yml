@@ -1,0 +1,22 @@
+# CodeQL configuration for the advanced (in-repo workflow) analysis.
+#
+# paths-exclude — LOUD, DOCUMENTED RATIONALE (fleet precedent: vendored /
+# frozen third-party trees are excluded from analysis rather than edited,
+# because "fixing" them would fork the vendored source we deliberately
+# keep byte-faithful to its upstream):
+#
+#   sidecar/media_studio/features/_vinet_s/** — vendored ViNet-S
+#   video-saliency network. A faithful copy of ViNet-Saliency/vinet_v2's
+#   ViNet_S/ViNet_S_model.py (see the module docstring and LICENSE in that
+#   directory). Findings there (py/polluting-import `import *`,
+#   py/mixed-returns, …) describe the upstream code as published; editing
+#   them locally would silently diverge the vendored arch from its
+#   upstream, which the sidecar's model-load parity depends on. The
+#   directory is guarded by `# pragma: no cover - vendored … (never
+#   imported by the gate)` markers and is exercised only when the ViNet
+#   saliency feature is explicitly enabled. Revisit if the vendoring is
+#   replaced by a package dependency.
+paths:
+  - "**"
+paths-exclude:
+  - "sidecar/media_studio/features/_vinet_s/**"

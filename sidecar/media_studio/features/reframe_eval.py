@@ -46,6 +46,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import IO, Any
 
+__all__ = [
+    "BASELINE_SWAY_CENTERS",
+]
+
 #: The three layout classes a per-segment decision may emit (plus the implicit
 #: ``"none"`` filler for frames no segment covers).
 LAYOUTS: tuple[str, ...] = ("single", "split", "composite")
