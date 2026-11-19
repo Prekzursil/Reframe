@@ -406,11 +406,9 @@ class TestRetry:
 
     def test_cancellation_is_not_retried(self, tmp_path):
         entry = download_entry("cancelme", size_mb=1)
-        cancel = {"v": False}
         body = b"c" * (1 * MB)
 
-        def _mark(_chunk):
-            cancel["v"] = True
+        # (unused `_mark` probe callback removed — py/unused-local-variable)
 
         resp = FakeResponse(200, {"Content-Length": str(MB)}, chunks=[body])
         client = FakeClient([resp])

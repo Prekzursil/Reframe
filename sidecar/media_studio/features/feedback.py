@@ -36,9 +36,6 @@ from typing import Any
 
 from ..pathsafe import ensure_within
 from ..settings_store import default_config_dir
-from ..util import get_logger
-
-log = get_logger("media_studio.feedback")
 
 # Frozen wire values (CONTRACTS.md P3 mini-contract / app rpc.ts).
 ACTIONS = ("approved", "discarded", "nudged", "exported")

@@ -41,10 +41,7 @@ from typing import Any
 
 from .. import protocol
 from ..protocol import ErrorCode, RpcContext, RpcError
-from ..util import get_logger
 from . import recipes
-
-log = get_logger("media_studio.features.templates")
 
 Template = dict[str, Any]
 

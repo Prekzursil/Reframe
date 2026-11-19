@@ -38,9 +38,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..protocol import ErrorCode, RpcError
-from ..util import get_logger
-
-log = get_logger("media_studio.features.offline")
 
 #: the authoritative settings key (this feature). Truthy -> offline.
 SETTING_OFFLINE = "offline"

@@ -26,7 +26,6 @@ from typing import Any
 from ...assets.manifest import AssetEntry, register_asset
 from ...pathsafe import ensure_within
 from ...settings_store import default_config_dir
-from ...util import get_logger
 from .engine import (
     Cue,
     TtsEngine,
@@ -35,8 +34,6 @@ from .engine import (
     float_samples_to_int16_bytes,
     write_pcm_wav,
 )
-
-log = get_logger("media_studio.tts.kokoro")
 
 # --------------------------------------------------------------------------- #
 # U4 manifest assets (PINNED — A6 lesson 5)

@@ -52,6 +52,9 @@ jobs:
           # Both suites per the fleet CODEQL DECISION — strictly subsumes the
           # default suite and the extended suite.
           queries: security-extended,security-and-quality
+          # Vendored-tree exclusion only (see the config for the loud
+          # rationale); queries stay on the input — the action merges them.
+          config-file: .github/codeql-config.yml
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3

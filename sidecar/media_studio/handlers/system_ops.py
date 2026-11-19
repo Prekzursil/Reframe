@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, cast
 from ..features import offline as _offline
 from ..protocol import ErrorCode, RpcContext, RpcError
 from ._shared import (
+    # Used by the string annotation in cast("list[Candidate]", ...) below;
+    # keep even though it has no runtime-visible use in this module.
     Candidate,
     _invalid,
     _require_str,

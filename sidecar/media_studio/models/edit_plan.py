@@ -29,6 +29,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, get_args
 
+__all__ = [
+    "EXECUTABLE_OP_KINDS",
+]
+
 # ---------------------------------------------------------------------------
 # Typed enumerations (FROZEN — every other WU consumes these). Centralized so
 # the dataclasses, the validator, the prompt builder, and the JSON schema all

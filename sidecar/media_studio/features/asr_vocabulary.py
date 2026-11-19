@@ -45,10 +45,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..util import get_logger
-
-log = get_logger("media_studio.features.asr_vocabulary")
-
 #: the settings key holding the user's term list (see ``settings_store``).
 VOCAB_SETTINGS_KEY = "asrVocabulary"
 

@@ -445,7 +445,9 @@ def run_batch(
         def on_sub(pct: float, message: str, _base: float = base, _span: float = span, _prefix: str = prefix) -> None:
             job_ctx.progress(_base + clamp(pct, 0.0, 100.0) / 100.0 * _span, f"{_prefix}{message}")
 
-        final = store.update_item(batch_id, video_id, status="running")
+        # Side-effect only; `final` is set by the terminal update below
+        # (py/multiple-definition).
+        store.update_item(batch_id, video_id, status="running")
         on_sub(0.0, "")
         try:
             started = _run_source(template_runner, video_id, ctx, decision)

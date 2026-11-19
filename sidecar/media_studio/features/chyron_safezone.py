@@ -466,4 +466,5 @@ __all__ = [
     "crop_slices_chyrons",
     "default_sample_times",
     "detect_chyrons",
+    "EDGES",
 ]

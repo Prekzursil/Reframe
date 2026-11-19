@@ -55,10 +55,7 @@ from typing import Any
 from ...assets.manifest import AssetEntry, register_asset
 from ...pathsafe import ensure_within
 from ...settings_store import default_config_dir
-from ...util import get_logger
 from .engine import Cue, TtsEngine, TtsError, Voice
-
-log = get_logger("media_studio.tts.chatterbox")
 
 # --------------------------------------------------------------------------- #
 # U4 manifest env-asset (PINNED — A6 lesson 5)

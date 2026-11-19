@@ -19,10 +19,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..util import get_logger
-
-log = get_logger("media_studio.features.caption_polish_backend")
-
 #: how many KeyBERT keywords to extract per cue (small — captions are short).
 DEFAULT_TOP_N = 3
 
