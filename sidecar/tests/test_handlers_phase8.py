@@ -7,10 +7,9 @@ job handlers run on a real JobRegistry and their ``job.done.result`` is asserted
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
-
-import re
 
 import pytest
 from media_studio import handlers

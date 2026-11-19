@@ -97,8 +97,8 @@ ckpt = torch.load(WEIGHT, map_location=DEV, weights_only=True)
 
 # ---- (b) REFERENCE model (~/LR-ASD) ----
 sys.path.insert(0, REFREPO)
-from model.Model import ASD_Model as RefASD  # noqa: E402
 from loss import lossAV as RefLossAV  # noqa: E402
+from model.Model import ASD_Model as RefASD  # noqa: E402
 
 ref_model = RefASD().to(DEV)
 ref_loss = RefLossAV().to(DEV)
@@ -113,9 +113,9 @@ print(f"ASD_Model params={ref_params/1e6:.4f}M")
 
 # ---- (a) VENDORED model (sidecar) ----
 sys.path.insert(0, SIDECAR)
-from media_studio.features._lightasd.asd import ASD as VendASD  # noqa: E402
+from media_studio.features._lightasd.asd import ASD as ASD_VEND  # noqa: E402
 
-vend = VendASD(device=DEV)
+vend = ASD_VEND(device=DEV)
 vend.loadParameters(WEIGHT)  # the REAL production loader (stderr empty == zero mismatch)
 vend.eval()
 vend_params = sum(p.numel() for p in vend.model.parameters())

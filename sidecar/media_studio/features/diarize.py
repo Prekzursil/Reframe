@@ -39,7 +39,6 @@ from ..settings_store import default_config_dir
 from ..util import clamp
 from . import offline as _offline
 
-
 Transcript = dict[str, Any]
 Segment = dict[str, Any]
 Embedding = Sequence[float]

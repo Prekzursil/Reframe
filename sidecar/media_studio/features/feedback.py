@@ -36,6 +36,7 @@ from typing import Any
 
 from ..pathsafe import ensure_within
 from ..settings_store import default_config_dir
+
 # Frozen wire values (CONTRACTS.md P3 mini-contract / app rpc.ts).
 ACTIONS = ("approved", "discarded", "nudged", "exported")
 POSITIVE_ACTIONS = frozenset({"approved", "exported"})

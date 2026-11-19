@@ -24,9 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from ... import ffmpeg
-from ...util import clamp, get_logger
+from ...util import clamp
 from .engine import Cue, TtsEngine, TtsError, Voice
-
 
 # Factory seam: (text, voice, rate_str) -> a Communicate-like object exposing
 # ``async save(path)``. Tests inject a fake; the default lazily imports edge_tts.

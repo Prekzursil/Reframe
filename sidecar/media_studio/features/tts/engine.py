@@ -34,7 +34,6 @@ from typing import Any, ClassVar
 
 from ...pathsafe import ensure_within
 
-
 # Type aliases mirroring CONTRACTS.md §3 / A2 (field names frozen).
 Cue = dict[str, Any]
 #: ``tts.voices()`` row shape (A2): {id, engine, lang, name}

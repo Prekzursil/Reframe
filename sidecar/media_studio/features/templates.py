@@ -43,7 +43,6 @@ from .. import protocol
 from ..protocol import ErrorCode, RpcContext, RpcError
 from . import recipes
 
-
 Template = dict[str, Any]
 
 #: Allowed step-method prefixes/exact-ids — the curated repurpose verb set

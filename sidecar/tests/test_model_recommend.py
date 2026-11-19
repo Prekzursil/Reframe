@@ -8,9 +8,8 @@ no socket, no clock, no heavy import.
 
 from __future__ import annotations
 
-from typing import Any
-
 import re
+from typing import Any
 
 import pytest
 from media_studio.models import model_recommend as mr

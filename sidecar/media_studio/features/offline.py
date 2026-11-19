@@ -38,6 +38,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..protocol import ErrorCode, RpcError
+
 #: the authoritative settings key (this feature). Truthy -> offline.
 SETTING_OFFLINE = "offline"
 #: a process-wide env override (supervisor / air-gapped deploys). Truthy -> offline.
