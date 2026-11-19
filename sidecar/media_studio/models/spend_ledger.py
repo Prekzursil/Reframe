@@ -150,5 +150,8 @@ class SpendLedger:
         return new_total
 
 
-__all__ = ["SpendLedger", "month_key", "PLACEHOLDER_CENTS_PER_REQUEST",
+__all__ = [
+    "SpendLedger",
+    "month_key",
+    "PLACEHOLDER_CENTS_PER_REQUEST",
 ]
