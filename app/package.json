@@ -61,7 +61,7 @@
     "electron-vite": "^6.0.0",
     "fast-check": "^4.10.2",
     "jsdom": "^24.1.0",
-    "typescript": "^5.5.0",
+    "typescript": "^7.0.2",
     "vite": "^6.4.5",
     "vitest": "^4.1.12"
   }
