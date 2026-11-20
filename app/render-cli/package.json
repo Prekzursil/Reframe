@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@remotion/bundler": "4.0.542",
-    "@types/node": "20.19.43",
+    "@types/node": "26.6.6",
     "@types/react": "19.3.0",
     "typescript": "5.9.3"
   },
