@@ -65,7 +65,7 @@ export interface FocusTrapOptions {
  */
 export function useFocusTrap<T extends HTMLElement = HTMLElement>(
   options: FocusTrapOptions,
-): RefObject<T> {
+): RefObject<T | null> {
   const { onEscape, initialFocus, trapTab = true } = options;
   // useRef<T>(null) resolves to RefObject<T> (a read-only ref whose `current`
   // is T | null) — exactly what a JSX `ref` prop expects.
