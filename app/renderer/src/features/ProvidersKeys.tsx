@@ -304,8 +304,9 @@ export function ProvidersKeys({
         Promise.resolve(api.providers.list()),
         Promise.resolve(api.providers.catalog()),
         Promise.resolve(api.providers.usage()),
-        /* v8 ignore next -- the optional-chaining fallback only fires when a test omits settings.get; every meaningful test injects it. -- @preserve */
+        /* v8 ignore start -- the optional-chaining fallback only fires when a test omits settings.get; every meaningful test injects it. Block form: vite 8's oxc transform shifts single-line ignore mapping. -- @preserve */
         Promise.resolve<SettingsConsentRead>(api.settings?.get?.() ?? {}),
+        /* v8 ignore end */
       ])
         .then(([list, cat, use, settings]) => {
           if (alive) {
