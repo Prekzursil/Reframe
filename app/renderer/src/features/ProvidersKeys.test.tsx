@@ -140,7 +140,9 @@ function makeApi(over: ApiOverrides = {}): ProvidersKeysProps['rpcClient'] {
     // `over.omitSettings` renders the panel WITHOUT the settings surface so the
     // component's optional-chaining fallback (api.settings?.get?.() ?? {}) is
     // exercised — vite 8's transform maps those branch edges into coverage.
-    ...(over.omitSettings ? {} : { settings: { get: over.settingsGet ?? (() => Promise.resolve({})) } }),
+    ...(over.omitSettings
+      ? {}
+      : { settings: { get: over.settingsGet ?? (() => Promise.resolve({})) } }),
   } as unknown as ProvidersKeysProps['rpcClient'];
 }
 
