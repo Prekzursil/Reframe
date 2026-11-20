@@ -114,6 +114,8 @@ interface ApiOverrides {
   revealKey?: ReturnType<typeof vi.fn>;
   setConsent?: ReturnType<typeof vi.fn>;
   settingsGet?: () => Promise<{ consent?: { perProvider?: Record<string, ProviderConsent> } }>;
+  /** Render with NO settings surface at all (covers the settings?.get?. fallback). */
+  omitSettings?: boolean;
 }
 
 function makeApi(over: ApiOverrides = {}): ProvidersKeysProps['rpcClient'] {
@@ -135,7 +137,10 @@ function makeApi(over: ApiOverrides = {}): ProvidersKeysProps['rpcClient'] {
       setFunctionModel: vi.fn(),
       firstRun: vi.fn(),
     },
-    settings: { get: over.settingsGet ?? (() => Promise.resolve({})) },
+    // `over.omitSettings` renders the panel WITHOUT the settings surface so the
+    // component's optional-chaining fallback (api.settings?.get?.() ?? {}) is
+    // exercised — vite 8's transform maps those branch edges into coverage.
+    ...(over.omitSettings ? {} : { settings: { get: over.settingsGet ?? (() => Promise.resolve({})) } }),
   } as unknown as ProvidersKeysProps['rpcClient'];
 }
 
@@ -174,6 +179,14 @@ describe('ProvidersKeys — load + empty state', () => {
     expect(container.textContent).toContain('No provider keys yet');
     // Picker still renders so the user can add one.
     expect(container.querySelector('.providers-keys__picker-list')).not.toBeNull();
+  });
+
+  it('renders with NO settings surface at all (settings?.get?. fallback)', async () => {
+    // A bridge/client that predates the settings surface must not break the
+    // panel: the load Promise.all falls back to an empty consent map.
+    const api = makeApi({ omitSettings: true });
+    await mount({ rpcClient: api });
+    expect(container.querySelector('.providers-keys__empty')).not.toBeNull();
   });
 
   it('surfaces a load error and hides the body', async () => {
