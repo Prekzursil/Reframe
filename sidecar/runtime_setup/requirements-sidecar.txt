@@ -22,13 +22,13 @@
 # lock is validated by media_studio.assets.manager.validate_hashed_lock first.
 
 faster-whisper==1.2.1
-ctranslate2==4.8.4
-scenedetect==0.7.2
+ctranslate2==4.9.0
+scenedetect==0.7.3
 opencv-python==4.14.0.94
 httpx==0.28.1
-numpy==2.5.4
+numpy==2.5.5
 av==16.1.0
-onnxruntime==1.31.1
+onnxruntime==1.32.0
 huggingface_hub==1.33.0
 tokenizers==0.23.3
 
@@ -38,13 +38,13 @@ tokenizers==0.23.3
 kokoro-onnx==0.6.1
 
 # CUDA runtime wheels for ctranslate2/onnxruntime GPU paths (pins = dev venv)
-nvidia-cublas-cu12==12.9.2.10
-nvidia-cudnn-cu12==9.27.0.42
+nvidia-cublas-cu12==12.9.3.13
+nvidia-cudnn-cu12==9.28.1.4
 
 # DELIBERATELY NOT HERE: mediapipe. The claudeshorts reframe engine's optional
 # MediaPipe backend uses the LEGACY Solutions API (`mp.solutions.face_detection`),
 # which only exists in mediapipe <=0.10.21 — and those wheels declare `numpy<2`,
-# a hard conflict with the `numpy==2.5.4` above (required by ctranslate2 / av /
+# a hard conflict with the `numpy==2.5.5` above (required by ctranslate2 / av /
 # onnxruntime / kokoro-onnx). mediapipe >=0.10.31 (numpy-2 clean) REMOVED the
 # Solutions API entirely, so pinning it would install a mediapipe whose
 # `mp.solutions` is missing -> the backend crashes at job time -> a SILENT drop
