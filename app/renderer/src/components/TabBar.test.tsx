@@ -71,9 +71,11 @@ describe('TabBar', () => {
     // Verify the onClick handler wiring via a shallow invocation.
     const onSelect = vi.fn();
     const el = TabBar({ tabs: TABS, active: 'a', onSelect }) as React.ReactElement;
-    // The rendered element is a div containing two button elements.
-    const children = el.props.children as React.ReactElement[];
-    children[1].props.onClick();
+    // The rendered element is a div containing two button elements. React 19
+    // types ReactElement['props'] as unknown, so narrow it explicitly.
+    const children = (el.props as { children: React.ReactElement[] }).children;
+    const second = children[1].props as { onClick: () => void };
+    second.onClick();
     expect(onSelect).toHaveBeenCalledWith('b');
   });
 });
